@@ -69,3 +69,7 @@ test-gateway:
 
 test-gateway-db:
 	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/db -q
+
+.PHONY: test-w4
+test-w4:
+	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w4 -q
