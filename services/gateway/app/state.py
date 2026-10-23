@@ -22,7 +22,13 @@ from sqlalchemy import Table
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .errors import GatewayError
-from .schemas.enums import ApprovalStatus, ExecutionJobStatus, PlanStatus, UtteranceStatus
+from .schemas.enums import (
+    ApprovalStatus,
+    ClarificationStatus,
+    ExecutionJobStatus,
+    PlanStatus,
+    UtteranceStatus,
+)
 
 PLAN_TRANSITIONS: dict[PlanStatus, frozenset[PlanStatus]] = {
     PlanStatus.EVALUATED: frozenset(
@@ -115,7 +121,16 @@ EXECUTION_JOB_TRANSITIONS: dict[ExecutionJobStatus, frozenset[ExecutionJobStatus
     ExecutionJobStatus.CANCELLED: frozenset(),
 }
 
+CLARIFICATION_TRANSITIONS: dict[ClarificationStatus, frozenset[ClarificationStatus]] = {
+    ClarificationStatus.OPEN: frozenset(
+        {ClarificationStatus.RESOLVED, ClarificationStatus.CANCELLED}
+    ),
+    ClarificationStatus.RESOLVED: frozenset(),
+    ClarificationStatus.CANCELLED: frozenset(),
+}
+
 TRANSITIONS: dict[str, dict] = {
+    "pending_clarifications": CLARIFICATION_TRANSITIONS,
     "plans": PLAN_TRANSITIONS,
     "approvals": APPROVAL_TRANSITIONS,
     "utterances": UTTERANCE_TRANSITIONS,
