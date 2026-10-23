@@ -613,34 +613,35 @@ def test_legacy_job_without_submission_evidence_still_requires_reconciliation(
     asyncio.run(run())
 
 
-def test_correction_runs_one_supersede_pass_but_replacement_still_supersedes(
-    gateway_db, monkeypatch
-):
-    """correction reuses supersede_session; the generic block must not re-scan plans."""
-    import services.gateway.app.utterance.service as service
+def test_correction_invalidates_each_plan_once_but_replacement_still_does(gateway_db, monkeypatch):
+    """Correction must not run a second per-plan invalidation after supersede_session."""
+    import services.gateway.app.utterance.lifecycle as lifecycle
 
     calls = []
 
+    real = lifecycle._invalidate_plan
+
+    async def spy(conn, plan_id):
+        calls.append(plan_id)
+        return await real(conn, plan_id)
+
     async def run():
         async with harness(gateway_db, monkeypatch) as (_, client, db, _, _, clock, _):
-            real_supersede = service.supersede
-
-            async def spy(conn, sid, *, keep=()):
-                calls.append((sid, keep))
-                return await real_supersede(conn, sid, keep=keep)
-
-            monkeypatch.setattr(service, "supersede", spy)
+            monkeypatch.setattr(lifecycle, "_invalidate_plan", spy)
 
             token = await login(client)
             sid = await create(client, token, new_id("req"))
-            assert (await utter(client, token, sid, "给王五800")).status_code == 201
+            old = (await utter(client, token, sid, "给王五800")).json()
+            plan, _, _ = await seed_job(db, sid, old, clock[0], "CONFIRMED", "PAUSED")
+            calls.clear()
 
             correction = await utter(client, token, sid, "不对；改成给赵六900", new_id("req"))
             assert correction.status_code == 201, correction.text
-            assert calls == [], "correction must not run a second supersede over the same plans"
+            assert calls == [plan], "correction must invalidate each plan exactly once"
 
+            calls.clear()
             replacement = await utter(client, token, sid, "给王五800", new_id("req"))
             assert replacement.status_code == 201, replacement.text
-            assert calls == [(sid, ())], "ordinary replacement still runs one supersede pass"
+            assert calls == [plan], "replacement still invalidates the plan once"
 
     asyncio.run(run())
