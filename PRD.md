@@ -1165,6 +1165,8 @@ Decision 见 §9.5；每个 finding 带 `code, step_id|null, effect, resolver, m
 
 **无评估遗留任务兼容（S1e，状态原语已验收，真实调用方联调待后续）**：若持久live job存在而该plan没有任何evaluation，只允许显式孤儿身份（customer、plan、origin、正整数attempt）的清理路径；不能伪造revision/evaluation，也不能恢复prepare/execute或绕过普通屏障。持有效客户锁，在同连接短事务内核对plan/job/全部CLAIMED及scope，检查零evaluation并在条件UPDATE中再次约束缺失；只可先持久UNKNOWN且保留全部提交字段和claim，再由W4取得真实L3 COMMITTED/CANCELLED终态后原子归档并消费claim。原话已CANCELLED/SUPERSEDED时保持原状态。预期CAS竞争应由调用者用savepoint隔离并重读，不能回滚本应生效的撤销；真实SQL/连接故障不得吞成成功。HTTP期间出现evaluation须重新取得普通身份并重新对账，不把旧孤儿回包套上最新revision。
 
+稳定畸形scope/claim或有界CAS重读仍失败时，G3/G14必须提交已经生效的撤销并返回上述409待清理错误，不发布替代写授权/token；同sid后续写授权发布前继续重核待清理任务。错误结果通过既有request幂等缓存；事务外统一抛错，重放不重复撤销。该错误分支的真实撤销审计与撤销/dedup在同一无HTTP短事务中原子追加；真实SQL故障仍失败，不伪装撤销已成功。具体边界见W1撤销待清理任务书。
+
 ### 7.11 定时、商户扣款与基金生命周期
 
 scheduler 只扫描到期事件并创建幂等 job，不自行决定是否授权。**事务外** S 回调 L2 `/internal/scheduled/authorize {event_id}`；L2 向 L3 拉取不可变事件定义、源客户、grant 指纹、到期时间，不能信任回调自报金额。L2 完成检查后主动调用 L3 执行该事件，scheduler 收到的是完成/拒绝结果；不颁发 `run_token`，不保留可脱离检查的执行许可。此为 D14 的具体调用顺序。
@@ -1304,7 +1306,7 @@ scheduler job 用真实时间 lease 防重复工作器；金融执行幂等由 e
 - 表中 `?` 表示 nullable；输入字段除 cursor/limit 默认值外均显式填写（可 null），与 strict schema 转换后的模型一一对应。`limit` 默认 50，1–100；cursor 是服务端不透明游标，分页按稳定 `(occurred_at,id)` 排序，返回 `items,next_cursor`。读快照限制查询最多 180 天。
 - 读工具响应 `ReadEnvelope={data,source_ref,untrusted_paths:string[],versions:object,observed_at}`。source_ref 为 src ID；路径使用 JSON Pointer。App 和 L1 读取都保存会话读取账本。来自实体名称等文本即使正常也标不可信。
 - HTTP：成功读取/评估/确认 200，创建会话/原话 201，推进时钟 202；401 身份无效、403 scope/origin 禁止、404 无权/不存在、409 状态冲突、422 契约错误、429 频率限制、503 依赖不可用。业务 DENY/REPLAN 是成功评估的 200 Decision，不能当网络错误自动重试。
-- 统一错误 `{error:{code,message,details,trace_id}}`，details 为字段错误或版本冲突，不含密钥/其他客户数据；`STATE_CHANGED` 的 `details` 固定为 `{decision: Decision}`（plan_id 不变，需要批准时 `decision.approval_id` 为新审批）；请求 `X-Request-ID` 回显 trace_id。修改接口的 request_id 在路由+主体作用域幂等；相同 ID 不同 body 为 IDEMPOTENCY_CONFLICT。
+- 统一错误 `{error:{code,message,details,trace_id}}`，details 为字段错误或版本冲突，不含密钥/其他客户数据；执行/复演产生的 `STATE_CHANGED` 的 `details` 为 `{decision: Decision}`（plan_id 不变，需要批准时 `decision.approval_id` 为新审批）；G3/G14已提交撤销但旧任务清理受阻时，409 `STATE_CHANGED` 的 details 为 `{authorization_revoked:true,cleanup_pending:true}`，不含Decision、不声称在途执行已回滚；请求 `X-Request-ID` 回显 trace_id；本类撤销待清理错误重放保持状态码/code/message/details，trace_id作为每请求元数据按当次请求重建。修改接口的 request_id 在路由+主体作用域幂等；相同 ID 不同 body 为 IDEMPOTENCY_CONFLICT。
 
 ### 9.2 六场景需求与接口覆盖
 

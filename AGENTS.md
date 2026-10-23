@@ -42,9 +42,10 @@
 | 调研 | 开源项目元数据和 DeepSeek 官方信息已核实；评分/提交已从官网公开 JS 核实（docs/acceptance/official-v1.md）；竞品「明鉴」未核实 |
 | PRD | **`PRD.md` = v2.1 定稿**（§0–§16；三轮多 agent 审核 + 两次修订复核，决议 D1–D47 见 §0.5；执行屏障增量约定见ADR-008）。v1.2 与作废的 v2.0 草稿在 `docs/archive/`；审核报告在 `docs/reviews/` |
 | 代码 | **P1 完成并逐组件验收**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116项单元+33项真实PG通过，契约v1已冻结。分支 feat/l3-core，P1代码已提交并推送私有仓库（功能提交7fd7a26）；CI权限修复70dcabe已推送，远端unit与p1-postgres均通过（run 39929405919） |
-| L2 网关 | **W0 基础骨架已合入 main**（PR #2，merge e2e91db，2026-10-23；经 4 轮架构评审 + 1 次 CI 修复）。波次1进行中：S1共享运行PR #4与S2预留PR #5已全绿合并；W1七缺陷与S1接线评审通过，W2来源链集成中；S1b迁移/状态PR #6已合并（94e40fe）；W4a客户锁PR #7已合并（d5ac9ed）；S1c PIN Settings接线已独立APPROVE并同步W4a、本地五退出通过，待协调最终复跑发布；W3/W4完整接线仍待依赖。计划 `docs/plans/L2-plan.md`，任务书 `docs/plans/briefs/` |
+| L2 网关 | **W0与共享PR #4–#10均已合入main**，当前main `44ded2f`：S1运行层、S2七天预留、S1b网关0002/CAS、W4a客户锁、S1c PIN Settings、S1e孤儿对账、S1d memo code。W1 `1722995`待协调者最新全退出与独立审；W2 `8063f27`已亲验五退出，memo独审及真实W1/S3接线仍缺。S1f尚未实施，先完成其挂载补缺；S3a提案F1修订待复审。W3/W4仅早期部分检查点。计划 `docs/plans/L2-plan.md`，交接 `docs/handoff/TEAMMATE-HANDOFF-2026-10-23.md` |
 | 前端 | **暂停**，用户亲自下令才开工（§2 第 13 条） |
-| 下一步 | L2 波次 1：W1 身份与原话、W2 读代理与来源、W3 预演·工作流·决策、W4 审批与执行，按接口依赖与可用槽位分批并行，共享补缺逐组件串行（见 §5「L2 进度」）。2026-10-23 起工作转到 Codex，交接说明见 `docs/handoff/CODEX-HANDOFF.md` |
+| 协调状态 | **用户于2026-10-23暂停开发，等待队友接手**；六个检查点与交接分支已推送。当前入口 `docs/handoff/TEAMMATE-HANDOFF-2026-10-23.md`；CODEX-RESUME是暂停时历史快照；旧实现agent已停 |
+| 下一步 | 队友先确认远端及文档PR、在最新main复跑基线；S1f→W1最终审验/发布，W2先独审memo后补真实接线，S3a先定点复审F1、待S1f合并后串行实施；再按依赖推进W3→W4。共享补缺逐组件串行，原四路任务无需从头重做（见 §5「L2 进度」） |
 
 ### 已确认事实
 
@@ -372,6 +373,24 @@
 
 | 2026-10-23 | Codex（协调者） | S1d独立review_s1d_memo规范PASS/质量APPROVE，无待修；核Code仅两处freeze枚举精确增量、工具Schema/既有枚举顺序/签名不变、SHA256正确。协调者三退出已全绿，准备合最新纯协调文档并立即push/base main组件PR；只交付新code契约，W2检测/W3黄级汇总/W4原文展示与view_hash仍待owner实际验收。 |
 
+| 2026-10-23 | Codex（协调者） | S1d已push head d6b8f4e并创建PR #10/附加任务，CI待完成。只读架构核对确认稳定畸形claim不能靠重试恢复；协调裁定W1提交撤销+缓存409、事务外重建GatewayError，details双true标明已失效/待清理，不新发替代授权。仅错误分支用现有audit.append同无HTTP短事务原子记审计，避免postcommit崩溃窗口，冻结helper不改；新写scope每次重扫该sid live jobs。已迭代PRD7.10/9.1、common精确例外和W1-revocation-deferred任务书，待设计报告核对后交owner。复用S2干净worktree预备S3a分支main6815547，派owner只读提出typed字段/迁移设计，尚不实施，仍等S1d合并。 |
+
+| 2026-10-23 | Codex（协调者） | W1撤销待清理只读设计报告完成（L2-W1-revocation-design.md），确认既有producer返回409即可原子缓存、事务外重建抛错可保留统一trace；无需改冻结helper。已补任务禁止广义catch/提前RESOLVED、新ID防跳过、原子审计与完整真实PG故障矩阵，PRD9.1补错误回放的当次trace约定；现交原W1 owner按固定双true details实施，矩阵仅需求、未跑不记通过。 |
+
+| 2026-10-23 | Codex（协调者） | PR #10精确head d6b8f4e的push/PR两套unit+p1-postgres四检查全部COMPLETED SUCCESS后执行gh pr merge 10 --merge --match-head-commit成功，merge44ded2f2431bdb0ce1d3f90f2c5d7d1b2ac67697，16:06:07Z。已fetch并同步main，仅PRD异段自动合并无冲突；S1d组件完成，通知W1稳定检查点后同步新main，S3a继续只读模型准备、未启动实现。 |
+
+| 2026-10-23 | Codex（协调者） | W2独立分支c945cd8同步最新main44ded2f为50c1bdb，仅AGENTS追加日志冲突，核全为日志行后保留双方，Makefile自动合并；未改W2业务。派w2_memo_integration接续已评审检查点，先落实已合S1d的memo/alias黄级TODO、移除严格xfail并补来源不放宽边界；保留W1/S3真实接线待决，不作为完整W2交付。W1继续自己的deferred撤销实现，S3a仅只读字段设计，各自所有权不冲突。 |
+
+| 2026-10-23 | Codex（协调者） | W1确认原有G22待决仍开放：main无条件挂auth.router，handler404不等于PRD要求的不注册，coverage_errors又总要求G22。安排S1f精确共享运行接线，任务S1f-demo-route-mount.md：仅每app条件装配与coverage条件校验，不改MATRIX权限条目/lookup/signature，不碰W1 active auth.py；优先在S3a实现前串行闭合W1此依赖。S3a具体字段提案已收，已派独立review_s3a_fields只读核对，未实施。 |
+
+| 2026-10-23 | Codex（协调者） | 用户明确暂停开发并要求接续prompt（非PRO）。已interrupt唯一仍运行的S1f，核HEAD58c4592/clean；其余子任务已结束。W1冻结1722995/clean，五退出1687为实现者自报，未亲自最终复跑/独立审；W2冻结8063f27/clean，协调者已亲跑五退出全0：lint196/gateway317+302skip（6.22s）/PG17（2.37s）/all552+350skip（6.47s）/W2 202零skip/xfail（7.15s），新memo尚未独立审。S3a提案F1 SUCCESS须instruction非空已仅改文档、未复审/实现/测试。仅保存临时提案/评审到repo、编写CODEX-RESUME-2026-10-23交接与更新总日志，不继续业务开发、测试、push/PR/merge。 |
+
+| 2026-10-23 | Codex（协调者） | 用户校正为交给队友，并明确要求先推送GitHub再给接续prompt。仅执行交接保存：核六工作树clean后原子push W1 1722995、W2 8063f27、W3 3bcbe8e、W4 3856a4c、S1f 58c4592、S3a 6815547，随后ls-remote逐项核对，未强推/未改main/未合并未验收功能。新增面向队友/异机的TEAMMATE-HANDOFF文档，保留旧暂停技术快照并标历史身份/发布状态。推送触发的CI未作为已通过宣称；开发仍暂停。 |
+
+| 2026-10-23 | Codex（协调者） | 交接文档分支2d4570e已push并ls-remote核对，与main的11个差异文件全为.md，git diff --check通过。另派只读review_teammate_handoff核文档/六远端SHA/证据边界，无其他重大问题；同步其指出的AGENTS §3/§5旧状态（S1c已合、W1/W2最新检查点、S1f与S3a未实施），保留失败与待审事实。本次不运行业务测试或修改业务代码，准备仅文档草稿PR供队友接手审阅；main仍44ded2f。 |
+
+| 2026-10-23 | Codex（协调者） | AGENTS状态修订91cd64f已push；GitHub插件对私有仓库创建PR返回404，改用已登录gh成功创建仅文档草稿PR #11并附加到当前任务。交接入口补PR链接与ready/精确head CI门禁，交由队友审阅接续；本轮不等待CI、不恢复业务开发、不执行merge，也未把新CI或未审功能宣称为通过。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
@@ -409,15 +428,16 @@ P0 准备阶段（决定后续一切）：
 | [x] | S1 共享运行层 | PR #4，merge `691cf88`；独立评审与四CI全绿 | `docs/acceptance/L2-S1-runtime.md` |
 | [x] | S2 七天预留纯函数 | PR #5，merge `a9d72cf`；真实生产接入待S3 | `docs/acceptance/L2-S2-reserve.md` |
 | [x] | W4a 客户锁先决组件 | PR #7 merge d5ac9ed（六退出、独立评审及四CI全绿） | `docs/plans/briefs/W4a-customer-locks.md` |
-| [ ] | W1 身份、会话与原话 | `feat/l2-identity`（65fc97d真实锁/PIN检查点，8PG亲验；同步S1e消除孤儿红测中） | `docs/plans/briefs/W1-identity.md` |
-| [ ] | W2 读代理、参数来源与污点 | `feat/l2-provenance`（c945cd8来源链检查点已push/独立APPROVE；memo/S3/真实W1仍待接入） | `docs/plans/briefs/W2-provenance.md` |
+| [ ] | W1 身份、会话与原话 | `feat/l2-identity`（已push `1722995`；最新五退出为实现者自报，协调者完整复跑/独审与S1f依赖未闭合） | `docs/plans/briefs/W1-identity.md`；`W1-revocation-deferred.md` |
+| [ ] | W2 读代理、参数来源与污点 | `feat/l2-provenance`（已push `8063f27`；memo五退出已亲验，最新memo独审与真实W1/S3接线未闭合） | `docs/plans/briefs/W2-provenance.md` |
 | [ ] | W3 快照、预演、工作流、决策与 G4 | `feat/l2-decision`（检查点3bcbe8e，共享依赖阻塞） | `docs/plans/briefs/W3-decision.md` |
 | [ ] | W4 审批与执行 | `feat/l2-execution`（3856a4c部分检查点，G8待共享状态与真实依赖） | `docs/plans/briefs/W4-execution.md` |
 | [x] | S1b / 0002_wave1 迁移与受控状态 | PR #6已合并94e40fe（四CI成功，真实现有库升级与集成通过） | `docs/plans/briefs/S1b-wave1-state.md` |
 | [x] | S1c PIN Settings 接线 | PR #8 merge `304adda`；五退出、独立评审与精确head四CI全绿 | `docs/plans/briefs/S1c-pin-settings.md`；证据 `docs/progress/S1c-pin-settings.md` |
 | [x] | S1e 孤儿job受控对账 | PR #9 merge `6815547`；独立APPROVE、亲自六退出/231专项及四CI全绿 | `docs/plans/briefs/S1e-orphan-jobs.md` |
-| [ ] | S1d memo敏感内容黄级code | `feat/contracts-memo-code`；2b5d6a6亲自三退出/独立APPROVE，准备组件PR | `docs/plans/briefs/S1d-memo-code.md` |
-| [ ] | S3a 真实完整义务数据 | ADR-009与任务书已准备，尚未实施 | `docs/plans/briefs/S3a-obligations-data.md` |
+| [x] | S1d memo敏感内容黄级code | PR #10 merge `44ded2f`；亲自三退出/独立APPROVE/四CI全绿 | `docs/plans/briefs/S1d-memo-code.md` |
+| [ ] | S1f G22条件挂载 | `feat/l2-demo-route-guard`（已push `58c4592`，仅准备任务/分支，未实施；优先S3a） | `docs/plans/briefs/S1f-demo-route-mount.md` |
+| [ ] | S3a 真实完整义务数据 | `feat/l3-obligations-data`（已push `6815547`；模型提案F1已修、未定点复审/实施，先同步main） | `docs/plans/briefs/S3a-obligations-data.md`；`S3a-model-proposal.md` |
 | [ ] | W5 定时授权、通知、审计接口、D 接口 | 波次 2，任务书未写 | L2-plan §3 W5 |
 | [ ] | W6 网关层安全验收（A8、A1/A2/A3/A5） | 波次 2，任务书未写 | L2-plan §3 W6 |
 

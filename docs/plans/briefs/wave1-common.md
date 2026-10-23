@@ -23,7 +23,7 @@
 - 错误只能 `raise GatewayError(Code.X)`，code 只来自 `safebank_contracts.codes`；缺码写进「待决」。
 - 调用方身份从 `request.state.caller` 取，不要重复声明鉴权依赖；`origin`、`customer_id` 绝不从请求体读取。
 - 调 L3 只能通过 `L3Client`；测试用 `FakeL3().transport()`。
-- 审计只能用 `audit.append_tx`，传入时间必须带时区，且不在包含 HTTP 调用的事务里追加。
+- 常规审计用 `audit.append_tx`，传入时间必须带时区，且不在包含HTTP调用的事务里追加。W1撤销待清理错误分支按W1-revocation-deferred.md精确例外用既有 `audit.chain.append(conn,...)`，与撤销/dedup同无HTTP短事务原子提交；不改冻结函数。
 - ActionKind、基础等级、outflow 只能用 `policy.registry` 计算（`action_kind()`、`outflow()`），不得另写一套。卡不在影子状态时它会抛 `LookupError`，调用方按实体不可见处理。
 - 交叉接口（签名不能改，对方合入前各自用替身打桩）：
   - W3 实现 `evaluation/repo.py: append_evaluation`、`execution/replay.py: replay`（`replay` 必须用新的 `EvalContext`，不能复用缓存快照）。
