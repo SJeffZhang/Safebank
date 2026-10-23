@@ -46,4 +46,3 @@ understand/gather/plan 三个端口实现。生产 HTTP 入口仍是 P0 探针�
 - 单元测试：`make test`（`tests/agent/`，内存 saver，零 skip；live 用 `python -m services.agent.app.llm.live` 手动跑）。
 - 本组件无 PostgreSQL；**不声称** Postgres saver 已验收（留 C1d）。
 - 启动：根目录 `make setup && make keys && make up`；端口 8100 只在容器网络内（仍为探针）。
-

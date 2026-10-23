@@ -239,9 +239,3 @@ r5 独审 APPROVE 但残留 P2-g/h 与未确认-d，本轮一并闭合（先红�
   失败 exit1、证据脱敏（含 reference_errors + attempts）、硬预算 8（plan 默认一次 validation retry）。
 - 本组件只在**本地结构/引用一致性**层面做来源核验（L2 才是授权判定方）：金额分/单位换算等业务金额语义
   不硬编码、不复制 L2 授权器；step/derived/hint/action 来源不本地判定、留 L2；verbatim 等值仅限白名单。
-
-
-
-
-
-
