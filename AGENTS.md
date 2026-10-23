@@ -292,6 +292,12 @@
 
 | 2026-10-23 | Codex（协调者） | PR #5精确head665f6b4的push/PR两套unit+p1-postgres四检查全部COMPLETED SUCCESS，执行gh pr merge 5 --merge --match-head-commit成功，merge a9d72cf49f518fbb2bd89d2e666f0d0e1196a4c9，14:26:59Z。fetch后协调分支merge origin/main成功，无冲突。S2纯函数组件完成，开始S1b串行共享实施；W2原owner独立启动自身来源链适配，跨真实W1和生产义务仍待后续。原execution_state文档复核5项全ADDRESSED/APPROVE，仅文档不算运行通过。W4a允许最小适配S1资源单测的fake Engine configure hook，不改共享生产代码、不扩大测试替身。 |
 
+| 2026-10-23 | Codex（协调者） | S1b worktree已先快进最新main a9d72cf，再纳入已评审协调文档97d5a33，派独立s1b_wave1_state实施0002与五类受控CAS；S2已合并，共享实施保持串行。准备S3a义务数据任务草稿，将存储/真实快照与后续读工具/领域写拆组件，要求增量迁移保留现有账本，当前未派发或改银行代码。 |
+
+| 2026-10-23 | Codex（协调者） | S1b新增ExecutionIdentity及五类CAS接口已协调固定；L3真实reconcile返回CANCELLED/result=None，终态归档允许None但仅FAILED，COMMITTED须匹配plan且真实EXECUTED结果。W2发现澄清root只保存补答文本，已明确仅持久parent链可追溯span/采纳源、root仍唯一claim且不合并父scope，补common约定。W4a在旧main完成六退出自报，尚非协调者验收；已要求先同步S2最新main再冻结后亲自复跑与独立评审。 |
+
+| 2026-10-23 | Codex（协调者） | W4a HEADd582752协调者六退出全exit0：lint161、all356/75skip（4.16s）、gateway127/27skip（3.39s）、PG17（2.11s）、customer-locks39零skip（7.40s）、shared-runtime51零skip（8.53s，含7Linux秘密配置及非roothealthcheck）；独立review_w4a尚在审查，不开PR。准备S1c显式Settings PIN路径任务，拆W1自己新增loader与共享runtime接线两个owner，不让W1越界。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
@@ -327,11 +333,13 @@ P0 准备阶段（决定后续一切）：
 |---|---|---|---|
 | [x] | W0 基础骨架 | `feat/l2-foundation` / PR #2 已合并 | `docs/plans/briefs/W0-*.md`，评审 `docs/reviews/L2-W0-architecture.md` |
 | [x] | S1 共享运行层 | PR #4，merge `691cf88`；独立评审与四CI全绿 | `docs/acceptance/L2-S1-runtime.md` |
-| [ ] | W1 身份、会话与原话 | `feat/l2-identity`（修复cc32e55，定点复审及真实共享联调待完成） | `docs/plans/briefs/W1-identity.md` |
-| [ ] | W2 读代理、参数来源与污点 | `feat/l2-provenance`（独立评审3项修复中） | `docs/plans/briefs/W2-provenance.md` |
+| [x] | S2 七天预留纯函数 | PR #5，merge `a9d72cf`；真实生产接入待S3 | `docs/acceptance/L2-S2-reserve.md` |
+| [ ] | W4a 客户锁先决组件 | `feat/l2-customer-locks`（d582752，协调者复跑及独立评审中） | `docs/plans/briefs/W4a-customer-locks.md` |
+| [ ] | W1 身份、会话与原话 | `feat/l2-identity`（42c86f5，7缺陷与S1接线评审通过；真实锁/PIN路径/后续状态待联调） | `docs/plans/briefs/W1-identity.md` |
+| [ ] | W2 读代理、参数来源与污点 | `feat/l2-provenance`（27a067a三项修复已评审通过，来源链集成中） | `docs/plans/briefs/W2-provenance.md` |
 | [ ] | W3 快照、预演、工作流、决策与 G4 | `feat/l2-decision`（检查点3bcbe8e，共享依赖阻塞） | `docs/plans/briefs/W3-decision.md` |
-| [ ] | W4 审批与执行 | `feat/l2-execution`（实现中，未验收） | `docs/plans/briefs/W4-execution.md` |
-| [ ] | 0002_wave1 迁移（波次 1 各任务提出的表 / 字段需求，由协调者串行追加） | — | 汇总各 `docs/progress/W*.md` 的「待决」 |
+| [ ] | W4 审批与执行 | `feat/l2-execution`（3856a4c部分检查点，G8待共享状态与真实依赖） | `docs/plans/briefs/W4-execution.md` |
+| [ ] | S1b / 0002_wave1 迁移与受控状态 | `feat/l2-wave1-state`（独立共享agent串行实施中） | `docs/plans/briefs/S1b-wave1-state.md` |
 | [ ] | W5 定时授权、通知、审计接口、D 接口 | 波次 2，任务书未写 | L2-plan §3 W5 |
 | [ ] | W6 网关层安全验收（A8、A1/A2/A3/A5） | 波次 2，任务书未写 | L2-plan §3 W6 |
 

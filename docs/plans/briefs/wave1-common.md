@@ -53,3 +53,5 @@
 - 该约定保持既有函数和冻结模型签名；必须以真实W1→W2→W3的PG/API集成验收来源采纳、跨会话拒绝、重放和表单来源，不以fixtures互相对齐当完成。
 
 日历共享约定：weekday使用Python datetime.weekday()索引，周一0…周日6。S2预留当前仅支持7天；完整ScheduledView锚点的定时展开可支持独立30天窗口，缺月度锚点的过时代扣next_due_at不得猜测。
+
+澄清合槽补充：当前ACTIVE root的持久parent_ids链可供arg_sources追溯原始typed span与已采纳hint/action。父节点必须同customer/sid/epoch、ACTIVE且未过期，校验防环与有界遍历；source.used_by须等于链上实际采纳该源的utterance.id。当前root仍是唯一授权/claim身份，不能把parent作用域另行并入许可，也不接受无关旧原话。CLARIFICATION action保存的[{field,entity_id}]仅还原已选槽值并拒绝重复冲突，不升级成完整FORM授权；最终完整动作/金额/目标仍由root scope核验。跨W1真实G3→W2联测才证明整个闭环，直接PG造数只证明来源校验。
