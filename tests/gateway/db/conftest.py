@@ -55,6 +55,8 @@ def _provision() -> GatewayDb:
             "-d",
             "--name",
             name,
+            "--tmpfs",
+            "/var/lib/postgresql/data:rw,noexec,nosuid,nodev,mode=0700",
             "-e",
             f"POSTGRES_PASSWORD={admin_pw}",
             "-p",
