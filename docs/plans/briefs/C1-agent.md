@@ -32,3 +32,5 @@
 - 若LangGraph原生新input行为不满足旧interrupt清除，先证明红测并在ingest适配，不删断言。
 - 退出：`make lint`、`.venv/bin/pytest tests/agent -q`（零skip）、`make test`、`make contracts-check`；worker可以跑以上命令。本组件无PG，不能宣称Postgres saver已验证。
 - 文档：更新 `services/agent/README.md` 明确骨架可用范围/运行方式/生产入口仍为探针；进度写 `docs/progress/C1a-agent.md`，记录精确红绿、退出命令与未覆盖。完成后本地提交并停止，等待协调者验收。
+
+C1a输入边界增量（8ed1f7c，最终独审APPROVE）：LangGraph会将缺key的新input合并旧state，故C1d的新输入服务必须调用唯一invoke_new_input（或等价经独立审查的异步入口），不能把裸graph.invoke({})当新消息。resume前必须维持持久customer/session与Runtime/config绑定，不能因为HTTP层也检查而删除图内guard。

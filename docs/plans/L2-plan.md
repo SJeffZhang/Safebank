@@ -133,7 +133,7 @@ env -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_API_KEY \
 
 ### W4 审批与执行（`feat/l2-execution`）
 
-- PlanView 生成与 view_hash（覆盖逐步余额、风险、揭示版本、memo）、G9、G17、G6 确认（view_hash、OTP、risk_ack + disclosure_token）、G7、G10（OTP：HMAC 存储、2 分钟、重发 3 次、错 5 次锁）、每会话 1 个 PENDING / 新审批作废旧审批、ALLOW 的策略审批。
+- PlanView 生成与 view_hash（覆盖逐步余额、风险、揭示版本、memo）、G9、G17、G6 确认（view_hash、OTP、risk_ack；按现行PRD不增加disclosure_token）、G7、G10（OTP：HMAC 存储、2 分钟、重发 3 次、错 5 次锁）、每会话 1 个 PENDING / 新审批作废旧审批、ALLOW 的策略审批。
 - G8 执行编排：客户锁（独占 `lock_conn`、`lock_timeout`、Semaphore 8）、authorization_claims、新快照复演（等价唯一判据 view_hash）、authorization_evidence 判别联合、L3 prepare / execute（attempt、deadline_cap）、L3 STATE_CHANGED 内部复演 2 次与 attempt+1、409 `details.decision`、202 UNKNOWN 与恢复工作器（reconcile 墓碑）、G5。
 - 退出：并发双花同一作用域只成功一次；确认后篡改 / 错配 approval 失败；STATE_CHANGED 重新审批路径；UNKNOWN（丢回包、L3 重启、延迟 execute）恢复不重复记账（对真实 L3 测试库）；OTP 状态机测试。
 
@@ -162,6 +162,8 @@ env -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_API_KEY \
 | `AGENTS.md` | worker 不改；指挥汇总 `docs/progress/*.md` |
 
 ## 5. 指挥的检查点
+
+下表为最初波次检查点记录；当前逐组件发布统一按§2.5：DeepSeek实现→协调者亲验→DeepSeek独审→base main PR→精确head四CI成功→merge commit，不再先攒集成分支。W3/W4真实交叉依赖按 `briefs/W3-W4-integration-order.md` 拆先决组件。
 
 | 时点 | 动作 |
 |---|---|
