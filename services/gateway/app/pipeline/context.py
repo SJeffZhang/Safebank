@@ -102,10 +102,23 @@ class IntentResult:
 
 @dataclass
 class PreflightResult:
-    """⑥ writes (owned by W3). W3 may add fields; existing fields stay."""
+    """⑥ writes (owned by W3). W3 may add fields; existing fields stay.
+
+    ``steps`` / ``balances`` / ``holdings`` / ``scheduled_reserve_cents`` feed
+    the public ``PreflightView`` (PRD §9.5); ``shortfall_before/after_cents``
+    and ``hint_max_outflow`` carry the 7-day reserve comparison and the shrunk
+    amount for replan hints (PRD §7.7 / §7.9).
+    """
 
     executable: bool = True
     violations: tuple[dict[str, Any], ...] = ()
+    steps: tuple[dict[str, Any], ...] = ()
+    balances: tuple[dict[str, Any], ...] = ()
+    holdings: tuple[dict[str, Any], ...] = ()
+    scheduled_reserve_cents: int = 0
+    shortfall_before_cents: int = 0
+    shortfall_after_cents: int = 0
+    hint_max_outflow: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass

@@ -31,6 +31,7 @@ jobs:
       - run: make test-w1
       - run: make test-obligations
       - run: make test-w2
+      - run: make test-w3a
       - run: make test-p1
       - run: make test-p1-concurrency
       - run: make test-p1-consistency
