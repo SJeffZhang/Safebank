@@ -20,3 +20,5 @@
 这些是共享DB条件验收。W1真实HTTP撤销、W3真实writer接线、W4真实L3查询/reconcile/响应身份及客户锁证明均由相应owner后续完成。不得给旧orphan回包补当前revision，也不得把本地状态造数当真实HTTP恢复通过。
 
 仅本地checkpoint，未push/PR/merge，未自开agent/up/down/test-p1或删重建卷。现有CI专项自然包含新测试，但本轮尚未运行远端CI；待协调者个人复跑与独立评审。
+
+协调者最终验收：独立审唯一P2由99e01e2修复，原评审定点ADDRESSED、规格PASS/质量APPROVE（见L2-S1e-orphan-jobs审核报告）。同步纯协调文档605d309后亲自完整六退出全部exit0：lint174、all392/302skip（4.29s）、gateway163/254skip（3.58s）、PG17（3.20s）、wave1-state231零skip（12.46s）、contracts PASS。相对独立复审99e01e2业务/测试无diff。后续只纳入文档与本证据，准备立即push/base main组件PR；精确head远端CI成功后才merge。
