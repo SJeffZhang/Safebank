@@ -162,6 +162,10 @@
 
 | 2026-10-23 | Codex | 用户授权的CI修复提交70dcabe已推送，GitHub运行https://github.com/SJeffZhang/Safebank/actions/runs/39929405919的unit/p1-postgres均success；远端实际通过全新Linux卷初始化回归、33项PG、5项并发、17项一致性、网络/HTTP/L3重启和冻结契约。机器可读步骤与日志摘录保存docs/acceptance/ci-bootstrap/github-result.json，Linux首次部署权限问题关闭。最后仅同步交付文档，使用[skip ci]避免重复跑相同代码；不合并main、不创建PR、不进入P2。 |
 
+| 2026-10-23 | Codex | 按用户要求核对记录并统计P1规模：截至已推送54c2f58，相对P0基线c3bd537，核心Python3933行（contracts1718、bankcore668、L3含迁移1547），测试/样本1836行，Python工具脚本新增587行及Shell14行；合计新增代码6370行（含注释/空行，脚本另删1行）。107个变更文件，共新增30415/删除40行，主要额外体积来自生成Schema/文档/证据23659行，不能当业务代码量。§3/§4/§5及验收目录已覆盖P1各组件、失败修复、推送和最终CI通过；本次只补充统计说明，未修改业务、未新提交推送。 |
+
+| 2026-10-23 | Claude（主会话 89da7fbc） | 验收 P1 分支 `feat/l3-core`（用户要求以 CI 为准）。核实：GitHub 上此前**没有 PR**，只有已推送分支；CI 运行 39929405919（提交 70dcabe）unit 与 p1-postgres 两个 job 全部 success，6 个验收步骤（bootstrap、make up、test-p1、并发、一致性、integration、contracts-check）均实际执行；HEAD 54c2f58 为 [skip ci]，只改 5 个文档文件。抽查 PRD 约束：bankcore 无 IO；`load_bank_state` / `persist` 仅在 L3 `app/state.py`；写事务 READ COMMITTED、快照 REPEATABLE READ；`execution_intents` 含 attempt / deadline_cap_wall 与 CHECK；客户账户余额边界与累计量非负 CHECK；20 笔并发、同计划 20 次重试、双向互转与冻结竞争、超额并发、pending 竞争测试齐全；金额代码无 float。本机未重跑测试。注意：P1 种子为测试用 `cus_a/cus_b`，PRD §2.2 的完整演示种子留待后续阶段。验收通过，提交本日志后开 PR 并合并入 main。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
