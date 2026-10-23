@@ -75,7 +75,7 @@ test-gateway-db:
 
 # W2 includes its real PostgreSQL ledger tests through the isolated fixture.
 test-w2:
-	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w2 -q
+	GATEWAY_DB_TESTS=1 OBLIGATIONS_DB_TESTS=1 .venv/bin/pytest tests/gateway/w2 -q
 .PHONY: test-w2
 
 .PHONY: test-w1

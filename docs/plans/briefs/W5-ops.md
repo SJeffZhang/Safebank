@@ -13,7 +13,7 @@
 
 ## 所有权与依赖
 
-开始前协调者核最新main冻结具体文件清单。默认仅gateway app/notify、internal/scheduled、api/notifications、api/audit、demo目录与专属tests/gateway/w5；可读共享客户锁、L3Client、audit/状态接口。shared runtime/main路由挂载、矩阵、表/迁移、contracts、L3/scheduler、依赖锁全冻结；缺字段/状态原语或路由装配先报告，另派共享owner串行补，W5不得自行越界。
+开始前协调者核最新main冻结具体文件清单。默认仅gateway app/notify、internal/scheduled、现有api/notify_audit.py、api/demo.py及必要notify/demo新目录与专属tests/gateway/w5；可读共享客户锁、L3Client、audit/状态接口。shared runtime/main路由挂载、矩阵、表/迁移、contracts、L3/scheduler、依赖锁全冻结；缺字段/状态原语或路由装配先报告，另派共享owner串行补，W5不得自行越界。
 
 S1依赖L3 /internal/events、event execute/block、outbox；尚未交付时按PRD契约fake验证并列待联调，不计真实S1完成。到期执行不能生成run_token或让scheduler持可复用写许可。不得直接写银行库或从agent网连内部口。
 
