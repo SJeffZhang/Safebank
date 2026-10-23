@@ -164,3 +164,5 @@ Actual targeted validation:
 - git diff --check passed. Product tests, Docker stacks/volumes and deployments were not rerun for this one-line workflow-only fix.
 
 Scope is exactly checks.yml cache value and this report. No push, CI dispatch, PR change or merge occurred. Awaiting original reviewer's targeted workflow recheck and coordinator push to obtain fresh real CI results; prior local green tests are not a claim that CI passed. Local repair SHA recorded below after commit.
+
+Workflow fix and targeted evidence commit: `e3ceb24a04374afd144153479e1b7357e3fe1e2e`; subsequent documentation-only commit records this stable repair SHA. Coordinator baseline 6c59ac1 remains in ancestry.
