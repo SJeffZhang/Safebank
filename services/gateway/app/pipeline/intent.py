@@ -12,6 +12,7 @@ from ..api.tools import fetch_read
 from ..errors import GatewayError
 from ..policy.registry import policy
 from ..schemas.enums import FindingEffect, ParseStatus, UtteranceStatus
+from ..taint.authorization import authorization_evidence
 from .context import EvalContext, IntentResult, Resolver, Stage
 
 
@@ -27,6 +28,11 @@ class IntentStage(Stage):
         auth = ctx.authorization
         if auth is None or auth.sid != ctx.session_id or auth.customer_id != ctx.customer_id:
             self._reject(ctx, Code.INTENT_UNCLEAR)
+            return
+        evidence = await authorization_evidence(ctx)
+        if not evidence.utterances and not evidence.sources:
+            # Invalid lineage is not rescued by read-backed argument values.
+            self._reject(ctx, Code.INTENT_SCOPE_EXCEEDED)
             return
         scopes = [
             u.scope

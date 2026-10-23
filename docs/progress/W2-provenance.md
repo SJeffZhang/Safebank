@@ -75,3 +75,41 @@
 - **F direct FORM**：只有 `origin=app_form` 的受信适配可使用已核验 act IDs 作为内部 ref/utterance_ids，statuses 对应 ACTIVE，scope_ids 为这些表单动作；source.used_by 仅允许空或同 plan。W3 使用 W1 的 scope_from_form 统一生成完整转账/周期作用域，不只填写 fields。A 令牌不能借该适配绕过 utts。
 - 上述来源链与 FORM 修复按协调者要求**另做独立后续集成组件**，本轮代码保持原状，未用宽松放行掩盖跨分支错配。
 - main 已有 S1 PR #4，但协调者最新要求本轮提交后冻结工作树/git，待其亲自复跑和原评审读取后再通知同步；当前没有 merge/cherry-pick 新 main。
+
+## 来源 / claim 语义集成组件（修复轮 1 批准之后）
+
+### 基线与固定需求
+
+按协调者授权，将 `origin/main a9d72cf49f518fbb2bd89d2e666f0d0e1196a4c9`（含 S1 PR #4 与 S2 PR #5）合入本分支，merge 为 `d580c956929c9c6639347ccfd060d25c8fa13ac1`。唯一冲突是 Makefile 尾部追加目标，保留 test-w2、test-shared-runtime、test-reserve 三者，没有覆盖共享配方。本节覆盖前文“尚未同步 main / S2 尚未落入基线”的旧状态；S2 数学函数已存在，但完整生产数据门禁与 W2 接线仍等待 S3，默认 reserve=None 的明确阻塞保留。
+
+已完整读取协调根工作树 `docs/plans/briefs/wave1-common.md` 的 A/F 及澄清补充、PRD §7.2/7.4/7.5 对应修订；采用协调者明确裁定：
+
+- A 的 scope_ids、utterance_ids 始终是本次已加载的 ACTIVE root utterance IDs，受同 sid/customer 的 assistant JWT utts 限制。hint/action 来源 ID 只是证据，不是 claim 身份。
+- 从持久 utterances.kind/source_id/parent_ids 追溯。root ref 与持久行的类型、原文、scope、parent_ids、parse_status、echo 标记及创建/过期时间必须一致；session 未撤销且 epoch 匹配。每个 parent 必须同 session（因此同 owner）、同 epoch、ACTIVE、未过期，创建不得晚于子节点，子节点不得延长父节点期限。父节点可处于原始缺槽的 parse_status，但不能形成新的执行作用域。
+- 防环；最大 64 个节点、最大 32 层，遇缺失/重复 parent、跨链或畸形链一律整条证明失败。source 必须同 sid、已生效且未过期，created 不晚于采纳节点，节点期限不超过 source；source.used_by 精确等于链上实际采纳该 source 的 utterance.id，不接受未采纳、任意非空 used_by 或 plan ID。
+- parent 链只供 typed 原文 span 或已采纳 hint/action 取证，绝不把 parent.normalized_scope 加进 ctx.authorization；最终计划仍只匹配 root 完整 scope。无效链即使配合其他合法 read 参数，也在④以 INTENT_SCOPE_EXCEEDED / REPLAN,user 拒绝。
+- CLARIFICATION 的 `[{field,entity_id}]` 仅还原所存选定槽值，要求 parent_utterance_id 在采纳节点 parent_ids 内、槽值与该节点完整 scope.fields 一致，拒绝重复字段（包括重复同值）和冲突；不能作为 amount 等完整 FORM 授权。
+- F 直接 FORM 独立要求 credential-derived Caller.F / origin=app_form / app scope，并以已核验 act IDs 构造内部 ref、scope_ids、ACTIVE statuses。source.kind 必须 FORM，used_by 为空或同 plan，精确匹配 fields、ActionKind、创建/过期时间；不写假 utterances 行。A 即使 JWT utts 包含 act ID 也不能借用适配。
+
+### 实现、边界与文件
+
+新增 `services/gateway/app/taint/authorization.py`：只读、有界的来源证明加载器；修改 `pipeline/provenance.py` 只消费此持久证明，移除无 caller 时直接信 loaded typed span 的旧路径；修改 `pipeline/intent.py` 对无效证明作完整授权门禁。只写本阶段结果与 findings，不写 claims、Decision、session 或来源记录。
+
+新增 `tests/gateway/w2/db/test_source_lineage.py`（46 项真实 PG）：合法采纳 hint/FORM、root/parent 原文回溯、parent 上已采纳 hint、澄清选择、无假原话 F FORM、同 plan 重放，以及未采纳/错误 used_by、跨 sid/customer/epoch、撤销、过期/失效 parent、JWT 不含 root、source ID 冒充 claim、root ref 篡改、无关原话、环/深度/节点上限、重复/冲突澄清槽、A 冒充 F、畸形时间、parent 未来创建、parent scope 不可扩成第二笔授权、无 caller 和坏链④门禁的拒绝。
+
+修改 `tests/gateway/w2/db/test_saved_sources.py`：移除旧的“未采纳 hint 可由 scope_ids 直接授权”错误夹具，等价安全性质由新的 A 已采纳链与 F FORM 测试覆盖；保留 reset 撤销后同 sim_now read 重放拒绝测试。修改 `tests/gateway/w2/db/test_read_ledger.py`：因 main 中 S1 已 fail-closed 依赖尚未合入的 W1 tokens.check_revocation，明确以签名兼容 test-only substitute 隔离 G2 HTTP / SQL 持久化；此测试不证明真实 W1 撤销检查。新增 `tests/gateway/w2/conftest.py`：只有非 db 的孤立阶段测试注入 loaded-evidence 替身，db/ 用例全走真实证明加载器；生产不含测试回退。另修改本进度文档。共 8 个组件文件，未改冻结文件、W1/W3 实现、迁移、契约、L3 或依赖。
+
+W3 适配输入需求已报协调者：复用 W1 `utterance/service.py:scope_from_form(kind,args,bank)`，kind 取 registry、args 为 WRITE_ARGS 校验后的 JSON、bank 为同次受信 BankState（提供 payee 指纹），不能仅填 scope.fields；内部 UtteranceRef.kind=action / text=None / parent_ids=() / parse_status=SCOPED / act ID / 数据库创建及过期时间，AuthorizationInputs 同步 act IDs 与 ACTIVE statuses / 当前 session epoch；ctx.identity 必须保持真实 Caller.F。A 则保留真实 loader 的 root refs 和 JWT-bound utterance IDs。
+
+### 实际红绿与退出命令
+
+- 先补真实 PG 回归：合法 adopted hint/action 两项实际 `2 failed / 4 passed`，修复持久 source.used_by / root ID 查证后 `6 passed`；扩展 parent 等用例到 `30 passed`。
+- 时间边界实际 `2 failed / 41 passed`：直接 FORM 的畸形时间抛 ValueError、活 parent 创建晚于 child 仍获信任；修复后来源/读/reset 共 `45 passed`。
+- 无 caller 的 loaded typed span 回退实际 `1 failed / 43 deselected`；移除生产回退并将孤立阶段替身限定到 tests 后通过。
+- 无效 parent / 无 caller 在④仅看 root.scope 的路径实际 `2 failed / 44 deselected`；加入相同持久证明门禁后通过。期间一次关联测试因测试自己的连接已关闭，实际 `1 failed / 125 passed / 1 xfailed`；修正测试连接生命周期后完整复验，没有把该次失败计为通过。
+- **最终代码五退出均 exit 0**：`make lint` 通过（178 files already formatted）；`make test-gateway` **187 passed / 54 skipped / 1 xfailed**；`PATH=/Applications/Docker.app/Contents/Resources/bin:$PATH make test-gateway-db` **17 passed**；`make test` **416 passed / 102 skipped / 1 xfailed**；同 PATH 下 `make test-w2` **126 passed / 1 xfailed**。test-w2 中 **48 项真实 PostgreSQL 测试实际执行**（新来源链 46 + G2 1 + reset 1），不是 skip；其他命令的 DB skips 不计为通过。
+- 最终 diff 自审及 `git diff --check` 通过；所有临时 PostgreSQL 使用既有随机端口 / 唯一容器 / tmpfs fixture，没有删除或重建数据卷；未跑 make up/down/test-p1，未派生 agent、未 push/PR。
+
+### 明确未完成
+
+本组件只证明 W2 对真实持久来源数据的校验；直接 PG 造数没有调用真实 W1 G3，跨 W1 load_for_plan → W2 → W3 G4 / replay 的端到端采纳、claim 与重放仍待 W1/W3 合入后的真实联测。S1 生产缺失 W1 revocation hook 仍 fail-closed；G2 fixture substitute 不能算生产身份验收。memo/alias 缺 `MEMO_SENSITIVE_CONTENT` 的严格 xfail 仍为**未满足要求**，等待共享枚举补缺后落地；真实派生及谓词生产数据 / reserve 数据完整性待 S3。未声称 W2 全验收或全部六场景真实后端齐备。

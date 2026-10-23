@@ -10,12 +10,11 @@ from pathlib import Path
 import yaml
 from safebank_contracts.codes import Code
 from safebank_contracts.tools import READ_ARGS
-from sqlalchemy import select
 
 from ..errors import GatewayError
 from ..policy.registry import policy
-from ..schemas.enums import FindingEffect, UtteranceStatus
-from ..tables import form_actions, hints, sessions
+from ..schemas.enums import FindingEffect
+from ..taint.authorization import authorization_evidence
 from ..taint.records import load_records, pointer
 from ..taint.text import matches, normalize, numbers
 from .context import EvalContext, ProvenanceResult, Resolver, Stage
@@ -27,29 +26,6 @@ _PATTERNS = tuple(
     )["patterns"]
 )
 _MISSING = object()
-
-
-async def saved_sources(ctx: EvalContext) -> dict[str, dict]:
-    """Only server-generated, still-live actions/hints already in this authorization."""
-    if ctx.conn is None or ctx.authorization is None:
-        return {}
-    result = {}
-    for table in (hints, form_actions):
-        rows = await ctx.conn.execute(
-            select(table)
-            .join(sessions, table.c.sid == sessions.c.id)
-            .where(
-                table.c.sid == ctx.session_id,
-                sessions.c.customer_id == ctx.customer_id,
-                sessions.c.revoked_at_wall.is_(None),
-                table.c.id.in_(ctx.authorization.scope_ids),
-                table.c.expires_at_wall > ctx.wall_now(),
-            )
-        )
-        for row in rows.mappings():
-            if row["used_by"] is None or row["used_by"] == ctx.plan_id:
-                result[row["id"]] = dict(row) | {"type": "hint" if table is hints else "action"}
-    return result
 
 
 def _read(source, records, state, now, customer_id):
@@ -117,7 +93,8 @@ class ProvenanceStage(Stage):
             return
         state = await ctx.bank_state()
         records = await load_records(ctx.conn, ctx.session_id, ctx.customer_id)
-        saved = await saved_sources(ctx)
+        evidence = await authorization_evidence(ctx)
+        saved = evidence.sources
         resolved = {s.step_id: s for s in ctx.steps}
         verified = {}
         refs = set()
@@ -139,23 +116,19 @@ class ProvenanceStage(Stage):
                 trust = "unknown"
                 if source is not None:
                     if source.kind == "utterance":
-                        auth = ctx.authorization
-                        utterance = auth.utterances.get(source.ref) if auth else None
+                        # Only persisted nodes reachable from a live, credential-bound
+                        # root can supply text. Parents never add write scopes.
+                        row = evidence.utterances.get(source.ref)
+                        text = row["text"] if row is not None else None
+                        valid = row is not None and row["kind"] == "typed"
+                        start, end = source.span
                         if (
-                            utterance is not None
-                            and source.ref in auth.utterance_ids
-                            and auth.statuses.get(source.ref) is UtteranceStatus.ACTIVE
+                            valid
+                            and text is not None
+                            and end <= len(text)
+                            and matches(value, text[start:end], param, state, ctx.customer_id)
                         ):
-                            text = utterance.text or ""
-                            start, end = source.span
-                            if (
-                                utterance.kind == "typed"
-                                and end <= len(text)
-                                and datetime.fromisoformat(utterance.expires_at_wall)
-                                > ctx.wall_now()
-                                and matches(value, text[start:end], param, state, ctx.customer_id)
-                            ):
-                                trust = "user"
+                            trust = "user"
                     elif source.kind == "read":
                         candidate, trust = _read(
                             source, records, state, ctx.wall_now(), ctx.customer_id

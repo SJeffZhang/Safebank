@@ -18,7 +18,17 @@ from tests.contracts.samples import step
 from tests.gateway.w2.test_contract_entity import context
 
 
-def test_g2_authenticated_http_persists_scoped_ledger_and_entity_consumes(gateway_db, keys):
+def test_g2_authenticated_http_persists_scoped_ledger_and_entity_consumes(
+    gateway_db, keys, monkeypatch
+):
+    from services.gateway.app.auth import tokens
+
+    async def fixture_revocation(conn, caller, *, now=None):
+        # W1 has not merged: this fixture isolates G2 HTTP/SQL persistence only.
+        pass
+
+    monkeypatch.setattr(tokens, "check_revocation", fixture_revocation, raising=False)
+
     async def run():
         private, public = keys
         db = engine(gateway_db.runtime_url, poolclass=NullPool)
