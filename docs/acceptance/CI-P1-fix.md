@@ -17,4 +17,4 @@
 
 原始输出在 ci-bootstrap/。独立卷回归用外部uid=12345持有的0600 SQL，避免macOS绑定挂载或已有银行卷掩盖Linux权限问题；使用新生成的合成测试凭证。所有容器/卷随机独立命名，清理只针对本次创建的资源，不删除应用卷、不打开Docker Desktop。
 
-CI增加 make test-postgres-bootstrap，确保此首次部署边界永久覆盖。修复未改变银行业务、金融阈值、数据库迁移或共享契约。远端CI结果将在推送后补记；本地通过不等于远端通过。
+CI增加 make test-postgres-bootstrap，确保此首次部署边界永久覆盖。修复未改变银行业务、金融阈值、数据库迁移或共享契约。修复提交70dcabe已推送，远端[GitHub Actions](https://github.com/SJeffZhang/Safebank/actions/runs/39929405919)的unit与p1-postgres均通过。远端实际结果：33项PG、5项并发、17项一致性；新卷初始化、网络/HTTP、实际L3重启和契约校验均通过。步骤状态和日志摘录保存ci-bootstrap/github-result.json。后续交付日志提交仅修改文档并使用[skip ci]，不重复测试同一代码。
