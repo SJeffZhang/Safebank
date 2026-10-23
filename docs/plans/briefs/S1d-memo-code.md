@@ -1,6 +1,6 @@
-# S1d 敏感备注黄级代码（准备稿）
+# S1d 敏感备注黄级代码
 
-PRD7.5要求memo/alias含至少8位数字或金额格式时升黄，但共享Code与9.8未给对应代码，W2严格xfail不能作为完整退出。共享owner在S1b/S1c后串行补最小代码契约；W2仍不改冻结contracts或registry结构。
+PRD7.5要求memo/alias含至少8位数字或金额格式时升黄，但共享Code与9.8未给对应代码，W2严格xfail不能作为完整退出。共享owner在S1e PR #9全绿合并后串行补最小代码契约；W2仍不改冻结contracts或registry结构。
 
 独立分支feat/contracts-memo-code从最新main开始。允许Code枚举新增MEMO_SENSITIVE_CONTENT、契约freeze快照中该枚举的精确增量、PRD7.5/9.8登记YELLOW及说明、必要contracts测试与报告。保留既有code与全部写工具签名；不改政策阈值，不把它冒充INJECTION_SUSPECTED红级或TAINTED_SENSITIVE_ARG拒绝，不改W2业务文件。
 
