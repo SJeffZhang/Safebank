@@ -215,7 +215,6 @@ class ProvenanceStage(Stage):
                 if (
                     param in ("memo", "alias")
                     and isinstance(value, str)
-                    and trust == "user"
                     and (numbers(value) or _MONEY_PATTERN.search(normalize(value)))
                 ):
                     ctx.add(

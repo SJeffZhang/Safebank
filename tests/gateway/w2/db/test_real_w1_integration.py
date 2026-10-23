@@ -3,7 +3,8 @@
 These tests exercise the production identity path: PIN login, session creation,
 utterance/action registration, a genuine assistant JWT, ``load_for_plan`` and the
 persistent source proof, not a cross-directory substitute. L3 stays a contract
-fake because P1 only implements five read tools and no real write backend.
+fake because P1 implements only a 5/18 read and 7/14 write backend subset, so
+these source-lineage tests do not claim full L3 integration.
 """
 
 import asyncio

@@ -175,3 +175,15 @@ W3 适配输入需求已报协调者：复用 W1 `utterance/service.py:scope_fro
 
 - W2b（default reserve 真实生产接线）是后续组件，须 S3a 合并后同步 main 再启动；当前 `reserve=None` 显式阻塞不变。
 - 完整 W2 尚未全交付：W3 聚合 Decision、W4 原文展示/view_hash、真实 L3 业务/演示/replay 仍未联调；不得自称 W2 全验收。
+
+
+## W2a 评审修复轮 1（2026-10-24，REQUEST_CHANGES）
+
+协调裁定保留 PRD 已审「黄 finding 与 DENY/REPLAN 并存」语义，不批准额外 trust gate。只修：
+
+- **撤销 `trust == "user"` 门禁**（`pipeline/provenance.py`）：memo/alias 黄级恢复为只要 `numbers()` 或 `_MONEY_PATTERN` 命中就追加，与来源 DENY/UNKNOWN 平铺并存，不覆盖、不降级；**裸 ¥/￥ 邻近无数字的正则修复保持**。
+- **恢复两处并存断言**（`test_memo_sensitive.py`）：`test_sensitive_read_text_keeps_source_deny_alongside_yellow` 与 `test_sensitive_text_without_valid_user_source_keeps_replan` 重新断言 DENY/REPLAN 与 `MEMO_SENSITIVE_CONTENT/RISK_YELLOW` 并存。
+- 先恢复断言实际红测：`test_memo_sensitive.py` **12 failed / 87 passed**（暴露当前 gate）；删 gate 后 `test_memo_sensitive.py + test_provenance.py` **106 passed**。
+- P2：`test_real_w1_integration.py` docstring 更正为 P1 实现子集 5/18 读、7/14 写，并明确本轮来源联测 L3 仍为契约 fake、不宣称完整 L3 联调。
+
+未改 DENY 优先级、共享 Decision、PRD 阈值或独立评审报告；未提交协调者 WIP 任务书；未做 W2b / default reserve。
