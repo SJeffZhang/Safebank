@@ -42,11 +42,11 @@
 | 调研 | 开源项目元数据和 DeepSeek 官方信息已核实；评分/提交已从官网公开 JS 核实（docs/acceptance/official-v1.md）；竞品「明鉴」未核实 |
 | PRD | **`PRD.md` = v2.1 定稿**（§0–§16；三轮多 agent 审核 + 两次修订复核，决议 D1–D47 见 §0.5；执行屏障增量约定见ADR-008）。v1.2 与作废的 v2.0 草稿在 `docs/archive/`；审核报告在 `docs/reviews/` |
 | 代码 | **P1 完成并逐组件验收**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116项单元+33项真实PG通过，契约v1已冻结。分支 feat/l3-core，P1代码已提交并推送私有仓库（功能提交7fd7a26）；CI权限修复70dcabe已推送，远端unit与p1-postgres均通过（run 39929405919） |
-| L2 网关 | main `eea02a6`；S3a PR #15（3508bd1）、W2a PR #16（53b7573）均亲验/独审/精确head四CI成功后已合。真实完整义务快照可用；W2b 4c84019亲验246真PG/HTTP且原独审APPROVE，准备组件PR；W3/W4仍为早期检查点。 |
-| L1 Agent | C1a PR #17已精确head四CI成功合并（eea02a6），图骨架/状态/身份绑定22项通过。仅内存saver与fake端口；C1b eb88414离线49项/独审通过但真实live transfer来源错误，原worker修复r2中，C1c–e未实施。 |
+| L2 网关 | main `383cd6f`；W2b PR #18已精确head四CI成功合并（383cd6f），默认真实预留/来源接线246真PG/HTTP与独审通过。W3a阶段组件准备启动，完整G4/审批/执行仍待W4b/W3b/W4c。 |
+| L1 Agent | C1a PR #17已精确head四CI成功合并（eea02a6），图骨架/状态/身份绑定22项通过。仅内存saver与fake端口；C1b b8ae062离线59项/独审通过但live错金额span/漏必填读参数，原worker修复r3中，C1c–e未实施。 |
 | 前端 | **暂停**，用户亲自下令才开工（§2 第 13 条） |
 | 协调状态 | **2026-10-24 Codex 同机接手**：实现与评审均由本机 Claude Code CLI（DeepSeek V4 Pro）无头 worker 完成，协调者只复跑、推送、开 PR、合并、记日志。接续计划 `docs/plans/L2-resume-2026-10-24.md`。本机 worktree 在 `../Fintech2026-wt/<名>`，`.secrets` 软链到与本机数据卷匹配的 W0 worktree 密钥；本会话已启用每5分钟worker定时跟进（safebank-worker），用户2026-10-24睡前新授权全自动推进P2→P3；跟进每次可有界核对待发PR的CI。 |
-| 下一步 | W2b/C1b均原worker修复独审发现中 → 亲验/原独审复核/PR/四CI；W2b合后按W3a→W4b→W3b→W4c，C1b合后C1c/d/e；按P2-P3自主门禁清单真闭合才进入P3。 |
+| 下一步 | W3a从最新main独立实施→W4b→W3b→W4c；C1b b8ae062真实live仍失败，原worker继续修复后亲验/独审；按P2-P3自主门禁真闭合才进入P3。 |
 
 ### 已确认事实
 
@@ -505,6 +505,18 @@
 | 2026-10-24 | Codex（协调者） | W2b原reviewer R-W2b-fix-r1最终APPROVE，10定点/188非DB通过，P1循环DENY与P2真取消费用来源链已核关闭。临时库TRUNCATE裁定：仅S3a fixture新建独立tmpfs测试库、session复用内重置，符合“不碰长期业务数据”与任务书明确允许的临时测试schema重置，不要求无意义另造生产库。结合协调者八退出246真PG/HTTP，准备逐组件发布。 |
 | 2026-10-24 | Codex（协调者） | C1b原复审49项APPROVE、P0/P1关闭，但协调者实际live eb88414 transfer仍Source.kind=none错误且limits引用无真实hint，验收优先于离线独审。续接原impl C1b-fix-r2：有效来源引用/重试字段摘要、live来源语义核验、预算8保持；顺手关闭plan untrusted说明/strip_wall兜底/RFC6901 pointer三个P2。旧失败evidence保留，未发布、不交C1c掩盖。 |
 
+| 2026-10-24 | Codex（协调者） | W2b保存最终独审/验收与P2→P3自主清单为ba3a6aa5a3bdf3ca953c676adaca14aad2aed05b；相对亲验4c84019业务/测试/构建/依赖零diff，17候选文件diffcheck和敏感路径/凭据模式扫描无命中。已推送codex/w2b-reserve-integration，创建base main PR #18并附加本会话；本次仅初查CI触发，不循环轮询，当前head四检查成功后才合并。C1b-r2继续原worker修复，W3a尚未派发（待W2b合入）。 |
+
+| 2026-10-24 | Codex（协调者） | 本次heartbeat只核PR #18当前ba3a6aa一次：push40019035918/PR40019043825两unit成功、两p1-postgres仍IN_PROGRESS，未合并。C1b-r2原impl已结束，提交b8ae062冻结，仅留独审/失败live证据WIP；已续接原R-C1b-fix-r2并开始59项及全量/真实预算live亲验，尚未采信自报成功。 |
+
+| 2026-10-24 | Codex（协调者） | C1b b8ae062本机离线五退出全exit0：lint259、agent59零skip（0.72s）、test2168/529skip（8.78s）、contracts PASS、actionlint；日志/private/tmp/sbg-codex-c1b-r2-20261024。真实live 6请求exit1：transfer结构合法/金额80000/收款人正确但原话金额span(5,7)≠“800”；gather模型漏history_days导致参数ValidationError。freeze/limits成功但整体未通过，失败证据已追加未覆写。R-C1b-fix-r2仍审查中，待结束再交原impl补“有效来源span与可观测有界修正”及read schema必填信息/安全参数补读策略；不擅改冻结schema或静默补金额/来源，不无限跑API。 |
+
+| 2026-10-24 | Codex（协调者） | PR #18当前ba3a6aa本次四检查均COMPLETED SUCCESS；Actions API再次核push40019035918与PR40019043825的head_sha匹配/事件正确，按长期授权merge --match-head-commit成功383cd6f05a2eedd361353235be3f53525dbaed18（04:33:32+08）。main备份/private/tmp/sbg-main-before-pr18-ff-20261024并stash保留后安全快进，远端所有历史日志逐行确认保留；W2来源/默认预留组件完成，不称完整G4/P2已闭合。 |
+
+| 2026-10-24 | Codex（协调者） | C1b独审r2 59项APPROVE不替代失败live。已核read_tools._lenient递归删除原生产required导致history_days缺参，redact末级list/非法转义/resolve根语义仍不完整；续原impl C1b-fix-r3恢复read schema必填信息、原话字符索引/有界来源一致性重试、live非空敏感来源真实值与预算transport硬上限等回归。不得静默改金额/span或复制L2授权算法，旧23行live失败证据保留；本轮worker不调用API，协调者后验。 |
+
+| 2026-10-24 | Codex（协调者） | 已读using-git-worktrees并检查原生artifact与git worktree：无已附加managed worktree，root为普通main。遵从用户交接固定../Fintech2026-wt/<名>布局（优先于技能默认原生目录），用git在../Fintech2026-wt/W3建codex/w3a-stages，自origin/main383cd6f；旧origin/feat/l2-decision3bcbe8e完整保留。仅软链../W0-foundation/.secrets并核ignored，不复制/打印密钥。main组合回归仍进行，尚未派W3a实现。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
@@ -548,7 +560,7 @@ P0 准备阶段（决定后续一切）：
 | [x] | S2 七天预留纯函数 | PR #5，merge `a9d72cf`；真实生产接入待S3 | `docs/acceptance/L2-S2-reserve.md` |
 | [x] | W4a 客户锁先决组件 | PR #7 merge d5ac9ed（六退出、独立评审及四CI全绿） | `docs/plans/briefs/W4a-customer-locks.md` |
 | [x] | W1 身份、会话与原话 | PR #13 已合并，merge `79dc943`；精确head `8dfdec1` push/PR两套四CI成功，五退出亲验与独立APPROVE已记录 | `docs/plans/briefs/W1-identity.md`；`W1-revocation-deferred.md` |
-| [ ] | W2 读代理、参数来源与污点 | W2a PR #16已合53b7573；234专项/独审/四CI通过；W2b实际预留接线待做，完整W2尚未交付 | `docs/plans/briefs/W2-real-integration.md` |
+| [x] | W2 读代理、参数来源与污点 | W2a #16与W2b #18均已合，W2b246真PG/HTTP、独审及当前head四CI成功；跨真实G4/审批执行待后续组件 | `docs/acceptance/L2-W2b-reserve-integration.md` |
 | [ ] | W3 快照、预演、工作流、决策与 G4 | `feat/l2-decision`（检查点3bcbe8e，共享依赖阻塞） | `docs/plans/briefs/W3-decision.md` |
 | [ ] | W4 审批与执行 | `feat/l2-execution`（3856a4c部分检查点，G8待共享状态与真实依赖） | `docs/plans/briefs/W4-execution.md` |
 | [x] | S1b / 0002_wave1 迁移与受控状态 | PR #6已合并94e40fe（四CI成功，真实现有库升级与集成通过） | `docs/plans/briefs/S1b-wave1-state.md` |
