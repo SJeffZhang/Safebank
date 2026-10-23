@@ -9,16 +9,26 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 
+def _fix_public_key_permissions(root: Path) -> None:
+    # The JWT public key is not secret and is mounted read-only into the
+    # gateway and agent containers; on Linux the non-root container user cannot
+    # read a 0600 host file, so it must be 0644 (the private key stays 0600).
+    public = root / "jwt-public.pem"
+    if public.exists():
+        os.chmod(public, 0o644)
+
+
 def generate(root: Path) -> bool:
     if root.exists():
         # Never rotate half the credentials underneath running services.
         if not (root / "complete").exists():
             raise RuntimeError("Incomplete secrets directory; inspect before retrying")
+        _fix_public_key_permissions(root)
         return False
     root.mkdir(mode=0o700)
 
-    def write(name: str, value: str) -> None:
-        fd = os.open(root / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    def write(name: str, value: str, mode: int = 0o600) -> None:
+        fd = os.open(root / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
         with os.fdopen(fd, "w") as stream:
             stream.write(value)
 
@@ -106,6 +116,7 @@ def generate(root: Path) -> bool:
         key.public_key()
         .public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
         .decode(),
+        mode=0o644,
     )
     write("complete", "v1\n")
     return True

@@ -3,7 +3,7 @@ export UV_CACHE_DIR
 PYTHON := .venv/bin/python
 .PHONY: setup keys test lint wheels build up down logs test-integration probe demo eval reset \
  test-postgres-bootstrap contracts-check p1-provision migrate seed-p1 test-p1-build \
- test-p1-db test-p1-concurrency test-p1-consistency test-p1
+ test-p1-db test-p1-concurrency test-p1-consistency test-p1 gateway-provision migrate-gateway
 setup:
 	uv sync --frozen --group poc --python 3.12
 keys:
@@ -19,13 +19,17 @@ build: keys wheels
 	docker compose build bank-backend
 p1-provision:
 	$(PYTHON) -m scripts.p1_database
+gateway-provision:
+	$(PYTHON) -m scripts.gateway_database
 migrate:
 	docker compose run --rm bank-maintenance
+migrate-gateway:
+	docker compose run --rm gateway-maintenance
 seed-p1:
 	docker compose run --rm bank-maintenance python -m app.bootstrap
 up: build
 	docker compose up -d --wait postgres-bank postgres-agent
-	$(MAKE) p1-provision migrate seed-p1
+	$(MAKE) p1-provision migrate seed-p1 gateway-provision migrate-gateway
 	docker compose up -d --no-build --wait frontend agent gateway bank-backend
 down:
 	docker compose down
@@ -59,3 +63,9 @@ contracts-check:
 
 test-postgres-bootstrap:
 	$(PYTHON) -m scripts.postgres_bootstrap_acceptance
+
+test-gateway:
+	.venv/bin/pytest tests/gateway --ignore=tests/gateway/db -q
+
+test-gateway-db:
+	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/db -q

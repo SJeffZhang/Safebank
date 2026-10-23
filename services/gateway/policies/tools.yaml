@@ -1,0 +1,117 @@
+# 写工具注册表（PRD §9.4）。结构由 W0 锁定；W2 之后只能改值，不能改结构。
+# base_risk: GREEN/YELLOW/RED —— 基础等级，规则只升不降（§5.0）。
+# outflow: 静态初值；transfer / schedule_transfer 的对外判定由 registry.outflow() 按参数决定。
+# otp_required: 基础等级为 RED 时恒 true；卡类 LOOSEN 升红的 OTP 由 W3 规则在决策时给。
+# allowed_origins: agent / app_form；W12 仅 app_form（§7.6）。
+- tool: transfer
+  base_risk: YELLOW
+  sensitive_params: [from_account_id, payee_id, to_account_id, amount_cents, memo]
+  allowed_origins: [agent, app_form]
+  outflow: false
+  irreversible: true
+  otp_required: false
+  title_template: "转账"
+- tool: add_payee
+  base_risk: YELLOW
+  sensitive_params: [name, account_no, bank_name, alias]
+  allowed_origins: [agent, app_form]
+  outflow: false
+  irreversible: false
+  otp_required: false
+  title_template: "添加收款人"
+- tool: schedule_transfer
+  base_risk: YELLOW
+  sensitive_params: [from_account_id, payee_id, to_account_id, amount_cents, period, first_run_at, end_at]
+  allowed_origins: [agent, app_form]
+  outflow: false
+  irreversible: true
+  otp_required: false
+  title_template: "定时转账"
+- tool: cancel_scheduled
+  base_risk: GREEN
+  sensitive_params: [instruction_id]
+  allowed_origins: [agent, app_form]
+  outflow: false
+  irreversible: false
+  otp_required: false
+  title_template: "取消定时转账"
+- tool: create_split_request
+  base_risk: GREEN
+  sensitive_params: [account_id, total_cents, participant_payee_ids, include_self, memo]
+  allowed_origins: [agent, app_form]
+  outflow: false
+  irreversible: false
+  otp_required: false
+  title_template: "发起 AA 收款"
+- tool: update_card_limits
+  base_risk: YELLOW
+  sensitive_params: [card_id, single_limit_cents, daily_limit_cents]
+  allowed_origins: [agent, app_form]
+  outflow: false
+  irreversible: false
+  otp_required: false
+  title_template: "调整卡限额"
+- tool: update_card_controls
+  base_risk: YELLOW
+  sensitive_params: [card_id, online, overseas, atm, quickpass]
+  allowed_origins: [agent, app_form]
+  outflow: false
+  irreversible: false
+  otp_required: false
+  title_template: "调整卡开关"
+- tool: freeze_card
+  base_risk: GREEN
+  sensitive_params: [card_id]
+  allowed_origins: [agent, app_form]
+  outflow: false
+  irreversible: false
+  otp_required: false
+  title_template: "冻结卡"
+- tool: unfreeze_card
+  base_risk: RED
+  sensitive_params: [card_id]
+  allowed_origins: [agent, app_form]
+  outflow: false
+  irreversible: true
+  otp_required: true
+  title_template: "解冻卡"
+- tool: report_card_lost
+  base_risk: RED
+  sensitive_params: [card_id, replace]
+  allowed_origins: [agent, app_form]
+  outflow: false
+  irreversible: true
+  otp_required: true
+  title_template: "挂失 / 补卡"
+- tool: cancel_subscription
+  base_risk: YELLOW
+  sensitive_params: [instruction_id]
+  allowed_origins: [agent, app_form]
+  outflow: false
+  irreversible: false
+  otp_required: false
+  title_template: "取消订阅代扣"
+- tool: submit_risk_assessment
+  base_risk: YELLOW
+  sensitive_params: [questionnaire_id, answers]
+  allowed_origins: [app_form]
+  outflow: false
+  irreversible: false
+  otp_required: false
+  title_template: "风险测评"
+- tool: subscribe_product
+  base_risk: RED
+  sensitive_params: [account_id, product_id, amount_cents]
+  allowed_origins: [agent, app_form]
+  outflow: false
+  irreversible: true
+  otp_required: true
+  title_template: "申购产品"
+- tool: redeem_product
+  base_risk: YELLOW
+  sensitive_params: [account_id, product_id, units]
+  allowed_origins: [agent, app_form]
+  outflow: false
+  irreversible: true
+  otp_required: false
+  title_template: "赎回产品"

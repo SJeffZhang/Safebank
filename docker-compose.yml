@@ -61,6 +61,7 @@ services:
       timeout: 4s
       retries: 10
   gateway:
+    command: [python, -m, services.gateway.app.main]
     build: .
     image: safebank-p0:local
     environment:
@@ -177,6 +178,18 @@ services:
     env_file:
     - .secrets/bank.env
     - .secrets/bank-migration.env
+    networks: [bank-net]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  gateway-maintenance:
+    profiles: [maintenance]
+    image: safebank-p0:local
+    command: [python, -m, alembic, -c, services/gateway/alembic.ini, upgrade, head]
+    env_file:
+    - .secrets/gateway.env
+    - .secrets/gateway-migration.env
     networks: [bank-net]
     read_only: true
     tmpfs: [/tmp]

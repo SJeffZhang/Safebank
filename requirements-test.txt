@@ -10,6 +10,10 @@ anyio==4.15.1
     # via
     #   httpx
     #   starlette
+argon2-cffi==25.1.0
+    # via safebank-gateway
+argon2-cffi-bindings==26.1.0
+    # via argon2-cffi
 asyncpg==0.32.0
     # via safebank-gateway
 attrs==26.1.0
@@ -20,8 +24,10 @@ certifi==2026.10.19
     # via
     #   httpcore
     #   httpx
-cffi==2.1.1 ; platform_python_implementation != 'PyPy'
-    # via cryptography
+cffi==2.1.1
+    # via
+    #   argon2-cffi-bindings
+    #   cryptography
 click==8.5.0
     # via uvicorn
 colorama==0.4.6 ; sys_platform == 'win32'
@@ -59,7 +65,7 @@ packaging==26.3
     # via pytest
 pluggy==1.7.0
     # via pytest
-pycparser==3.12 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy'
+pycparser==3.12 ; implementation_name != 'PyPy'
     # via cffi
 pydantic==2.14.1
     # via
@@ -69,8 +75,13 @@ pydantic-core==2.50.1
     # via pydantic
 pygments==2.21.0
     # via pytest
+pyjwt==2.15.1
+    # via safebank-gateway
+pypinyin==0.55.0
+    # via safebank-gateway
 pytest==9.1.1
 pyyaml==6.0.3
+    # via safebank-gateway
 referencing==0.37.0
     # via
     #   jsonschema
