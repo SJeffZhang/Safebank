@@ -149,3 +149,21 @@
 本轮只证明显式文件helper及兼容校验；尚未修改共享runtime，它仍调用旧零参loader，所以**未证明Settings.demo_pins_file整体接线已完成**。下一共享组件必须调用新函数，之后W1再用两套Settings+相反环境+真实runtime/真实PG登录做完整集成。现有58 PG并非新函数的Settings接线证明，W4锁替身仍按旧进度明确保留。没有修改runtime/config/state/tables/迁移、依赖或其他任务代码，不推送/开PR，不跑up/down/test-p1、不删卷、不派生agent。
 
 `git diff --check`通过；本轮文件为auth/pin.py、新test_pin_files.py、W1两份进度。自审后仅本地提交并冻结，最终SHA见交付消息，待协调者复跑及独立评审。
+
+
+## W4a/S1b真实锁与生命周期接线（进行中，存在共享阻塞）
+
+以协调者留存5cf394c为干净基线，merge origin/main d5ac9ede为041546d；仅AGENTS追加日志冲突，保留双方原记录，Makefile/CI保留双方目标。已读ADR-008、S1b/W4a任务书、真实locks.configure/customer_lock/assert_lock_owner与state专用CAS。接口简报已获协调者确认：取消/登出增epoch，改口/普通新写替代只SUPERSEDED；LIVE job必须持久UNKNOWN并保留claim/evidence/attempt/cap，真实HTTP reconcile/终态archive归W4后续组件，不由本轮伪造。
+
+删除W1/db/support全部锁替身，改为同一GatewayRuntime.db调用真实configure(max_executions)，18槽pool匹配当前runtime默认容量；仅L3仍用契约FakeL3。`PATH=/Applications/Docker.app/Contents/Resources/bin:$PATH GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w1/db/test_identity.py tests/gateway/w1/db/test_utterances.py -q --tb=short`：11 passed in 6.39s，原登录→session→登记/取消/登出真实PG锁路径通过。
+
+新增db/test_live_job_revocation.py：初次完整真实PG红测19 failed / 2 passed in 9.15s，复现EXECUTING/FENCING未转UNKNOWN、PAUSED计划普通SUPERSEDED被共享guard拒绝导致原话撤销回滚、普通新写替代未作废旧审批；含无evaluation孤儿job最小场景。新增生产衔接仅在W1 lifecycle中使用真实ExecutionIdentity和mark_execution_unknown，不直接写job状态、不消费claims。普通写替代只清理旧plan/审批，不能把正在采纳的新hint/action的期限清空；明确取消/改口另做UI/clarification清理。
+
+阶段测试：
+
+- `PATH=... GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w1/db/test_live_job_revocation.py -q -k 'not orphaned' --tb=short`：先20 passed/1 deselected（9.80s）；补keep/hint/锁等待后23 passed/1 deselected（10.54s）；补真实登记/登出两排队顺序与legacy空证据后26 passed/1 deselected（12.41s）。这些是明确的非孤儿组件测试，**不是完整目标验收**，孤儿用例仍真实保留、没有skip/xfail。
+- `... -k concurrent_registration --tb=short`：2 passed /24 deselected in 3.52s；真实pg_locks证明请求已在同客户键排队，退出无旧ACTIVE授权、epoch/撤销时间正确、job UNKNOWN/claim CLAIMED。
+- `... -k orphaned --tb=short`：当前1 failed /26 deselected in 3.09s，409导致旧原话仍ACTIVE而非CANCELLED；这正是不能交付的共享原语阻塞。不能伪造evaluation/revision、直接DML或把宽松fallback计作完成；working tree不会在该风险存在时标为验收完成。
+- 当前lint首跑仅新测试SQL字符串超长E501，已拆行；等待下面复验结果。
+
+共享最小阻塞已报协调者并获确认：schema允许job存在而evaluations零行，既有ExecutionIdentity要求revision>=1且mark_execution_unknown要求latest evaluation；需要独立共享“expected latest absent”UNKNOWN CAS（及终态清理配对），让W1在同事务撤销仍可持久待对账。协调者安排S1c后原S1b owner串行补缺；W1不改state/迁移、不假造revision，待冻结新接口后消除该红测再跑原五退出。当前无新完成提交，无完整五退出成功声明。S1c runtime显式PIN文件接线也待随后同步后做真实两路径相反环境+PG登录验证。

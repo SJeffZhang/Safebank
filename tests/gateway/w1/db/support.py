@@ -1,4 +1,4 @@
-"""Explicit W4-lock substitute; S1 runtime, auth and state paths are real."""
+"""Real W4a locks, S1 runtime, auth and state; only L3 uses a contract fake."""
 
 import secrets
 from contextlib import asynccontextmanager
@@ -7,7 +7,6 @@ from datetime import UTC, datetime
 import httpx
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from sqlalchemy import text
 
 from services.gateway.app import locks
 from services.gateway.app.auth.pin import HASHER
@@ -31,7 +30,7 @@ ENV = {
 
 @asynccontextmanager
 async def harness(gateway_db, monkeypatch):
-    database = engine(gateway_db.runtime_url)
+    database = engine(gateway_db.runtime_url, pool_size=18, max_overflow=0)
     key = Ed25519PrivateKey.generate()
     private = key.private_bytes(
         serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
@@ -55,28 +54,7 @@ async def harness(gateway_db, monkeypatch):
     )
     app = build_public_app(settings, env=ENV, runtime=runtime)
 
-    # W4 owns the real implementation; this local substitute uses real PG locks.
-    @asynccontextmanager
-    async def customer_lock(ids):
-        async with database.connect() as conn:
-            for id_ in sorted(set(ids)):
-                await conn.execute(
-                    text("SELECT pg_advisory_lock(hashtext('customer'),hashtext(:id))"), {"id": id_}
-                )
-            await conn.commit()
-            try:
-                yield conn
-            finally:
-                if conn.in_transaction():
-                    await conn.rollback()
-                for id_ in sorted(set(ids), reverse=True):
-                    await conn.execute(
-                        text("SELECT pg_advisory_unlock(hashtext('customer'),hashtext(:id))"),
-                        {"id": id_},
-                    )
-                await conn.commit()
-
-    monkeypatch.setattr(locks, "customer_lock", customer_lock)
+    locks.configure(database, max_executions=settings.max_executions)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app, client=("test-" + secrets.token_hex(8), 1234)),
         base_url="http://gateway",
