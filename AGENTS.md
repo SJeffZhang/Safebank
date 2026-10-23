@@ -250,6 +250,19 @@
 | 2026-10-23 | Codex（协调者） | S1修复轮2独立定点复审PASS/APPROVE：N1 ADDRESSED，无新增问题；原评审亲自定向回归1 passed（0.21s），R1–R4/CI/N1全部关闭。准备将纯协调文档提交28a0c21、3d8d6c4及后续记录按顺序纳入S1分支（fixture已存在不重复cherry-pick），然后推送base main的组件PR；远端CI尚未运行，不预称合并。 |
 
 | 2026-10-23 | Codex（协调者） | S1已push并创建PR #4（base main），初始head6c59ac1的run39964404373在workflow校验阶段失败，jobs/check_runs为空且无日志，未提前合并。按systematic-debugging查明job env不能使用runner.temp；原agent最小修为/tmp/sbg-uv-cache，官方actionlint修前exit1准确定位18:25，修后exit0。协调者亲自复跑actionlint/diffcheck，原只读评审定点APPROVE（6c59ac1..f5dd74a），业务未变。现推送修复重触发真实CI；S2在读材料后暂停，尚无代码，维持共享实施串行。 |
+| 2026-10-23 | Codex（协调者） | S1文档cherry-pick完成，最终PR HEAD6c59ac1；按长期授权push并创建PR #4（base main，feat/l2-shared-runtime），已附加当前任务，等待unit/p1-postgres CI，不提前merge。执行状态独立架构审查完成，记录L2-execution-state-review.md并采用最小设计：复用same-attempt过期deadline屏障，内部job新增FENCING/PAUSED、专用CAS迁移；UNKNOWN只对账不回退，不新增L3 HTTP契约。尚无组合协议真实验收，后续先共享迁移再W4与跨组件联调。 |
+
+| 2026-10-23 | Codex（协调者） | 已派只读review_w2审1699091；S2从当前最新main启动读材料后，因S1 PR4 CI失败立即暂停，无代码改动/测试/提交。PR4 head6c59ac1的push run39964404373启动即failure、jobs和check_runs均空，log-failed返回log not found；不能把空checks当绿。应用systematic-debugging，已派原S1定位job级runner.temp表达式可用性并最小修复，之后再独立复核与真实CI。 |
+
+| 2026-10-23 | Codex（协调者） | 核查W4新增待决disclosure_token：仅任务书存在，PRD G6/PlanView与W0评审均无该wire，按PRD/冻结接口优先纠正任务书删除额外要求，已通知W4恢复时移除响应额外字段；揭示全文/版本仍绑定view_hash与审批，risk_ack不放宽。0002清单更新内部FENCING/PAUSED及无额外generation列的严格CAS前提。 |
+
+| 2026-10-23 | Codex（协调者） | W2独立评审FAIL/REQUEST_CHANGES，2项P1（遗漏明确卡参数、非转账scope非一对一可重复目标）及1项P2（读取实际客户范围与计划快照整dict比较导致稳定503），记录L2-W2-provenance.md，协调者读源码确认，派原agent修复轮1。另列W1 used_by/scope_ids与W2来源消费、W3 app_form授权输入的具体跨分支错配，后续统一语义并真实联调，不宽松放行。S1 CI一行修复经协调者actionlint与原评审APPROVE，已push efcd553重触发，尚待远端结果。 |
+
+| 2026-10-23 | Codex（协调者） | PR4修复后efcd553的push/PR两套unit均SUCCESS，p1-postgres实际IN_PROGRESS，S2恢复独立纯函数实施。裁定weekday沿用datetime周一0…周日6，未来L3生产者一致；S2 days仅7、月度账单stale且缺锚点拒绝不猜。W1/W2接口保留A scope_ids为ACTIVE utterance IDs（claim身份），source_id用于hint/action来源链且used_by必须等于采纳utt；不改为源ID混淆claim。F directFORM仅受信app_form适配使用act IDs并复用W1 scope_from_form，A仍严格JWT utts。后续独立集成测试，当前不冒称已实现。 |
+
+| 2026-10-23 | Codex（协调者） | PR #4精确head efcd553的push/PR四个unit/p1-postgres均COMPLETED SUCCESS后，执行gh pr merge 4 --merge --match-head-commit efcd553成功；merge commit691cf880866076a0db9a5a77b752a785364560f6，2026-10-23T14:00:50Z。已fetch最新main，准备各后续分支安全同步再验。协调公共约定追加来源/claim语义时diffcheck发现EOF多余空行，已去除；均为文档修改。 |
+
+| 2026-10-23 | Codex（协调者） | 已切main并快进691cf88，再开docs/codex-wave1-integration接续协调文档；cherry-pick9978e07仅AGENTS追加日志冲突，保留双方全部日志并解决，无业务冲突。 |
 
 ## 5. 下一步待办（按顺序）
 

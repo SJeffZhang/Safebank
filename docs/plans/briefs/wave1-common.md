@@ -45,3 +45,11 @@
 - 进度写 `docs/progress/<任务名>.md`：做了什么、文件清单、每条退出命令的实际结果、待决（含需要的迁移、缺的错误码、对冻结文件的修改请求）。
 - 遇到 PRD 不闭合或与骨架冲突：不自行发明设计，写进「待决」，选最保守的可交付方案继续。
 - 最终回复简短：完成项、退出命令结果、未完成项、待决。
+# 协调补充：授权单元与来源记录（2026-10-23）
+
+- `AuthorizationInputs.scope_ids`是执行claim身份。A路径typed/hint/action均使用本次ACTIVE utterance IDs；不能把hint/action来源ID替换进去。`utterance_ids`仍受assistant JWT `utts`约束。
+- hint/action来源ID由持久`utterances.kind/source_id/parent_ids`证明，W2加载时必须核对其属于本次已加载ACTIVE utterance、同sid/customer/epoch/期限，且源`used_by`恰等于采纳该源的utterance ID。A不能用未采纳源，不接受任意非空used_by。
+- F直接表单仅在`origin=app_form`的受信G4适配中用已核验action IDs作为scope身份，源used_by为空或同plan；通过W1 `scope_from_form`统一生成完整scope，不只复制fields。可用内部UtteranceRef形状承载form scope并在AuthorizationInputs列出act IDs/ACTIVE状态，但不写假utterances行、不允许A走该适配。
+- 该约定保持既有函数和冻结模型签名；必须以真实W1→W2→W3的PG/API集成验收来源采纳、跨会话拒绝、重放和表单来源，不以fixtures互相对齐当完成。
+
+日历共享约定：weekday使用Python datetime.weekday()索引，周一0…周日6。S2预留当前仅支持7天；完整ScheduledView锚点的定时展开可支持独立30天窗口，缺月度锚点的过时代扣next_due_at不得猜测。
