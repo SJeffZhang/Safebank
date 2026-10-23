@@ -204,13 +204,30 @@ nullable 来源声明。故上一轮「必须 read / None 不得声明来源」�
    `test_entity_wrong_span_fails` 改断言 `error_type=ReferenceError`（adapter 先拒，8 响应含一次 retry）。
    金额 800/800元/1000分 与 00 拒、预算第 9 调用不触网、gather r4 顺序回归全部保留。
 
+## 修复轮 6（r5 独审 P2-g/h + 未确认-d，2026-10-24）
+
+r5 独审 APPROVE 但残留 P2-g/h 与未确认-d，本轮一并闭合（先红测再绿，不假定 live 根因）：
+
+1. **P2-g verbatim 白名单**：`_reference_problems` 的字符串强等值只对 `_VERBATIM_STR_PARAMS`（实体/账户/卡/
+   产品/指令/收款人等 ID 及 name/account_no/bank_name/phone/alias/memo 等逐字字段）生效；日期/枚举/小数等
+   计算或归一化字符串仍验证 ref 存在、span 边界、pointer 存在，但**不做等值**，不误拒合法归一化值；合法实体
+   仍逐值核验。红：`test_normalized_enum_string_not_false_rejected`（period="MONTHLY" 配 "每月" span 不误拒）。
+2. **P2-h 反馈注入面/截断**：problem 文案改固定 `steps[数组下标].固定参数名: 固定类别`，**不回显模型自选
+   `step_id` 等任意文本**；`_MAX_REFERENCE_PROBLEMS=5` 封顶。红：`test_plan_feedback_does_not_echo_model_step_id`
+   （恶意 step_id 不出现在重试 human）、`test_reference_problems_are_capped`（6 处坏来源截到 5）。
+3. **未确认-d live 证据补 ReferenceError 明细**：`live.py` 新增 `_reference_fields`（`exc.problems[:5]`）进
+   `reference_errors`，`record` 增加 `attempts`（usage 观察者 delta，即该样本实际模型调用次数，不含输入/私密
+   内容）。旧失败仍 exit1，证据原样追加、不洗绿。
+4. **span 半开约定与索引展示**：plan 提示头明确「span 用 0 基半开区间 [start,end)，即 text[start:end]，end
+   不包含」；`_index_map` 改为每字符起止 `char[start,end)` 展示（不硬编码合成 ID、不静默改模型 span）。
+
 ## 退出命令与结果（本组件无 PG）
 
 | 命令 | 结果 |
 |---|---|
 | `make lint` | ruff check + format --check 通过（259 files formatted） |
-| `.venv/bin/pytest tests/agent -q` | `80 passed`（零 skip/xfail；live 单独 `python -m` 入口不混入） |
-| `make test` | `2189 passed, 529 skipped`（skip 为无 PG 配置项，非本组件范围） |
+| `.venv/bin/pytest tests/agent -q` | `83 passed`（零 skip/xfail；live 单独 `python -m` 入口不混入） |
+| `make test` | `2192 passed, 529 skipped`（skip 为无 PG 配置项，非本组件范围） |
 | `make contracts-check` | `PASS: contracts v1 match frozen schemas` |
 
 ## 未覆盖 / 待决（交协调者或后续组件）
@@ -219,9 +236,10 @@ nullable 来源声明。故上一轮「必须 read / None 不得声明来源」�
   为本地形状，C1c 接真实 L2 读结果时对齐 PRD §7.5 完整字段。
 - `gather` 的 `read_executor` 是显式端口（C1b 用 fake；C1c 接 L2 G2）。未接 gateway HTTP/路由/持久化。
 - live 仍未由本 worker 执行（不读 key/不跑 API）；协调者复跑 `python -m services.agent.app.llm.live`，
-  失败 exit1、证据脱敏、硬预算 8（plan 默认一次 validation retry）。模型未含多模态 Flash、未开启思考。
+  失败 exit1、证据脱敏（含 reference_errors + attempts）、硬预算 8（plan 默认一次 validation retry）。
 - 本组件只在**本地结构/引用一致性**层面做来源核验（L2 才是授权判定方）：金额分/单位换算等业务金额语义
-  不硬编码、不复制 L2 授权器；step/derived/hint/action 来源不本地判定、留 L2；基础 plan 语义不是授权器。
+  不硬编码、不复制 L2 授权器；step/derived/hint/action 来源不本地判定、留 L2；verbatim 等值仅限白名单。
+
 
 
 

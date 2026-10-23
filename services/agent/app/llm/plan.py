@@ -37,7 +37,7 @@ _SYSTEM = (
 
 
 def _index_map(text: str) -> str:
-    return " ".join(f"{char}[{index}]" for index, char in enumerate(text))
+    return " ".join(f"{char}[{index},{index + 1})" for index, char in enumerate(text))
 
 
 class ReferenceError(Exception):
@@ -48,14 +48,41 @@ class ReferenceError(Exception):
         self.problems = problems
 
 
+# Directly copyable identifiers/text whose value must equal the slice/pointer value verbatim.
+# Computed/normalized strings (dates, enum names, decimals) are excluded so they are not
+# false-rejected by a byte-wise equality that the frozen contract does not itself require.
+_VERBATIM_STR_PARAMS = frozenset(
+    {
+        "from_account_id",
+        "payee_id",
+        "to_account_id",
+        "account_id",
+        "card_id",
+        "product_id",
+        "instruction_id",
+        "merchant_id",
+        "request_id",
+        "questionnaire_id",
+        "name",
+        "account_no",
+        "bank_name",
+        "phone",
+        "alias",
+        "memo",
+    }
+)
+
+_MAX_REFERENCE_PROBLEMS = 5
+
+
 def _reference_problems(draft: PlanDraft, state: AgentState) -> list[str]:
     """Local, bounded, generic reference-integrity checks (C1b boundary, not authorization).
 
-    Only what is decidable from the given utterances/reads is checked: a ``utterance``
-    source's ref must exist and its span stay in bounds (and, for a direct string arg, slice
-    equal that value); a ``read`` source's ref must exist and its pointer resolve (and, for a
-    direct string arg, equal that value).  Nullable None args and step/derived/hint/action
-    sources are left to L2 — never rejected here.
+    Every declared source's ref is checked to exist and its span/pointer to stay in bounds;
+    for verbatim string params (the whitelist above) the slice/pointer value must also equal
+    the arg value.  Nullable None args and step/derived/hint/action sources are left to L2.
+    Problem strings use the fixed step array index and param name — never the model-chosen
+    ``step_id`` or any untrusted value.
     """
 
     utterances = state.get("utterances", [])
@@ -63,8 +90,10 @@ def _reference_problems(draft: PlanDraft, state: AgentState) -> list[str]:
     utt_by_id = {utterance.id: utterance for utterance in utterances}
     read_by_ref = {read.source_ref: read for read in reads}
     problems: list[str] = []
-    for step in draft.steps:
+    for index, step in enumerate(draft.steps):
         for source in step.arg_sources:
+            if len(problems) >= _MAX_REFERENCE_PROBLEMS:
+                return problems
             param = source.param
             value = getattr(step.args, param, None)
             if value is None:
@@ -73,26 +102,34 @@ def _reference_problems(draft: PlanDraft, state: AgentState) -> list[str]:
             if kind == "utterance":
                 ref = source.source.ref
                 if ref not in utt_by_id:
-                    problems.append(f"{step.step_id}.{param}: utterance ref 不存在")
+                    problems.append(f"steps[{index}].{param}: utterance ref 不存在")
                     continue
                 text = utt_by_id[ref].text
                 span = source.source.span
                 if not (0 <= span[0] < span[1] <= len(text)):
-                    problems.append(f"{step.step_id}.{param}: utterance span 越界")
-                elif isinstance(value, str) and text[span[0] : span[1]] != value:
-                    problems.append(f"{step.step_id}.{param}: utterance span 切片与参数值不符")
+                    problems.append(f"steps[{index}].{param}: utterance span 越界")
+                elif (
+                    param in _VERBATIM_STR_PARAMS
+                    and isinstance(value, str)
+                    and text[span[0] : span[1]] != value
+                ):
+                    problems.append(f"steps[{index}].{param}: utterance span 切片与参数值不符")
             elif kind == "read":
                 ref = source.source.ref
                 if ref not in read_by_ref:
-                    problems.append(f"{step.step_id}.{param}: read ref 不存在")
+                    problems.append(f"steps[{index}].{param}: read ref 不存在")
                     continue
                 try:
                     pointer_value = resolve_pointer(read_by_ref[ref].data, source.source.pointer)
                 except ValueError:
-                    problems.append(f"{step.step_id}.{param}: read pointer 无法解析")
+                    problems.append(f"steps[{index}].{param}: read pointer 无法解析")
                 else:
-                    if isinstance(value, str) and pointer_value != value:
-                        problems.append(f"{step.step_id}.{param}: read pointer 值与参数值不符")
+                    if (
+                        param in _VERBATIM_STR_PARAMS
+                        and isinstance(value, str)
+                        and pointer_value != value
+                    ):
+                        problems.append(f"steps[{index}].{param}: read pointer 值与参数值不符")
             # step/derived/hint/action are not locally verifiable at C1b; L2 re-derives.
     return problems
 
@@ -156,11 +193,14 @@ class PlanAdapter:
 
     @staticmethod
     def _messages(state: AgentState, note: str) -> list:
-        parts = ["用户请求（id/kind/text；0 基字符下标对照，span 用该下标）："]
+        parts = [
+            "用户请求（id/kind/text；span 用 0 基半开区间 [start, end)，即 text[start:end]，"
+            "end 不包含；每字符下标范围如下）："
+        ]
         for utterance in state.get("utterances", []):
             text = json.dumps(utterance.text, ensure_ascii=False)
             parts.append(f"- id={utterance.id} kind={utterance.kind.value} text={text}")
-            parts.append(f"  下标对照: {_index_map(utterance.text)}")
+            parts.append(f"  下标范围: {_index_map(utterance.text)}")
         reads = state.get("reads", [])
         if reads:
             parts.append("已读数据（source_ref 供 {kind:read, ref:<source_ref>, pointer} 引用）：")

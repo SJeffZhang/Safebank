@@ -27,7 +27,7 @@ from services.agent.app.graph.state import (
 )
 from services.agent.app.llm.client import load_api_key, make_llm
 from services.agent.app.llm.gather import GatherAdapter, ReadResult
-from services.agent.app.llm.plan import PlanAdapter
+from services.agent.app.llm.plan import PlanAdapter, ReferenceError
 from services.agent.app.llm.redact import resolve_pointer
 from services.agent.app.llm.schema import read_tools, understanding_tool
 from services.agent.app.llm.understand import UnderstandAdapter
@@ -65,6 +65,12 @@ def _error_fields(exc: Exception) -> list[dict] | None:
             {"loc": list(error["loc"]), "msg": error["msg"], "type": error["type"]}
             for error in exc.errors()
         ]
+    return None
+
+
+def _reference_fields(exc: Exception) -> list[str] | None:
+    if isinstance(exc, ReferenceError):
+        return list(exc.problems)[:5]
     return None
 
 
@@ -254,6 +260,7 @@ def run_scenarios(llm) -> tuple[list[dict], int]:
 
     def record(name: str, fn, check=None) -> None:
         nonlocal failed
+        before = len(usage)
         started = time.perf_counter()
         try:
             result = fn()
@@ -262,6 +269,7 @@ def run_scenarios(llm) -> tuple[list[dict], int]:
                 "name": name,
                 "ok": not problems,
                 "latency_ms": round((time.perf_counter() - started) * 1000),
+                "attempts": len(usage) - before,
             }
             if isinstance(result, PlanDraft):
                 entry["draft"] = _draft_summary(result)
@@ -279,10 +287,14 @@ def run_scenarios(llm) -> tuple[list[dict], int]:
                 "ok": False,
                 "error_type": type(exc).__name__,
                 "latency_ms": round((time.perf_counter() - started) * 1000),
+                "attempts": len(usage) - before,
             }
             fields = _error_fields(exc)
             if fields is not None:
                 entry["validation_errors"] = fields
+            refs = _reference_fields(exc)
+            if refs:
+                entry["reference_errors"] = refs
             failed += 1
             records.append(entry)
 
