@@ -83,3 +83,5 @@ W4 locks.py交出裸连接：断连后本次owner必须永久失效；不得roll
 ## PRD/ADR定点复核（2026-10-23）
 
 原review_execution_state核对059af8a..25fed0a，指出P1：PRD8.5仍允许UNKNOWN重试与新7.10矛盾；另建议明确原话失效不等于claim终态、五类专用CAS职责、首次prepare前复演与已存在intent屏障区别、G8request_id重放优先级。协调者已按原评审修正文档，核对L3现有代码实际只接受attempt恰好+1、同身份同证据COMMITTED重复prepare返回终态，无新增L3协议或业务修改。修订待定点复核；本轮仍无运行测试。
+
+原评审对修订再次定点复核：五项全ADDRESSED，文档APPROVE，无新增阻塞；未运行PG/HTTP测试。
