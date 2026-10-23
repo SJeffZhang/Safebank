@@ -50,7 +50,14 @@ async def _insert_executed_plan(
     customer_id="cus_a",
     sid="sid_w3",
     status="EXECUTED",
+    job_status="EXECUTED",
 ):
+    """Insert a plan + (optionally) its execution job.
+
+    ``created_wall`` is the plan/job creation (G8 start) time; ``executed_wall``
+    is the terminal archive time (``execution_jobs.updated_at_wall``). They are
+    independent so tests can cover slow executions and mismatched states.
+    """
     await conn.execute(
         insert(t.plans).values(
             id=plan_id,
@@ -70,9 +77,9 @@ async def _insert_executed_plan(
         await conn.execute(
             insert(t.execution_jobs).values(
                 plan_id=plan_id,
-                status="EXECUTED",
+                status=job_status,
                 l3_attempt=1,
-                created_at_wall=executed_wall,
+                created_at_wall=created_wall,
                 updated_at_wall=executed_wall,
             )
         )
@@ -85,7 +92,7 @@ def _ctx(conn, steps, *, wall, plan_id="pln_w3"):
     return ctx
 
 
-def test_duplicate_plan_anchors_on_execution_time_wall(gateway_db):
+def test_duplicate_plan_anchors_on_terminal_time_wall(gateway_db):
     async def run():
         engine = gateway_engine(gateway_db.runtime_url, poolclass=NullPool)
         try:
@@ -93,16 +100,17 @@ def test_duplicate_plan_anchors_on_execution_time_wall(gateway_db):
             steps_hash = request_digest(plan(steps).steps)
             async with engine.begin() as conn:
                 await _insert_session(conn)
-                # Slow approval: plan created 1 hour ago, executed 5 minutes ago.
+                # Slow execution: started 30 minutes ago, terminal archive 2
+                # minutes ago. The window must anchor on the terminal time.
                 await _insert_executed_plan(
                     conn,
                     plan_id="pln_old",
                     steps_hash=steps_hash,
-                    created_wall=WALL - timedelta(hours=1),
-                    executed_wall=WALL - timedelta(minutes=5),
+                    created_wall=WALL - timedelta(minutes=30),
+                    executed_wall=WALL - timedelta(minutes=2),
                 )
 
-            # Within the 10-minute wall window anchored on execution time.
+            # Within the 10-minute wall window anchored on the terminal time.
             async with engine.connect() as conn:
                 ctx = _ctx(conn, steps, wall=WALL)
                 await EntityStage().run(ctx)
@@ -151,8 +159,8 @@ def test_duplicate_plan_excludes_self_and_boundaries(gateway_db):
                     conn,
                     plan_id="pln_w3",
                     steps_hash=steps_hash,
-                    created_wall=WALL - timedelta(hours=1),
-                    executed_wall=WALL - timedelta(minutes=5),
+                    created_wall=WALL - timedelta(minutes=30),
+                    executed_wall=WALL - timedelta(minutes=2),
                     sid="sid_self",
                 )
                 # Cross-customer execution.
@@ -160,22 +168,43 @@ def test_duplicate_plan_excludes_self_and_boundaries(gateway_db):
                     conn,
                     plan_id="pln_other_customer",
                     steps_hash=steps_hash,
-                    created_wall=WALL - timedelta(hours=1),
-                    executed_wall=WALL - timedelta(minutes=5),
+                    created_wall=WALL - timedelta(minutes=30),
+                    executed_wall=WALL - timedelta(minutes=2),
                     customer_id="cus_b",
                     sid="sid_other",
                 )
-                # Invalid (non-executed) status.
+                # Invalid (non-executed) plan status.
                 await _insert_executed_plan(
                     conn,
                     plan_id="pln_not_executed",
                     steps_hash=steps_hash,
-                    created_wall=WALL - timedelta(hours=1),
-                    executed_wall=WALL - timedelta(minutes=5),
+                    created_wall=WALL - timedelta(minutes=30),
+                    executed_wall=WALL - timedelta(minutes=2),
                     status="DENIED",
                     sid="sid_self",
                 )
-                # Expired execution (executed 11 minutes ago).
+                # Plan EXECUTED but job still UNKNOWN: status mismatch must not hit.
+                await _insert_executed_plan(
+                    conn,
+                    plan_id="pln_job_mismatch",
+                    steps_hash=steps_hash,
+                    created_wall=WALL - timedelta(minutes=30),
+                    executed_wall=WALL - timedelta(minutes=2),
+                    status="EXECUTED",
+                    job_status="UNKNOWN",
+                    sid="sid_self",
+                )
+                # Recent start but stale terminal time: must not hit (the window
+                # keys on the terminal archive, not the G8 start).
+                await _insert_executed_plan(
+                    conn,
+                    plan_id="pln_stale_terminal",
+                    steps_hash=steps_hash,
+                    created_wall=WALL - timedelta(minutes=2),
+                    executed_wall=WALL - timedelta(minutes=30),
+                    sid="sid_self",
+                )
+                # Expired terminal (11 minutes ago).
                 await _insert_executed_plan(
                     conn,
                     plan_id="pln_expired",
@@ -184,7 +213,7 @@ def test_duplicate_plan_excludes_self_and_boundaries(gateway_db):
                     executed_wall=WALL - timedelta(minutes=11),
                     sid="sid_self",
                 )
-                # Future execution timestamp is outside the wall window.
+                # Future terminal timestamp is outside the wall window.
                 await _insert_executed_plan(
                     conn,
                     plan_id="pln_future",
@@ -293,6 +322,163 @@ def test_risky_sequence_cooldown_is_persisted(gateway_db):
                 )
             assert {r["payee_fingerprint"] for r in rows} == {"pye_extfp"}
             assert all(r["reason"] == "RISKY_SEQUENCE" for r in rows)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_terminal_cas_persists_updated_at_wall_and_rejects_retry(gateway_db):
+    """The existing terminal CAS is the trusted wall source for DUPLICATE_PLAN.
+
+    ``state.archive_execution_terminal`` is the last ``_job_update`` for an
+    EXECUTED job (EXECUTED has no outgoing edges), so ``updated_at_wall`` is the
+    terminal observed wall time. A retry after the terminal state is rejected and
+    must not refresh that timestamp.
+    """
+    import pytest
+    from safebank_contracts.enums import Risk
+    from safebank_contracts.plan import ExecutionResult, InteractiveEvidence, StepResult
+
+    from services.gateway.app import state
+    from services.gateway.app.errors import GatewayError
+    from services.gateway.app.schemas.enums import ExecutionJobStatus
+
+    async def run():
+        engine = gateway_engine(gateway_db.runtime_url, poolclass=NullPool)
+        try:
+            plan_id = "pln_cas"
+            evidence = InteractiveEvidence(
+                type="INTERACTIVE",
+                origin="agent",
+                scope_ids=("utt_cas",),
+                utterance_ids=("utt_cas",),
+                evaluation_id="evl_cas",
+                approved_evaluation_id=None,
+                plan_hash="0" * 64,
+                approval_id=None,
+                confirmed_view_hash=None,
+                final_view_hash="0" * 64,
+                risk=Risk.GREEN,
+                confirmed_at_wall=None,
+                authorization_epoch=0,
+            )
+            async with engine.begin() as conn:
+                await _insert_session(conn, sid="sid_cas")
+                await conn.execute(
+                    insert(t.plans).values(
+                        id=plan_id,
+                        customer_id="cus_a",
+                        sid="sid_cas",
+                        origin="agent",
+                        request_id="req_cas",
+                        request_hash="0" * 64,
+                        plan_hash="0" * 64,
+                        steps_hash="0" * 64,
+                        resolved_steps=[],
+                        scope_ids=["utt_cas"],
+                        utterance_ids=["utt_cas"],
+                        status="EXECUTING",
+                        created_at_wall=WALL,
+                    )
+                )
+                await conn.execute(
+                    insert(t.execution_jobs).values(
+                        plan_id=plan_id,
+                        status="EXECUTING",
+                        l3_attempt=1,
+                        created_at_wall=WALL,
+                        updated_at_wall=WALL,
+                        deadline_wall=WALL + timedelta(minutes=10),
+                        deadline_cap_wall=WALL + timedelta(minutes=10),
+                        authorization_evidence=evidence.model_dump(mode="json"),
+                    )
+                )
+                await conn.execute(
+                    insert(t.evaluations).values(
+                        id="evl_cas",
+                        plan_id=plan_id,
+                        revision=1,
+                        decision={},
+                        risk="GREEN",
+                        policy_version="0" * 64,
+                        created_at_wall=WALL,
+                    )
+                )
+                await conn.execute(
+                    insert(t.authorization_claims).values(
+                        scope_id="utt_cas", plan_id=plan_id, status="CLAIMED"
+                    )
+                )
+
+            result = ExecutionResult(
+                plan_id=plan_id,
+                status="EXECUTED",
+                steps=(
+                    StepResult(
+                        step_id="s1",
+                        tool="transfer",
+                        status="EXECUTED",
+                        created_ids={},
+                        result={},
+                        effects=(),
+                    ),
+                ),
+                versions={"cus_a": 1},
+                committed_at="2026-10-15T09:00:00+08:00",
+                error_code=None,
+                replayed=False,
+            )
+            identity = state.ExecutionIdentity(
+                customer_id="cus_a", plan_id=plan_id, origin="agent", attempt=1, revision=1
+            )
+
+            async with engine.begin() as conn:
+                await state.archive_execution_terminal(
+                    conn,
+                    expected=identity,
+                    from_status=ExecutionJobStatus.EXECUTING,
+                    l3_status="COMMITTED",
+                    result=result,
+                )
+
+            async with engine.connect() as conn:
+                job = (
+                    (
+                        await conn.execute(
+                            select(t.execution_jobs).where(t.execution_jobs.c.plan_id == plan_id)
+                        )
+                    )
+                    .mappings()
+                    .one()
+                )
+            first_updated = job["updated_at_wall"]
+            assert job["status"] == "EXECUTED"
+            assert first_updated is not None
+
+            # A terminal retry is rejected and leaves updated_at_wall untouched.
+            async with engine.begin() as conn:
+                with pytest.raises(GatewayError) as exc:
+                    await state.archive_execution_terminal(
+                        conn,
+                        expected=identity,
+                        from_status=ExecutionJobStatus.EXECUTING,
+                        l3_status="COMMITTED",
+                        result=result,
+                    )
+            assert exc.value.code is Code.STATE_CHANGED
+
+            async with engine.connect() as conn:
+                after = (
+                    (
+                        await conn.execute(
+                            select(t.execution_jobs).where(t.execution_jobs.c.plan_id == plan_id)
+                        )
+                    )
+                    .mappings()
+                    .one()
+                )
+            assert after["updated_at_wall"] == first_updated
         finally:
             await engine.dispose()
 

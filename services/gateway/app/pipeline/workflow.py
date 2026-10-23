@@ -141,10 +141,11 @@ async def _load_history(ctx: EvalContext) -> WorkflowHistory:
                 t.plans.c.customer_id == ctx.customer_id,
                 t.plans.c.steps_hash == steps_hash,
                 t.plans.c.status == "EXECUTED",
+                t.execution_jobs.c.status == "EXECUTED",
                 t.plans.c.id != ctx.plan_id,
-                t.execution_jobs.c.created_at_wall
+                t.execution_jobs.c.updated_at_wall
                 >= wall_now - timedelta(minutes=cfg["duplicate_plan_wall_minutes"]),
-                t.execution_jobs.c.created_at_wall <= wall_now,
+                t.execution_jobs.c.updated_at_wall <= wall_now,
             )
             .limit(1)
         )

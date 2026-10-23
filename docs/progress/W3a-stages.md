@@ -57,6 +57,8 @@
 - **P2-2**：workflow 阈值从 `policies/thresholds.yaml` 加载（split count/total、cumulative、new_payee 分钟），构造器支持 `thresholds` 注入；测试证明改配置影响行为。
 - **P2-3**：DUPLICATE_PLAN 排除 `ctx.plan_id`，并 join `execution_jobs` 用 `created_at_wall`（G8 一次性写入、非重试 updated_at）作「已执行」wall 锚点，且 `<= wall_now` 排除未来。真实 PG 补：慢审批近期执行、自身复演、过期/未来/跨客户/无效状态。**注**：`execution_jobs.result.committed_at` 经查为 L3 `state.sim_now`（execution.py:249），是模拟时间，不能锚 wall 窗口；专用 `executed_at_wall` 列需迁移、超出本组件，已按「无现有来源则明确记录」处理。
 
+> **第二修复轮更正**：上面的「专用 `executed_at_wall` 列需迁移/无现有来源」说法有误。可信的「终态已执行」墙钟**已有现成来源**：`state._job_update`（state.py）每次状态迁移都 `.values(**values, updated_at_wall=func.now())`，而 `archive_execution_terminal`（state.py）是 EXECUTED 终态 job 的**最后一次** `_job_update`（EXECUTED/FAILED/CANCELLED 无出边），故 `execution_jobs.updated_at_wall` = 终态提交墙钟，无需迁移/新列。DUPLICATE_PLAN 锚点已改为该 `updated_at_wall`（且要求 plan 与 job 双 EXECUTED），并用真实 PG 调用既有 `state.archive_execution_terminal` 确认落盘且终态重试不改时间。`result.committed_at` 为 sim，仍不用于 wall 窗口。
+
 ## 修复轮退出命令
 
 | 命令 | 结果 |
@@ -73,4 +75,4 @@
 ## 修复后仍开放（未闭项）
 
 - 完整 G4/审批/落库/复演、领域写、evaluation_id/revision 真实分配、W4b→W3b→W4c（同原进度）。
-- REJECTED_RETRY 卡类方向、cooldown 纳入 G4 事务、`executed_at_wall` 专用列（W3b/W4c 或受控迁移组件）。
+- REJECTED_RETRY 卡类方向、cooldown 纳入 G4 事务（W3b/W4c）。
