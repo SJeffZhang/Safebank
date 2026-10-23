@@ -42,7 +42,7 @@ def _run(args: list[str], **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(args, check=True, capture_output=True, text=True, **kwargs)
 
 
-def _provision() -> GatewayDb:
+def _provision(revision: str = "head") -> GatewayDb:
     name = f"sbg-gateway-db-{os.getpid()}-{secrets.token_hex(4)}"
     port = _free_port()
     admin_pw = secrets.token_hex(16)
@@ -57,6 +57,8 @@ def _provision() -> GatewayDb:
             name,
             "--tmpfs",
             "/var/lib/postgresql/data:rw,noexec,nosuid,nodev,mode=0700",
+            "-e",
+            "PGDATA=/var/lib/postgresql/data",
             "-e",
             f"POSTGRES_PASSWORD={admin_pw}",
             "-p",
@@ -115,7 +117,7 @@ def _provision() -> GatewayDb:
             "-c",
             "services/gateway/alembic.ini",
             "upgrade",
-            "head",
+            revision,
         ]
         # Empty database, upgrade head twice must both succeed.
         _run(cmd, cwd=ROOT, env=env)
