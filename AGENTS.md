@@ -322,6 +322,24 @@
 | 2026-10-23 | Codex（S1c 实现者） | 按协调者要求同步已合并W4a的精确main d5ac9ed；冲突仅AGENTS追加日志和shared-runtime测试相邻fixture/签名，保留全部日志、W4a三Fake Engine hook spy及S1c局部PIN用例。runtime PIN生产diff和W4a锁业务均无冲突、无额外修改；协调者此前五退出全绿且独立S1c评审APPROVE。本轮同步后五退出待运行，不沿用旧计数冒称通过。 |
 
 | 2026-10-23 | Codex（S1c 实现者） | 精确同步W4a main d5ac9ed后五退出全exit0：lint169、all384/184skip（4.68s）、gateway155/136skip（3.50s）、PG17（3.72s）、shared59零skip（10.26s）；PG与专项均显式使用Docker应用内PATH、沿用tmpfs夹具。已有取消场景继续打印预期CancelledError。runtime相对64fd9aa和locks.py相对d5ac9ed的diff均为空，cached diffcheck通过；仅文档/测试冲突解决，保留双方hook spies。报告已更新，真实W1文件登录仍未验收，只本地冻结，待协调者最终复跑后发布。 |
+| 2026-10-23 | Codex（协调者） | S1b已合入最新协调文档，f5c5bc4仅文档确认后push feat/l2-wave1-state并创建PR #6（base main），已附加任务；unit两套SUCCESS，p1-postgres尚在跑，未提前merge。W2来源子组件已完成独立评审后新增验收/总日志commit c945cd8并push feat/l2-provenance检查点，完整缺口仍开放。原W1按S1c只实现自己owner的新显式PIN文件loader，共享runtime仍下一共享组件负责。 |
+
+| 2026-10-23 | Codex（协调者） | W4a轮2原owner以真实诊断定位SQLAlchemy2.1.6 pool销毁/ID复用导致event.contains注册索引假阳性；协调者核对本地_stored_in_collection源码后同意检查实际dispatcher成员，保持每pool稳定回调。e4023ed已冻结，正在亲自六门禁复跑，并改派可用独立review_w4a_fixes审d582752..e4023ed的原2P2及None-checkin新回归，尚未APPROVE。S1b PR6的CI已通过真实升级、17PG、105专项、shared-runtime，当前运行P1余下集成门禁。 |
+
+| 2026-10-23 | Codex（协调者） | PR6精确head f5c5bc4的push/PR两套unit/p1-postgres四检查全部COMPLETED SUCCESS，执行gh pr merge 6 --merge --match-head-commit成功，merge94e40fec12dd4496b978ad11e094ab321737a2fc，15:00:34Z，已fetch。W4a e4023ed亲自六退出全0：lint161/all356+99skip/gateway127+51skip/PG17/locks63零skip（9.12s）/shared51零skip（9.56s）；新评审R1/R2/None-checkin全ADDRESSED且APPROVE，实际26PG通过，已要求同步94e40fe再复测后组件PR。W1 PIN helper a7570e6冻结，正在亲自五退出验证。 |
+
+| 2026-10-23 | Codex（协调者） | W4a最终05af2ec同步版已亲自六退出全绿，文档确认37db47d后push并创建PR #7（base main），已附加任务，CI尚待完成。W1 helper经19项独立评审后，以5cf394c验收/日志提交push feat/l2-identity检查点。共享S1c从main94e40fe在复用的共享worktree建立feat/l2-pin-settings，64fd9aa已冻结，协调者复跑与独立评审中；S3a另派只读架构准备，无并行共享实施。 |
+
+| 2026-10-23 | Codex（协调者） | 已在root同步main94e40fe后实际make up exit0（镜像元数据获取耗时55秒，非产品失败；既有secret preserved、44锁定wheels校验），真实Gateway持久库SELECT版本0002_wave1。两卷CreatedAt仍12:26:36Z未删重建。make test-integration exit0：网络/凭证/DB角色、HTTP→PG→prepare/transfer/outbox、L3进程重启与幂等回放全通过；这不是尚未实现G8的验收。 |
+
+| 2026-10-23 | Codex（协调者） | PR7精确head37db47d的push/PR两套unit+p1-postgres四检查全部COMPLETED SUCCESS后执行gh pr merge 7 --merge --match-head-commit，merge d5ac9edecc0d7c35e72567aab5eba5c8328c9b60，15:12:10Z，已fetch。S1c 64fd9aa亲自五退出全0：lint166/all366+139skip（4.65s）/gateway137+91skip（3.67s）/PG17（3.07s）/shared59零skip（8.76s），独立10测试与spec/quality APPROVE；现同步新main，复测后立即组件PR。W1开始真实锁与共享状态接线。 |
+| 2026-10-23 | Codex（协调者） | W4a同步main94e40fe后05af2ec亲自actionlint及六退出全exit0：lint169、all376/184skip（4.27s）、gateway147/136skip（3.46s）、PG17（2.77s）、locks63零skip（8.26s）、shared51零skip（8.71s）。相对独立APPROVE的e4023ed业务/专属测试diff为空；同步仅解决CI/Makefile目标追加冲突并保留两边。新增验收与复审记录，准备立即push base main组件PR，远端CI全绿后merge commit。 |
+
+| 2026-10-23 | Codex（协调者） | root同步PR7最新main时仅AGENTS追加日志冲突，保留双方全部记录并解决，无业务冲突；当前S1b/PR6与W4a/PR7均已四CI全绿合并。S1c同步版363b54d已冻结，协调者最终五退出复跑中；W1接口简报获准以真实锁和共享CAS持久待对账，不伪造L3终态，缺evaluation孤儿先failclosed并报告。 |
+
+| 2026-10-23 | Codex（协调者） | S1c同步main d5ac后363b54d亲自五退出全0：lint169/all384+184skip（4.24s）/gateway155+136skip（3.49s）/PG17（2.74s）/shared59零skip（8.65s）；runtime相对独立APPROVE的64fd9aa无diff、locks相对main无diff。准备立即push/组件PR。W1真实PG发现无evaluation孤儿job无法构造revision，直接报错会回滚撤销；安排原S1b owner只读设计显式latest absent待对账/终态接口，S1c后串行补，W1不越界或伪造revision。 |
+
+| 2026-10-23 | Codex（协调者） | S1c发布前合并最新协调文档，仅AGENTS追加日志和S1b进度行冲突，保留双方全部日志、合并去重进度项，未改已评审业务代码；亲自同步版五退出与独立APPROVE均成立，准备发布。 |
 
 ## 5. 下一步待办（按顺序）
 
@@ -359,13 +377,13 @@ P0 准备阶段（决定后续一切）：
 | [x] | W0 基础骨架 | `feat/l2-foundation` / PR #2 已合并 | `docs/plans/briefs/W0-*.md`，评审 `docs/reviews/L2-W0-architecture.md` |
 | [x] | S1 共享运行层 | PR #4，merge `691cf88`；独立评审与四CI全绿 | `docs/acceptance/L2-S1-runtime.md` |
 | [x] | S2 七天预留纯函数 | PR #5，merge `a9d72cf`；真实生产接入待S3 | `docs/acceptance/L2-S2-reserve.md` |
-| [ ] | W4a 客户锁先决组件 | `feat/l2-customer-locks`（05af2ec同步版六退出通过、独立评审通过，准备PR） | `docs/plans/briefs/W4a-customer-locks.md` |
+| [x] | W4a 客户锁先决组件 | PR #7 merge d5ac9ed（六退出、独立评审及四CI全绿） | `docs/plans/briefs/W4a-customer-locks.md` |
 | [ ] | W1 身份、会话与原话 | `feat/l2-identity`（42c86f5，7缺陷与S1接线评审通过；真实锁/PIN路径/后续状态待联调） | `docs/plans/briefs/W1-identity.md` |
 | [ ] | W2 读代理、参数来源与污点 | `feat/l2-provenance`（27a067a三项修复已评审通过，来源链集成中） | `docs/plans/briefs/W2-provenance.md` |
 | [ ] | W3 快照、预演、工作流、决策与 G4 | `feat/l2-decision`（检查点3bcbe8e，共享依赖阻塞） | `docs/plans/briefs/W3-decision.md` |
 | [ ] | W4 审批与执行 | `feat/l2-execution`（3856a4c部分检查点，G8待共享状态与真实依赖） | `docs/plans/briefs/W4-execution.md` |
-| [x] | S1b / 0002_wave1 迁移与受控状态 | PR #6 已合并，merge `94e40fe` | `docs/plans/briefs/S1b-wave1-state.md` |
-| [ ] | S1c PIN Settings 接线 | `feat/l2-pin-settings`；独立APPROVE，已同步W4a且五退出通过，待协调者最终复跑/PR | `docs/plans/briefs/S1c-pin-settings.md`；证据 `docs/progress/S1c-pin-settings.md` |
+| [x] | S1b / 0002_wave1 迁移与受控状态 | PR #6已合并94e40fe（四CI成功，真实现有库升级与集成通过） | `docs/plans/briefs/S1b-wave1-state.md` |
+| [ ] | S1c PIN Settings 接线 | `feat/l2-pin-settings`；363b54d同步版亲自五退出/独立APPROVE，准备组件PR | `docs/plans/briefs/S1c-pin-settings.md`；证据 `docs/progress/S1c-pin-settings.md` |
 | [ ] | W5 定时授权、通知、审计接口、D 接口 | 波次 2，任务书未写 | L2-plan §3 W5 |
 | [ ] | W6 网关层安全验收（A8、A1/A2/A3/A5） | 波次 2，任务书未写 | L2-plan §3 W6 |
 
