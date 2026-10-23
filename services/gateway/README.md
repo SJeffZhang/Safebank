@@ -18,7 +18,7 @@ GATEWAY_PUBLIC_BIND=127.0.0.1 GATEWAY_INTERNAL_BIND=127.0.0.2 \
 - `public_app`：`:8200`，只有公共路由（G1–G22a + `/health`），**绝不注册 `/internal/*`**。
 - `internal_app`：`:8201`，**只有 `/internal/*`**（S 服务令牌），供 scheduler 回调（S1）。
 
-启动时校验授权矩阵覆盖（`auth/matrix.coverage_errors`）：已挂载路由 ⊆ 矩阵、矩阵里每条记录都有对应路由（D 路由按模式），public 不能有 `/internal/*`、internal 不能有非 `/internal/*`。
+启动时校验授权矩阵覆盖（`auth/matrix.coverage_errors`）：已挂载路由 ⊆ 矩阵、矩阵里每条记录都有对应路由（D 路由与 G22 按 DEMO/EVAL 模式），public 不能有 `/internal/*`、internal 不能有非 `/internal/*`。
 
 ## 测试
 

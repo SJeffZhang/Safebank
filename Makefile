@@ -74,6 +74,11 @@ test-gateway-db:
 test-w2:
 	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w2 -q
 .PHONY: test-w2
+
+.PHONY: test-w1
+test-w1:
+	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w1 -q
+
 .PHONY: test-shared-runtime
 test-shared-runtime:
 	GATEWAY_DB_TESTS=1 GATEWAY_SECRET_TESTS=1 .venv/bin/pytest tests/gateway/shared_runtime -q -s
