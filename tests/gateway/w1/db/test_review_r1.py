@@ -130,11 +130,14 @@ def test_r6_existing_empty_action_cannot_bypass_g3_guard(gateway_db, monkeypatch
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("separator", ["，", "。", "；", "\n", " "])
+@pytest.mark.parametrize("replacement", ["改成", "改为", "换成"])
+@pytest.mark.parametrize("unavailable", [False, True])
 def test_r7_unclear_correction_consumes_old_authority_but_preserves_execution(
-    gateway_db, monkeypatch
+    gateway_db, monkeypatch, separator, replacement, unavailable
 ):
     async def run():
-        async with harness(gateway_db, monkeypatch) as (_, client, db, _, public, clock, _):
+        async with harness(gateway_db, monkeypatch) as (_, client, db, _, public, clock, fake):
             token = await login(client)
             sid = await create(client, token, new_id("req"))
             old = (await utter(client, token, sid, "给王五800")).json()
@@ -190,9 +193,18 @@ def test_r7_unclear_correction_consumes_old_authority_but_preserves_execution(
                         scope_id=old["utterance"]["id"], plan_id=plan_id, status="CLAIMED"
                     )
                 )
-            corrected = await utter(client, token, sid, "不对，改成给赵六九百", "req_r7_correction")
+            if unavailable:
+                fake.behaviors["snapshot"] = "timeout"
+            corrected = await utter(
+                client, token, sid, f"不对{separator}{replacement}给赵六九百", "req_r7_correction"
+            )
             assert corrected.status_code == 201, corrected.text
             assert corrected.json()["utterance"]["parse_status"] == "INTENT_UNCLEAR"
+            assert corrected.json()["utterance"]["scope"]["action_kinds"] == []
+            clarification = (
+                await client.get(f"/sessions/{sid}/clarifications/current", headers=headers(token))
+            ).json()["clarification"]
+            assert clarification["kind"] == "FORM_REQUIRED"
             await cannot_load(db, sid, old, public)
             old_visible = await client.get(
                 f"/sessions/{sid}/utterances", headers=headers(old["assistant_token"], "a-test")
@@ -229,7 +241,16 @@ def test_r7_unclear_correction_consumes_old_authority_but_preserves_execution(
 
 
 @pytest.mark.parametrize(
-    "text", ["看上月消费和异常", "查询之前的转账", "不对吗", "“改成”是什么意思", "改成是什么意思"]
+    "text",
+    [
+        "看上月消费和异常",
+        "查询之前的转账",
+        "不对吗",
+        "“改成”是什么意思",
+        "改成是什么意思",
+        "“不对。改成给赵六九百”",
+        "查看备注“不对；改为给赵六九百”",
+    ],
 )
 def test_r7_read_queries_do_not_revoke_existing_write(gateway_db, monkeypatch, text):
     async def run():

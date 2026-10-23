@@ -97,20 +97,27 @@ def money_cents(text: str) -> int | None:
     return int(cents)
 
 
+# Match once so withdrawal recognition and command stripping use identical boundaries.
+CORRECTION_PREFIX = re.compile(
+    r"^(?:不对(?:[,。;.\s]+(?:改成|改为|换成)\s*|,\s*|$)|(?:改成|改为|换成)\s*)"
+)
+
+
+def _correction_body(text: str) -> str | None:
+    text = normalize(text)
+    if re.fullmatch(r"(?:改成|改为|换成)(?:是什么意思|什么意思|怎么理解)", text.rstrip(" ?。.!！")):
+        return None
+    prefix = CORRECTION_PREFIX.match(text)
+    return text[prefix.end() :] if prefix is not None else None
+
+
 def is_correction(text: str) -> bool:
-    if re.fullmatch(
-        r"(?:改成|改为|换成)(?:是什么意思|什么意思|怎么理解)", normalize(text).rstrip(" ?。.!！")
-    ):
-        return False
-    return re.match(r"^(?:不对(?:[，,]|$)|改成|改为|换成)", normalize(text)) is not None
+    return _correction_body(text) is not None
 
 
 def _command_text(text: str) -> str:
-    text = normalize(text)
-    if not is_correction(text):
-        return text
-    text = re.sub(r"^不对(?:[，,]\s*|$)", "", text, count=1)
-    return re.sub(r"^(?:改成|改为|换成)\s*", "", text, count=1)
+    body = _correction_body(text)
+    return body if body is not None else normalize(text)
 
 
 @dataclass

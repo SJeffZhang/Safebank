@@ -163,3 +163,16 @@ def test_r6_schedule_slot_cannot_promote_zero_amount_to_complete_scope():
     }
     with pytest.raises(GatewayError):
         merge_scope(clarification, {"from_account_id": "acc_zs"}, bank_state())
+
+
+@pytest.mark.parametrize("separator", ["，", "。", "；", "\n", " "])
+@pytest.mark.parametrize("replacement", ["改成", "改为", "换成"])
+def test_r7_correction_boundary_is_shared_with_command_prefix_removal(separator, replacement):
+    from services.gateway.app.utterance.parser import is_correction
+
+    text = f"不对{separator}{replacement}给赵六900"
+    assert is_correction(text)
+    result = parse(text, bank_state(), "cus_zs")
+    assert result.status == "SCOPED"
+    assert result.scope.transfers[0].target_fingerprint == "fp_zl"
+    assert result.scope.transfers[0].amount_cents == 90000
