@@ -25,7 +25,7 @@
 
 ## 未完成与真实证明范围
 
-1. **缺码**：PRD §7.5 规定 memo/alias 含账号或金额升黄；冻结 Code 缺 `MEMO_SENSITIVE_CONTENT`。精确测试 `test_memo_account_number_requires_precise_yellow_warning_code` 严格 xfail；生产对应处明确留空，没有滥用 UNKNOWN_SENSITIVE_ARG 或 INJECTION_SUSPECTED。需共享补缺加 Code/PRD 后接入并移除 xfail，当前不满足全部规则正反例退出要求。
+1. **memo/alias 检测已接线**：共享 S1d 合入后，本分支已使用 `MEMO_SENSITIVE_CONTENT / RISK_YELLOW` 落实 PRD §7.5，移除原严格 xfail。2026-10-23 本次组件实际红绿、五退出与覆盖范围见文末；此前章节中的“缺码/xfail”描述属于历史检查点，不再是当前缺口。完整 W2 仍待以下生产依赖联调。
 2. **S2/S3**：预留数学函数尚未落入本基线，完整义务投影亦未装载。测试回调只证明 W2 比对值和用途，不证明生产预留算法或真实资金安全。默认 reserve=None 显式阻塞；S3 完整数据门禁后再由 W2 接生产函数。
 3. 真实 L3 P1 仅 5/18 读：get_accounts、list_payees、get_transactions、get_cards、get_profile。snapshot 的 instructions/subscriptions/products/holdings/orders 仍默认空。订阅/理财/异常谓词和派生场景的当前证明为合成状态或 FakeL3，未声称真实联调完成。不把缺失集合当客户无义务。
 4. BankState v1 没有 split 集合，G2 对非空 get_split_status.request_id 暂无法证明所有权，保守 NOT_FOUND；等待共享实体投影/只读归属能力。其他未实现 L3 工具正常转发拒绝，未造成功。
@@ -113,3 +113,34 @@ W3 适配输入需求已报协调者：复用 W1 `utterance/service.py:scope_fro
 ### 明确未完成
 
 本组件只证明 W2 对真实持久来源数据的校验；直接 PG 造数没有调用真实 W1 G3，跨 W1 load_for_plan → W2 → W3 G4 / replay 的端到端采纳、claim 与重放仍待 W1/W3 合入后的真实联测。S1 生产缺失 W1 revocation hook 仍 fail-closed；G2 fixture substitute 不能算生产身份验收。memo/alias 缺 `MEMO_SENSITIVE_CONTENT` 的严格 xfail 仍为**未满足要求**，等待共享枚举补缺后落地；真实派生及谓词生产数据 / reserve 数据完整性待 S3。未声称 W2 全验收或全部六场景真实后端齐备。
+
+
+## S1d 后 memo / alias 黄级检测组件（2026-10-23）
+
+### 基线、范围与行为
+
+协调者已将 S1d 与最新 main 同步到本分支；本轮起点为 `50c1bdb732872ba43fecdca86d8401c77e7c0872`，工作树起始干净。只补本任务的可独立推进部分，不将本节称为完整 W2 生产验收。
+
+- `ProvenanceStage` 对 memo（transfer 与 AA）和 alias 的 ≥8 位数字或金额格式追加 `Code.MEMO_SENSITIVE_CONTENT / FindingEffect.RISK_YELLOW`，绑定具体 step_id。数字继续复用现有 `numbers()`；金额匹配复用 `normalize()` 做 NFKC/空白归一化，覆盖数字+元/人民币/CNY/RMB、人民币/CNY/RMB+数字、¥/￥及大小写形式。仅识别敏感文本，不解析/计算金额，不改阈值、共享 Code 或 registry。
+- 来源核验顺序和结果保持：合法 utterance/action 可证明 user；read（包括 trusted read）仍不是 memo/alias 许可，保留 `TAINTED_SENSITIVE_ARG / DENY`；缺失或无效 utterance 来源仍保留 `UNKNOWN_SENSITIVE_ARG / REPLAN,user`。warning 只追加，不替换或降级这些 finding。
+- 原严格 xfail 变为普通测试；新增 `test_memo_sensitive.py` 75 项，覆盖 transfer/AA memo/alias，普通中文/7位与8位边界/全角和空白/各金额格式、null/空串、read taint/unknown 来源和已保存 action 来源。action 测试只替代证明加载结果，测试生产阶段消费，不作为真实 W1 采纳链验收。
+
+### 实际红绿与完整退出
+
+- 先只修改测试：`.venv/bin/pytest tests/gateway/w2/test_memo_sensitive.py tests/gateway/w2/test_provenance.py -q` 实际 **58 failed / 21 passed**（0.40s）。失败均缺精确黄级 finding；既有来源 DENY/REPLAN 与普通文本正反例断言先行成立。
+- 实现后同命令 **79 passed**（0.24s）；再补 3 项保存 action 的兼容覆盖并限定格式化，最终同命令 **82 passed**（0.26s）。
+- 本轮最终代码五退出均 exit 0：
+  - `make lint`：ruff check 通过，**196 files already formatted**。
+  - `make test-gateway`：**317 passed / 302 skipped**（5.99s）。
+  - `PATH=/Applications/Docker.app/Contents/Resources/bin:$PATH make test-gateway-db`：**17 passed**（2.16s）。
+  - `make test`：**552 passed / 350 skipped**（6.60s）。
+  - `PATH=/Applications/Docker.app/Contents/Resources/bin:$PATH make test-w2`：**202 passed**（5.80s），**零 skip / xfail**；包含原有 **48 项真实 PostgreSQL** 来源链/读账本/reset 用例（`pytest tests/gateway/w2/db --collect-only -q` 核实48项），本轮并未跳过它们。
+- 默认 gateway / 全量入口的既有 DB/环境 skip 不算通过；W2 的48项 PG skip 已由上述专项实际执行覆盖。`git diff --check` 通过。
+
+### 本轮文件、限制与待决
+
+本轮仅修改 `services/gateway/app/pipeline/provenance.py`、`tests/gateway/w2/test_provenance.py`、新增 `tests/gateway/w2/test_memo_sensitive.py`、更新本进度文档。未修改 AGENTS（由协调者维护）、冻结契约、共享 Code、registry、W1/W3/W4文件、CI、Makefile、L3、迁移或依赖。
+
+保留真实缺口：本基线尚无真实 W1 G3 / load_for_plan / revocation hook 联调，G2 的既有 fixture substitute 仍不能证明生产鉴权；原48项真实PG造数只证明持久来源校验。S2纯函数已存在，但 S3 完整义务数据与谓词/派生场景生产投影仍未交付，默认 `reserve=None` 继续显式阻塞，未用 FakeL3 代替生产能力。W3整决策保留YELLOW和W4非空原文展示/view_hash绑定仍需各owner真实联测。本轮未运行真实L3完整业务、完整演示、浏览器/BFF、银行并发或 replay。
+
+未运行 make up/down/test-p1，未删除或重建任何Docker数据卷，未派生agent，未push/PR/merge；仅本地提交冻结，交协调者亲自复跑与独立审后处理检查点及完整W2交付。

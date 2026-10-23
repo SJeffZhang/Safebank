@@ -25,6 +25,11 @@ _PATTERNS = tuple(
         (Path(__file__).resolve().parents[2] / "policies/injection_patterns.yaml").read_text()
     )["patterns"]
 )
+_MONEY_PATTERN = re.compile(
+    r"[0-9]+(?:\.[0-9]{1,2})?(?:元|人民币|CNY|RMB)"
+    r"|(?:人民币|CNY|RMB)[0-9]+(?:\.[0-9]{1,2})?|[¥￥]",
+    re.I,
+)
 _MISSING = object()
 
 
@@ -209,14 +214,13 @@ class ProvenanceStage(Stage):
                 if (
                     param in ("memo", "alias")
                     and isinstance(value, str)
-                    and (
-                        numbers(value)
-                        or re.search(r"[0-9]+(?:\.[0-9]{1,2})?\s*(元|人民币|CNY)|[¥￥]", value)
-                    )
+                    and (numbers(value) or _MONEY_PATTERN.search(normalize(value)))
                 ):
-                    # Pending shared Code.MEMO_SENSITIVE_CONTENT (YELLOW).
-                    # Do not misuse an existing code with a different effect.
-                    pass
+                    ctx.add(
+                        Code.MEMO_SENSITIVE_CONTENT,
+                        FindingEffect.RISK_YELLOW,
+                        step_id=step.step_id,
+                    )
             verified[step.step_id] = results
             previous[step.step_id] = step
         ctx.provenance.arg_sources = verified

@@ -1,7 +1,6 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 
-import pytest
 from safebank_contracts.codes import Code
 
 from services.gateway.app.pipeline.entity import EntityStage
@@ -143,10 +142,6 @@ def test_echoed_new_payee_and_outflow_denied_even_with_user_sources():
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Frozen Code enum lacks MEMO_SENSITIVE_CONTENT; coordinator decision pending",
-)
 def test_memo_account_number_requires_precise_yellow_warning_code():
     s = step(payee_id="pye_b", memo="6222020000000099")
     s["arg_sources"] = [source("memo", ref="utt_1", span=[0, 16])]
