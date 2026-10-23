@@ -253,6 +253,8 @@
 
 | 2026-10-23 | Codex（协调者） | S2同步main691cf88后独立评审发现UTC与上海同瞬间误拒绝（P1），原owner修复e25b140。协调者亲自四退出全部exit0：lint158、全量338/54skip（4.30s）、reserve110零skip（0.09s）、contracts PASS；原review_s2定点110 passed并APPROVE，R1关闭。新增docs/acceptance/L2-S2-reserve.md，准备单独base main PR；只交付纯预留组件，真实L3快照/其他窗口仍待S3，尚未远端CI或合并。 |
 
+| 2026-10-23 | Codex（协调者） | W2来源链269469b独立review_w2_lineage规格PASS/质量APPROVE，真实PG46+关联25通过，协调者五退出记录在L2-W2-lineage验收报告。按用户逐组件推送要求，推送feat/l2-provenance检查点留存；完整W2仍有memo严格xfail、S3与跨W1/W3联调缺口，不作为完整交付开合并PR。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
