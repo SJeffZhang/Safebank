@@ -23,3 +23,15 @@ PIN错误计数可提交并行锁防丢失；JWT jti持久化，归属/撤销/�
 ## 修复轮1
 
 原实现agent修复上述全部问题，逐项记录覆盖测试、命令和输出；协调者复跑后由原评审定点复审d9a1b56..新HEAD。未通过前不开PR。
+
+定点复审d9a1b56..cc32e55：1–6 ADDRESSED，7 NOT ADDRESSED，REQUEST_CHANGES。协调者五退出全部通过（W1 1514零skip，23真实PG），但以下同根问题未覆盖。
+
+## 修复轮2：明确改口的分隔符边界
+
+parser.py:105,112只识别“不对,”，service.py:364,457因而遗漏旧授权作废。`不对。改成给赵六九百`、`不对；改成给赵六九百`、换行、空格四种形式is_correction=False且INTENT_UNCLEAR空scope；旧“给王五800”仍ACTIVE，同epoch。评审纯函数探针及协调者亲自is_correction探针均复现，逗号为True、其余四种False。没有运行这些新增变体的HTTP/PG，不冒称该链已实际执行。
+
+统一改口识别与前缀剥离的边界；明确“不对+分隔符+改成/改为/换成”即使后续金额不支持也先撤旧scope。参数化真实PG回归旧SUPERSEDED/旧JWT loader拒绝/G20不返回，新原话FORM_REQUIRED、执行状态与claim保留；L3不可用仍撤旧；不对吗/普通查询/引用内容不误撤。原实现agent修该剩余项，不扩大其他业务。修复后再定点复审cc32e55..新HEAD，再同步main并真实联调。
+
+## 修复轮2：7250105
+
+原问题7 ADDRESSED，独立review_w1定点APPROVE；句号、分号、空白和换行统一识别/剥离，查询与引用不误撤。评审实际18 passed/42 deselected及手动探针。协调者全部五退出exit0，W1 1560 passed零skip（54项真实PG）；其他计数见AGENTS §4。原七问题已关闭；真实S1运行接线、W4锁、后续状态集成尚未完成，不等于完整W1交付。
