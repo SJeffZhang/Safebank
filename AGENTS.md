@@ -304,6 +304,12 @@
 
 | 2026-10-23 | Codex（协调者） | S1b实现者完整退出发现旧test_ddl_drift把当前metadata等同冻结v1，在增量0002后1 failed/357 passed/138 skipped；允许仅该测试改为精确核对0002四列/CHECK增量并保留历史v1和真实PG最新drift保护，禁止改历史快照或删测试。上述及test_state_keys、W4a三fake Engine适配已补入各任务书，属于测试边界修正，仍待协调者完整复跑。 |
 
+| 2026-10-23 | Codex（协调者） | W2来源链小组件269469b（已同步main a9）亲自五退出全部exit0：lint178；all416 passed/102 skipped/1 xfailed（6.49s）；gateway187/54skip/1xfail（5.63s）；PG17（2.27s）；W2 126/1xfail（5.98s，48真实PG）。已派原review_w2独立审新增来源链；PG造数不等于真实W1 G3联调，memo严格xfail仍未满足，不开完整W2 PR。S1b自报六退出绿，正在形成冻结提交，尚未计为协调者验收。 |
+
+| 2026-10-23 | Codex（协调者） | 用户重申每组件完成必须推送GitHub、同步总AGENTS，并允许开发中正常迭代PRD；已固化8.1/8.5。核对仓库allow_auto_merge=true，但只有checks.yml、main protected=false，最近PR无autoMergeRequest；继续按既有授权在评审通过和精确head全部CI成功后手动merge commit，不依赖无保护分支自动等待。原review_w2/review_w4a因模型额度错误未完成，已改派可用标准模型独立只读评审，不能把中断算通过。 |
+
+| 2026-10-23 | Codex（协调者） | S1b HEAD8b151bc亲自六退出全exit0：lint166、all358/139skip（4.14s）、gateway129/91skip（3.46s）、PG17（2.09s）、wave1-state105零skip（7.74s）、contracts PASS，已派独立review_s1b_state。W4a修复22d8e04亲自复跑：lint161/all356+97skip/gateway127+49skip/PG17通过，locks1 failed/60 passed（8.78s），None checkin后record_info残留active owner；make短路，shared-runtime本轮未运行，未计通过。原owner修复轮2定位根因，未开PR。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
@@ -389,6 +395,7 @@ P0 准备阶段（决定后续一切）：
 - **所有操作都要写进本文件 §4 进度日志**：包括文件的创建、改名、删除、恢复，文档改版，调研与核实结论，subagent 审核结果，以及失败或中断的工作。不要等到收尾才补记，每完成一步就记一步。
 
 ### 8.1 开发
+- **PRD持续迭代（用户2026-10-23重申）**：开发中发现需求遗漏、接口歧义或必要设计变化时，及时更新PRD相关段落，并记录依据与ADR；同步任务书和验收条件，保持文档与已验证行为一致。
 - Python 3.12（容器内）；依赖在 `pyproject.toml` 中**锁定精确版本**。新增依赖前确认它是知名、活跃维护的包。
 - 风格：`ruff` + `ruff format`；类型标注齐全；Pydantic v2。
 - 每个服务的 README 写清启动、测试、环境变量。
@@ -415,6 +422,7 @@ P0 准备阶段（决定后续一切）：
 
 ### 8.5 Git
 - 主分支 `main`；功能分支 `feat/<层>-<功能>`。
+- **组件发布长期授权（用户2026-10-23重申）**：每个组件完成亲自验收与独立评审后立即推送分支并开base main PR，更新本文件§3/§4/§5与相关PRD。当前提交全部CI成功后使用merge commit合并，无须逐个确认；未验证、失败或评审中断不算完成。仓库当前main无保护，自动合并功能开启不等于必需检查门禁，协调者须核对实际检查结果。
 - 只有在用户要求时才提交；提交前检查是否混入 `.env` 等敏感文件。
 
 ## 9. 常用命令（脚手架建好后生效）
