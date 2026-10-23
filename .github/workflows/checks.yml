@@ -25,6 +25,7 @@ jobs:
       - run: make test-postgres-bootstrap
       - run: make up
       - run: make test-gateway-db
+      - run: make test-customer-locks
       - run: make test-wave1-state
       - run: make test-shared-runtime
       - run: make test-p1
