@@ -1,5 +1,5 @@
 from dataclasses import FrozenInstanceError
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -507,6 +507,16 @@ def test_mandate_with_missing_billing_fails():
         bankcore.projected_shortfall(state)
 
 
+def test_mandate_billing_account_must_match_source_account():
+    state = raw_projection_state(
+        mandates=(raw_mandate(from_account_id="acc_s"),),
+        billings=(raw_billing(),),  # account_id acc_a != acc_s
+        merchants=(raw_merchant(),),
+    )
+    with pytest.raises(ValueError, match="account"):
+        bankcore.projected_shortfall(state)
+
+
 def test_unknown_subscription_account_is_rejected():
     billing = raw_billing(account_id="acc_missing")
     state = raw_projection_state(
@@ -748,3 +758,120 @@ def test_report_offsets_preserve_same_seven_day_obligations(offset_hours):
     report = bankcore.projected_shortfall(state)
     assert [due.due_at.isoformat() for due in report.obligations] == ["2026-10-18T06:00:00+08:00"]
     assert report.accounts["acc_a"].reserve_cents == 1000
+
+
+@pytest.mark.parametrize("end_shift_microseconds", [0, -1])
+def test_raw_mixed_offset_window_and_end_at_compare_instants(end_shift_microseconds):
+    end = NOW + timedelta(days=7)
+    item = raw_instruction(
+        period="WEEKLY",
+        weekday=3,
+        time_of_day=time(9, 0),
+        next_run_at=NOW.astimezone(UTC),
+        end_at=(end + timedelta(microseconds=end_shift_microseconds)).astimezone(
+            timezone(timedelta(hours=14))
+        ),
+    )
+    state = raw_projection_state(instructions=(item,)).model_copy(
+        update={"sim_now": NOW.astimezone(timezone(timedelta(hours=-7)))}
+    )
+    report = bankcore.projected_shortfall(state)
+    assert [due.due_at.isoformat() for due in report.obligations] == (
+        ["2026-10-22T09:00:00+08:00"] if end_shift_microseconds == 0 else []
+    )
+
+
+def test_raw_mixed_offset_report_keeps_merchant_and_scheduled_window_boundaries():
+    end = NOW + timedelta(days=7)
+    state = raw_projection_state(
+        instructions=(
+            raw_instruction(
+                period="WEEKLY",
+                weekday=3,
+                time_of_day=time(9, 0),
+                next_run_at=NOW.astimezone(UTC),
+                end_at=end.astimezone(timezone(timedelta(hours=14))),
+            ),
+        ),
+        mandates=(
+            raw_mandate(),
+            raw_mandate(id="si_end", billing_id="bill_end"),
+            raw_mandate(id="si_late", billing_id="bill_late"),
+        ),
+        billings=(
+            raw_billing(
+                period="MONTHLY",
+                anchor_day=15,
+                weekday=None,
+                time_of_day=time(9, 0),
+                next_due_at=NOW.astimezone(UTC),
+            ),
+            raw_billing(
+                id="bill_end",
+                period="WEEKLY",
+                anchor_day=None,
+                weekday=3,
+                time_of_day=time(9, 0),
+                next_due_at=end.astimezone(timezone(timedelta(hours=-7))),
+            ),
+            raw_billing(
+                id="bill_late",
+                period="WEEKLY",
+                anchor_day=None,
+                weekday=3,
+                time_of_day=time(9, 0, 1),
+                next_due_at=(end + timedelta(seconds=1)).astimezone(UTC),
+            ),
+        ),
+        merchants=(raw_merchant(),),
+    ).model_copy(update={"sim_now": NOW.astimezone(timezone(timedelta(hours=-7)))})
+    report = bankcore.projected_shortfall(state)
+    assert [(due.due_at.isoformat(), due.rank, due.id) for due in report.obligations] == [
+        ("2026-10-22T09:00:00+08:00", 3, "si_1"),
+        ("2026-10-22T09:00:00+08:00", 4, "bill_end"),
+    ]
+    assert report.accounts["acc_a"].reserve_cents == 4000
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"time_of_day": time(22, 0)},
+        {"period": "WEEKLY", "weekday": 5},
+        {"period": "MONTHLY", "anchor_day": 17},
+    ],
+)
+def test_raw_wrong_shanghai_time_or_anchor_is_rejected(updates):
+    item = raw_instruction(**updates)
+    state = raw_projection_state(instructions=(item,))
+    with pytest.raises(ValueError):
+        bankcore.projected_shortfall(state)
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"time_of_day": time(22, 0)},
+        {"period": "WEEKLY", "anchor_day": None, "weekday": 5},
+        {"period": "MONTHLY", "anchor_day": 17},
+    ],
+)
+def test_raw_billing_wrong_shanghai_time_or_anchor_is_rejected(updates):
+    billing = raw_billing(**updates)
+    state = raw_projection_state(
+        mandates=(raw_mandate(),), billings=(billing,), merchants=(raw_merchant(),)
+    )
+    with pytest.raises(ValueError):
+        bankcore.projected_shortfall(state)
+
+
+def test_inactive_billing_is_not_reserved_but_billing_stays():
+    state = raw_projection_state(
+        mandates=(raw_mandate(),),
+        billings=(raw_billing(active=False),),
+        merchants=(raw_merchant(),),
+    )
+    report = bankcore.projected_shortfall(state)
+    assert report.obligations == ()
+    assert report.total_reserve_cents == 0
+    assert "bill_video" in state.obligations.billings

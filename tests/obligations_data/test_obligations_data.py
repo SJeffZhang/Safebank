@@ -5,7 +5,7 @@ import hashlib
 import socket
 import threading
 from copy import deepcopy
-from datetime import timedelta
+from datetime import time, timedelta
 from pathlib import Path
 
 import httpx
@@ -16,13 +16,19 @@ from alembic.migration import MigrationContext
 from app import models as m
 from app.db import engine, ready
 from app.main import create_app
-from app.state import load_bank_state, persist, resolve_scope
+from app.state import fingerprint, load_bank_state, resolve_scope
 from safebank_bankcore import projected_shortfall
 from safebank_bankcore.banking import Context, apply_transfer
-from safebank_bankcore.ledger import post_transfer
-from safebank_contracts.obligations import InstructionRun
-from safebank_contracts.plan import PlanBody, SnapshotRequest
-from safebank_contracts.state import BankState, LedgerTransfer
+from safebank_contracts.enums import Risk
+from safebank_contracts.obligations import InstructionRun, ScheduledInstruction
+from safebank_contracts.plan import (
+    Execute,
+    InteractiveEvidence,
+    PlanBody,
+    Prepare,
+    SnapshotRequest,
+)
+from safebank_contracts.state import BankState
 from safebank_contracts.tools import Transfer
 from sqlalchemy import ForeignKeyConstraint, text
 from sqlalchemy.exc import DBAPIError
@@ -57,10 +63,17 @@ def free_port() -> int:
         return sock.getsockname()[1]
 
 
-def _transfer_steps():
+def _transfer_steps(amount_cents=80000):
     return PlanBody(
         intents=(),
-        steps=[step(from_account_id="acc_zs_chk", payee_id="pye_zs_ww", to_account_id=None)],
+        steps=[
+            step(
+                from_account_id="acc_zs_chk",
+                payee_id="pye_zs_ww",
+                to_account_id=None,
+                amount_cents=amount_cents,
+            )
+        ],
         rationale="test",
     ).steps
 
@@ -159,6 +172,24 @@ def _serve(app, port):
     return server
 
 
+def _green_evidence(plan_hash: str) -> InteractiveEvidence:
+    return InteractiveEvidence(
+        type="INTERACTIVE",
+        origin="agent",
+        scope_ids=("utt_1",),
+        utterance_ids=("utt_1",),
+        evaluation_id="evl_1",
+        approved_evaluation_id=None,
+        plan_hash=plan_hash,
+        approval_id=None,
+        confirmed_view_hash=None,
+        final_view_hash=plan_hash,
+        risk=Risk.GREEN,
+        confirmed_at_wall=None,
+        authorization_epoch=0,
+    )
+
+
 def test_real_http_snapshot_feeds_s2_projection(obligations_db):
     async def check():
         admin = engine(obligations_db.admin_url, poolclass=NullPool)
@@ -167,38 +198,43 @@ def test_real_http_snapshot_feeds_s2_projection(obligations_db):
             await install_core(conn)
             await install_obligations(conn)
 
-        steps = _transfer_steps()
-        async with runtime.begin() as conn:
-            scope = await resolve_scope(conn, "cus_zs", steps, KEY)
-            before = await load_bank_state(conn, scope, NOW, customer_id="cus_zs")
-            cmd = LedgerTransfer(
-                id="trf_prd_300000",
-                debit_account_id="acc_zs_chk",
-                credit_account_id="acc_ww_chk",
-                amount_cents=300000,
-                code="P2P_INTERNAL",
-                phase="POSTED",
-                pending_id=None,
-                plan_id="pln_prd",
-                step_id="s1",
-                occurred_at=NOW,
-                expires_at=None,
-            )
-            _, effects, errors = post_transfer(before, cmd, NOW)
-            assert errors == ()
-            await persist(conn, effects)
+        steps = _transfer_steps(300000)
+        plan_hash = "hash_prd_http"
+        evidence = _green_evidence(plan_hash)
+        deadline = "2099-01-01T00:00:00Z"
+        prepare_body = Prepare(
+            customer_id="cus_zs",
+            plan_id="pln_prd_http",
+            attempt=1,
+            plan_hash=plan_hash,
+            steps=steps,
+            deadline_wall=deadline,
+            deadline_cap_wall=deadline,
+            authorization_evidence=evidence,
+        )
+        execute_body = Execute(
+            customer_id="cus_zs",
+            plan_id="pln_prd_http",
+            attempt=1,
+            plan_hash=plan_hash,
+            steps=steps,
+            expected_versions={"cus_zs": 0, "cus_ww": 0},
+            clock_version=1,
+            authorization_evidence=evidence,
+        )
 
         app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
         port = free_port()
         _serve(app, port)
-        body = SnapshotRequest(customer_id="cus_zs", steps=steps, event_id=None)
+        headers = {"X-Service-Token": SERVICE_TOKEN}
+        snapshot = SnapshotRequest(customer_id="cus_zs", steps=steps, event_id=None)
         async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
             for _ in range(40):
                 try:
-                    response = await client.post(
-                        "/internal/snapshot",
-                        json=body.model_dump(mode="json"),
-                        headers={"X-Service-Token": SERVICE_TOKEN},
+                    prepared = await client.post(
+                        "/internal/plans/prepare",
+                        json=prepare_body.model_dump(mode="json"),
+                        headers=headers,
                         timeout=2.0,
                     )
                     break
@@ -206,7 +242,23 @@ def test_real_http_snapshot_feeds_s2_projection(obligations_db):
                     await asyncio.sleep(0.2)
             else:
                 raise RuntimeError("uvicorn listener never became ready")
-        assert response.status_code == 200
+            assert prepared.status_code == 200, prepared.text
+            assert prepared.json()["status"] == "PREPARED"
+            executed = await client.post(
+                "/internal/plans/execute",
+                json=execute_body.model_dump(mode="json"),
+                headers=headers,
+                timeout=10.0,
+            )
+            assert executed.status_code == 200, executed.text
+            assert executed.json()["status"] == "EXECUTED"
+            response = await client.post(
+                "/internal/snapshot",
+                json=snapshot.model_dump(mode="json"),
+                headers=headers,
+                timeout=10.0,
+            )
+        assert response.status_code == 200, response.text
         state = BankState.model_validate_json(response.text)
         assert state.accounts["acc_zs_chk"].available_cents == 300000
         assert set(state.obligations.covered_customer_ids) == {"cus_zs", "cus_ww"}
@@ -218,10 +270,40 @@ def test_real_http_snapshot_feeds_s2_projection(obligations_db):
             "si_zs_gym",
         }
         assert "si_ls_video" not in state.obligations.standing_instructions
+        # The real execute path bumped each scoped customer exactly once.
+        assert state.versions == {"cus_zs": 1, "cus_ww": 1}
         report = projected_shortfall(state)
         assert report.accounts["acc_zs_chk"].reserve_cents == 4500
         assert report.accounts["acc_zs_chk"].max_outflow_cents == 295500
         assert report.total_reserve_cents == 4500
+
+        async with admin.connect() as conn:
+            status = await conn.scalar(
+                text(
+                    "SELECT status FROM execution_intents "
+                    "WHERE customer_id='cus_zs' AND plan_id='pln_prd_http'"
+                )
+            )
+            assert status == "COMMITTED"
+            assert (
+                await conn.scalar(
+                    text(
+                        "SELECT count(*) FROM plan_executions "
+                        "WHERE customer_id='cus_zs' AND plan_id='pln_prd_http'"
+                    )
+                )
+                == 1
+            )
+            assert (
+                await conn.scalar(
+                    text(
+                        "SELECT count(*) FROM operation_events "
+                        "WHERE customer_id='cus_zs' AND plan_id='pln_prd_http'"
+                    )
+                )
+                >= 1
+            )
+            assert (await conn.scalar(text("SELECT count(*) FROM outbox"))) >= 1
 
         for amount, expected_shortfall in [(295500, 0), (295501, 1)]:
             candidate, _, errors = apply_transfer(
@@ -269,7 +351,8 @@ def test_empty_scope_returns_complete_empty_snapshot(obligations_db):
     asyncio.run(check())
 
 
-def test_run_f1_matrix_rejects_unlinked_success_and_keeps_history(obligations_db):
+@pytest.mark.parametrize("final_status", ["DELETED", "DISABLED"])
+def test_run_f1_matrix_rejects_unlinked_success_and_keeps_history(obligations_db, final_status):
     async def check():
         admin = engine(obligations_db.admin_url, poolclass=NullPool)
         runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
@@ -352,7 +435,7 @@ def test_run_f1_matrix_rejects_unlinked_success_and_keeps_history(obligations_db
             await conn.execute(
                 m.standing_instructions.update()
                 .where(m.standing_instructions.c.id == "si_zs_video")
-                .values(status="DELETED")
+                .values(status=final_status)
             )
 
         async with runtime.connect() as conn:
@@ -364,7 +447,224 @@ def test_run_f1_matrix_rejects_unlinked_success_and_keeps_history(obligations_db
                 runs = {r.id: r for r in state.obligations.runs}
                 assert runs["run_zs_success"].instruction_id == "si_zs_video"
                 assert runs["run_zs_blocked"].instruction_id is None
-                assert state.obligations.standing_instructions["si_zs_video"].status == "DELETED"
+                assert state.obligations.standing_instructions["si_zs_video"].status == final_status
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_runs_append_only_and_bank_ro_read_only(obligations_db):
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        ro = engine(obligations_db.ro_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+            blocked = dict(
+                id="run_x",
+                customer_id="cus_zs",
+                account_id="acc_zs_chk",
+                kind="MERCHANT_MANDATE",
+                instruction_id=None,
+                billing_id="bill_zs_video",
+                due_at=NOW - timedelta(days=1),
+                event_id="evt_x",
+                status="BLOCKED",
+                code="MANDATE_NOT_ACTIVE",
+                amount_cents=3000,
+                transfer_id=None,
+            )
+            await conn.execute(m.instruction_runs.insert().values(**blocked))
+            # Append-only trigger rejects UPDATE even for the table owner.
+            with pytest.raises(DBAPIError):
+                await conn.execute(text("UPDATE instruction_runs SET code='x' WHERE id='run_x'"))
+        async with ro.connect() as conn:
+            with pytest.raises(DBAPIError):
+                await conn.execute(text("INSERT INTO instruction_runs (id) VALUES ('run_ro')"))
+            with pytest.raises(DBAPIError):
+                await conn.execute(text("UPDATE instruction_runs SET code='x' WHERE id='run_x'"))
+        await admin.dispose()
+        await ro.dispose()
+
+    asyncio.run(check())
+
+
+def test_ownership_other_target_does_not_recurse_third_customer(obligations_db):
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+            sb_no = "6222020000000005"
+            await conn.execute(
+                m.payees.insert().values(
+                    id="pye_ww_sb",
+                    customer_id="cus_ww",
+                    name="哨兵收款人",
+                    alias="哨兵别名",
+                    phone=None,
+                    bank_name="本行",
+                    account_no=sb_no,
+                    target_account_id="acc_sb_chk",
+                    target_fingerprint=fingerprint(sb_no, KEY),
+                    created_at=NOW,
+                )
+            )
+            own = ScheduledInstruction(
+                id="si_zs_own",
+                customer_id="cus_zs",
+                status="ACTIVE",
+                from_account_id="acc_zs_chk",
+                payee_id=None,
+                to_account_id="acc_zs_sav",
+                amount_cents=1000,
+                period="ONCE",
+                anchor_day=None,
+                weekday=None,
+                time_of_day=time(6, 0),
+                next_run_at="2026-10-18T06:00:00+08:00",
+                end_at=None,
+                priority="HIGH",
+                grant_scope_hash="0" * 64,
+                source_plan_id="pln_seed",
+                created_at=NOW,
+            )
+            other = ScheduledInstruction(
+                id="si_ww_sb",
+                customer_id="cus_ww",
+                status="ACTIVE",
+                from_account_id="acc_ww_chk",
+                payee_id="pye_ww_sb",
+                to_account_id=None,
+                amount_cents=5000,
+                period="MONTHLY",
+                anchor_day=20,
+                weekday=None,
+                time_of_day=time(6, 0),
+                next_run_at="2026-10-20T06:00:00+08:00",
+                end_at=None,
+                priority="HIGH",
+                grant_scope_hash="0" * 64,
+                source_plan_id="pln_seed",
+                created_at=NOW,
+            )
+            await conn.execute(
+                m.standing_instructions.insert().values(**own.model_dump(mode="python"))
+            )
+            await conn.execute(
+                m.standing_instructions.insert().values(**other.model_dump(mode="python"))
+            )
+
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        body = SnapshotRequest(customer_id="cus_zs", steps=_transfer_steps(), event_id=None)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            for _ in range(40):
+                try:
+                    response = await client.post(
+                        "/internal/snapshot",
+                        json=body.model_dump(mode="json"),
+                        headers={"X-Service-Token": SERVICE_TOKEN},
+                        timeout=2.0,
+                    )
+                    break
+                except httpx.TransportError:
+                    await asyncio.sleep(0.2)
+            else:
+                raise RuntimeError("uvicorn listener never became ready")
+        assert response.status_code == 200, response.text
+        state = BankState.model_validate_json(response.text)
+        assert set(state.obligations.covered_customer_ids) == {"cus_zs", "cus_ww"}
+        assert "cus_sb" not in state.customers
+        assert "acc_sb_chk" not in state.accounts
+        assert "cus_sb" not in state.versions
+        assert "13900009999" not in response.text
+        assert "哨兵收款人" not in response.text
+        assert "哨兵别名" not in response.text
+
+        target = state.obligations.instruction_targets["si_ww_sb"]
+        assert target.ownership == "OTHER"
+        assert target.target_account_id == "acc_sb_chk"
+        assert target.target_customer_id == "cus_sb"
+        own_target = state.obligations.instruction_targets["si_zs_own"]
+        assert own_target.ownership == "OWN"
+        assert own_target.target_account_id == "acc_zs_sav"
+
+        report = projected_shortfall(state)
+        legs = {
+            (o.id, o.account_id, o.delta_cents) for o in report.obligations if o.id == "si_zs_own"
+        }
+        assert ("si_zs_own", "acc_zs_chk", -1000) in legs
+        assert ("si_zs_own", "acc_zs_sav", 1000) in legs
+        assert report.accounts["acc_zs_sav"].reserve_cents == 0
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_repeatable_read_snapshot_isolation(obligations_db):
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        body = SnapshotRequest(customer_id="cus_zs", steps=_transfer_steps(), event_id=None)
+
+        async with runtime.connect() as conn:
+            await conn.execution_options(isolation_level="REPEATABLE READ")
+            async with conn.begin():
+                await conn.execute(text("SET TRANSACTION READ ONLY"))
+                scope = await resolve_scope(conn, "cus_zs", _transfer_steps(), KEY)
+                before = await load_bank_state(conn, scope, NOW, customer_id="cus_zs")
+                assert before.obligations.billings["bill_zs_video"].amount_cents == 3000
+                assert before.versions["cus_zs"] == 0
+
+                async with admin.begin() as writer:
+                    await writer.execute(
+                        m.merchant_billing.update()
+                        .where(m.merchant_billing.c.id == "bill_zs_video")
+                        .values(amount_cents=4000)
+                    )
+                    await writer.execute(
+                        m.state_versions.update()
+                        .where(m.state_versions.c.customer_id == "cus_zs")
+                        .values(version=1)
+                    )
+
+                after = await load_bank_state(conn, scope, NOW, customer_id="cus_zs")
+                assert after.obligations.billings["bill_zs_video"].amount_cents == 3000
+                assert after.versions["cus_zs"] == 0
+                with pytest.raises(DBAPIError):
+                    async with conn.begin_nested():
+                        await conn.execute(text("UPDATE state_versions SET version=9"))
+
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            for _ in range(40):
+                try:
+                    response = await client.post(
+                        "/internal/snapshot",
+                        json=body.model_dump(mode="json"),
+                        headers={"X-Service-Token": SERVICE_TOKEN},
+                        timeout=2.0,
+                    )
+                    break
+                except httpx.TransportError:
+                    await asyncio.sleep(0.2)
+            else:
+                raise RuntimeError("uvicorn listener never became ready")
+        assert response.status_code == 200, response.text
+        state = BankState.model_validate_json(response.text)
+        assert state.obligations.billings["bill_zs_video"].amount_cents == 4000
+        assert state.versions["cus_zs"] == 1
         await admin.dispose()
         await runtime.dispose()
 

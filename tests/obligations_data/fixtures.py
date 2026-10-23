@@ -31,8 +31,14 @@ def at(value: str) -> datetime:
 
 
 async def install_core(conn) -> None:
+    # cus_sb carries a sentinel phone so ownership/privacy tests can prove it never
+    # leaks into a snapshot whose scope does not include that customer.
     customers = {
-        cid: Customer(id=cid, display_name=name, phone="13800000000")
+        cid: Customer(
+            id=cid,
+            display_name=name,
+            phone="13900009999" if cid == "cus_sb" else "13800000000",
+        )
         for cid, name in [
             ("cus_zs", "张三"),
             ("cus_ls", "李四"),
@@ -141,6 +147,7 @@ async def install_core(conn) -> None:
     await conn.execute(
         m.clock.insert().values(id=1, sim_now=NOW, version=1, dataset_revision=DATASET)
     )
+    return state
 
 
 async def install_obligations(conn) -> None:

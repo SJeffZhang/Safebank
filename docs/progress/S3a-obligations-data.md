@@ -80,8 +80,32 @@ ADR-009 与已 APPROVE 的 `docs/plans/briefs/S3a-model-proposal.md` 实施，�
   留后续（提案 §7 已明示）。
 - `target_display` 对请求客户统一用固定描述（本人/本行/他行收款人），不携带联系人文字；
   请求客户自身的 payee 名展示属 R7 展示细节，未在本组件实现（保守选择，避免泄漏）。
-- 真实执行经 `post_transfer`+`persist`（与 seed 同一纯函数/persist 路径）而非完整
-  InteractiveEvidence prepare/execute；完整执行链已由 P1 门禁覆盖，本组件聚焦快照正确性。
+
+## 评审修复轮（`docs/reviews/L2-S3a-implementation-review.md`，2 P1 + 7 P2）
+
+- **P1-1 0002 升级保留门禁**：新增 `tests/obligations_data/test_0002_upgrade.py` + 会话级
+  `obligations_0002_db` fixture（先 `upgrade 0002_identity`）。真实 ledger/persist 生成
+  posted/pending/transactions，并以 P1 ExecutionService 行形（raw SQL，注明来源
+  `services/bank-backend/app/execution.py`）落三类 intent/evidence_history/plan_execution/
+  operation/outbox、客户/clock 版本；`_capture` 采集全部旧表行+序列+权限基线 → upgrade head
+  两次 → 逐字段相等；再真实 `prepare/query/reconcile/replay`（含 COMMITTED 重放 `replayed=True`）。
+  未用最新 head 造数冒充旧库，未改生产 loader。
+- **P1-2 真实 prepare/execute 链**：`test_real_http_snapshot_feeds_s2_projection` 改为真实 TCP
+  `/internal/plans/prepare`+`/execute`（正确 InteractiveEvidence、GREEN），再 snapshot→S2；
+  断言双方 version 各增一次、intent COMMITTED、plan_execution/operation/outbox 落盘、
+  reserve 4500 / max 295500。原 `post_transfer`+`persist` 样本删除。
+- **P2-1**：fixture 给 cus_sb 设哨兵电话、新增 OWN（si_zs_own）/OTHER（si_ww_sb→cus_sb）指令，
+  真实 HTTP 断言 covered 不含 cus_sb、哨兵电话/别名/收款人名不泄露、OWN 贷借腿正确。
+- **P2-2**：RR READ ONLY 首读后另一事务改 billing+增版本，同 conn loader 仍旧值、只读写被拒、
+  新 HTTP snapshot 见新值。
+- **P2-3**：恢复 raw 路径混合 offset 窗口/end_at 与「错误上海钟面/锚点拒绝」（scheduled 与
+  billing 两路 `_check_calendar`）。
+- **P2-4**：`billing.active=False` + ACTIVE mandate 不预留且账单仍在。
+- **P2-5**：F1 矩阵参数化 DELETED/DISABLED，均保留 SUCCESS 历史与 last_run 来源。
+- **P2-6**：`_validate_mandate_billing` 增 `billing.account_id != from_account_id` 拒绝；先写
+  model_copy 红测（确认旧码不拒）再补 guard 转绿。
+- **P2-7**：instruction_runs 的 UPDATE 被只追加触发器拒绝（owner 级），bank_ro 的 INSERT/UPDATE
+  被权限拒绝。
 
 ## 需协调者串行跑的全栈门禁
 

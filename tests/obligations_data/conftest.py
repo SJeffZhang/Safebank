@@ -101,31 +101,32 @@ def _provision() -> ObligationsDb:
         admin_url = f"postgresql://postgres:{admin_pw}@127.0.0.1:{port}/bank_obligations_test"
         runtime_url = f"postgresql://bank_app:{app_pw}@127.0.0.1:{port}/bank_obligations_test"
         ro_url = f"postgresql://bank_ro:{ro_pw}@127.0.0.1:{port}/bank_obligations_test"
-        pythonpath = os.pathsep.join(
-            str(ROOT / p)
-            for p in ("packages/contracts/src", "packages/bankcore/src", "services/bank-backend")
-        )
-        env = {
-            **os.environ,
-            "BANK_MIGRATION_DATABASE_URL": admin_url,
-            "PYTHONPATH": pythonpath + os.pathsep + str(ROOT),
-        }
-        cmd = [
-            sys.executable,
-            "-m",
-            "alembic",
-            "-c",
-            "services/bank-backend/alembic.ini",
-            "upgrade",
-            "head",
-        ]
-        # Empty database, upgrade head twice must both succeed.
-        _run(cmd, cwd=ROOT, env=env)
-        _run(cmd, cwd=ROOT, env=env)
         return ObligationsDb(name=name, admin_url=admin_url, runtime_url=runtime_url, ro_url=ro_url)
     except BaseException:
         subprocess.run(["docker", "rm", "-f", name], capture_output=True)
         raise
+
+
+def _migrate(db: ObligationsDb, revision: str) -> None:
+    pythonpath = os.pathsep.join(
+        str(ROOT / p)
+        for p in ("packages/contracts/src", "packages/bankcore/src", "services/bank-backend")
+    )
+    env = {
+        **os.environ,
+        "BANK_MIGRATION_DATABASE_URL": db.admin_url,
+        "PYTHONPATH": pythonpath + os.pathsep + str(ROOT),
+    }
+    cmd = [
+        sys.executable,
+        "-m",
+        "alembic",
+        "-c",
+        "services/bank-backend/alembic.ini",
+        "upgrade",
+        revision,
+    ]
+    _run(cmd, cwd=ROOT, env=env)
 
 
 @pytest.fixture(scope="session")
@@ -134,6 +135,21 @@ def obligations_db():
         pytest.skip("requires isolated PostgreSQL; run make test-obligations")
     db = _provision()
     try:
+        # Empty database, upgrade head twice must both succeed.
+        _migrate(db, "head")
+        _migrate(db, "head")
+        yield db
+    finally:
+        subprocess.run(["docker", "rm", "-f", db.name], capture_output=True)
+
+
+@pytest.fixture(scope="session")
+def obligations_0002_db():
+    if os.getenv("OBLIGATIONS_DB_TESTS") != "1":
+        pytest.skip("requires isolated PostgreSQL; run make test-obligations")
+    db = _provision()
+    try:
+        _migrate(db, "0002_identity")
         yield db
     finally:
         subprocess.run(["docker", "rm", "-f", db.name], capture_output=True)

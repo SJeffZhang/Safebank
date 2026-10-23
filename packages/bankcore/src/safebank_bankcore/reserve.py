@@ -241,6 +241,8 @@ def _validate_mandate_billing(
         raise ValueError(f"mandate {item.id} billing belongs to a different customer")
     if billing.merchant_id != item.merchant_id:
         raise ValueError(f"mandate {item.id} merchant disagrees with its billing")
+    if billing.account_id != item.from_account_id:
+        raise ValueError(f"mandate {item.id} billing account disagrees with its source")
     _customer_account(state, billing.account_id)
     next_run = _business_time(billing.next_due_at)
     _check_calendar(
