@@ -56,3 +56,7 @@ main.py:162–171：关闭期间再次SIGINT使force_exit=True，安装版_wait_
 协调者读真实main.py确认。原实现agent修复轮2：force_exit也取消并等待剩余请求，保持请求结束→lifespan→DB/L3顺序，补真实Uvicorn第二次中断回归与定向复跑；只修该问题及本次改动带来的破坏。
 
 第二轮定点复审db8a00c..0a95872：N1 ADDRESSED；规格PASS，质量APPROVE，无新增问题。main.py:169显式取消force_exit剩余请求后仍等待清理；测试用真实handle_exit(SIGINT)两次及FastAPI lifespan断言正确释放顺序。评审亲自定向回归1 passed（0.21s），diff --check通过。R1–R4、CI接线及N1全部关闭，可进入PR/远端CI门禁。
+
+## 远端CI工作流校验修复
+
+初次push run39964404373没有创建job即failure。job级env不允许runner上下文，故runner.temp无效；本地普通YAML解析无法覆盖该问题。6c59ac1..f5dd74a仅将UV_CACHE_DIR改为/tmp/sbg-uv-cache字面量并记报告。官方actionlint1.7.12修前exit1、修后exit0，协调者和原评审分别复核；独立结论APPROVE，无新增缺陷。业务代码不变，尚不代表远端CI通过。
