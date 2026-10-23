@@ -32,6 +32,9 @@ class Settings:
     l3_base_url: str
     service_tokens: dict[str, str]
     jwt_public_key_path: str
+    jwt_private_key_path: str = "/run/secrets/jwt-private.pem"
+    demo_pins_file: str = "/run/secrets/demo_pins"
+    gateway_service_token: str = ""
 
     def validate(self) -> None:
         """Refuse to start on configuration combinations that weaken isolation."""
@@ -89,5 +92,8 @@ def from_env(env: dict[str, str] | None = None) -> Settings:
             "S": env.get("SCHEDULER_SERVICE_TOKEN") or "",
             "D": env.get("DEMO_CONSOLE_TOKEN") or "",
         },
+        jwt_private_key_path=env.get("JWT_PRIVATE_KEY_PATH") or "/run/secrets/jwt-private.pem",
+        demo_pins_file=env.get("DEMO_PINS_FILE") or "/run/secrets/demo_pins",
+        gateway_service_token=env.get("GATEWAY_SERVICE_TOKEN") or "",
         jwt_public_key_path=env.get("JWT_PUBLIC_KEY_PATH") or "/run/secrets/jwt-public.pem",
     )
