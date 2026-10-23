@@ -380,6 +380,8 @@ def test_resume_wrong_customer_rejected_without_execute():
     with pytest.raises(CrossCustomerError):
         graph.invoke(Command(resume="apv_a"), config(), context=ctx("cus_b", "ses_a"))
     assert calls.get("execute", 0) == 0
+    assert calls.get("respond", 0) == 0
+    assert calls.get("verify_output", 0) == 0
 
 
 def test_resume_wrong_session_rejected_without_execute():
@@ -389,9 +391,13 @@ def test_resume_wrong_session_rejected_without_execute():
     with pytest.raises(SessionMismatchError):
         graph.invoke(Command(resume="apv_a"), config(), context=ctx("cus_a", "ses_wrong"))
     assert calls.get("execute", 0) == 0
+    assert calls.get("respond", 0) == 0
+    assert calls.get("verify_output", 0) == 0
 
 
-def test_resume_thread_id_mismatch_rejected_without_execute():
+def test_thread_id_session_mismatch_rejected_via_ingest_guard():
+    # thread_id "ses_other" has no checkpoint, so this starts a fresh run and is rejected by
+    # ingest's thread_id-vs-session guard — it does NOT exercise await_approval's resume binding.
     calls = {}
     graph = _approval_graph(calls)
     run(graph, [utterance()])
@@ -400,6 +406,8 @@ def test_resume_thread_id_mismatch_rejected_without_execute():
             Command(resume="apv_a"), config(session="ses_other"), context=ctx("cus_a", "ses_a")
         )
     assert calls.get("execute", 0) == 0
+    assert calls.get("respond", 0) == 0
+    assert calls.get("verify_output", 0) == 0
 
 
 def test_correct_resume_after_bad_resume_is_safe():

@@ -60,6 +60,13 @@ ingest 空校验都无法区分缺 key）；② `graph.invoke({"utterances": []}
 也被拒）。新 input 与 resume 保持清楚区分：新 input 只经 `invoke_new_input`，resume 只经
 `Command(resume=...)`。仅改 services/agent 与 tests/agent，未自制平行状态机、未越界改 API/共享 schema。
 
+**协调者亲验后收尾（小改，不更动执行逻辑）**：① `state.py` 的 `AgentInput` docstring 更正为真实行为
+——输入类型声明**不能**让 `graph.invoke` 拒绝缺键（`invoke({})` 仍走 state 合并），服务新输入必须经
+`invoke_new_input` 验证、`ingest` 兜底；② 错 customer/sid 两个 resume 用例补 `respond==0`、
+`verify_output==0` 断言；错 thread 用例改名 `test_thread_id_session_mismatch_rejected_via_ingest_guard`
+并注明走 fresh ingest guard（无 checkpoint 于 `ses_other`），不冒充 await_approval resume guard 覆盖。
+
+
 ## 退出命令与结果（本组件无 PG）
 
 | 命令 | 结果 |

@@ -109,7 +109,13 @@ class AgentState(TypedDict, total=False):
 
 
 class AgentInput(TypedDict):
-    """New-input boundary schema: ``utterances`` is required so an empty/omitted input can
-    never silently reuse the previous round's persisted utterances (P2 guard)."""
+    """Declared new-input shape (``utterances`` required) for documentation/schema purposes.
+
+    This type declaration alone does **not** make ``graph.invoke`` reject a missing
+    ``utterances`` key: LangGraph merges a dict input into the thread's persisted state, so a
+    bare ``invoke({})`` would still reuse the previous round's utterances.  New input must go
+    through ``invoke_new_input`` (which fails closed on empty/missing utterances), with the
+    ``ingest`` empty-utterances check as a second, in-graph guard.
+    """
 
     utterances: list[UtteranceRef]
