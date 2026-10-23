@@ -971,10 +971,10 @@ L2 根据 F / A 确定 `origin`；PlanDraft 不接受 `origin`、`customer_id`�
 | `approvals` | id、plan_id、evaluation_id、customer_id、sid、plan_hash、view_hash、binding_mac、expires_at_wall、status、risk_ack、confirmed_at_wall；每 sid 最多一个 PENDING；同计划最多一个可用审批 |
 | `otp_challenges` | approval_id、code_digest（带密钥 HMAC）、expires_at_wall、attempt_count、sent_count、locked_at_wall；不存日志明文 |
 | `authorization_claims` | scope_id 主键、plan_id、status CLAIMED/CONSUMED；执行与 UNKNOWN 期间持久占用；同 plan 重试幂等 |
-| `execution_jobs` | plan_id 主键、status、l3_attempt（发给 L3 prepare / execute 的 attempt，§8.5）、retry_count（同一 l3_attempt 下的网络重试次数）、last_error、result；L3 执行前先持久化，恢复机制见 §7.10 |
+| `execution_jobs` | plan_id 主键、status EXECUTING/UNKNOWN/EXECUTED/FAILED/CANCELLED、l3_attempt（发给 L3 prepare / execute 的 attempt，§8.5）、retry_count（同一 l3_attempt 下的网络重试次数）、last_error、result；L3 执行前先持久化，恢复机制见 §7.10 |
 | `scheduled_grants` | instruction_id、customer_id、source_plan_id（种子为 `seed`）、scope_json、scope_hash、approved_risk、status ACTIVE/REVOKED、created_at、revoked_at；内容不可扩大，变更需新计划 |
 | `event_decisions` | event_id 主键、status SUCCESS/BLOCKED/FAILED_INSUFFICIENT/SKIPPED_REAPPROVAL、code、decided_at_wall；到期事件的终态，回调重放直接返回它（§7.11） |
-| `workflow_events` | event_id、customer_id、plan_id、step_id、action_kind、target_id、amount_cents、status、occurred_at；event_id 唯一；与 L3 operation_events 对账 |
+| `workflow_events` | event_id、customer_id、plan_id、step_id、action_kind、target_id、amount_cents、status PENDING/COMMITTED/BLOCKED、occurred_at；event_id 唯一；与 L3 operation_events 对账 |
 | `cooldowns` | customer_id、payee_fingerprint、until_at、reason；按目标账户指纹，而非可重建的 payee_id |
 | `notifications` | id、customer_id、event_id、type、payload、created_at、read_at_wall；UNIQUE(event_id,type) |
 | `audit_events` | id、customer_id、trace_id、event_type、payload_digest、payload、prev_hash、hash、created_at_wall；追加写 |
@@ -1625,7 +1625,8 @@ B2 的 shadow_b1 纯内存计算，仅比较决策，不创建审批、冷静期
 | SCHEDULER_SERVICE_TOKEN | bank-backend、gateway（校验） | S 回调，仅 bank-net |
 | DEMO_CONSOLE_TOKEN | gateway、可信评测 runner/操作员环境 | frontend 登录时短暂处理用户输入，部署环境不注入 agent |
 | JWT_PRIVATE_KEY、APPROVAL_HMAC_KEY、OTP_HMAC_KEY | gateway | 私钥不挂载 L1；OTP 使用随机数生成器 |
-| JWT_PUBLIC_KEY | gateway、agent | 令牌受众与 scope 仍必须核验 |
+| JWT_PUBLIC_KEY | gateway、agent | 令牌受众与 scope 仍必须核验；gateway 经 `JWT_PUBLIC_KEY_PATH`（默认 `/run/secrets/jwt-public.pem`）加载，缺失则拒绝启动 |
+| BANK_BACKEND_URL | gateway | L3 地址（默认 `http://bank-backend:8300`，仅 bank-net） |
 | DEEPSEEK_API_KEY | agent | 只在 live/record 必需；不得写 replay 文件 |
 | BANK_DATABASE_URL / GATEWAY_DATABASE_URL / AGENT_DATABASE_URL | 对应服务 | 分库最小权限；bank_ro 仅 gateway demo/eval |
 | DEMO_LOGIN_PINS | gateway（校验）；可信评测 runner（EVAL_MODE）与 `make demo` 的 Playwright 驱动（DEMO_MODE），两者都从宿主机只读挂载 `.secrets/demo_pins`，不进入任何容器镜像 | 合成客户独立 PIN，.env 配置；无默认公开万能 PIN；不注入 agent / frontend |
