@@ -36,3 +36,12 @@
 
 R7/R10/R11 读取、1–30 天展示、signed max_outflow 公开契约、scheduler 与三项定时写、
 完整 baseline_v1 数据安装。完整细节见 `docs/progress/S3a-obligations-data.md`。
+
+## 协调者最终复验（2026-10-24）
+
+- 业务/测试提交 `f7223d0`；原 DeepSeek reviewer `b9d4561e-d66d-44ee-bcaa-88ef8f0cc75f` 最终 APPROVE，原 9 项与追加权限测试卫生项全部关闭，报告 `docs/reviews/L2-S3a-implementation-review.md`。
+- 协调者实际七退出全部 exit 0：make lint；make test 1931 passed / 473 skipped；make test-obligations **30 passed、零 skip/xfail**（4.88s）；make contracts-check PASS；make test-gateway 1702 passed / 413 skipped；make test-gateway-db 17 passed；actionlint。日志 `/private/tmp/sbg-codex-s3a-r2-20261024`。
+- 协调者全栈在 `main-baseline` 的 `fd82290` 串行执行：make up 六 healthy；make test-p1 33 真 PG；make test-p1-concurrency 5；make test-p1-consistency 17；make test-integration 网络/HTTP/实际 L3 重启恢复全部 exit 0。追加 make test-w1 **1688 passed、零 skip**。日志 `/private/tmp/sbg-codex-s3a-r1-stack-20261024` 与 `/private/tmp/sbg-codex-s3a-r1-20261024`；`fd82290..f7223d0` 仅测试与文档、services/packages 无差异，故明确复用相同生产代码的全栈证据。
+- `0001_core.py`、`0002_identity.py`、schema_v1 对 main 字节不变，契约增量仅 BankState.obligations 及独立 ObligationSnapshot；read/write/LLM schema 未漂移。
+- 既有 SQLAlchemy FK 环警告保留；无义务写业务、scheduler 或 W2 default reserve 接线。现有长期库未装义务种子，两个持久卷创建时间不变。
+- 后续仅带独立评审与协调日志、同步 main 的启动脚本/文档，不修改已验业务；最终发布 head 的四 CI 另查，不把本地测试写成远端 CI 通过。
