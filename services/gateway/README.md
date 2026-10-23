@@ -122,7 +122,7 @@ services/gateway/
 
 生产入口 `serve` 在启动两个监听器前进入一次 `app.runtime.gateway_runtime`，统一创建 AsyncEngine、L3Client 和 UTC wall clock；两应用共享 `app.state.db/l3/wall_now/settings`。只在两个监听器都停止后关闭资源，启动中途出错也释放已创建的资源。处理器不得另建池。单独构造 app 的单元测试仍兼容原签名；生产资源由入口负责注入。
 
-`JWT_PRIVATE_KEY_PATH` 默认 `/run/secrets/jwt-private.pem`；私钥必须是普通 0600 文件，拒绝符号链接，且必须与公钥构成 Ed25519 密钥对。`DEMO_PINS_FILE` 默认 `/run/secrets/demo_pins`，PIN 解析与哈希由 W1 `auth.pin.configured_hashes()` 提供，集中加载后放入 `app.state.pin_hashes`。W1 模块尚未合并时该资源明确未配置；S1 不提供默认 PIN 或成功替身。W1 加载函数存在但读文件失败时拒绝启动。
+`JWT_PRIVATE_KEY_PATH` 默认 `/run/secrets/jwt-private.pem`；私钥必须是普通 0600 文件，拒绝符号链接，且必须与公钥构成 Ed25519 密钥对。`DEMO_PINS_FILE` 默认 `/run/secrets/demo_pins`，PIN 解析与哈希由 W1 `auth.pin.configured_hashes_from_file(pins_file: str)` 提供；runtime 将当前 `Settings.demo_pins_file` 原样传给它，启动时加载一次后保留在 `app.state.pin_hashes`，请求期间不重读。显式 Settings 路径不受进程中 `DEMO_PINS_FILE`、`DEMO_PIN_HASHES` 或旧零参 loader 缓存覆盖；不同启动各自加载，包括同一路径内容更新后的新启动。W1 模块尚未合并时该资源明确未配置；S1 不提供默认 PIN 或成功替身。模块存在但新 loader 缺失/不可调用，或 loader 拒绝缺失/非法文件时以 `DEPENDENCY_UNAVAILABLE` / 503 拒绝启动，且不退回旧 `configured_hashes()`。`gateway_runtime(..., pin_hashes=...)` 的显式注入继续跳过自动加载，空字典也保持该行为。
 
 `caller_dependency` 在验证 F/A 客户 JWT 后调用 W1 `tokens.check_revocation(conn,caller,now=...)`；DB、时钟或检查函数缺失均拒绝（503），撤销/过期/缺行错误由 W1 决定并传递。S/F/D 的纯服务凭证及控制台凭证按原授权矩阵处理。真实登录→会话→撤销验收须在 W1 合并后补跑；S1 的签名替身测试只证明依赖接线。
 

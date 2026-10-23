@@ -42,7 +42,7 @@
 | 调研 | 开源项目元数据和 DeepSeek 官方信息已核实；评分/提交已从官网公开 JS 核实（docs/acceptance/official-v1.md）；竞品「明鉴」未核实 |
 | PRD | **`PRD.md` = v2.1 定稿**（§0–§16；三轮多 agent 审核 + 两次修订复核，决议 D1–D47 见 §0.5；执行屏障增量约定见ADR-008）。v1.2 与作废的 v2.0 草稿在 `docs/archive/`；审核报告在 `docs/reviews/` |
 | 代码 | **P1 完成并逐组件验收**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116项单元+33项真实PG通过，契约v1已冻结。分支 feat/l3-core，P1代码已提交并推送私有仓库（功能提交7fd7a26）；CI权限修复70dcabe已推送，远端unit与p1-postgres均通过（run 39929405919） |
-| L2 网关 | **W0 基础骨架已合入 main**（PR #2，merge e2e91db，2026-10-23；经 4 轮架构评审 + 1 次 CI 修复）。波次1进行中：S1共享运行PR #4与S2预留PR #5已全绿合并；W1七缺陷与S1接线评审通过，W2来源链集成中；W4a锁修复及S1b迁移/状态实施中，W3/W4完整接线仍待依赖。计划 `docs/plans/L2-plan.md`，任务书 `docs/plans/briefs/` |
+| L2 网关 | **W0 基础骨架已合入 main**（PR #2，merge e2e91db，2026-10-23；经 4 轮架构评审 + 1 次 CI 修复）。波次1进行中：S1共享运行PR #4与S2预留PR #5已全绿合并；W1七缺陷与S1接线评审通过，W2来源链集成中；S1b迁移/状态PR #6已合并（94e40fe）；S1c PIN Settings接线本地五退出通过、待协调复跑与独立评审，W4a锁修复及W3/W4完整接线仍待依赖。计划 `docs/plans/L2-plan.md`，任务书 `docs/plans/briefs/` |
 | 前端 | **暂停**，用户亲自下令才开工（§2 第 13 条） |
 | 下一步 | L2 波次 1：W1 身份与原话、W2 读代理与来源、W3 预演·工作流·决策、W4 审批与执行，按接口依赖与可用槽位分批并行，共享补缺逐组件串行（见 §5「L2 进度」）。2026-10-23 起工作转到 Codex，交接说明见 `docs/handoff/CODEX-HANDOFF.md` |
 
@@ -312,6 +312,12 @@
 
 | 2026-10-23 | Codex（协调者） | S1b独立review_s1b_state规范PASS/质量APPROVE，无可复现P0/P1/P2；实际定向17 passed零skip（10.13s），核查迁移保留/权限/漂移/并发CAS/claims。协调者六退出已全绿，准备合入最新协调文档后立即push并开base main组件PR。W2来源独立review_w2_lineage规格PASS/质量APPROVE，真实PG46 passed及关联回归25 passed；完整W2的memo xfail/S3/跨W1联调继续开放，不按完整W2合并。 |
 
+| 2026-10-23 | Codex（S1c 实现者） | 在最新 main 94e40fe 的 feat/l2-pin-settings 接手独立共享 PIN 接线；已读完整 AGENTS、S1c 任务书、PRD 身份/PIN 约定与现有 runtime。当前 main 尚无 W1 PIN 模块，先用受控 loader 替身补当前 Settings 路径/旧环境缓存隔离/缺接口与坏配置 failclosed/资源边界红测，不将适配单测计为真实 PIN 文件登录联调。一次只做 S1c，不改 W1 或授权矩阵；首次普通沙箱写入附加 worktree 被文件系统权限拒绝，随后按既有授权申请受控写入。 |
+
+| 2026-10-23 | Codex（S1c 实现者） | PIN 接线红测实际 7 failed/3 passed/15 deselected（0.69s），复现零参旧缓存读取、缺新接口/坏配置未拒绝并继续分配资源。随后仅修改 runtime PIN 适配为当前 Settings 路径 → W1 新 loader，缺接口 503；同步 README 并局部隔离 Fake Engine 的锁 hook，不改真实 pool/hook 测试。绿测与五退出待运行。 |
+
+| 2026-10-23 | Codex（S1c 实现者） | PIN 定向由红7 failed/3 passed转绿10 passed（0.34s）；五退出全exit0：lint166、all366/139skip（4.61s）、gateway137/91skip（3.48s）、PG17（2.93s）、shared59零skip（12.07s）。又按指定Docker应用内PATH复核PG17（2.87s）/shared59（8.36s）；含真实临时PG与Linux权限，已有取消场景打印预期CancelledError，未隐藏。报告docs/progress/S1c-pin-settings.md已记命令/红绿/失败/覆盖边界；main仍无W1，真实PIN文件+runtime+PG两路径登录尚未验收，W4a合并后须同步再复跑。未改W1/config/授权矩阵/资源生命周期，未up/down/test-p1/删卷。仅本地冻结，待协调者复跑与独立评审后发布。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
@@ -353,7 +359,8 @@ P0 准备阶段（决定后续一切）：
 | [ ] | W2 读代理、参数来源与污点 | `feat/l2-provenance`（27a067a三项修复已评审通过，来源链集成中） | `docs/plans/briefs/W2-provenance.md` |
 | [ ] | W3 快照、预演、工作流、决策与 G4 | `feat/l2-decision`（检查点3bcbe8e，共享依赖阻塞） | `docs/plans/briefs/W3-decision.md` |
 | [ ] | W4 审批与执行 | `feat/l2-execution`（3856a4c部分检查点，G8待共享状态与真实依赖） | `docs/plans/briefs/W4-execution.md` |
-| [ ] | S1b / 0002_wave1 迁移与受控状态 | `feat/l2-wave1-state`（8b151bc六退出和独立评审通过，准备组件PR/CI） | `docs/plans/briefs/S1b-wave1-state.md` |
+| [x] | S1b / 0002_wave1 迁移与受控状态 | PR #6 已合并，merge `94e40fe` | `docs/plans/briefs/S1b-wave1-state.md` |
+| [ ] | S1c PIN Settings 接线 | `feat/l2-pin-settings`；本地五退出通过，待协调者复跑/独立评审/PR | `docs/plans/briefs/S1c-pin-settings.md`；证据 `docs/progress/S1c-pin-settings.md` |
 | [ ] | W5 定时授权、通知、审计接口、D 接口 | 波次 2，任务书未写 | L2-plan §3 W5 |
 | [ ] | W6 网关层安全验收（A8、A1/A2/A3/A5） | 波次 2，任务书未写 | L2-plan §3 W6 |
 
