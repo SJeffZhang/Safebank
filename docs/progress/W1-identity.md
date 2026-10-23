@@ -195,3 +195,24 @@
 本段仅组件检查点；接下来安全同步S1d main44ded2f后运行原五退出。尚未宣布完整W1 gate通过。真实客户锁/Runtime/PG/PIN已使用生产实现；外部L3谓词仍按原W1任务允许的契约FakeL3，真实HTTP执行fence/reconcile/终态archive及W2–W4联合验收仍是后续边界。没有新增迁移需求，没有push/PR/compose/卷操作。
 
 补充：加强完整旧write授权前置校验后，`... pytest test_revocation_deferred.py -q -k prevalidation --tb=short`：3 passed/37 deselected in2.97s。最终组件lint再次通过（201 files）；一次未提权ruff因worktree .ruff_cache写权限失败，正确提权重跑通过，不是代码失败。只读核对G22待决仍开放：共享main无条件include auth.router，非DEMO/EVAL仅handler404，coverage仍要求路由；已报协调者安排共享精确接线，W1未改main/matrix。
+
+
+## S1e/deferred组件最终退出与冻结交付
+
+组件本地提交`c618d17`（persist revoked authority when strict execution cleanup is pending）；随后从干净树无冲突merge已审S1d main `44ded2f2431bdb0ce1d3f90f2c5d7d1b2ac67697`为`7afd963e56cae959ef531251502bcd4f58a45086`，AGENTS由Git自动保留双方；Makefile所有目标与CI唯一新增`make test-w1`保持。未另改共享文件，未push或发PR。
+
+同步后的完整原五退出如下（每条真实执行且exit0）：
+
+| 实际命令 | 最终结果 |
+|---|---|
+| `make lint` | All checks passed；202 files already formatted |
+| `make test-gateway` | 1692 passed, 412 skipped in6.22s |
+| `PATH=/Applications/Docker.app/Contents/Resources/bin:$PATH make test-gateway-db` | 17 passed in2.62s，真实PG |
+| `make test` | 1927 passed, 460 skipped in6.15s |
+| `PATH=/Applications/Docker.app/Contents/Resources/bin:$PATH make test-w1` | **1687 passed in58.87s，0 skipped** |
+
+`GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w1/db --collect-only -q`：158 tests collected in0.55s；这些PG用例已包含在上面1687零skip实际执行中，收集命令仅核对数量。普通pytest目标的PG skip没有当作数据库验收。`git diff --check`通过，当前代码检查点自审包括：严格只捕获受控STATE_CHANGED/409、有限重读、回放trace重建、G14两阶段继续撤销、合槽RESOLVED/source.used_by/JWT延后到清理后、每次新写重扫遗留任务、deferred审计与dedup原子事务；没有放宽S1e严格scope/claim前置条件。
+
+本轮唯一新增的稳定缺claim旧红测已转绿；没有遗留owner红测/skip/xfail，没有新增迁移需求。真实Settings两PIN/相反env/跨启动缓存、真实GatewayRuntime与真实W4a客户锁、登录/session/登记/撤销/G14全局JWT撤销均由W1专项实际复跑。state普通与orphanUNKNOWN只持久待对账，保留claim及captured submission，不能据此宣称已阻止在途资金提交或已完成终态归档。
+
+剩余共享/联合边界：G22在非DEMO/EVAL的“严格不注册”仍待共享接线（当前无条件auth.router+handler404；W1未越界改main/matrix，协调者已确认安排）。真实W4 HTTP fence/reconcile/恢复器/终态archive仍归W4；未实现领域读按原W1交付3契约FakeL3回归，真实L3谓词数据与W2–W4联合验收不属于本轮已通过证明。上述边界不因本地五退出成功而静默关闭。最终本地冻结SHA见交付消息；等待协调者亲自复跑及独立复审，不自行push/PR/merge其他任务。
