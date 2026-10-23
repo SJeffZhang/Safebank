@@ -40,7 +40,7 @@
 |---|---|
 | 调研 | 开源项目元数据和 DeepSeek 官方信息已核实；评分/提交已从官网公开 JS 核实（docs/acceptance/official-v1.md）；竞品「明鉴」未核实 |
 | PRD | **`PRD.md` = v2.1 定稿**（1,764 行，§0–§16；三轮多 agent 审核 + 两次修订复核，决议 D1–D47 见 §0.5）。v1.2 与作废的 v2.0 草稿在 `docs/archive/`；审核报告在 `docs/reviews/` |
-| 代码 | **P1 完成并逐组件验收**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116项单元+33项真实PG通过，契约v1已冻结。分支 feat/l3-core，P1代码已提交并推送私有仓库（功能提交7fd7a26） |
+| 代码 | **P1 完成并逐组件验收**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116项单元+33项真实PG通过，契约v1已冻结。分支 feat/l3-core，P1代码已提交并推送私有仓库（功能提交7fd7a26）；远端unit通过，PG集成被Linux初始化SQL读取权限阻塞 |
 | 下一步 | P1已结束，等待用户指定下一步；按PRD后续P2实现L2/L1的单笔需确认转账闭环，仍须逐组件验收。本轮不启动P2 |
 
 ### 已确认事实
@@ -149,6 +149,8 @@
 | 2026-10-23 | Codex | 暂存后git diff --cached --check发现新验收日志含Docker输出尾随空格，首次提交前检查因此终止，尚未产生提交；仅清理p1-final文本行尾空格后重试，未修改测试结果或业务代码。 |
 
 | 2026-10-23 | Codex | P1功能提交7fd7a26已成功推送到私有仓库SJeffZhang/Safebank的origin/feat/l3-core，并建立upstream；未合并main、未创建PR。仅日志行尾空格规范化，未改变业务代码或既有验收结论。本条以文档提交同步交付状态，CI结果以GitHub实际运行记录为准。 |
+
+| 2026-10-23 | Codex | 推送后只读检查远端CI：unit通过，p1-postgres在make up失败，两个Postgres容器均报告/docker-entrypoint-initdb.d/01-roles.sql: Permission denied；真实PG/并发/一致性后续CI步骤被跳过，不能宣称远端通过。运行记录：https://github.com/SJeffZhang/Safebank/actions/runs/39925600593。这是Linux容器读取宿主0600初始化脚本的权限问题，待后续修复；本次按用户指令完成推送，未改业务代码。 |
 
 ## 5. 下一步待办（按顺序）
 
