@@ -70,7 +70,7 @@ No make up/down/test-p1, no push/PR/merge, no named volume operations, and no fu
 - `d2726bb`: clarification transitions.
 - `8e1874a`: shared runtime and global fail-closed revocation wiring.
 - `5b67a76`: explicit PGDATA tmpfs fixture correction (17 real PG tests passed).
-- Final Linux/bootstrap commit SHA: see branch head / final delivery (this file is committed with that change).
+- `03f66e8`: final Linux/bootstrap implementation and complete exit evidence. Subsequent documentation-only commit records this stable implementation SHA.
 
 ## Isolated PG fixture correction
 
