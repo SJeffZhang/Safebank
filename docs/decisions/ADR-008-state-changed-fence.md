@@ -10,4 +10,4 @@
 
 先独立迁移/状态组件，再W4执行恢复与W1/W3接线。强制验收包括execute与fence两顺序、旧attempt迟到、丢回包/崩溃、数据库锁连接断开、取消/拒绝/登出及cap不扩期，检查真实PG账本和证据。详细矩阵见评审，不以mock或本地PAUSED造数冒充协议验收。
 
-S1e兼容增量（待实现验收）：schema允许live job无evaluation，使用独立OrphanExecutionIdentity与成对UNKNOWN/终态接口，现有ExecutionIdentity/revision及全部普通签名不变。检查客户锁、调用者短事务、plan→job→claims顺序和零evaluation（条件UPDATE再次NOT EXISTS）；只允许保留提交字段与claim地转UNKNOWN，真实L3终态后归档。未知/旧空证据不成为提交许可；预期CAS用savepoint重读以保留撤销，真正SQL故障不吞掉。HTTP期间出现evaluation须重新普通身份/重新对账，不能借新revision消费旧回包。边界与真实PG矩阵见[任务书](../plans/briefs/S1e-orphan-jobs.md)。
+S1e兼容增量（共享状态原语已独立评审及本地验收；调用方真实联调待后续）：schema允许live job无evaluation，使用独立OrphanExecutionIdentity与成对UNKNOWN/终态接口，现有ExecutionIdentity/revision及全部普通签名不变。检查客户锁、调用者短事务、plan→job→claims顺序和零evaluation（条件UPDATE再次NOT EXISTS）；只允许保留提交字段与claim地转UNKNOWN，真实L3终态后归档。未知/旧空证据不成为提交许可；预期CAS用savepoint重读以保留撤销，真正SQL故障不吞掉。HTTP期间出现evaluation须重新普通身份/重新对账，不能借新revision消费旧回包。边界与真实PG矩阵见[任务书](../plans/briefs/S1e-orphan-jobs.md)。
