@@ -372,6 +372,8 @@
 
 | 2026-10-23 | Codex（协调者） | S1d独立review_s1d_memo规范PASS/质量APPROVE，无待修；核Code仅两处freeze枚举精确增量、工具Schema/既有枚举顺序/签名不变、SHA256正确。协调者三退出已全绿，准备合最新纯协调文档并立即push/base main组件PR；只交付新code契约，W2检测/W3黄级汇总/W4原文展示与view_hash仍待owner实际验收。 |
 
+| 2026-10-23 | Codex（协调者） | S1d已push head d6b8f4e并创建PR #10/附加任务，CI待完成。只读架构核对确认稳定畸形claim不能靠重试恢复；协调裁定W1提交撤销+缓存409、事务外重建GatewayError，details双true标明已失效/待清理，不新发替代授权。仅错误分支用现有audit.append同无HTTP短事务原子记审计，避免postcommit崩溃窗口，冻结helper不改；新写scope每次重扫该sid live jobs。已迭代PRD7.10/9.1、common精确例外和W1-revocation-deferred任务书，待设计报告核对后交owner。复用S2干净worktree预备S3a分支main6815547，派owner只读提出typed字段/迁移设计，尚不实施，仍等S1d合并。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
