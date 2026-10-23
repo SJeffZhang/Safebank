@@ -135,19 +135,19 @@ def _fields_for(ctx: EvalContext, state: BankState | None, step: ResolvedStep):
         if args.get("alias") is not None:
             fields.append(PlanViewField(key="alias", label="别名", value=args["alias"]))
     elif tool == "cancel_scheduled":
+        if state is None:
+            raise ValueError("cancel_scheduled requires the snapshot")
+        instruction = next((i for i in state.instructions if i.id == args["instruction_id"]), None)
+        if instruction is None:
+            raise ValueError(
+                f"scheduled instruction {args['instruction_id']!r} is absent from the snapshot"
+            )
         fields.append(
             PlanViewField(key="instruction_id", label="定时转账", value=args["instruction_id"])
         )
-        if state is not None:
-            instruction = next(
-                (i for i in state.instructions if i.id == args["instruction_id"]), None
-            )
-            if instruction is not None:
-                fields.append(
-                    PlanViewField(
-                        key="target_display", label="目标", value=instruction.target_display
-                    )
-                )
+        fields.append(
+            PlanViewField(key="target_display", label="目标", value=instruction.target_display)
+        )
     elif tool == "create_split_request":
         fields.append(amount(args["total_cents"]))
         fields.append(
@@ -207,22 +207,22 @@ def _fields_for(ctx: EvalContext, state: BankState | None, step: ResolvedStep):
                 PlanViewField(key="replace", label="补卡", value="是" if args["replace"] else "否")
             )
     elif tool == "cancel_subscription":
+        if state is None:
+            raise ValueError("cancel_subscription requires the snapshot")
+        subscription = next(
+            (s for s in state.subscriptions if s.instruction_id == args["instruction_id"]), None
+        )
+        if subscription is None:
+            raise ValueError(f"subscription {args['instruction_id']!r} is absent from the snapshot")
         fields.append(
             PlanViewField(key="instruction_id", label="代扣授权", value=args["instruction_id"])
         )
-        if state is not None:
-            subscription = next(
-                (s for s in state.subscriptions if s.instruction_id == args["instruction_id"]), None
-            )
-            if subscription is not None:
-                fields.append(
-                    PlanViewField(key="merchant", label="商户", value=subscription.merchant_name)
-                )
+        fields.append(PlanViewField(key="merchant", label="商户", value=subscription.merchant_name))
     elif tool == "submit_risk_assessment":
-        fields.append(
-            PlanViewField(key="questionnaire", label="问卷", value=args["questionnaire_id"])
-        )
-        fields.append(PlanViewField(key="answers", label="题目数", value=str(len(args["answers"]))))
+        # BankState carries no authoritative questionnaire metadata, so this
+        # tool cannot safely build an approval panel; fail closed (PRD §9.5
+        # "不能仅显示裸 ID"; authoritative questionnaire display is deferred).
+        raise ValueError("submit_risk_assessment panel requires questionnaire metadata")
     elif tool in _FUND_TOOLS:
         product_id = args["product_id"]
         if state is None:
@@ -234,7 +234,9 @@ def _fields_for(ctx: EvalContext, state: BankState | None, step: ResolvedStep):
         if tool == "subscribe_product":
             fields.append(amount(args["amount_cents"]))
         else:
-            fields.append(PlanViewField(key="units", label="份额", value=args["units"], unit="份"))
+            fields.append(
+                PlanViewField(key="units", label="份额", value=str(args["units"]), unit="份")
+            )
     return tuple(fields)
 
 
@@ -350,11 +352,20 @@ def _approval_deadline(ctx: EvalContext, now: datetime) -> datetime:
         for uid in auth.utterance_ids:
             utterance = auth.utterances.get(uid)
             if utterance is None:
-                continue
+                # A missing authorization utterance must not silently extend the
+                # approval beyond its utterance validity (fail closed).
+                raise ValueError(f"authorization is missing utterance {uid!r}")
             expires = datetime.fromisoformat(utterance.expires_at_wall)
             if expires < deadline:
                 deadline = expires
     return deadline
+
+
+def _wall_now(ctx: EvalContext) -> datetime:
+    now = ctx.wall_now()
+    if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("wall clock must return a timezone-aware datetime")
+    return now
 
 
 def build_view(ctx: EvalContext) -> tuple[PlanView, str]:
@@ -407,7 +418,7 @@ def build_view(ctx: EvalContext) -> tuple[PlanView, str]:
         disclosures=disclosures,
         risk_ack_required=risk_ack_required,
         otp_required=otp_required,
-        expires_at_wall=_approval_deadline(ctx, ctx.wall_now()).isoformat(),
+        expires_at_wall=_approval_deadline(ctx, _wall_now(ctx)).isoformat(),
         view_hash=view_hash,
     )
     return view, view_hash

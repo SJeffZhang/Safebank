@@ -5,8 +5,8 @@ from safebank_contracts.state import BankState
 
 from services.gateway.app import locks
 from services.gateway.app.approval import planview, service
-from services.gateway.app.evaluation import repo
 from services.gateway.app.errors import GatewayError
+from services.gateway.app.evaluation import repo
 from services.gateway.app.execution import replay
 from services.gateway.app.l3.client import L3Client
 from services.gateway.app.l3.fake import FakeL3

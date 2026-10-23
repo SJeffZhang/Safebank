@@ -7,6 +7,11 @@ state, calls L3 or issues HTTP. The HMAC key and server-side profile are wired
 explicitly via :func:`configure`; without them the library fails closed with a
 503 (never a default/random key, never the service token, never the policy
 version in place of the profile).
+
+All authoritative facts are re-read and locked from the database (plan,
+evaluation, session, live job) so a self-consistent caller mapping cannot
+insert an approval whose evaluation belongs to another plan or whose view
+diverges from the persisted decision.
 """
 
 from __future__ import annotations
@@ -20,7 +25,7 @@ from typing import Any
 
 from safebank_bankcore.ids import canonical
 from safebank_contracts.codes import Code
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .. import state
@@ -32,6 +37,20 @@ from .planview import content_hash
 
 _APPROVAL_TTL = timedelta(minutes=5)
 _VALID_PROFILES = frozenset({"B0", "B1", "B2", "B2_NO_PREFLIGHT", "B2_NO_WORKFLOW", "B2_NO_TAINT"})
+
+# Plan states in which a fresh approval may still be created (§7.10.5: the
+# first evaluation is EVALUATED; a re-evaluation may revisit a CONFIRMED plan).
+_ELIGIBLE_PLAN_STATUSES = frozenset(
+    {PlanStatus.EVALUATED.value, PlanStatus.PENDING_APPROVAL.value, PlanStatus.CONFIRMED.value}
+)
+
+_EXISTING_CONFLICT: dict[str, Code] = {
+    ApprovalStatus.SUPERSEDED.value: Code.APPROVAL_SUPERSEDED,
+    ApprovalStatus.USED.value: Code.APPROVAL_USED,
+    ApprovalStatus.EXPIRED.value: Code.APPROVAL_EXPIRED,
+    ApprovalStatus.REJECTED.value: Code.APPROVAL_REJECTED,
+    ApprovalStatus.LOCKED.value: Code.OTP_LOCKED,
+}
 
 
 @dataclass(frozen=True)
@@ -104,9 +123,10 @@ class ApprovalBinding:
         if type(self.clock_version) is not int or self.clock_version < 0:
             raise ValueError("binding clock_version must be a nonnegative integer")
         if not isinstance(self.versions, Mapping) or any(
-            not isinstance(value, int) for value in self.versions.values()
+            not isinstance(key, str) or not key or type(value) is not int or value < 0
+            for key, value in self.versions.items()
         ):
-            raise ValueError("binding versions must map IDs to integers")
+            raise ValueError("binding versions must map nonempty IDs to nonnegative integers")
         if (
             not isinstance(self.expires_at_wall, datetime)
             or self.expires_at_wall.tzinfo is None
@@ -153,19 +173,41 @@ def _expiry(view: Any, now: datetime) -> datetime:
     return expires
 
 
-async def _supersede_session(
-    conn: AsyncConnection, *, sid: str, plan_id: str, except_evaluation_id: str
-) -> None:
+def _wall(cfg: _ApprovalConfig) -> datetime:
+    now = cfg.wall_now()
+    if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("wall clock must return a timezone-aware datetime")
+    return now
+
+
+def _existing_approval_id(existing: Mapping[str, Any], *, view_hash: str, now: datetime) -> str:
+    status = existing["status"]
+    if status in (ApprovalStatus.PENDING.value, ApprovalStatus.CONFIRMED.value):
+        if existing["expires_at_wall"] <= now:
+            raise GatewayError(Code.APPROVAL_EXPIRED, 409, "existing approval has expired")
+        if existing["view_hash"] != view_hash:
+            raise ValueError("existing approval view_hash differs from the view")
+        return existing["id"]
+    raise GatewayError(
+        _EXISTING_CONFLICT.get(status, Code.STATE_CHANGED),
+        409,
+        f"existing approval is {status}",
+    )
+
+
+async def _supersede_session(conn: AsyncConnection, *, sid: str, except_evaluation_id: str) -> None:
     """Supersede prior PENDING/CONFIRMED approvals of the same session.
 
-    Only unexecuted approvals are superseded (PRD §7.10.2 / §7.10.5). The
-    ``state.transition`` guard keeps the shared table rules authoritative and
-    forbids touching USED/LOCKED rows or live execution state.
+    A candidate whose plan has a live execution job (or the claims it still
+    holds) must not be superseded: that would strand a confirmed approval behind
+    an ADR-008 barrier, so the whole creation is refused with 409 and nothing is
+    changed (PRD §7.10 / ADR-008). Jobs are locked before approvals to keep the
+    same ``job -> approval`` order the execution path uses.
     """
-    rows = (
+    candidates = (
         (
             await conn.execute(
-                select(t.approvals.c.id, t.approvals.c.status)
+                select(t.approvals.c.id, t.approvals.c.plan_id, t.approvals.c.status)
                 .where(
                     t.approvals.c.sid == sid,
                     t.approvals.c.status.in_(
@@ -173,13 +215,25 @@ async def _supersede_session(
                     ),
                     t.approvals.c.evaluation_id != except_evaluation_id,
                 )
-                .with_for_update()
+                .order_by(t.approvals.c.plan_id, t.approvals.c.id)
             )
         )
         .mappings()
         .all()
     )
-    for row in rows:
+    for row in candidates:
+        job_status = await conn.scalar(
+            select(t.execution_jobs.c.status)
+            .where(t.execution_jobs.c.plan_id == row["plan_id"])
+            .with_for_update()
+        )
+        if job_status is not None and job_status in {s.value for s in state.LIVE_JOB_STATUSES}:
+            raise GatewayError(
+                Code.STATE_CHANGED,
+                409,
+                "another plan in this session has a live execution job",
+            )
+    for row in candidates:
         await state.transition(
             conn,
             t.approvals,
@@ -205,6 +259,7 @@ async def create_for_evaluation(
     plan_id = plan["id"]
     customer_id = plan["customer_id"]
     sid = plan["sid"]
+    evaluation_id = evaluation["id"]
     decision = evaluation["decision"]
     decision_value = decision.get("decision")
     if decision_value == "ALLOW":
@@ -212,39 +267,62 @@ async def create_for_evaluation(
     if decision_value != "REQUIRE_APPROVAL":
         raise ValueError("create_for_evaluation requires a REQUIRE_APPROVAL evaluation")
 
-    # Ownership / identity consistency; a mismatched view or a view whose hash
-    # no longer matches its content is a programming error, never a soft skip.
+    # View identity and content: a mismatched view or a view whose hash no
+    # longer matches its content is a programming error, never a soft skip.
     if (
         view.plan_id != plan_id
-        or view.evaluation_id != evaluation["id"]
+        or view.evaluation_id != evaluation_id
         or view.session_id != sid
         or view.origin != plan["origin"]
-        or view.risk.value != evaluation["risk"]
     ):
         raise ValueError("view does not match the plan/evaluation identity")
     if content_hash(view) != view.view_hash:
         raise ValueError("view_hash does not match the view content")
 
-    now = cfg.wall_now()
+    now = _wall(cfg)
     expires = _expiry(view, now)
 
-    # Same evaluation never creates a second approval or extends its lifetime.
-    existing = (
+    # Authoritative locked rows: plan -> evaluation -> session -> live job.
+    db_plan = (
+        (await conn.execute(select(t.plans).where(t.plans.c.id == plan_id).with_for_update()))
+        .mappings()
+        .one_or_none()
+    )
+    if (
+        db_plan is None
+        or db_plan["customer_id"] != customer_id
+        or db_plan["sid"] != sid
+        or db_plan["origin"] != plan["origin"]
+        or db_plan["plan_hash"] != plan["plan_hash"]
+    ):
+        raise GatewayError(Code.OWNERSHIP_MISMATCH, 404)
+    if db_plan["status"] not in _ELIGIBLE_PLAN_STATUSES:
+        raise GatewayError(Code.STATE_CHANGED, 409, "plan is not approval-eligible")
+
+    db_eval = (
         (
             await conn.execute(
-                select(t.approvals)
-                .where(
-                    t.approvals.c.evaluation_id == evaluation["id"],
-                    t.approvals.c.plan_id == plan_id,
-                )
-                .with_for_update()
+                select(t.evaluations).where(t.evaluations.c.id == evaluation_id).with_for_update()
             )
         )
         .mappings()
         .one_or_none()
     )
-    if existing is not None:
-        return existing["id"]
+    if db_eval is None or db_eval["plan_id"] != plan_id:
+        raise ValueError("evaluation does not belong to the plan")
+    if db_eval["risk"] != view.risk.value:
+        raise ValueError("evaluation risk does not match the view")
+    if db_eval["decision"].get("decision") != "REQUIRE_APPROVAL":
+        raise ValueError("evaluation decision is not REQUIRE_APPROVAL")
+    if db_eval["findings"] != list(view.findings):
+        raise ValueError("evaluation findings do not match the view")
+    if db_eval["preflight"] != view.preflight.model_dump(mode="json"):
+        raise ValueError("evaluation preflight does not match the view")
+    latest_revision = await conn.scalar(
+        select(func.max(t.evaluations.c.revision)).where(t.evaluations.c.plan_id == plan_id)
+    )
+    if db_eval["revision"] != latest_revision:
+        raise GatewayError(Code.STATE_CHANGED, 409, "evaluation is not the latest revision")
 
     session = (
         (await conn.execute(select(t.sessions).where(t.sessions.c.id == sid).with_for_update()))
@@ -267,18 +345,37 @@ async def create_for_evaluation(
     if job_status is not None and job_status in {s.value for s in state.LIVE_JOB_STATUSES}:
         raise GatewayError(Code.STATE_CHANGED, 409, "a live execution job exists for this plan")
 
-    await _supersede_session(conn, sid=sid, plan_id=plan_id, except_evaluation_id=evaluation["id"])
+    # Idempotency: re-check only after the serializing plan/session locks so two
+    # concurrent creators of the same evaluation return the same ID (P1-2).
+    existing = (
+        (
+            await conn.execute(
+                select(t.approvals)
+                .where(
+                    t.approvals.c.evaluation_id == evaluation_id,
+                    t.approvals.c.plan_id == plan_id,
+                )
+                .with_for_update()
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if existing is not None:
+        return _existing_approval_id(existing, view_hash=view.view_hash, now=now)
+
+    await _supersede_session(conn, sid=sid, except_evaluation_id=evaluation_id)
 
     approval_id = new_id("apv")
     binding = ApprovalBinding(
         customer_id=customer_id,
         sid=sid,
         plan_id=plan_id,
-        plan_hash=plan["plan_hash"],
-        evaluation_id=evaluation["id"],
-        versions=evaluation["versions"],
-        clock_version=evaluation["clock_version"],
-        policy_version=evaluation["policy_version"],
+        plan_hash=db_plan["plan_hash"],
+        evaluation_id=evaluation_id,
+        versions=db_eval["versions"],
+        clock_version=db_eval["clock_version"],
+        policy_version=db_eval["policy_version"],
         profile=cfg.profile,
         view_hash=view.view_hash,
         expires_at_wall=expires,
@@ -287,10 +384,10 @@ async def create_for_evaluation(
         t.approvals.insert().values(
             id=approval_id,
             plan_id=plan_id,
-            evaluation_id=evaluation["id"],
+            evaluation_id=evaluation_id,
             customer_id=customer_id,
             sid=sid,
-            plan_hash=plan["plan_hash"],
+            plan_hash=db_plan["plan_hash"],
             view_hash=view.view_hash,
             binding_mac=binding_mac(cfg.key, binding),
             expires_at_wall=expires,
@@ -301,7 +398,8 @@ async def create_for_evaluation(
 
     # Persist the final view_json with the real approval ID / status / expiry,
     # consistent with the approval row and the evaluation row (never the
-    # placeholder ``apv_unassigned``).
+    # placeholder ``apv_unassigned``). A 0-row update is a real error: the
+    # caller's transaction rolls back, so no half-written approval survives.
     final_view = view.model_copy(
         update={
             "approval_id": approval_id,
@@ -309,12 +407,14 @@ async def create_for_evaluation(
             "expires_at_wall": expires.isoformat(),
         }
     )
-    await conn.execute(
+    updated = await conn.execute(
         t.evaluations.update()
         .where(
-            t.evaluations.c.id == evaluation["id"],
+            t.evaluations.c.id == evaluation_id,
             t.evaluations.c.plan_id == plan_id,
         )
         .values(view_hash=view.view_hash, view_json=final_view.model_dump(mode="json"))
     )
+    if updated.rowcount != 1:
+        raise ValueError("evaluation view_json update affected no row")
     return approval_id

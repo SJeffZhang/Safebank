@@ -106,6 +106,15 @@ def test_binding_requires_nonempty_strings():
         _binding(plan_id="")
 
 
+def test_binding_rejects_bool_and_negative_versions():
+    with pytest.raises(ValueError):
+        _binding(versions={"cus_a": True})
+    with pytest.raises(ValueError):
+        _binding(versions={"cus_a": -1})
+    with pytest.raises(ValueError):
+        _binding(versions={"": 1})
+
+
 def test_binding_mac_normalizes_timezone_offset(approval_config):
     # A different tz offset for the same instant must produce the same MAC.
     east = _binding(expires_at_wall=WALL + timedelta(minutes=5))

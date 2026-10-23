@@ -276,3 +276,93 @@ def test_expiry_is_capped_by_utterance_expiry():
     ctx.authorization = utterance_auth(expires=WALL + timedelta(minutes=3))
     view, _ = build_view(ctx)
     assert view.expires_at_wall == (WALL + timedelta(minutes=3)).isoformat()
+
+
+def test_missing_authorization_utterance_fails_closed():
+    from services.gateway.app.schemas.scope import AuthorizationInputs
+
+    auth = utterance_auth()
+    auth = AuthorizationInputs(
+        sid="sid_1",
+        customer_id="cus_a",
+        utterance_ids=("utt_1", "utt_missing"),
+        utterances=auth.utterances,
+        scope_ids=("utt_1",),
+    )
+    ctx = make_ctx((transfer_step(),))
+    ctx.authorization = auth
+    with pytest.raises(ValueError):
+        build_view(ctx)
+
+
+def test_naive_wall_clock_fails_closed():
+    ctx = make_ctx((transfer_step(),))
+    ctx.wall_now = lambda: WALL.replace(tzinfo=None)
+    with pytest.raises(ValueError):
+        build_view(ctx)
+
+
+def test_cancel_scheduled_shows_target_and_missing_fails_closed():
+    step = ResolvedStep(
+        "s1", "cancel_scheduled", {"instruction_id": "si_t"}, "SCHEDULE_CANCEL", "GREEN", False
+    )
+    view = _view([step])
+    assert _field(view, "s1", "target_display").value == "王五"
+
+    missing = ResolvedStep(
+        "s1", "cancel_scheduled", {"instruction_id": "si_nope"}, "SCHEDULE_CANCEL", "GREEN", False
+    )
+    with pytest.raises(ValueError):
+        _view([missing])
+
+
+def test_cancel_subscription_shows_merchant_and_missing_fails_closed():
+    step = ResolvedStep(
+        "s1",
+        "cancel_subscription",
+        {"instruction_id": "si_gym"},
+        "MANDATE_CANCEL",
+        "YELLOW",
+        False,
+    )
+    view = _view([step])
+    assert _field(view, "s1", "merchant").value == "健身"
+
+    missing = ResolvedStep(
+        "s1",
+        "cancel_subscription",
+        {"instruction_id": "si_nope"},
+        "MANDATE_CANCEL",
+        "YELLOW",
+        False,
+    )
+    with pytest.raises(ValueError):
+        _view([missing])
+
+
+def test_submit_risk_assessment_fails_closed():
+    step = ResolvedStep(
+        "s1",
+        "submit_risk_assessment",
+        {"questionnaire_id": "rq_v1", "answers": []},
+        "ASSESSMENT_SUBMIT",
+        "YELLOW",
+        False,
+    )
+    with pytest.raises(ValueError):
+        _view([step])
+
+
+def test_redeem_units_rendered_as_plain_decimal_string():
+    from decimal import Decimal
+
+    for units in ("1.0000", Decimal("1.0000")):
+        step = ResolvedStep(
+            "s1",
+            "redeem_product",
+            {"account_id": "acc_a", "product_id": "prd_a", "units": units},
+            "FUND_REDEEM",
+            "YELLOW",
+            False,
+        )
+        assert _field(_view([step]), "s1", "units").value == "1.0000"
