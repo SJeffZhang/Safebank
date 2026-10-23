@@ -16,3 +16,5 @@
 独立评审：docs/reviews/L2-W1-final-review.md；R-W1d增量358bd48..159d811，APPROVE，无P0/P1/P2。评审未亲跑PG，PG结论以协调者实跑为准。
 
 边界：谓词等未实现L3能力仍按任务书使用契约fake；完整资金执行/fence/reconcile归W4，W1不宣称三层资金闭环已完成。S1f已合并，G22条件挂载兼容已复核。远端CI尚待本PR精确head四项成功后方可合并。
+
+协调脚本增量：macOS Bash3.2空数组set-u修复、相对prompt按worktree解析、失败状态记录与传播；协调者fresh/resume/相对路径红绿/exit7模拟通过，原DeepSeek独立复审APPROVE，见docs/reviews/ds-worker-launcher-review.md。未更改159d811已验收业务代码。
