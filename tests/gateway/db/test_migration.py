@@ -13,7 +13,7 @@ def test_migration_applied_and_runtime_does_not_own_audit(gateway_db):
         db = engine(gateway_db.runtime_url, poolclass=NullPool)
         async with db.connect() as conn:
             assert (
-                await conn.scalar(text("SELECT version_num FROM alembic_version")) == "0001_gateway"
+                await conn.scalar(text("SELECT version_num FROM alembic_version")) == "0002_wave1"
             )
             owner = await conn.scalar(
                 text("SELECT tableowner FROM pg_tables WHERE tablename='audit_events'")
