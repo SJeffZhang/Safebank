@@ -48,3 +48,5 @@
 `services/gateway/app/approval/{planview,service,sms}.py`、`services/gateway/app/locks.py`、`services/gateway/app/api/approvals.py`、`tests/gateway/w4/{test_planview,test_binding}.py`、`tests/gateway/w4/db/{conftest,test_lock,test_approval}.py`、Makefile末尾test-w4、本文。
 
 AGENTS.md、PRD、replay、EvalContext、schemas、matrix、state、tables、迁移、main/config、L3均未修改。无push/PR/merge，无新增子agent，无虚假署名。实现SHA将由后续日志提交记录。
+
+实现检查点SHA：`8abc82b5d9014e289d4e9e081c11a8a862f6f455`（本地，未push）；本条为仅文档记账。检查点后工作树干净。
