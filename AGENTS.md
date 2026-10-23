@@ -368,6 +368,8 @@
 
 | 2026-10-23 | Codex（协调者） | PR #9精确head a156c53的push/PR两套unit+p1-postgres四检查全部COMPLETED SUCCESS，执行gh pr merge 9 --merge --match-head-commit成功；merge681554752215dcf82b6e768f4a3f788c19469834，15:54:05Z。已fetch并同步main无冲突，派原W1 owner同步真实S1e完成孤儿撤销/CAS联调；下一共享S1d在复用独立worktree快进新main后串行启动，不与其他共享实现并行。 |
 
+| 2026-10-23 | Codex（协调者） | S1d从新main6815547及纯协调文档a176293启动，独立s1d_memo_code已冻结2b5d6a6；亲自三退出全exit0：lint175、all398/302skip（4.42s）、contracts PASS，独立review_s1d_memo审查中。W1发现稳定畸形claim使专用CAS持续409的边界，已要求保留红测/不放宽，并另派只读design_revocation_errors核撤销提交与错误幂等缓存的最小路径。修正common旧虚假co-author指令、共享例外/专用CAS和0002已合并的过时描述；不改业务。一次猜测utterance/api.py不存在，实际处理器在api/sessions.py，已读真实路由与冻结幂等helper核对。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
