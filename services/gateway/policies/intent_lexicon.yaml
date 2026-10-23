@@ -13,12 +13,6 @@ actions:
   redeem_product: [赎回]
   create_split_request: [AA, 分摊]
 cancel: [取消, 算了, 停止本次, 不要了, 取消这笔转账]
-correction: [不对, 改成, 改为, 换成]
-question: [吗, 是不是, 什么意思, 真的假的, 能不能, 可不可以, 是否]
-periods:
-  MONTHLY: [每月, 每个月]
-  WEEKLY: [每周, 每星期]
-  ONCE: [一次, 仅本次]
 phonetic:
   pinyin: true
   confusables: {巳: 已, 己: 已, 零: 〇}

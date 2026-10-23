@@ -47,7 +47,9 @@ def test_customer_labels_do_not_fall_back_to_process_environment(monkeypatch):
             transport=httpx.ASGITransport(app), base_url="http://gateway"
         ) as client:
             response = await client.get("/auth/demo-customers", headers={"X-Service-Token": "f"})
-            assert response.status_code == 503, response.text
-            assert response.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+            # from_env({}) ignores os.environ, so settings.demo_mode is False and
+            # S1f mounts no G22 route; process DEMO_MODE must not revive it.
+            assert response.status_code == 404, response.text
+            assert response.json()["error"]["code"] == "NOT_FOUND"
 
     asyncio.run(run())

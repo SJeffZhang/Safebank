@@ -611,3 +611,36 @@ def test_legacy_job_without_submission_evidence_still_requires_reconciliation(
                 )
 
     asyncio.run(run())
+
+
+def test_correction_runs_one_supersede_pass_but_replacement_still_supersedes(
+    gateway_db, monkeypatch
+):
+    """correction reuses supersede_session; the generic block must not re-scan plans."""
+    import services.gateway.app.utterance.service as service
+
+    calls = []
+
+    async def run():
+        async with harness(gateway_db, monkeypatch) as (_, client, db, _, _, clock, _):
+            real_supersede = service.supersede
+
+            async def spy(conn, sid, *, keep=()):
+                calls.append((sid, keep))
+                return await real_supersede(conn, sid, keep=keep)
+
+            monkeypatch.setattr(service, "supersede", spy)
+
+            token = await login(client)
+            sid = await create(client, token, new_id("req"))
+            assert (await utter(client, token, sid, "给王五800")).status_code == 201
+
+            correction = await utter(client, token, sid, "不对；改成给赵六900", new_id("req"))
+            assert correction.status_code == 201, correction.text
+            assert calls == [], "correction must not run a second supersede over the same plans"
+
+            replacement = await utter(client, token, sid, "给王五800", new_id("req"))
+            assert replacement.status_code == 201, replacement.text
+            assert calls == [(sid, ())], "ordinary replacement still runs one supersede pass"
+
+    asyncio.run(run())

@@ -333,6 +333,7 @@ async def register(
     reset_clarifications = False
     revoked_ids = ()
     echo = False
+    already_superseded = False
     source_ref = new_id("src")
     if bank is not None:
         data = bank.model_dump(mode="json")
@@ -375,6 +376,10 @@ async def register(
         if correction:
             revocation = await supersede_session(conn, sid, now)
             revoked_ids = revocation.utterance_ids
+            # supersede_session already invalidated every old write scope, plan and
+            # unused UI source for this sid; the generic block below must not run
+            # a second supersede pass over the same plans.
+            already_superseded = True
             if revocation.pending_plan_ids:
                 return revocation
             parsed = (
@@ -457,7 +462,7 @@ async def register(
         epoch = session["authorization_epoch"] + 1
     else:
         epoch = session["authorization_epoch"]
-    if parsed.scope.action_kinds or parsed.required_fields:
+    if (parsed.scope.action_kinds or parsed.required_fields) and not already_superseded:
         revocation = await supersede(conn, sid, keep=parent_ids)
         if revocation.pending_plan_ids:
             await invalidate_ui(conn, sid, now)
