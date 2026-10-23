@@ -68,3 +68,11 @@ CI仅在 `.github/workflows/checks.yml` 既有p1-postgres job新增 `make test-c
 等待独立只读评审、协调者亲自复跑、真实CI全绿后才可合并。当前仅本地提交，无push/PR/merge、无子agent。实现提交SHA由后续本地记账条目记录。
 
 本地实现SHA：`f52649dcfab95dd37e6bc1469711d68442ceab20`；提交后工作树干净。只读核实原`feat/l2-execution`仍HEAD `3856a4c`，未修改。本条为仅文档记账。
+
+## 同步最新main后冻结（2026-10-23）
+
+按协调者指示合入精确main `a9d72cf`（S2 PR #5），同步提交`8277764`。唯一冲突为Makefile末尾两方新增目标；保留main的test-reserve和本组件test-customer-locks以及所有其他目标，未修改业务代码或原W4分支。
+
+同步后完整六门禁均实际exit0：make lint通过（161 files already formatted）；make test **356 passed/75 skipped**（4.17s，含S2新增110项）；make test-gateway **127 passed/27 skipped**（3.45s）；make test-gateway-db **17 passed零skip**（2.91s）；make test-customer-locks **39 passed零skip**（7.59s）；make test-shared-runtime **51 passed零skip**（8.52s，原有ASGI取消测试预期traceback仍存在，测试通过）。后三者均使用后台Docker CLI及显式tmpfs隔离夹具。
+
+本轮仅同步冲突及结果记账，代码冻结，未push/PR/merge远端；立即结束本轮，留独立review槽给协调者。原W4分支继续保留不动。
