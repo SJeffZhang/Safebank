@@ -122,13 +122,45 @@ tool/金额/实体，未核 source 真实性。先红测再最小修：
    `test_run_scenarios_catches_unprovided_hint` 断言 limits 含 hint 来源 → exit1。live plan 默认
    `max_retries=1`，但硬预算仍 8：单次全流程计数超限由 `_BudgetTransport` 明确 fail，不再补跑刷样本。
 
+## 修复轮 3（协调者真实 live 再失败后，2026-10-24）
+
+协调者真实 live 6 请求 exit1（旧/新证据保留于 `docs/acceptance/c1b-deepseek-live/results.jsonl` 共 23 行）：
+plan:transfer 工具/金额/账户/对方正确，但金额来源 `span(5,7)` 切片 "00"（应为 "800"）；gather 漏必填
+`history_days` 报 ValidationError。根因：① `read_tools` 的 `_lenient` 递归删了所有 `required`/`additionalProperties`，
+把 `get_accounts.history_days` 本来必填向模型表示成可选；② 模型中文下标易错且提示无 0 基索引对照；③ reviewer
+指出的 live 来源存在性/derived 叶子/预算 transport 无实测等小缺口。先红测再最小修：
+
+1. **read 工具 schema 恢复生产 Pydantic 语义**：新 `_read_schema`（替代 `_lenient`）内联 `$defs` 但保留契约
+   原始 `required`（无默认字段才必填）、`additionalProperties`、`default`、可空 `anyOf`，仍由 `READ_ARGS`
+   生成、不改冻结 contracts、不把 null 改 `__NULL__`。红：`history_days` 本应必填却不在 required。绿：
+   `test_read_tools_preserve_required_and_nullable_semantics`（history_days required、query 契约必填可空、
+   limit/cursor default 非必填）。
+2. **gather 非法参数反馈重提（限 3 轮内）**：`_validate_calls` 先对整批 tool calls 做 `READ_ARGS` 校验，任一
+   非法则**不执行任何端口**、以安全 loc/type ToolMessage 反馈让模型重提（不自动发明 history 范围/不忽略校验）；
+   混合调用先验证完再执行，不先读一半后失败误称完整。红：`test_gather_feeds_back_invalid_args_without_executing`
+   （漏 history_days 不执行端口、重提后执行）、`test_gather_mixed_valid_and_invalid_args_executes_none`。
+3. **金额 span 索引对照 + 本地证据一致性**：`PlanAdapter._messages` 给每句原话代码生成 0 基字符下标对照
+   （`给[0] 王[1] …`，不改文本/不手写固定来源）；重试摘要用共享 `validation_summary`（loc+type）。live 金额
+   校验允许合法 "800"/"800元" 切片（`_check_utterance_param`），不放 "00"。红：
+   `test_run_scenarios_catches_wrong_amount_span`（span[5,7]→slice "00" → exit1）。
+4. **live 来源断言补强**：`_source_problems` 拒 hint/action/**derived**（三场景均不提供）；每个敏感参数必须有
+   来源（空 arg_sources 失败），read 来源 ref 存在且 pointer 解析值 == 实际参数值（card/账户/payee 不指向别
+   字段），utterance 来源 span 边界+切片与参数值对应；limits 核 daily=None（哨兵不得声明来源）+ 单笔 1000 来自
+   真实原话；保留 L2 权限分工（只核本地结构/引用一致性，不另造生产授权算术）。
+5. **RFC6901 收尾**：`_wrap_at` 末级支持 list 字符串叶子；`_tokens` 拒非法 `~` 转义（`~2`/结尾 `~`）；
+   `resolve_pointer("")` 按 RFC 返回整个 document、wrap 根非字符串按明确类型约束抛错。红：
+   `test_pointer_wraps_list_string_leaf`、`test_pointer_rejects_invalid_tilde_escape`、
+   `test_resolve_root_returns_whole_document`。
+6. **预算 transport 实测**：`test_budget_transport_enforces_hard_limit` 用底层计数 transport 证明第 9 请求抛
+   `RuntimeError` 且不触底层；gather/plan 重试共享同一预算，超限明确 fail 不无限刷。
+
 ## 退出命令与结果（本组件无 PG）
 
 | 命令 | 结果 |
 |---|---|
 | `make lint` | ruff check + format --check 通过（259 files formatted） |
-| `.venv/bin/pytest tests/agent -q` | `59 passed`（零 skip/xfail；live 单独 `python -m` 入口不混入） |
-| `make test` | `2168 passed, 529 skipped`（skip 为无 PG 配置项，非本组件范围） |
+| `.venv/bin/pytest tests/agent -q` | `67 passed`（零 skip/xfail；live 单独 `python -m` 入口不混入） |
+| `make test` | `2176 passed, 529 skipped`（skip 为无 PG 配置项，非本组件范围） |
 | `make contracts-check` | `PASS: contracts v1 match frozen schemas` |
 
 ## 未覆盖 / 待决（交协调者或后续组件）
@@ -139,6 +171,7 @@ tool/金额/实体，未核 source 真实性。先红测再最小修：
 - live 仍未由本 worker 执行（不读 key/不跑 API）；协调者复跑 `python -m services.agent.app.llm.live`，
   失败 exit1、证据脱敏、硬预算 8（plan 默认一次 validation retry）。模型未含多模态 Flash、未开启思考。
 - 本组件只在**本地结构/引用一致性**层面做来源核验（L2 才是授权判定方）：live 语义校验不替 L2 授权，也不
-  另造生产金额/授权算术（分换算只按固定合成例）。
+  另造生产金额/授权算术（分换算只按固定合成例）；derived 模板三场景明确拒绝，未来真实 derived 另验。
+
 
 

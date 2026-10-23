@@ -118,6 +118,37 @@ def mixed_tool_response(valid_name: str, valid_args: dict) -> httpx.Response:
     return _response(body)
 
 
+def multi_tool_response(calls: list[tuple[str, dict]]) -> httpx.Response:
+    """Multiple valid-JSON tool calls in one message."""
+
+    body = {
+        "id": "chatcmpl-test",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "deepseek-v4-pro",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": f"call_{index}",
+                            "type": "function",
+                            "function": {"name": name, "arguments": json.dumps(args)},
+                        }
+                        for index, (name, args) in enumerate(calls)
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+    }
+    return _response(body)
+
+
 def _response(body: dict) -> httpx.Response:
     return httpx.Response(
         200,

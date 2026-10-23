@@ -46,3 +46,15 @@ def test_read_tools_cover_exactly_read_args_and_are_not_strict():
     for tool in tools:
         assert "strict" not in tool["function"]
         Draft202012Validator.check_schema(tool["function"]["parameters"])
+
+
+def test_read_tools_preserve_required_and_nullable_semantics():
+    tools = {tool["function"]["name"]: tool["function"]["parameters"] for tool in read_tools()}
+    accounts = tools["get_accounts"]
+    assert accounts["required"] == ["history_days"]
+    payees = tools["list_payees"]
+    assert "query" in payees["required"]  # nullable but no default → required per contract
+    assert "limit" not in payees["required"]  # defaulted
+    assert "cursor" not in payees["required"]  # defaulted None
+    upcoming = tools["upcoming_charges"]
+    assert "days" in upcoming["required"]

@@ -11,7 +11,12 @@ from safebank_contracts.plan import PlanBody, PlanDraft
 from safebank_contracts.schema import from_strict_plan, plan_tool
 
 from services.agent.app.graph.state import AgentContext, AgentState, UtteranceKind
-from services.agent.app.llm._common import LlmToolError, new_ulid, single_tool_call
+from services.agent.app.llm._common import (
+    LlmToolError,
+    new_ulid,
+    single_tool_call,
+    validation_summary,
+)
 from services.agent.app.llm.redact import strip_wall
 
 _PLAN_TOOL = "submit_action_plan"
@@ -31,11 +36,8 @@ _SYSTEM = (
 )
 
 
-def _validation_summary(exc: Exception) -> str:
-    if isinstance(exc, ValidationError):
-        items = [f"{list(e['loc'])}:{e['type']}" for e in exc.errors()[:5]]
-        return "；".join(items)
-    return type(exc).__name__
+def _index_map(text: str) -> str:
+    return " ".join(f"{char}[{index}]" for index, char in enumerate(text))
 
 
 class PlanAdapter:
@@ -65,7 +67,7 @@ class PlanAdapter:
             except (LlmToolError, ValidationError, ValueError) as exc:
                 if attempt == self._max_retries:
                     raise
-                note = f"上次计划未通过校验（{_validation_summary(exc)}），请修正后重新生成。"
+                note = f"上次计划未通过校验（{validation_summary(exc)}），请修正后重新生成。"
         raise AssertionError("unreachable")
 
     @staticmethod
@@ -86,10 +88,11 @@ class PlanAdapter:
 
     @staticmethod
     def _messages(state: AgentState, note: str) -> list:
-        parts = ["用户请求（id/kind/text；span 用从 0 开始的字符下标）："]
+        parts = ["用户请求（id/kind/text；0 基字符下标对照，span 用该下标）："]
         for utterance in state.get("utterances", []):
             text = json.dumps(utterance.text, ensure_ascii=False)
             parts.append(f"- id={utterance.id} kind={utterance.kind.value} text={text}")
+            parts.append(f"  下标对照: {_index_map(utterance.text)}")
         reads = state.get("reads", [])
         if reads:
             parts.append("已读数据（source_ref 供 {kind:read, ref:<source_ref>, pointer} 引用）：")

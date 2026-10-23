@@ -80,7 +80,54 @@ def _draft_summary(draft: PlanDraft) -> dict:
         "source_kinds": sorted(
             {source.source.kind for step in draft.steps for source in step.arg_sources}
         ),
+        "sources": [
+            {"param": source.param, "kind": source.source.kind}
+            for step in draft.steps
+            for source in step.arg_sources
+        ],
     }
+
+
+def _read_value(reads: list[ReadRecord], ref: str, pointer: str):
+    read = next((r for r in reads if r.source_ref == ref), None)
+    if read is None:
+        return None
+    try:
+        return resolve_pointer(read.data, pointer)
+    except ValueError:
+        return None
+
+
+def _check_read_param(sources, param, expected, reads, ref, pointer) -> list[str]:
+    problems = []
+    source = sources.get(param)
+    if source is None:
+        problems.append(f"{param} has no source")
+    elif source.kind != "read":
+        problems.append(f"{param} source kind {source.kind} != read")
+    elif source.ref != ref:
+        problems.append(f"{param} ref {source.ref} != {ref}")
+    else:
+        value = _read_value(reads, ref, pointer)
+        if value != expected:
+            problems.append(f"{param} read value {value!r} != {expected!r}")
+    return problems
+
+
+def _check_utterance_param(sources, param, text, digits) -> list[str]:
+    problems = []
+    source = sources.get(param)
+    if source is None:
+        problems.append(f"{param} has no source")
+    elif source.kind != "utterance":
+        problems.append(f"{param} source kind {source.kind} != utterance")
+    else:
+        span = source.span
+        if not (0 <= span[0] < span[1] <= len(text)):
+            problems.append(f"{param} span {span} out of bounds")
+        elif text[span[0] : span[1]] not in (digits, digits + "元"):
+            problems.append(f"{param} span {span} slice {text[span[0] : span[1]]!r} != {digits!r}")
+    return problems
 
 
 def _source_problems(draft: PlanDraft, utterances: list, reads: list[ReadRecord]) -> list[str]:
@@ -91,8 +138,8 @@ def _source_problems(draft: PlanDraft, utterances: list, reads: list[ReadRecord]
     for step in draft.steps:
         for source in step.arg_sources:
             kind = source.source.kind
-            if kind in ("hint", "action"):
-                problems.append(f"unprovided source kind {kind}")
+            if kind in ("hint", "action", "derived"):
+                problems.append(f"unexpected source kind {kind} in live sample")
             elif kind == "utterance":
                 ref = source.source.ref
                 if ref not in utt_by_id:
@@ -118,20 +165,11 @@ def _source_problems(draft: PlanDraft, utterances: list, reads: list[ReadRecord]
     return problems
 
 
-def _amount_span_ok(draft: PlanDraft, text: str, digits: str) -> list[str]:
-    problems = []
-    for source in draft.steps[0].arg_sources:
-        if source.param == "amount_cents" and source.source.kind == "utterance":
-            span = source.source.span
-            if text[span[0] : span[1]] != digits:
-                problems.append(f"amount span {span} slice != {digits!r}")
-    return problems
-
-
 def _check_transfer(draft: PlanDraft, state: dict) -> list[str]:
     if not draft.steps or draft.steps[0].tool != "transfer":
         return ["expected transfer step"]
-    args = draft.steps[0].args
+    step = draft.steps[0]
+    args = step.args
     problems = []
     if args.from_account_id != "acc_zs_chk":
         problems.append(f"from_account_id={args.from_account_id}")
@@ -141,25 +179,58 @@ def _check_transfer(draft: PlanDraft, state: dict) -> list[str]:
         problems.append(f"to_account_id={args.to_account_id}")
     if args.amount_cents != 80000:
         problems.append(f"amount_cents={args.amount_cents}")
-    problems += _amount_span_ok(draft, state["utterances"][0].text, "800")
-    return problems + _source_problems(draft, state["utterances"], state["reads"])
+    sources = {source.param: source.source for source in step.arg_sources}
+    if not sources:
+        problems.append("empty arg_sources")
+    reads = state["reads"]
+    problems += _check_read_param(
+        sources, "from_account_id", "acc_zs_chk", reads, "src_syn_acct", "/accounts/0/account_id"
+    )
+    problems += _check_read_param(
+        sources, "payee_id", "pye_zs_ww", reads, "src_syn_payee", "/payees/0/payee_id"
+    )
+    problems += _check_utterance_param(sources, "amount_cents", state["utterances"][0].text, "800")
+    return problems + _source_problems(draft, state["utterances"], reads)
 
 
 def _check_freeze(draft: PlanDraft, state: dict) -> list[str]:
     if not draft.steps or draft.steps[0].tool != "freeze_card":
         return ["expected freeze_card step"]
-    if draft.steps[0].args.card_id != "crd_zs_1":
-        return [f"card_id={draft.steps[0].args.card_id}"]
-    return _source_problems(draft, state["utterances"], state["reads"])
+    step = draft.steps[0]
+    if step.args.card_id != "crd_zs_1":
+        return [f"card_id={step.args.card_id}"]
+    sources = {source.param: source.source for source in step.arg_sources}
+    problems = []
+    if not sources:
+        problems.append("empty arg_sources")
+    problems += _check_read_param(
+        sources, "card_id", "crd_zs_1", state["reads"], "src_syn_card", "/cards/0/card_id"
+    )
+    return problems + _source_problems(draft, state["utterances"], state["reads"])
 
 
 def _check_limits(draft: PlanDraft, state: dict) -> list[str]:
     if not draft.steps or draft.steps[0].tool != "update_card_limits":
         return ["expected update_card_limits step"]
-    args = draft.steps[0].args
+    step = draft.steps[0]
+    args = step.args
     if args.card_id != "crd_zs_1" or args.single_limit_cents != 1000:
         return [f"card_id={args.card_id} single_limit_cents={args.single_limit_cents}"]
-    return _source_problems(draft, state["utterances"], state["reads"])
+    if args.daily_limit_cents is not None:
+        return [f"daily_limit_cents={args.daily_limit_cents} expected None"]
+    sources = {source.param: source.source for source in step.arg_sources}
+    problems = []
+    if not sources:
+        problems.append("empty arg_sources")
+    problems += _check_read_param(
+        sources, "card_id", "crd_zs_1", state["reads"], "src_syn_card", "/cards/0/card_id"
+    )
+    problems += _check_utterance_param(
+        sources, "single_limit_cents", state["utterances"][0].text, "1000"
+    )
+    if "daily_limit_cents" in sources:
+        problems.append("daily_limit_cents must not declare a source (sentinel)")
+    return problems + _source_problems(draft, state["utterances"], state["reads"])
 
 
 def _plan_state(text: str, utt_id: str, reads: list[ReadRecord], intents: tuple[str, ...]) -> dict:

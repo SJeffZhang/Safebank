@@ -19,6 +19,7 @@ from tests.agent.llm_mock import (
     ScriptedLLM,
     malformed_tool_response,
     mixed_tool_response,
+    multi_tool_response,
     text_response,
     tool_response,
 )
@@ -317,6 +318,45 @@ def test_gather_stores_read_data_for_plan():
     assert result[0].args == {"history_days": 7}
     assert result[0].data["accounts"][0]["account_id"] == "acc_a"
     assert result[0].versions == {"accounts": 3}
+
+
+def test_gather_feeds_back_invalid_args_without_executing():
+    executed = []
+
+    def executor(name, args):
+        executed.append((name, args))
+        return ReadResult(data={}, source_ref="src_a")
+
+    scripted = ScriptedLLM(
+        [
+            tool_response("get_accounts", {}),  # missing required history_days
+            tool_response("get_accounts", {"history_days": 7}),
+            text_response("done"),
+        ]
+    )
+    llm = build(scripted)
+    result = GatherAdapter(llm, executor)(plan_state(), ctx())
+    assert executed == [("get_accounts", {"history_days": 7})]
+    assert len(result) == 1
+
+
+def test_gather_mixed_valid_and_invalid_args_executes_none():
+    executed = []
+
+    def executor(name, args):
+        executed.append((name, args))
+        return ReadResult(data={}, source_ref="src_a")
+
+    scripted = ScriptedLLM(
+        [
+            multi_tool_response([("get_accounts", {"history_days": 7}), ("get_accounts", {})]),
+            text_response("done"),
+        ]
+    )
+    llm = build(scripted)
+    result = GatherAdapter(llm, executor)(plan_state(), ctx())
+    assert executed == []
+    assert len(result) == 0
 
 
 def test_plan_prompt_includes_reads_utterances_and_derived():

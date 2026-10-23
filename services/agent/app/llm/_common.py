@@ -7,12 +7,22 @@ import uuid
 from typing import Any
 
 from langchain_core.messages import AIMessage
+from pydantic import ValidationError
 
 _CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 
 class LlmToolError(Exception):
     """The model produced no usable single tool call for the required tool."""
+
+
+def validation_summary(exc: Exception, limit: int = 5) -> str:
+    """Sanitized loc/type summary of a pydantic ValidationError (no input values)."""
+
+    if isinstance(exc, ValidationError):
+        items = [f"{list(e['loc'])}:{e['type']}" for e in exc.errors()[:limit]]
+        return "；".join(items)
+    return type(exc).__name__
 
 
 def new_ulid() -> str:

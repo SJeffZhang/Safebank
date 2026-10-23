@@ -51,6 +51,23 @@ def test_resolve_pointer_returns_value():
     assert resolve_pointer({"a/b": 2}, "/a~1b") == 2
 
 
+def test_resolve_root_returns_whole_document():
+    assert resolve_pointer({"a": 1}, "") == {"a": 1}
+
+
+def test_pointer_wraps_list_string_leaf():
+    data = {"tags": ["a", "b"]}
+    out = apply_untrusted_wrapping(data, ("/tags/1",), "src")
+    assert out["tags"][1].startswith('<untrusted_data source="src">')
+
+
+def test_pointer_rejects_invalid_tilde_escape():
+    with pytest.raises(ValueError):
+        resolve_pointer({"a": 1}, "/a~2b")
+    with pytest.raises(ValueError):
+        resolve_pointer({"a": 1}, "/a~")
+
+
 def test_strip_wall_recursive():
     data = {"keep": 1, "drop_wall": 2, "nested": {"keep": 3, "x_wall": 4}}
     assert strip_wall(data) == {"keep": 1, "nested": {"keep": 3}}

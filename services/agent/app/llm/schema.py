@@ -8,6 +8,8 @@ their arguments are validated locally by the same contracts before any port is c
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 from safebank_contracts.schema import inline
 from safebank_contracts.tools import READ_ARGS
 
@@ -27,29 +29,54 @@ def understanding_tool() -> dict:
     }
 
 
-def _lenient(schema: dict) -> dict:
-    """Inline ``$defs`` but keep fields optional (no strict required/additionalProperties)."""
+def _read_schema(model) -> dict:
+    """Inline ``$defs`` while keeping the production Pydantic semantics.
+
+    Unlike the strict ``inline`` (which forces every property ``required``), a non-strict
+    read tool must keep the contract's real ``required`` (non-default fields only),
+    ``additionalProperties``, ``default`` and nullable ``anyOf`` so the model sees that e.g.
+    ``get_accounts.history_days`` is required while ``list_payees.query`` is optional.
+    """
+
+    raw = model.model_json_schema()
 
     def visit(node):
         if isinstance(node, list):
             return [visit(item) for item in node]
         if not isinstance(node, dict):
             return node
-        kept = ("required", "additionalProperties")
-        result = {key: visit(value) for key, value in node.items() if key not in kept}
+        if "$ref" in node:
+            return visit(deepcopy(raw["$defs"][node["$ref"].split("/")[-1]]))
+        stripped = {
+            "$defs",
+            "title",
+            "discriminator",
+            "minLength",
+            "maxLength",
+            "minItems",
+            "maxItems",
+        }
+        result = {key: visit(value) for key, value in node.items() if key not in stripped}
+        if result.get("format") in ("date-time", "date", "time"):
+            result.pop("format")
+        if "const" in result:
+            result["enum"] = [result.pop("const")]
+        if "oneOf" in result:
+            result["anyOf"] = result.pop("oneOf")
+        if "prefixItems" in result:
+            result["items"] = result.pop("prefixItems")[0]
         return result
 
-    return visit(schema)
+    return visit(raw)
 
 
 def read_tools() -> list[dict]:
     tools = []
     for name, model in READ_ARGS.items():
-        schema = _lenient(inline(model.model_json_schema()))
         tools.append(
             {
                 "type": "function",
-                "function": {"name": name, "parameters": schema},
+                "function": {"name": name, "parameters": _read_schema(model)},
             }
         )
     return tools

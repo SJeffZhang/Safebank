@@ -7,11 +7,11 @@ from collections.abc import Callable
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 from safebank_contracts.tools import READ_ARGS
 
 from services.agent.app.graph.state import AgentContext, AgentState, ReadRecord
-from services.agent.app.llm._common import LlmToolError
+from services.agent.app.llm._common import LlmToolError, validation_summary
 from services.agent.app.llm.redact import apply_untrusted_wrapping, strip_wall
 from services.agent.app.llm.schema import read_tools
 
@@ -65,19 +65,41 @@ class GatherAdapter:
             if not calls:
                 return reads
             messages.append(message)
-            for call in calls:
-                reads.append(self._execute(call, messages))
+            prepared, rejected = self._validate_calls(calls)
+            if rejected:
+                # Never execute a partially-valid batch: feed sanitized errors back instead.
+                for call, summary in rejected:
+                    messages.append(
+                        ToolMessage(content=f"参数无效：{summary}", tool_call_id=call["id"])
+                    )
+                for call, _, _ in prepared:
+                    messages.append(
+                        ToolMessage(content="未执行：同轮存在非法参数", tool_call_id=call["id"])
+                    )
+                continue
+            for call, name, args in prepared:
+                reads.append(self._execute(name, args, call, messages))
         # Loop completed without the model stopping: it still wanted more reads.
         raise LlmToolError(f"gather exceeded max rounds ({self._max_rounds})")
 
-    def _execute(self, call: dict, messages: list) -> ReadRecord:
-        name = call.get("name")
-        if name not in READ_ARGS:
-            raise LlmToolError(f"unknown or non-read tool {name!r}")
-        raw_args = call.get("args")
-        if isinstance(raw_args, str):
-            raw_args = json.loads(raw_args)
-        args = READ_ARGS[name].model_validate(raw_args).model_dump(mode="json")
+    def _validate_calls(self, calls: list) -> tuple[list, list]:
+        prepared = []
+        rejected = []
+        for call in calls:
+            name = call.get("name")
+            if name not in READ_ARGS:
+                raise LlmToolError(f"unknown or non-read tool {name!r}")
+            raw_args = call.get("args")
+            if isinstance(raw_args, str):
+                raw_args = json.loads(raw_args)
+            try:
+                args = READ_ARGS[name].model_validate(raw_args).model_dump(mode="json")
+                prepared.append((call, name, args))
+            except ValidationError as exc:
+                rejected.append((call, validation_summary(exc)))
+        return prepared, rejected
+
+    def _execute(self, name: str, args: dict, call: dict, messages: list) -> ReadRecord:
         result = self._read_executor(name, args)
         wrapped = apply_untrusted_wrapping(
             strip_wall(result.data), result.untrusted_paths, result.source_ref
