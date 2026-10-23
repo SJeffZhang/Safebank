@@ -329,6 +329,10 @@
 
 | 2026-10-23 | Codex（协调者） | S1c同步main d5ac后363b54d亲自五退出全0：lint169/all384+184skip（4.24s）/gateway155+136skip（3.49s）/PG17（2.74s）/shared59零skip（8.65s）；runtime相对独立APPROVE的64fd9aa无diff、locks相对main无diff。准备立即push/组件PR。W1真实PG发现无evaluation孤儿job无法构造revision，直接报错会回滚撤销；安排原S1b owner只读设计显式latest absent待对账/终态接口，S1c后串行补，W1不越界或伪造revision。 |
 
+| 2026-10-23 | Codex（协调者） | S3a只读架构准备完成，无代码/测试变更。已采纳ADR-009并迭代PRD7.7/8.3：显式完整义务容器、最小目标所有权、多客户隐私、weekly账单weekday与DUES单一周期源。裁定S3a不向现有P1 cus_a/b凭空安装任意义务或冒充baseline，精确PRD场景只用独立fresh fixture，完整seed另组件；真正空表须作为已加载空义务。更新S3a任务书，尚未实施。 |
+
+| 2026-10-23 | Codex（协调者） | 共享PIN Settings组件207f246已push并创建PR #8（base main），已附加任务，CI待完成。原S1b owner只读确认必须配对孤儿UNKNOWN和终态归档，否则旧任务仍无法终结；已冻结独立OrphanExecutionIdentity与两新增接口，旧revision/提交路径不降级，写S1e任务书，S1c之后串行实施。W1已固定真实PG红测，未用skip/xfail掩盖。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：

@@ -1,0 +1,11 @@
+# ADR-009：原始义务快照与最小所有权
+
+2026-10-23，采纳，尚待S3a实现和验收。只读架构准备对照PRD、现有loader与S2证明：展示View缺账单原始锚点；默认空义务不能证明已加载；多客户scope只有caller payees，不能为投影而塞入他人完整Payee（现list_payees会直接遍历）。
+
+内部BankState新增可空ObligationSnapshot，含covered_customer_ids、typed merchants/billings/standing_instructions/runs与instruction_targets。null代表未知，完整空容器代表确实没有义务；唯一L3 loader在同snapshot事务覆盖全部scope客户。S2仅最小适配，保留原函数签名和七天范围，共用原算式；旧展示投影从原始数据生成，不成为第二事实源。
+
+目标所有权只保存source_customer_id及OWN/OTHER/EXTERNAL、必要target_account/customer IDs；不加载他人联系人，不递归第三方余额或扩大锁范围。只有本人互转可给目标保证贷记。账单weekly补weekday，DUES周期以billing为唯一事实源。0003银行迁移仅新增四领域表及必要候选唯一/复合FK，不改历史迁移、网关schema或外部写工具。
+
+既有P1库使用cus_a/cus_b，不得冒充PRD baseline或重播开户/历史。S3a默认只增量schema与真实loader；没有业务数据写入时不凭空安装P1义务、不改sim_now或数据版本。真实已加载空表应如实返回。精确PRD客户/金额/06:00/295500用独立fresh fixture验证，完整baseline数据安装另组件负责。以后实际写入领域数据的安装事务才按clock→客户顺序锁并增加受影响版本；保持既有余额、流水、intent/outbox。
+
+R7/R10/R11读取、1–30天扩展与max_outflow有符号派生差额留S3b受控处理；S3a不放宽Cents总定义、不截断负值。scheduler与领域写另立组件，不能以本数据组件冒充完成。

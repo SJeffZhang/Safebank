@@ -31,3 +31,12 @@ load_bank_state用同一snapshot事务加载真实义务，不能另起连接或
 实现者可运行lint/test/该组件独立PG专项/contracts-check；真实PG专项必须零skip。协调者亲自完整复跑，并串行执行make up、test-p1、test-p1-concurrency、test-p1-consistency、test-integration；这些命令仅协调者可跑，不能与其他compose控制并发。所有PGDATA显式tmpfs，不删除或重建任何卷。
 
 每个小组件先红后绿，完成后本地提交并冻结；报告docs/progress/S3a-obligations-data.md。独立只读评审→原owner修复→协调者复跑→单独PR→当前head全部CI绿→merge commit。只有生产快照实际完整才能解除对应W2/W3接入阻塞；1–30天读取、signed max_outflow公开契约与三项定时写另立任务，不宣称本组件覆盖。
+
+## 已采纳只读架构结论（ADR-009，实施前固定）
+
+- BankState新增obligations: ObligationSnapshot|None，含covered_customer_ids及typed四领域集合、最小instruction_targets。None=未加载；完整空容器=真实无义务。全部scope客户须完整，S2拒绝未知/不全；原public函数签名和7天范围不变，旧View仅派生投影。
+- target mapping仅instruction/source owner/OWN-OTHER-EXTERNAL及必要目标ID，绝不扩大旧state.payees到他人完整数据，不递归第三方余额。
+- merchant_billing新增weekday；DUES周期字段可空且只以billing为周期事实源。priority保留URGENT/HIGH/MEDIUM/LOW，义务rank仍明确整数3/4，不按字符串排序。
+- 允许bank db.py最新revision/readiness最小更新；银行0003仅四新表+必要父表候选唯一/所有权复合FK，历史0001/0002/schema_v1字节不变。
+- 本组件默认不创建任意P1义务fixture、不将cus_a/b改名或标为baseline_v1、不重播开户/资金历史。若无真实数据写入只迁移schema/加载真实空表，不改sim_now/clock/data版本。精确PRD种子仅fresh独立验收fixture；完整baseline安装单独任务。上文增量seed提案据此收窄。
+- S3b才实现R7/R10/R11与1..30天、受控signed max_outflow契约；S3a不得clamp负上限或放宽全部Cents。真实PG+HTTP证明完整加载，缺数据/所有权/周期明确失败，不用FakeL3当生产证明。

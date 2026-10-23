@@ -1066,6 +1066,8 @@ app_form 使用 L2 保存的规范化表单代替文本来源，同样执行所�
 
 `BankState` 为不可变结构，含 `versions={customer_id:version}`、`clock_version`、sim_now、账户累计量、当前卡、收款人、指令、账单、持仓、订单、测评、产品净值和 Counters。快照（只读，REPEATABLE READ READ ONLY）读取全体涉及客户，隐藏收款方个人信息，只给 L2 执行所需目标账户和版本。Counters 从已过账交易生成：自然日对外转出、滚动 24h 对外转出、卡（或无卡账户）自然日占用；当前计划每步成功后增量更新。
 
+义务数据使用内部`BankState.obligations: ObligationSnapshot | null`：null表示未加载，非空容器即使集合为空也表示已完整加载，covered_customer_ids必须覆盖全部scope客户。展示用ScheduledView/SubscriptionView不能代替原始账单/授权。最小instruction_targets只携带指令源客户与OWN/OTHER/EXTERNAL目标所有权标识，不把其他客户完整payees/联系方式放入旧state.payees，也不递归加载第三方余额。缺失或覆盖不完整时拒绝预留计算，不能把默认空集合当无义务。具体增量见ADR-009。
+
 所有业务规则形如 `apply_*(state, cmd, now) -> (new_state, effects, violations)`，不访问数据库、不取系统时钟、不产生随机数。违反硬约束时该步返回原状态；整个计划标记不可执行，后续依赖步骤报 DEPENDENCY_UNMET，展示的中间结果标明「预测，未提交」。
 
 #### 7.7.1 状态加载与领域函数接口（预演与执行共用的唯一实现）
@@ -1224,8 +1226,8 @@ scheduler 只扫描到期事件并创建幂等 job，不自行决定是否授权
 | `payees` | id、customer_id、name、alias nullable、phone nullable、bank_name、account_no、target_account_id nullable、target_fingerprint、created_at；UNIQUE(customer_id,target_fingerprint)；外部文本视为 untrusted |
 | `cards` | id、account_id、last4、status ACTIVE/FROZEN/LOST、single_limit_cents、daily_limit_cents、max_single_limit_cents、max_daily_limit_cents、controls{online,overseas,atm,quickpass}、replaces_id nullable、created_at；0 < single ≤ daily ≤ max_daily，single ≤ max_single |
 | `merchants` | id、name、mcc、category、usage_expected；本期不提供用户编辑接口 |
-| `merchant_billing` | id、customer_id、account_id、merchant_id、amount_cents、period、anchor_day、time_of_day（种子 06:00）、next_due_at、active、created_at；与代扣授权生命周期独立 |
-| `standing_instructions` | id、customer_id、kind SCHEDULED_TRANSFER/MERCHANT_MANDATE、amount_type FIXED/DUES、status ACTIVE/DISABLED/DELETED、from_account_id、payee_id/to_account_id 二选一（定时）、merchant_id nullable、billing_id nullable、amount_cents/max_amount_cents、recurrence PERIODIC/AS_PER_DUES、period ONCE/WEEKLY/MONTHLY、anchor_day/weekday、time_of_day、next_run_at、end_at nullable、priority、grant_scope_hash、source_plan_id、created_at；不同 kind 用 CHECK 限定字段组合 |
+| `merchant_billing` | id、customer_id、account_id、merchant_id、amount_cents、period、anchor_day、weekday（周一0..周日6）、time_of_day（种子 06:00）、next_due_at、active、created_at；与代扣授权生命周期独立 |
+| `standing_instructions` | id、customer_id、kind SCHEDULED_TRANSFER/MERCHANT_MANDATE、amount_type FIXED/DUES、status ACTIVE/DISABLED/DELETED、from_account_id、payee_id/to_account_id 二选一（定时）、merchant_id nullable、billing_id nullable、amount_cents/max_amount_cents、recurrence PERIODIC/AS_PER_DUES、period ONCE/WEEKLY/MONTHLY、anchor_day/weekday、time_of_day、next_run_at、end_at nullable、priority、grant_scope_hash、source_plan_id、created_at；不同 kind 用 CHECK 限定字段组合；MERCHANT_MANDATE周期字段可空，由关联billing作为唯一周期事实源 |
 | `instruction_runs` | id、instruction_id nullable、billing_id nullable、due_at、event_id、status SUCCESS/FAILED_INSUFFICIENT/BLOCKED/SKIPPED_REAPPROVAL、code nullable、amount_cents、transfer_id nullable；按 instruction 或 billing + due_at 唯一 |
 | `split_requests` / `split_items` | request：id、customer_id、account_id、total_cents、include_self、self_share_cents、created_at；item：id、request_id、payee_id、amount_cents、status UNPAID/PAID、paid_at nullable、payment_event_id nullable；参与人唯一，分摊之和含本人 = total |
 | `products` | id、name、product_type MMF/BOND/MIXED/EQUITY、risk_level、risk_label、base_nav、base_date、confirm_days、settle_days、min_amount_cents、risk_disclosure、disclosure_version；recent_return_bp 由 NAV 序列计算 |
