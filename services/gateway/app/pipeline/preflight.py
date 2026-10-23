@@ -211,8 +211,10 @@ class PreflightStage(Stage):
         ctx.preflight.shortfall_before_cents = report_before.total_shortfall_cents
         ctx.preflight.shortfall_after_cents = report_after.total_shortfall_cents
         if report_after.total_shortfall_cents > report_before.total_shortfall_cents:
-            # The plan grew the 7-day shortfall. Attribute it to the outflow step.
-            step_id = next((s.step_id for s in ctx.steps if s.tool == "transfer"), None)
+            # Attribute the grown shortfall to the first step that pushed the
+            # 7-day reserve over its boundary, so the shrink hint only lowers
+            # the truly over-limit step (never enlarges an earlier one).
+            step_id = self._offending_shortfall_step(ctx, before)
             ctx.add(
                 Code.SCHEDULED_SHORTFALL,
                 FindingEffect.REPLAN,
@@ -224,6 +226,25 @@ class PreflightStage(Stage):
                 maximum = await self._failed_step_max(ctx, step_id, Code.SCHEDULED_SHORTFALL)
                 if maximum is not None and maximum > 0:
                     ctx.preflight.hint_max_outflow[step_id] = maximum
+
+    def _offending_shortfall_step(self, ctx: EvalContext, before) -> str | None:
+        """First step whose cumulative prefix grows the 7-day total shortfall.
+
+        Re-applies the shared ``bankcore.apply_plan`` on each prefix (never new
+        arithmetic) and returns the step that crossed the boundary. ``None`` when
+        the projection is unavailable (no new hint is fabricated).
+        """
+        report_before = self._project_optional(ctx, before)
+        if report_before is None:
+            return None
+        baseline = report_before.total_shortfall_cents
+        steps = ctx.plan_draft.steps
+        for index in range(1, len(steps) + 1):
+            shadow = apply_plan(before, steps[:index], ctx.customer_id, ctx.plan_id).state
+            report = self._project_optional(ctx, shadow)
+            if report is not None and report.total_shortfall_cents > baseline:
+                return steps[index - 1].step_id
+        return None
 
     def _project_optional(self, ctx: EvalContext, state):
         try:

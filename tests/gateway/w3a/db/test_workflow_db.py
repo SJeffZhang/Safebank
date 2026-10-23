@@ -34,20 +34,58 @@ def plan(steps):
     )
 
 
-async def _insert_session(conn, sid="sid_dup", customer_id="cus_a"):
+async def _insert_session(conn, sid="sid_w3", customer_id="cus_a"):
     await conn.execute(
         insert(t.sessions).values(id=sid, customer_id=customer_id, created_at_wall=WALL)
     )
 
 
-def _ctx(conn, steps, *, wall):
-    ctx = build_ctx(steps, plan_id="pln_w3")
+async def _insert_executed_plan(
+    conn,
+    *,
+    plan_id,
+    steps_hash,
+    created_wall,
+    executed_wall,
+    customer_id="cus_a",
+    sid="sid_w3",
+    status="EXECUTED",
+):
+    await conn.execute(
+        insert(t.plans).values(
+            id=plan_id,
+            customer_id=customer_id,
+            sid=sid,
+            origin="agent",
+            request_id="req_" + plan_id,
+            request_hash="0" * 64,
+            plan_hash="0" * 64,
+            steps_hash=steps_hash,
+            resolved_steps=[],
+            status=status,
+            created_at_wall=created_wall,
+        )
+    )
+    if status == "EXECUTED":
+        await conn.execute(
+            insert(t.execution_jobs).values(
+                plan_id=plan_id,
+                status="EXECUTED",
+                l3_attempt=1,
+                created_at_wall=executed_wall,
+                updated_at_wall=executed_wall,
+            )
+        )
+
+
+def _ctx(conn, steps, *, wall, plan_id="pln_w3"):
+    ctx = build_ctx(steps, plan_id=plan_id)
     ctx.conn = conn
     ctx.wall_now = lambda: wall
     return ctx
 
 
-def test_duplicate_plan_uses_wall_not_sim(gateway_db):
+def test_duplicate_plan_anchors_on_execution_time_wall(gateway_db):
     async def run():
         engine = gateway_engine(gateway_db.runtime_url, poolclass=NullPool)
         try:
@@ -55,23 +93,16 @@ def test_duplicate_plan_uses_wall_not_sim(gateway_db):
             steps_hash = request_digest(plan(steps).steps)
             async with engine.begin() as conn:
                 await _insert_session(conn)
-                await conn.execute(
-                    insert(t.plans).values(
-                        id="pln_old",
-                        customer_id="cus_a",
-                        sid="sid_dup",
-                        origin="agent",
-                        request_id="req_old",
-                        request_hash="0" * 64,
-                        plan_hash="0" * 64,
-                        steps_hash=steps_hash,
-                        resolved_steps=[],
-                        status="EXECUTED",
-                        created_at_wall=WALL - timedelta(minutes=5),
-                    )
+                # Slow approval: plan created 1 hour ago, executed 5 minutes ago.
+                await _insert_executed_plan(
+                    conn,
+                    plan_id="pln_old",
+                    steps_hash=steps_hash,
+                    created_wall=WALL - timedelta(hours=1),
+                    executed_wall=WALL - timedelta(minutes=5),
                 )
 
-            # Within the 10-minute wall window.
+            # Within the 10-minute wall window anchored on execution time.
             async with engine.connect() as conn:
                 ctx = _ctx(conn, steps, wall=WALL)
                 await EntityStage().run(ctx)
@@ -98,6 +129,76 @@ def test_duplicate_plan_uses_wall_not_sim(gateway_db):
                 await EntityStage().run(later_ctx)
                 await WorkflowStage().run(later_ctx)
             assert not any(f.code is Code.DUPLICATE_PLAN for f in later_ctx.findings)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_duplicate_plan_excludes_self_and_boundaries(gateway_db):
+    async def run():
+        engine = gateway_engine(gateway_db.runtime_url, poolclass=NullPool)
+        try:
+            # Distinct amount keeps this test's steps_hash away from the other
+            # tests that share the session-scoped gateway database.
+            steps = [transfer("pye_ext", 200000)]
+            steps_hash = request_digest(plan(steps).steps)
+            async with engine.begin() as conn:
+                await _insert_session(conn, sid="sid_self")
+                await _insert_session(conn, sid="sid_other", customer_id="cus_b")
+                # Self replay: same plan_id must not self-trigger.
+                await _insert_executed_plan(
+                    conn,
+                    plan_id="pln_w3",
+                    steps_hash=steps_hash,
+                    created_wall=WALL - timedelta(hours=1),
+                    executed_wall=WALL - timedelta(minutes=5),
+                    sid="sid_self",
+                )
+                # Cross-customer execution.
+                await _insert_executed_plan(
+                    conn,
+                    plan_id="pln_other_customer",
+                    steps_hash=steps_hash,
+                    created_wall=WALL - timedelta(hours=1),
+                    executed_wall=WALL - timedelta(minutes=5),
+                    customer_id="cus_b",
+                    sid="sid_other",
+                )
+                # Invalid (non-executed) status.
+                await _insert_executed_plan(
+                    conn,
+                    plan_id="pln_not_executed",
+                    steps_hash=steps_hash,
+                    created_wall=WALL - timedelta(hours=1),
+                    executed_wall=WALL - timedelta(minutes=5),
+                    status="DENIED",
+                    sid="sid_self",
+                )
+                # Expired execution (executed 11 minutes ago).
+                await _insert_executed_plan(
+                    conn,
+                    plan_id="pln_expired",
+                    steps_hash=steps_hash,
+                    created_wall=WALL - timedelta(hours=2),
+                    executed_wall=WALL - timedelta(minutes=11),
+                    sid="sid_self",
+                )
+                # Future execution timestamp is outside the wall window.
+                await _insert_executed_plan(
+                    conn,
+                    plan_id="pln_future",
+                    steps_hash=steps_hash,
+                    created_wall=WALL - timedelta(hours=2),
+                    executed_wall=WALL + timedelta(minutes=5),
+                    sid="sid_self",
+                )
+
+            async with engine.connect() as conn:
+                ctx = _ctx(conn, steps, wall=WALL, plan_id="pln_w3")
+                await EntityStage().run(ctx)
+                await WorkflowStage().run(ctx)
+            assert not any(f.code is Code.DUPLICATE_PLAN for f in ctx.findings)
         finally:
             await engine.dispose()
 

@@ -65,9 +65,11 @@ def _policy_version() -> str:
 
 
 def _format_cents(cents: int) -> str:
-    if cents % 100 == 0:
-        return f"{cents // 100:,} 元"
-    return f"{cents / 100:,.2f} 元"
+    # Integer arithmetic only (§0.1: 金额禁止 float); negative guards keep the
+    # display helper honest even if a caller passes a non-positive sentinel.
+    if cents < 0:
+        return f"-{_format_cents(-cents)}"
+    return f"{cents // 100:,}.{cents % 100:02d} 元"
 
 
 class DecisionStage(Stage):
@@ -77,14 +79,17 @@ class DecisionStage(Stage):
     async def run(self, ctx: EvalContext) -> None:
         if ctx.plan_draft is None:
             return
-        state = ctx.snapshot if ctx.snapshot is not None else await ctx.bank_state()
-
+        # The snapshot may be absent when stage ⑤ was skipped (profile ablation)
+        # or short-circuited by an earlier hard DENY. A DENY Decision must never
+        # depend on L3 being reachable just to assemble display fields, so we
+        # never re-fetch here: use the cached snapshot or empty wire defaults.
+        state = ctx.snapshot
         decision, risk = self._aggregate(ctx)
         hints = await self._hints(ctx, decision, state)
         preflight = self._preflight_view(ctx)
         shadow_b1 = (
             await self._shadow_b1(ctx, state)
-            if ctx.profile == "B2" and ctx.mode is EvalMode.EVALUATE
+            if ctx.profile == "B2" and ctx.mode is EvalMode.EVALUATE and state is not None
             else None
         )
 
@@ -97,8 +102,8 @@ class DecisionStage(Stage):
             findings=tuple(ctx.findings),
             replan_hints=hints,
             preflight=preflight,
-            versions=dict(state.versions),
-            clock_version=state.clock_version,
+            versions=dict(state.versions) if state is not None else {},
+            clock_version=state.clock_version if state is not None else 0,
             policy_version=_policy_version(),
             shadow_b1=shadow_b1,
         )
@@ -126,6 +131,10 @@ class DecisionStage(Stage):
     @staticmethod
     def _preflight_view(ctx: EvalContext) -> PreflightView:
         pre = ctx.preflight
+        if pre is None:
+            # Stage ⑥ was skipped (profile ablation or an earlier hard DENY).
+            # A rejected plan must not report a fabricated "executable: true".
+            return PreflightView(executable=not ctx.has_hard_deny())
         steps = tuple(
             {
                 "step_id": s["step_id"],
@@ -144,8 +153,10 @@ class DecisionStage(Stage):
         )
 
     # ---- replan hints ------------------------------------------------------
-    async def _hints(self, ctx: EvalContext, decision: DecisionValue, state: BankState):
+    async def _hints(self, ctx: EvalContext, decision: DecisionValue, state: BankState | None):
         if decision is not DecisionValue.REPLAN:
+            return ()
+        if state is None or ctx.preflight is None:
             return ()
         findings = ctx.findings
         replan = [f for f in findings if f.effect is FindingEffect.REPLAN]
@@ -180,6 +191,11 @@ class DecisionStage(Stage):
                 else ("int:" + args.to_account_id if args.to_account_id else None)
             )
             old_amount = args.amount_cents
+            # A hint may only ever shrink (§7.9). If the proposed maximum is not
+            # strictly below the replaced amount, it would enlarge or no-op the
+            # authorization, so no hint is produced at all.
+            if maximum >= old_amount:
+                return ()
             matched = False
             for i, transfer in enumerate(transfers):
                 if transfer.target_fingerprint == target and transfer.amount_cents == old_amount:

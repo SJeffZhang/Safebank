@@ -46,3 +46,31 @@
 4. **冷静期写入时机**：RISKY_SEQUENCE 命中即在评估阶段写 `cooldowns`（§7.8 冷静期从 DENY 起算）；W3b 需把它纳入 G4 同一事务原子提交。
 5. **IRREVERSIBLE_STEP 与未实现工具的叠加**：subscribe_product 当前既 TOOL_NOT_ALLOWED(DENY) 又 IRREVERSIBLE_STEP(RED)，领域写实现后仅保留 IRREVERSIBLE_STEP。
 6. `scheduled_reserve_cents` 为展示用预留（before 投影 total_reserve）；失败计划只做 best-effort 展示，绝不因预留 503 遮盖已有 REPLAN 结论。
+
+## 评审修复轮（REQUEST_CHANGES，reviewer 3d1faedd）
+
+候选 `df67cc0` → 修复提交（本工作区）。逐条处理 P0-1 / P1-1 / P2-1/2/3，全部真实红绿。
+
+- **P0-1**：`decision.run` 不再 `await ctx.bank_state()`（早 DENY/无 L3 时不为展示/影子额外依赖 L3 而 503）；`_preflight_view` 对 `ctx.preflight is None` 回退 `PreflightView(executable=not ctx.has_hard_deny())`（拒绝时 executable 不捏造 true）；`_hints`/`_shadow_b1` 在无快照时跳过。shadow 仅在 B2+EVALUATE 且有快照时计算。
+- **P1-1**：SCHEDULED_SHORTFALL 改为 `_offending_shortfall_step`（用共享 `apply_plan` 逐前缀复演找首个越预留边界步），hint 只归因到真正越界步；`decision._hints` 强制 `maximum >= old_amount → 无 hint`。补 300000+298000 → 只把 s2 降 295500（总 595500）的用例，以及 shrink 后计划再预演通过的用例。
+- **P2-1**：`_format_cents` 改整数运算（`//`/`%`），9999999999999999 → `99,999,999,999,999.99 元`。
+- **P2-2**：workflow 阈值从 `policies/thresholds.yaml` 加载（split count/total、cumulative、new_payee 分钟），构造器支持 `thresholds` 注入；测试证明改配置影响行为。
+- **P2-3**：DUPLICATE_PLAN 排除 `ctx.plan_id`，并 join `execution_jobs` 用 `created_at_wall`（G8 一次性写入、非重试 updated_at）作「已执行」wall 锚点，且 `<= wall_now` 排除未来。真实 PG 补：慢审批近期执行、自身复演、过期/未来/跨客户/无效状态。**注**：`execution_jobs.result.committed_at` 经查为 L3 `state.sim_now`（execution.py:249），是模拟时间，不能锚 wall 窗口；专用 `executed_at_wall` 列需迁移、超出本组件，已按「无现有来源则明确记录」处理。
+
+## 修复轮退出命令
+
+| 命令 | 结果 |
+|---|---|
+| make lint | 通过（257 files） |
+| make test-gateway | 1928 passed / 477 skipped |
+| make test-gateway-db | 17 passed |
+| make test | 2179 passed / 537 skipped |
+| make test-w3a | 44 passed 零 skip/xfail（含真实 bank PG + L3 HTTP + gateway PG） |
+| make test-w2 | 246 passed 零 skip/xfail |
+| make test-obligations | 30 passed（既有 FK 环 warning 保留） |
+| make contracts-check | PASS |
+
+## 修复后仍开放（未闭项）
+
+- 完整 G4/审批/落库/复演、领域写、evaluation_id/revision 真实分配、W4b→W3b→W4c（同原进度）。
+- REJECTED_RETRY 卡类方向、cooldown 纳入 G4 事务、`executed_at_wall` 专用列（W3b/W4c 或受控迁移组件）。

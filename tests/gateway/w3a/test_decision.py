@@ -126,6 +126,97 @@ def test_replan_hint_shrinks_amount():
     assert [t.amount_cents for t in hint.scope.transfers] == [295500]
 
 
+def test_replan_hint_shrinks_only_the_over_limit_step():
+    # Two transfers: s1 (300000) must stay, s2 (298000) shrinks to 295500. A
+    # hint that enlarged s1 would be rejected (no hint), never emitted.
+    from tests.gateway.w3a.conftest import build_ctx
+
+    a = transfer("pye_b", 300000, step_id="s1")
+    b = transfer("pye_ext", 298000, step_id="s2")
+    b["depends_on"] = ["s1"]
+    ctx = build_ctx([a, b], plan_id="pln_two")
+    ctx.snapshot = w3_state()
+    ctx.steps = (
+        ResolvedStep(
+            "s1", "transfer", {"amount_cents": 300000}, "TRANSFER_EXTERNAL", "YELLOW", True
+        ),
+        ResolvedStep(
+            "s2", "transfer", {"amount_cents": 298000}, "TRANSFER_EXTERNAL", "YELLOW", True
+        ),
+    )
+    now = datetime.now(UTC)
+    utterance = UtteranceRef(
+        id="utt_1",
+        kind="typed",
+        text="转账",
+        scope=NormalizedScope(
+            action_kinds=("TRANSFER_EXTERNAL", "TRANSFER_EXTERNAL"),
+            transfers=(
+                ScopeTransfer(target_fingerprint="pye_bfp", amount_cents=300000),
+                ScopeTransfer(target_fingerprint="pye_extfp", amount_cents=298000),
+            ),
+        ),
+        parse_status=ParseStatus.SCOPED,
+        created_at_wall=now.isoformat(),
+        expires_at_wall=(now + timedelta(minutes=10)).isoformat(),
+    )
+    ctx.authorization = AuthorizationInputs(
+        sid="sid_1",
+        customer_id="cus_a",
+        utterance_ids=("utt_1",),
+        utterances={"utt_1": utterance},
+        scope_ids=("utt_1",),
+        statuses={"utt_1": UtteranceStatus.ACTIVE},
+    )
+    ctx.add(Code.SCHEDULED_SHORTFALL, FindingEffect.REPLAN, step_id="s2", resolver=Resolver.USER)
+    ctx.preflight = PreflightResult(hint_max_outflow={"s2": 295500})
+    ctx.wall_now = lambda: datetime.now(UTC)
+    run(ctx)
+    assert ctx.decision.decision is DecisionValue.REPLAN
+    assert len(ctx.decision.replan_hints) == 1
+    hint = ctx.decision.replan_hints[0]
+    amounts = {t.target_fingerprint: t.amount_cents for t in hint.scope.transfers}
+    assert amounts == {"pye_bfp": 300000, "pye_extfp": 295500}
+
+
+def test_no_hint_when_maximum_would_enlarge():
+    ctx = decision_ctx()
+    now = datetime.now(UTC)
+    utterance = UtteranceRef(
+        id="utt_1",
+        kind="typed",
+        text="转账",
+        scope=NormalizedScope(
+            action_kinds=("TRANSFER_EXTERNAL",),
+            transfers=(ScopeTransfer(target_fingerprint="pye_extfp", amount_cents=100000),),
+        ),
+        parse_status=ParseStatus.SCOPED,
+        created_at_wall=now.isoformat(),
+        expires_at_wall=(now + timedelta(minutes=10)).isoformat(),
+    )
+    ctx.authorization = AuthorizationInputs(
+        sid="sid_1",
+        customer_id="cus_a",
+        utterance_ids=("utt_1",),
+        utterances={"utt_1": utterance},
+        scope_ids=("utt_1",),
+        statuses={"utt_1": UtteranceStatus.ACTIVE},
+    )
+    ctx.add(Code.INSUFFICIENT_FUNDS, FindingEffect.REPLAN, step_id="s1", resolver=Resolver.USER)
+    # A "shrink" of 100000 -> 595500 would enlarge: no hint may be produced.
+    ctx.preflight = PreflightResult(hint_max_outflow={"s1": 595500})
+    run(ctx)
+    assert ctx.decision.replan_hints == ()
+
+
+def test_format_cents_is_integer_arithmetic():
+    from services.gateway.app.pipeline.decision import _format_cents
+
+    assert _format_cents(9999999999999999) == "99,999,999,999,999.99 元"
+    assert _format_cents(100) == "1.00 元"
+    assert _format_cents(295500) == "2,955.00 元"
+
+
 def test_no_hint_when_taint_present():
     ctx = decision_ctx()
     ctx.add(Code.TAINTED_SENSITIVE_ARG, FindingEffect.DENY)

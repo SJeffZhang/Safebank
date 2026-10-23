@@ -37,6 +37,7 @@ from ..workflow.sequence import (
 from .context import EvalContext, EvalMode, Stage, WorkflowResult
 
 _WORKFLOW_PATH = Path(__file__).resolve().parents[2] / "policies" / "workflow.yaml"
+_THRESHOLDS_PATH = Path(__file__).resolve().parents[2] / "policies" / "thresholds.yaml"
 
 
 @dataclass
@@ -51,6 +52,10 @@ class WorkflowHistory:
 
 def _load_workflow_yaml() -> dict[str, int]:
     return {str(k): int(v) for k, v in yaml.safe_load(_WORKFLOW_PATH.read_text()).items()}
+
+
+def _load_thresholds() -> dict[str, int]:
+    return {str(k): int(v) for k, v in yaml.safe_load(_THRESHOLDS_PATH.read_text()).items()}
 
 
 def _step_signature(tool: str, args: dict) -> tuple[str, str]:
@@ -131,12 +136,15 @@ async def _load_history(ctx: EvalContext) -> WorkflowHistory:
     duplicate_row = (
         await conn.execute(
             select(t.plans.c.id)
+            .join(t.execution_jobs, t.execution_jobs.c.plan_id == t.plans.c.id)
             .where(
                 t.plans.c.customer_id == ctx.customer_id,
                 t.plans.c.steps_hash == steps_hash,
                 t.plans.c.status == "EXECUTED",
-                t.plans.c.created_at_wall
+                t.plans.c.id != ctx.plan_id,
+                t.execution_jobs.c.created_at_wall
                 >= wall_now - timedelta(minutes=cfg["duplicate_plan_wall_minutes"]),
+                t.execution_jobs.c.created_at_wall <= wall_now,
             )
             .limit(1)
         )
@@ -194,10 +202,13 @@ async def _write_cooldown(ctx: EvalContext, fingerprint: str, until_at: datetime
 class WorkflowStage(Stage):
     name = "workflow"
 
-    def __init__(self, *, load_history=None, write_cooldown=None) -> None:
+    def __init__(
+        self, *, load_history=None, write_cooldown=None, thresholds: dict[str, int] | None = None
+    ) -> None:
         self.load_history = load_history or _load_history
         self.write_cooldown = write_cooldown or _write_cooldown
         self._cfg = _load_workflow_yaml()
+        self._thresholds = _load_thresholds() if thresholds is None else thresholds
 
     async def run(self, ctx: EvalContext) -> None:
         ctx.workflow = WorkflowResult()
@@ -291,7 +302,10 @@ class WorkflowStage(Stage):
                 )
                 continue
             count, total = split_transfer(window, target_fingerprint=target)
-            if count >= 3 and total > 500_000:
+            if (
+                count >= self._thresholds["split_transfer_min_count"]
+                and total > self._thresholds["split_transfer_min_total_cents"]
+            ):
                 ctx.add(
                     Code.SPLIT_TRANSFER,
                     FindingEffect.RISK_RED,
@@ -318,7 +332,7 @@ class WorkflowStage(Stage):
 
         committed_rolling = state.counters.rolling_outflow_cents.get(ctx.customer_id, 0)
         plan_outflow = sum(int(s.args["amount_cents"]) for s in ctx.steps if s.outflow)
-        if committed_rolling + plan_outflow > 1_000_000:
+        if committed_rolling + plan_outflow > self._thresholds["cumulative_outflow_24h_cents"]:
             ctx.add(
                 Code.CUMULATIVE_OUTFLOW,
                 FindingEffect.RISK_RED,
@@ -346,13 +360,14 @@ class WorkflowStage(Stage):
                 return True
         return False
 
-    @staticmethod
-    def _new_payee(state, step, sim_now: datetime) -> bool:
+    def _new_payee(self, state, step, sim_now: datetime) -> bool:
         payee = state.payees.get(step.args.get("payee_id"))
         if payee is None:
             # A payee created earlier in this same plan has created_at == sim_now.
             return True
-        return sim_now - payee.created_at <= timedelta(minutes=30)
+        return sim_now - payee.created_at <= timedelta(
+            minutes=self._thresholds["new_payee_first_transfer_minutes"]
+        )
 
 
 stage = WorkflowStage()

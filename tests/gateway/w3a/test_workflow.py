@@ -14,7 +14,7 @@ from tests.gateway.w3a.conftest import build_ctx, run_entity, transfer, w3_state
 SIM = NOW  # 2026-10-15T09:00+08
 
 
-def run(ctx, history=None, writes=None):
+def run(ctx, history=None, writes=None, thresholds=None):
     recorded = {}
 
     async def load(ctx):
@@ -23,7 +23,7 @@ def run(ctx, history=None, writes=None):
     async def write(ctx, fingerprint, until_at):
         recorded.setdefault("cooldowns", []).append((fingerprint, until_at))
 
-    stage = WorkflowStage(load_history=load, write_cooldown=writes or write)
+    stage = WorkflowStage(load_history=load, write_cooldown=writes or write, thresholds=thresholds)
 
     async def execute():
         await stage.run(ctx)
@@ -238,3 +238,64 @@ def test_future_ops_are_outside_window():
     ctx, _ = run(ctx, history)
     # A future op must not contribute to a 24h split window.
     assert not any(f.code is Code.SPLIT_TRANSFER for f in ctx.findings)
+
+
+_BASE_THRESHOLDS = {
+    "split_transfer_min_count": 3,
+    "split_transfer_min_total_cents": 500000,
+    "cumulative_outflow_24h_cents": 1000000,
+    "new_payee_first_transfer_minutes": 30,
+}
+
+
+def test_workflow_split_thresholds_are_loaded_from_config():
+    history = WorkflowHistory(
+        committed=(
+            committed(event_id="e1", amount_cents=200000, occurred_at=SIM - timedelta(hours=2)),
+            committed(event_id="e2", amount_cents=200000, occurred_at=SIM - timedelta(hours=1)),
+        )
+    )
+    # Default count=3: two committed + one current transfer split.
+    ctx = run_entity(build_ctx([transfer("pye_ext", 200000)]))
+    ctx, _ = run(ctx, history)
+    assert any(f.code is Code.SPLIT_TRANSFER for f in ctx.findings)
+    # Raising the count to 4 suppresses the split.
+    ctx = run_entity(build_ctx([transfer("pye_ext", 200000)]))
+    ctx, _ = run(ctx, history, thresholds={**_BASE_THRESHOLDS, "split_transfer_min_count": 4})
+    assert not any(f.code is Code.SPLIT_TRANSFER for f in ctx.findings)
+    # Raising the total to 700000 (above the 600000 sum) suppresses the split.
+    ctx = run_entity(build_ctx([transfer("pye_ext", 200000)]))
+    ctx, _ = run(
+        ctx, history, thresholds={**_BASE_THRESHOLDS, "split_transfer_min_total_cents": 700000}
+    )
+    assert not any(f.code is Code.SPLIT_TRANSFER for f in ctx.findings)
+
+
+def test_new_payee_window_is_configurable():
+    from safebank_bankcore.ledger import replace_state
+    from safebank_contracts.state import Payee
+
+    state = w3_state()
+    recent = Payee(
+        id="pye_recent",
+        customer_id="cus_a",
+        name="近期收款人",
+        alias=None,
+        phone=None,
+        bank_name="他行",
+        account_no="6222020000000088",
+        target_account_id=None,
+        target_fingerprint="recentfp",
+        created_at=SIM - timedelta(minutes=20),
+    )
+    state = replace_state(state, payees=dict(state.payees) | {"pye_recent": recent})
+    ctx = run_entity(build_ctx([transfer("pye_recent", 100000)], state=state))
+    ctx, _ = run(ctx)
+    assert any(f.code is Code.NEW_PAYEE_FIRST_TRANSFER for f in ctx.findings)
+    # A 10-minute window no longer flags a payee created 20 minutes ago.
+    ctx = run_entity(build_ctx([transfer("pye_recent", 100000)], state=state))
+    ctx, _ = run(
+        ctx,
+        thresholds={**_BASE_THRESHOLDS, "new_payee_first_transfer_minutes": 10},
+    )
+    assert not any(f.code is Code.NEW_PAYEE_FIRST_TRANSFER for f in ctx.findings)

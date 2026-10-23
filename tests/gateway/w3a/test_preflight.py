@@ -51,6 +51,36 @@ def test_b1_single_step_checks_each_against_original():
     assert ctx.preflight.hint_max_outflow == {}
 
 
+def test_shortfall_hint_attributes_the_over_limit_step_only():
+    # available=600000, reserve=4500 (max_outflow=595500). Two transfers total
+    # 598000 succeed in bankcore but grow the shortfall; the hint must shrink the
+    # *second* step (which crossed the boundary) to 295500, never enlarge s1.
+    a = transfer("pye_b", 300000, step_id="s1")
+    b = transfer("pye_ext", 298000, step_id="s2")
+    b["depends_on"] = ["s1"]
+    ctx = run_entity(build_ctx([a, b]))
+    run(ctx)
+    assert ctx.preflight.executable is True
+    shortfall = [f for f in ctx.findings if f.code is Code.SCHEDULED_SHORTFALL]
+    assert len(shortfall) == 1
+    assert shortfall[0].step_id == "s2"
+    assert ctx.preflight.hint_max_outflow == {"s2": 295500}
+
+
+def test_shrunk_hint_repreflights_successfully():
+    # The shrunk plan (s1=300000, s2=295500) must preflight cleanly, proving the
+    # hint is a real executable shrink, not just a printed number.
+    a = transfer("pye_b", 300000, step_id="s1")
+    b = transfer("pye_ext", 295500, step_id="s2")
+    b["depends_on"] = ["s1"]
+    ctx = run_entity(build_ctx([a, b]))
+    run(ctx)
+    assert ctx.preflight.executable is True
+    assert not any(
+        f.code in (Code.INSUFFICIENT_FUNDS, Code.SCHEDULED_SHORTFALL) for f in ctx.findings
+    )
+
+
 def test_amount_above_yellow_cap_escalates_red():
     ctx = run_entity(build_ctx([transfer("pye_b", 500001)]))
     run(ctx)
