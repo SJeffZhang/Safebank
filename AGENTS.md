@@ -409,7 +409,7 @@ P0 准备阶段（决定后续一切）：
 | [ ] | W4 审批与执行 | `feat/l2-execution`（3856a4c部分检查点，G8待共享状态与真实依赖） | `docs/plans/briefs/W4-execution.md` |
 | [x] | S1b / 0002_wave1 迁移与受控状态 | PR #6已合并94e40fe（四CI成功，真实现有库升级与集成通过） | `docs/plans/briefs/S1b-wave1-state.md` |
 | [x] | S1c PIN Settings 接线 | PR #8 merge `304adda`；五退出、独立评审与精确head四CI全绿 | `docs/plans/briefs/S1c-pin-settings.md`；证据 `docs/progress/S1c-pin-settings.md` |
-| [ ] | S1e 孤儿job受控对账 | `feat/l2-orphan-reconcile`；S1c后串行实施，修复W1真实PG红测依赖 | `docs/plans/briefs/S1e-orphan-jobs.md` |
+| [ ] | S1e 孤儿job受控对账 | `feat/l2-orphan-reconcile`；99e01e2已修复/独立APPROVE，亲自六退出含state231通过，准备PR | `docs/plans/briefs/S1e-orphan-jobs.md` |
 | [ ] | S1d memo敏感内容黄级code | 任务草稿，S1e后串行实施 | `docs/plans/briefs/S1d-memo-code.md` |
 | [ ] | S3a 真实完整义务数据 | ADR-009与任务书已准备，尚未实施 | `docs/plans/briefs/S3a-obligations-data.md` |
 | [ ] | W5 定时授权、通知、审计接口、D 接口 | 波次 2，任务书未写 | L2-plan §3 W5 |
