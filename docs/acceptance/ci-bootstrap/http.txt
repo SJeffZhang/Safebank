@@ -1,0 +1,10 @@
+.venv/bin/python -m scripts.network_acceptance
+PASS: real network, credential and database role boundaries
+.venv/bin/python -m scripts.p1_http_acceptance
+PASS: actual HTTP -> PostgreSQL, service auth, snapshot, prepare, transfer and outbox
+ Container safebank-bank-backend-1 Restarting
+ Container safebank-bank-backend-1 Started
+ Container safebank-bank-backend-1 Running
+ Container safebank-bank-backend-1 Waiting
+ Container safebank-bank-backend-1 Healthy
+PASS: actual L3 process restart recovers committed result and idempotent replay

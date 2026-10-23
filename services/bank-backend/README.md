@@ -33,6 +33,7 @@ L2 的授权/审批/OTP 仍属于 P2/P3。当前 HTTP 验收信封仅由可信�
 ```sh
 make test                 # 本地单元；未配置真实 PG 的集成项显示 skipped
 make lint
+make test-postgres-bootstrap # 独立Linux新卷初始化/权限/重启回归
 make test-p1              # 重建独立测试库、空库迁移、重复升级、全部真实 PG 验收
 make test-p1-concurrency  # 在 test-p1 构建后独立运行
 make test-p1-consistency
@@ -43,3 +44,5 @@ make contracts-check
 测试库清理仅针对固定名称 bank_p1_test；运行角色无 DDL/TRUNCATE。迁移 0001 固化 DDL，0002 分离请求与解析后摘要；0002 对非空旧执行表拒绝猜测迁移。迁移仅前进，不回退删除账本。
 
 `make demo/eval/reset` 仍明确失败，等待后续完整演示、评测与正式种子数据实现。CI 配置见 `.github/workflows/checks.yml`；本地验收证据见 `docs/acceptance/P1.*.md`。
+
+Linux 全新部署通过 scripts/postgres-entrypoint.sh 适配宿主0600 SQL的所有者；启动副本位于容器私有tmpfs（目录0700/文件0600），再运行官方entrypoint。原始只读挂载和宿主密钥权限不变，正式bank卷不为修复CI而删除。

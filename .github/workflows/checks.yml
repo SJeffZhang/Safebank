@@ -20,6 +20,7 @@ jobs:
         with:
           version: '0.12.23'
       - run: make setup
+      - run: make test-postgres-bootstrap
       - run: make up
       - run: make test-p1
       - run: make test-p1-concurrency

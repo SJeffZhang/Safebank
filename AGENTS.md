@@ -40,7 +40,7 @@
 |---|---|
 | 调研 | 开源项目元数据和 DeepSeek 官方信息已核实；评分/提交已从官网公开 JS 核实（docs/acceptance/official-v1.md）；竞品「明鉴」未核实 |
 | PRD | **`PRD.md` = v2.1 定稿**（1,764 行，§0–§16；三轮多 agent 审核 + 两次修订复核，决议 D1–D47 见 §0.5）。v1.2 与作废的 v2.0 草稿在 `docs/archive/`；审核报告在 `docs/reviews/` |
-| 代码 | **P1 完成并逐组件验收**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116项单元+33项真实PG通过，契约v1已冻结。分支 feat/l3-core，P1代码已提交并推送私有仓库（功能提交7fd7a26）；远端unit通过，PG集成被Linux初始化SQL读取权限阻塞 |
+| 代码 | **P1 完成并逐组件验收**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116项单元+33项真实PG通过，契约v1已冻结。分支 feat/l3-core，P1代码已提交并推送私有仓库（功能提交7fd7a26）；CI权限修复已获授权并完成本地全新Linux卷与P1回归，远端验证待推送 |
 | 下一步 | P1已结束，等待用户指定下一步；按PRD后续P2实现L2/L1的单笔需确认转账闭环，仍须逐组件验收。本轮不启动P2 |
 
 ### 已确认事实
@@ -151,6 +151,14 @@
 | 2026-10-23 | Codex | P1功能提交7fd7a26已成功推送到私有仓库SJeffZhang/Safebank的origin/feat/l3-core，并建立upstream；未合并main、未创建PR。仅日志行尾空格规范化，未改变业务代码或既有验收结论。本条以文档提交同步交付状态，CI结果以GitHub实际运行记录为准。 |
 
 | 2026-10-23 | Codex | 推送后只读检查远端CI：unit通过，p1-postgres在make up失败，两个Postgres容器均报告/docker-entrypoint-initdb.d/01-roles.sql: Permission denied；真实PG/并发/一致性后续CI步骤被跳过，不能宣称远端通过。运行记录：https://github.com/SJeffZhang/Safebank/actions/runs/39925600593。这是Linux容器读取宿主0600初始化脚本的权限问题，待后续修复；本次按用户指令完成推送，未改业务代码。 |
+
+| 2026-10-23 | Codex | 用户要求查看CI报错；按gh-fix-ci技能只读复查3次push运行，unit/ruff/format均通过，p1-postgres均在make up因两库init SQL Permission denied失败，其余5个验收步骤跳过。读取现有后台官方entrypoint确认先降权再psql -f；诊断与保留0600的tmpfs权限适配方案写入docs/acceptance/CI-P1-diagnosis.md，尚未实施修复、提交或推送；不启动Docker Desktop。 |
+
+| 2026-10-23 | Codex | 用户明确接受CI权限修复方案并授权推送；开始为双Postgres加入root启动阶段的私有tmpfs复制与postgres所有者0600适配，继续使用官方entrypoint。宿主.secrets权限不变、SQL不进镜像；将先用独立全新卷复现/验收，再跑P1门禁并检查远端CI，不操作现有银行卷。 |
+
+| 2026-10-23 | Codex | CI权限修复独立验收通过：scripts.postgres_bootstrap_acceptance在临时原生Linux卷为bank/agent均复现旧0600外部owner错误；新wrapper的全新初始化、角色/CONNECT隔离、tmpfs内postgres-owner 0600/目录0700、重启保留哨兵数据均通过。只清理测试专属随机命名卷。新增make test-postgres-bootstrap并接入CI；普通P1回归和远端CI仍待跑。 |
+
+| 2026-10-23 | Codex | CI权限修复本地总验收：make up全部healthy；make test-p1空测试库迁移+重复upgrade+33 passed；并发5 passed、一致性17 passed、网络/HTTP/L3重启恢复通过；116单元、lint、冻结契约检查通过。独立Linux卷测试同时复现旧失败、验证新启动与重启；宿主SQL/口令仍0600。README/后端说明及CI修复验收文档已更新，下一步提交并等待实际GitHub CI。 |
 
 ## 5. 下一步待办（按顺序）
 

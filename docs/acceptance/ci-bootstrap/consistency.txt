@@ -1,0 +1,5 @@
+docker compose run --rm p1-tests python -m pytest tests/integration -m consistency -q
+ Container safebank-p1-tests-run-53078ca24f3c Creating
+ Container safebank-p1-tests-run-53078ca24f3c Created
+.................                                                        [100%]
+17 passed, 16 deselected in 3.29s

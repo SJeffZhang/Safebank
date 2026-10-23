@@ -2,7 +2,8 @@ UV_CACHE_DIR ?= /private/tmp/sbg-uv-cache
 export UV_CACHE_DIR
 PYTHON := .venv/bin/python
 .PHONY: setup keys test lint wheels build up down logs test-integration probe demo eval reset \
- p1-provision migrate seed-p1 test-p1-build test-p1-db test-p1-concurrency test-p1-consistency test-p1
+ test-postgres-bootstrap contracts-check p1-provision migrate seed-p1 test-p1-build \
+ test-p1-db test-p1-concurrency test-p1-consistency test-p1
 setup:
 	uv sync --frozen --group poc --python 3.12
 keys:
@@ -55,3 +56,6 @@ demo eval reset:
 
 contracts-check:
 	PYTHONPATH=packages/contracts/src $(PYTHON) -m scripts.freeze_contracts --check
+
+test-postgres-bootstrap:
+	$(PYTHON) -m scripts.postgres_bootstrap_acceptance

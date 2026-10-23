@@ -126,12 +126,17 @@ services:
       retries: 10
   postgres-bank:
     image: postgres:16.10-alpine@sha256:029660641a0cfc575b14f336ba448fb8a75fd595d42e1fa316b9fb4378742297
+    entrypoint: [/bin/sh, /usr/local/bin/safebank-postgres-entrypoint.sh]
+    command: [postgres]
+    tmpfs:
+    - /docker-entrypoint-initdb.d:rw,noexec,nosuid,nodev,mode=0700,size=1m
     environment:
       POSTGRES_PASSWORD_FILE: /run/secrets/password
     volumes:
     - pg-bank:/var/lib/postgresql/data
     - ./.secrets/postgres-bank-password:/run/secrets/password:ro
-    - ./.secrets/init-bank.sql:/docker-entrypoint-initdb.d/01-roles.sql:ro
+    - ./.secrets/init-bank.sql:/run/bootstrap/roles.sql:ro
+    - ./scripts/postgres-entrypoint.sh:/usr/local/bin/safebank-postgres-entrypoint.sh:ro
     networks:
       bank-net:
         ipv4_address: 172.29.20.20
@@ -144,12 +149,17 @@ services:
       retries: 10
   postgres-agent:
     image: postgres:16.10-alpine@sha256:029660641a0cfc575b14f336ba448fb8a75fd595d42e1fa316b9fb4378742297
+    entrypoint: [/bin/sh, /usr/local/bin/safebank-postgres-entrypoint.sh]
+    command: [postgres]
+    tmpfs:
+    - /docker-entrypoint-initdb.d:rw,noexec,nosuid,nodev,mode=0700,size=1m
     environment:
       POSTGRES_PASSWORD_FILE: /run/secrets/password
     volumes:
     - pg-agent:/var/lib/postgresql/data
     - ./.secrets/postgres-agent-password:/run/secrets/password:ro
-    - ./.secrets/init-agent.sql:/docker-entrypoint-initdb.d/01-roles.sql:ro
+    - ./.secrets/init-agent.sql:/run/bootstrap/roles.sql:ro
+    - ./scripts/postgres-entrypoint.sh:/usr/local/bin/safebank-postgres-entrypoint.sh:ro
     networks:
       agent-net:
         ipv4_address: 172.29.10.20

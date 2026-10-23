@@ -28,6 +28,7 @@ make contracts-check
 ## 独立验收
 
 - `make test`：契约、账本、转账/卡规则和原 P0 单元回归；没有真实 PG 配置的集成项显示 skipped。
+- `make test-postgres-bootstrap`：用可清理的独立Linux卷复现旧权限错误并验证双库首次初始化、私有权限和重启保留数据。
 - `make test-p1`：从空独立测试库迁移、重复升级、全部真实 PostgreSQL 验收。
 - `make test-p1-concurrency` / `make test-p1-consistency`：独立并发与预演一致性门禁；先运行 test-p1。
 - `make contracts-check`：冻结契约 v1 漂移检测。
@@ -41,3 +42,5 @@ make contracts-check
 密钥只在 .env/.secrets，不进Git或镜像。`make keys`不覆盖已有凭证；发现半生成目录会拒绝继续，需先人工核对。不要删除已有数据库卷来掩盖初始化问题。
 
 L3 路由、环境变量、启动恢复与范围见 [后端说明](services/bank-backend/README.md)。CI 已接入单元、真实 PG、并发、一致性、网络和契约门禁；远端执行状态以 GitHub 实际运行结果为准。
+
+PostgreSQL 初始化 SQL 保持宿主0600，通过启动适配脚本复制到容器私有tmpfs，设为postgres所有后交给官方entrypoint。不能把SQL放宽为全员可读；运行时副本不进入镜像，已有数据卷不会自动清空。

@@ -1,0 +1,5 @@
+PASS: bank reproduces original 0600 foreign-owner read failure
+PASS: bank fresh init, role isolation, private permissions and restart persistence
+PASS: agent reproduces original 0600 foreign-owner read failure
+PASS: agent fresh init, role isolation, private permissions and restart persistence
+PASS: disposable Linux bootstrap acceptance; existing application volumes untouched
