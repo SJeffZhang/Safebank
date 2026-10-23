@@ -40,11 +40,11 @@
 | 模块 | 状态 |
 |---|---|
 | 调研 | 开源项目元数据和 DeepSeek 官方信息已核实；评分/提交已从官网公开 JS 核实（docs/acceptance/official-v1.md）；竞品「明鉴」未核实 |
-| PRD | **`PRD.md` = v2.1 定稿**（1,764 行，§0–§16；三轮多 agent 审核 + 两次修订复核，决议 D1–D47 见 §0.5）。v1.2 与作废的 v2.0 草稿在 `docs/archive/`；审核报告在 `docs/reviews/` |
+| PRD | **`PRD.md` = v2.1 定稿**（§0–§16；三轮多 agent 审核 + 两次修订复核，决议 D1–D47 见 §0.5；执行屏障增量约定见ADR-008）。v1.2 与作废的 v2.0 草稿在 `docs/archive/`；审核报告在 `docs/reviews/` |
 | 代码 | **P1 完成并逐组件验收**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116项单元+33项真实PG通过，契约v1已冻结。分支 feat/l3-core，P1代码已提交并推送私有仓库（功能提交7fd7a26）；CI权限修复70dcabe已推送，远端unit与p1-postgres均通过（run 39929405919） |
-| L2 网关 | **W0 基础骨架已合入 main**（PR #2，merge e2e91db，2026-10-23；经 4 轮架构评审 + 1 次 CI 修复）。波次 1 已启动：W1/W3已有待联调检查点，W2/W4与共享S1按槽位推进。计划 `docs/plans/L2-plan.md`，任务书 `docs/plans/briefs/` |
+| L2 网关 | **W0 基础骨架已合入 main**（PR #2，merge e2e91db，2026-10-23；经 4 轮架构评审 + 1 次 CI 修复）。波次1进行中：S1共享运行PR #4与S2预留PR #5已全绿合并；W1七缺陷与S1接线评审通过，W2来源链集成中；W4a锁修复及S1b迁移/状态实施中，W3/W4完整接线仍待依赖。计划 `docs/plans/L2-plan.md`，任务书 `docs/plans/briefs/` |
 | 前端 | **暂停**，用户亲自下令才开工（§2 第 13 条） |
-| 下一步 | L2 波次 1：W1 身份与原话、W2 读代理与来源、W3 预演·工作流·决策、W4 审批与执行，四路并行（见 §5「L2 进度」）。2026-10-23 起工作转到 Codex，交接说明见 `docs/handoff/CODEX-HANDOFF.md` |
+| 下一步 | L2 波次 1：W1 身份与原话、W2 读代理与来源、W3 预演·工作流·决策、W4 审批与执行，按接口依赖与可用槽位分批并行，共享补缺逐组件串行（见 §5「L2 进度」）。2026-10-23 起工作转到 Codex，交接说明见 `docs/handoff/CODEX-HANDOFF.md` |
 
 ### 已确认事实
 
@@ -292,6 +292,26 @@
 
 | 2026-10-23 | Codex（协调者） | PR #5精确head665f6b4的push/PR两套unit+p1-postgres四检查全部COMPLETED SUCCESS，执行gh pr merge 5 --merge --match-head-commit成功，merge a9d72cf49f518fbb2bd89d2e666f0d0e1196a4c9，14:26:59Z。fetch后协调分支merge origin/main成功，无冲突。S2纯函数组件完成，开始S1b串行共享实施；W2原owner独立启动自身来源链适配，跨真实W1和生产义务仍待后续。原execution_state文档复核5项全ADDRESSED/APPROVE，仅文档不算运行通过。W4a允许最小适配S1资源单测的fake Engine configure hook，不改共享生产代码、不扩大测试替身。 |
 
+| 2026-10-23 | Codex（协调者） | S1b worktree已先快进最新main a9d72cf，再纳入已评审协调文档97d5a33，派独立s1b_wave1_state实施0002与五类受控CAS；S2已合并，共享实施保持串行。准备S3a义务数据任务草稿，将存储/真实快照与后续读工具/领域写拆组件，要求增量迁移保留现有账本，当前未派发或改银行代码。 |
+
+| 2026-10-23 | Codex（协调者） | S1b新增ExecutionIdentity及五类CAS接口已协调固定；L3真实reconcile返回CANCELLED/result=None，终态归档允许None但仅FAILED，COMMITTED须匹配plan且真实EXECUTED结果。W2发现澄清root只保存补答文本，已明确仅持久parent链可追溯span/采纳源、root仍唯一claim且不合并父scope，补common约定。W4a在旧main完成六退出自报，尚非协调者验收；已要求先同步S2最新main再冻结后亲自复跑与独立评审。 |
+
+| 2026-10-23 | Codex（协调者） | W4a HEADd582752协调者六退出全exit0：lint161、all356/75skip（4.16s）、gateway127/27skip（3.39s）、PG17（2.11s）、customer-locks39零skip（7.40s）、shared-runtime51零skip（8.53s，含7Linux秘密配置及非roothealthcheck）；独立review_w4a尚在审查，不开PR。准备S1c显式Settings PIN路径任务，拆W1自己新增loader与共享runtime接线两个owner，不让W1越界。 |
+
+| 2026-10-23 | Codex（协调者） | W4a独立评审REQUEST_CHANGES：R1清理断连未归一LockOwnershipLost，R2执行期重复configure重置Semaphore突破上限（P2，非当前启动一次路径资金绕过）；独立真实PG39通过并两探针复现，记录L2-W4a-customer-locks.md。协调者读源码确认，派原owner修复轮1，新增有等待者重配边界，未开PR。协调文档4acbcf6已提交；S1b获准最小适配旧test_state_keys：UNKNOWN claim消费409、无job claim仍验PK，普通有关job终态要求专用归档。 |
+
+| 2026-10-23 | Codex（协调者） | 继续核对PRD7.5与Code枚举，确认memo/alias敏感内容黄级缺独立code而W2已有TODO；准备S1d-memo-code任务草稿，先最小共享枚举/PRD登记，再由W2 owner消除xfail，不以红级代码代替黄级需求。只读检索一个旧W2测试文件名不存在导致exit2，依据实际源码TODO确认，未改W2业务。 |
+
+| 2026-10-23 | Codex（协调者） | S1b实现者完整退出发现旧test_ddl_drift把当前metadata等同冻结v1，在增量0002后1 failed/357 passed/138 skipped；允许仅该测试改为精确核对0002四列/CHECK增量并保留历史v1和真实PG最新drift保护，禁止改历史快照或删测试。上述及test_state_keys、W4a三fake Engine适配已补入各任务书，属于测试边界修正，仍待协调者完整复跑。 |
+
+| 2026-10-23 | Codex（协调者） | W2来源链小组件269469b（已同步main a9）亲自五退出全部exit0：lint178；all416 passed/102 skipped/1 xfailed（6.49s）；gateway187/54skip/1xfail（5.63s）；PG17（2.27s）；W2 126/1xfail（5.98s，48真实PG）。已派原review_w2独立审新增来源链；PG造数不等于真实W1 G3联调，memo严格xfail仍未满足，不开完整W2 PR。S1b自报六退出绿，正在形成冻结提交，尚未计为协调者验收。 |
+
+| 2026-10-23 | Codex（协调者） | 用户重申每组件完成必须推送GitHub、同步总AGENTS，并允许开发中正常迭代PRD；已固化8.1/8.5。核对仓库allow_auto_merge=true，但只有checks.yml、main protected=false，最近PR无autoMergeRequest；继续按既有授权在评审通过和精确head全部CI成功后手动merge commit，不依赖无保护分支自动等待。原review_w2/review_w4a因模型额度错误未完成，已改派可用标准模型独立只读评审，不能把中断算通过。 |
+
+| 2026-10-23 | Codex（协调者） | S1b HEAD8b151bc亲自六退出全exit0：lint166、all358/139skip（4.14s）、gateway129/91skip（3.46s）、PG17（2.09s）、wave1-state105零skip（7.74s）、contracts PASS，已派独立review_s1b_state。W4a修复22d8e04亲自复跑：lint161/all356+97skip/gateway127+49skip/PG17通过，locks1 failed/60 passed（8.78s），None checkin后record_info残留active owner；make短路，shared-runtime本轮未运行，未计通过。原owner修复轮2定位根因，未开PR。 |
+
+| 2026-10-23 | Codex（协调者） | S1b独立review_s1b_state规范PASS/质量APPROVE，无可复现P0/P1/P2；实际定向17 passed零skip（10.13s），核查迁移保留/权限/漂移/并发CAS/claims。协调者六退出已全绿，准备合入最新协调文档后立即push并开base main组件PR。W2来源独立review_w2_lineage规格PASS/质量APPROVE，真实PG46 passed及关联回归25 passed；完整W2的memo xfail/S3/跨W1联调继续开放，不按完整W2合并。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
@@ -327,11 +347,13 @@ P0 准备阶段（决定后续一切）：
 |---|---|---|---|
 | [x] | W0 基础骨架 | `feat/l2-foundation` / PR #2 已合并 | `docs/plans/briefs/W0-*.md`，评审 `docs/reviews/L2-W0-architecture.md` |
 | [x] | S1 共享运行层 | PR #4，merge `691cf88`；独立评审与四CI全绿 | `docs/acceptance/L2-S1-runtime.md` |
-| [ ] | W1 身份、会话与原话 | `feat/l2-identity`（修复cc32e55，定点复审及真实共享联调待完成） | `docs/plans/briefs/W1-identity.md` |
-| [ ] | W2 读代理、参数来源与污点 | `feat/l2-provenance`（独立评审3项修复中） | `docs/plans/briefs/W2-provenance.md` |
+| [x] | S2 七天预留纯函数 | PR #5，merge `a9d72cf`；真实生产接入待S3 | `docs/acceptance/L2-S2-reserve.md` |
+| [ ] | W4a 客户锁先决组件 | `feat/l2-customer-locks`（d582752，协调者复跑及独立评审中） | `docs/plans/briefs/W4a-customer-locks.md` |
+| [ ] | W1 身份、会话与原话 | `feat/l2-identity`（42c86f5，7缺陷与S1接线评审通过；真实锁/PIN路径/后续状态待联调） | `docs/plans/briefs/W1-identity.md` |
+| [ ] | W2 读代理、参数来源与污点 | `feat/l2-provenance`（27a067a三项修复已评审通过，来源链集成中） | `docs/plans/briefs/W2-provenance.md` |
 | [ ] | W3 快照、预演、工作流、决策与 G4 | `feat/l2-decision`（检查点3bcbe8e，共享依赖阻塞） | `docs/plans/briefs/W3-decision.md` |
-| [ ] | W4 审批与执行 | `feat/l2-execution`（实现中，未验收） | `docs/plans/briefs/W4-execution.md` |
-| [ ] | 0002_wave1 迁移（波次 1 各任务提出的表 / 字段需求，由协调者串行追加） | — | 汇总各 `docs/progress/W*.md` 的「待决」 |
+| [ ] | W4 审批与执行 | `feat/l2-execution`（3856a4c部分检查点，G8待共享状态与真实依赖） | `docs/plans/briefs/W4-execution.md` |
+| [ ] | S1b / 0002_wave1 迁移与受控状态 | `feat/l2-wave1-state`（独立共享agent串行实施中） | `docs/plans/briefs/S1b-wave1-state.md` |
 | [ ] | W5 定时授权、通知、审计接口、D 接口 | 波次 2，任务书未写 | L2-plan §3 W5 |
 | [ ] | W6 网关层安全验收（A8、A1/A2/A3/A5） | 波次 2，任务书未写 | L2-plan §3 W6 |
 
@@ -375,6 +397,7 @@ P0 准备阶段（决定后续一切）：
 - **所有操作都要写进本文件 §4 进度日志**：包括文件的创建、改名、删除、恢复，文档改版，调研与核实结论，subagent 审核结果，以及失败或中断的工作。不要等到收尾才补记，每完成一步就记一步。
 
 ### 8.1 开发
+- **PRD持续迭代（用户2026-10-23重申）**：开发中发现需求遗漏、接口歧义或必要设计变化时，及时更新PRD相关段落，并记录依据与ADR；同步任务书和验收条件，保持文档与已验证行为一致。
 - Python 3.12（容器内）；依赖在 `pyproject.toml` 中**锁定精确版本**。新增依赖前确认它是知名、活跃维护的包。
 - 风格：`ruff` + `ruff format`；类型标注齐全；Pydantic v2。
 - 每个服务的 README 写清启动、测试、环境变量。
@@ -401,6 +424,7 @@ P0 准备阶段（决定后续一切）：
 
 ### 8.5 Git
 - 主分支 `main`；功能分支 `feat/<层>-<功能>`。
+- **组件发布长期授权（用户2026-10-23重申）**：每个组件完成亲自验收与独立评审后立即推送分支并开base main PR，更新本文件§3/§4/§5与相关PRD。当前提交全部CI成功后使用merge commit合并，无须逐个确认；未验证、失败或评审中断不算完成。仓库当前main无保护，自动合并功能开启不等于必需检查门禁，协调者须核对实际检查结果。
 - 只有在用户要求时才提交；提交前检查是否混入 `.env` 等敏感文件。
 
 ## 9. 常用命令（脚手架建好后生效）
