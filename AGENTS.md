@@ -376,6 +376,8 @@
 
 | 2026-10-23 | Codex（协调者） | W1撤销待清理只读设计报告完成（L2-W1-revocation-design.md），确认既有producer返回409即可原子缓存、事务外重建抛错可保留统一trace；无需改冻结helper。已补任务禁止广义catch/提前RESOLVED、新ID防跳过、原子审计与完整真实PG故障矩阵，PRD9.1补错误回放的当次trace约定；现交原W1 owner按固定双true details实施，矩阵仅需求、未跑不记通过。 |
 
+| 2026-10-23 | Codex（协调者） | PR #10精确head d6b8f4e的push/PR两套unit+p1-postgres四检查全部COMPLETED SUCCESS后执行gh pr merge 10 --merge --match-head-commit成功，merge44ded2f2431bdb0ce1d3f90f2c5d7d1b2ac67697，16:06:07Z。已fetch并同步main，仅PRD异段自动合并无冲突；S1d组件完成，通知W1稳定检查点后同步新main，S3a继续只读模型准备、未启动实现。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
@@ -420,7 +422,7 @@ P0 准备阶段（决定后续一切）：
 | [x] | S1b / 0002_wave1 迁移与受控状态 | PR #6已合并94e40fe（四CI成功，真实现有库升级与集成通过） | `docs/plans/briefs/S1b-wave1-state.md` |
 | [x] | S1c PIN Settings 接线 | PR #8 merge `304adda`；五退出、独立评审与精确head四CI全绿 | `docs/plans/briefs/S1c-pin-settings.md`；证据 `docs/progress/S1c-pin-settings.md` |
 | [x] | S1e 孤儿job受控对账 | PR #9 merge `6815547`；独立APPROVE、亲自六退出/231专项及四CI全绿 | `docs/plans/briefs/S1e-orphan-jobs.md` |
-| [ ] | S1d memo敏感内容黄级code | `feat/contracts-memo-code`；2b5d6a6亲自三退出/独立APPROVE，准备组件PR | `docs/plans/briefs/S1d-memo-code.md` |
+| [x] | S1d memo敏感内容黄级code | PR #10 merge `44ded2f`；亲自三退出/独立APPROVE/四CI全绿 | `docs/plans/briefs/S1d-memo-code.md` |
 | [ ] | S3a 真实完整义务数据 | ADR-009与任务书已准备，尚未实施 | `docs/plans/briefs/S3a-obligations-data.md` |
 | [ ] | W5 定时授权、通知、审计接口、D 接口 | 波次 2，任务书未写 | L2-plan §3 W5 |
 | [ ] | W6 网关层安全验收（A8、A1/A2/A3/A5） | 波次 2，任务书未写 | L2-plan §3 W6 |
