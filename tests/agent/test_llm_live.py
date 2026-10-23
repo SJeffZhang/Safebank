@@ -218,7 +218,8 @@ def test_run_scenarios_plan_validation_failure_exits_nonzero():
 
 def test_run_scenarios_semantic_assertion_fails_exit_nonzero():
     responses = valid_responses()
-    responses[2] = tool_response("submit_action_plan", transfer_plan(payee="pye_other"))
+    # amount value is a semantic check the adapter's reference validation does not cover
+    responses[2] = tool_response("submit_action_plan", transfer_plan(amount=50000))
     scripted = ScriptedLLM(responses)
     records, exit_code = run(scripted)
     assert exit_code == 1
@@ -247,13 +248,23 @@ def test_limits_typed_card_id_passes():
 
 
 def test_read_wrong_pointer_value_fails():
-    responses = valid_responses()
-    responses[4] = tool_response("submit_action_plan", limits_plan_wrong_pointer())
+    bad = limits_plan_wrong_pointer()
+    responses = [
+        tool_response("report_understanding", UNDERSTANDING),
+        tool_response("report_understanding", UNDERSTANDING),
+        tool_response("submit_action_plan", transfer_plan()),
+        tool_response("submit_action_plan", freeze_plan()),
+        tool_response("submit_action_plan", bad),
+        tool_response("submit_action_plan", bad),  # validation retry also fails
+        tool_response("get_accounts", {"history_days": 7}),
+        text_response("done"),
+    ]
     scripted = ScriptedLLM(responses)
     records, exit_code = run(scripted)
     assert exit_code == 1
     limits_record = next(r for r in records if r["name"] == "plan:limits")
-    assert any("read value" in p for p in limits_record["problems"])
+    assert limits_record["ok"] is False
+    assert limits_record.get("error_type") == "ReferenceError"
 
 
 def test_none_param_with_source_is_ignored():
@@ -278,13 +289,23 @@ def test_non_null_param_without_source_fails():
 
 
 def test_entity_wrong_span_fails():
-    responses = valid_responses()
-    responses[4] = tool_response("submit_action_plan", limits_plan_wrong_span())
+    bad = limits_plan_wrong_span()
+    responses = [
+        tool_response("report_understanding", UNDERSTANDING),
+        tool_response("report_understanding", UNDERSTANDING),
+        tool_response("submit_action_plan", transfer_plan()),
+        tool_response("submit_action_plan", freeze_plan()),
+        tool_response("submit_action_plan", bad),
+        tool_response("submit_action_plan", bad),  # validation retry also fails
+        tool_response("get_accounts", {"history_days": 7}),
+        text_response("done"),
+    ]
     scripted = ScriptedLLM(responses)
     records, exit_code = run(scripted)
     assert exit_code == 1
     limits_record = next(r for r in records if r["name"] == "plan:limits")
-    assert any("span slice" in p for p in limits_record["problems"])
+    assert limits_record["ok"] is False
+    assert limits_record.get("error_type") == "ReferenceError"
 
 
 def test_amount_slices_accept_digits_with_unit():

@@ -17,7 +17,7 @@ from services.agent.app.llm._common import (
     single_tool_call,
     validation_summary,
 )
-from services.agent.app.llm.redact import strip_wall
+from services.agent.app.llm.redact import resolve_pointer, strip_wall
 
 _PLAN_TOOL = "submit_action_plan"
 
@@ -38,6 +38,63 @@ _SYSTEM = (
 
 def _index_map(text: str) -> str:
     return " ".join(f"{char}[{index}]" for index, char in enumerate(text))
+
+
+class ReferenceError(Exception):
+    """A locally-verifiable arg_sources reference does not match the actual data."""
+
+    def __init__(self, problems: list[str]) -> None:
+        super().__init__("；".join(problems))
+        self.problems = problems
+
+
+def _reference_problems(draft: PlanDraft, state: AgentState) -> list[str]:
+    """Local, bounded, generic reference-integrity checks (C1b boundary, not authorization).
+
+    Only what is decidable from the given utterances/reads is checked: a ``utterance``
+    source's ref must exist and its span stay in bounds (and, for a direct string arg, slice
+    equal that value); a ``read`` source's ref must exist and its pointer resolve (and, for a
+    direct string arg, equal that value).  Nullable None args and step/derived/hint/action
+    sources are left to L2 — never rejected here.
+    """
+
+    utterances = state.get("utterances", [])
+    reads = state.get("reads", [])
+    utt_by_id = {utterance.id: utterance for utterance in utterances}
+    read_by_ref = {read.source_ref: read for read in reads}
+    problems: list[str] = []
+    for step in draft.steps:
+        for source in step.arg_sources:
+            param = source.param
+            value = getattr(step.args, param, None)
+            if value is None:
+                continue  # nullable None is not consumed for authorization (L2 ignores too)
+            kind = source.source.kind
+            if kind == "utterance":
+                ref = source.source.ref
+                if ref not in utt_by_id:
+                    problems.append(f"{step.step_id}.{param}: utterance ref 不存在")
+                    continue
+                text = utt_by_id[ref].text
+                span = source.source.span
+                if not (0 <= span[0] < span[1] <= len(text)):
+                    problems.append(f"{step.step_id}.{param}: utterance span 越界")
+                elif isinstance(value, str) and text[span[0] : span[1]] != value:
+                    problems.append(f"{step.step_id}.{param}: utterance span 切片与参数值不符")
+            elif kind == "read":
+                ref = source.source.ref
+                if ref not in read_by_ref:
+                    problems.append(f"{step.step_id}.{param}: read ref 不存在")
+                    continue
+                try:
+                    pointer_value = resolve_pointer(read_by_ref[ref].data, source.source.pointer)
+                except ValueError:
+                    problems.append(f"{step.step_id}.{param}: read pointer 无法解析")
+                else:
+                    if isinstance(value, str) and pointer_value != value:
+                        problems.append(f"{step.step_id}.{param}: read pointer 值与参数值不符")
+            # step/derived/hint/action are not locally verifiable at C1b; L2 re-derives.
+    return problems
 
 
 class PlanAdapter:
@@ -63,7 +120,18 @@ class PlanAdapter:
             try:
                 args = single_tool_call(message, _PLAN_TOOL)
                 body = PlanBody.model_validate(from_strict_plan(args))
-                return self._to_draft(body, state)
+                draft = self._to_draft(body, state)
+                problems = _reference_problems(draft, state)
+                if problems:
+                    raise ReferenceError(problems)
+                return draft
+            except ReferenceError as exc:
+                if attempt == self._max_retries:
+                    raise
+                note = (
+                    f"上次计划的来源引用与给定数据不符：{'；'.join(exc.problems)}；"
+                    "请修正 arg_sources 的 ref/span/pointer 后重新生成。"
+                )
             except (LlmToolError, ValidationError, ValueError) as exc:
                 if attempt == self._max_retries:
                     raise

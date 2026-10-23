@@ -178,13 +178,39 @@ nullable 来源声明。故上一轮「必须 read / None 不得声明来源」�
    一非法整批零执行）。`test_gather_mixed_valid_and_invalid_args_executes_none` 断言 tool_call_id 顺序
    [call_0, call_1] 且跳过/错误内容各归其位。
 
+## 修复轮 5（PlanAdapter 本地引用完整性，2026-10-24）
+
+协调者真实 live 7 请求 exit1（旧证据 39 行保留）：limits 的 card_id=crd_zs_1 且 source utterance ref 正确，
+但 span 切片 `crd_zs_`（缺尾 1）。这是**真实坏来源**，不是假阴性；此前 PlanAdapter 只做 `PlanBody` 结构校验，
+未对手头 utterance/read 做本地可判定的引用完整性校验，坏 span 直到 live 事后才发现、也不触发既有
+`max_retries=1`。本轮在 PlanAdapter 内加最小、通用、有界本地校验并接现有重试循环，先红测再绿：
+
+1. **`_reference_problems`（plan.py）**：对每条 arg_sources 只做本地可判定检查——utterance 来源 ref 必须
+   存在、span 必须在界（对直接字符串参数值还须 span 切片==该值）；read 来源 ref 必须存在、按模型实际
+   `source.pointer` 解析且（对直接字符串参数值）pointer 值==参数值。nullable None 参数跳过（L2 也不消费），
+   step/derived/hint/action 不本地判定、留 L2（不误伤未来契约）。金额为 int 分不做值匹配（不做业务金额
+   语义、不复制 L2 授权器）。
+2. **反馈进重试循环**：可判定错误抛 `ReferenceError`（携带 sanitized `step.param: 类别` 列表，不回显
+   untrusted/密钥），进入既有 `max_retries=1` 重试循环，重试仍全新 system+human、note 含具体
+   ref/span/pointer 类别；连续坏抛出不产草稿；全局 8 HTTP 预算不变、不额外模型调用、不改 live 为单独重跑。
+3. **红测**：合法 card span[2,10] 通过（`test_plan_accepts_legal_typed_entity_span`）；坏 [2,9] 真实失败
+   （`test_plan_rejects_bad_entity_span_and_retries` 断言 2 次调用且第 2 次 human 含 span 反馈）；
+   连续坏抛出且不产草稿（`test_plan_consecutive_bad_span_raises`）；错误 read pointer 值/未知 ref 拒、
+   合法对应值通过（`test_plan_rejects_wrong_read_pointer_value_and_retries`、
+   `test_plan_rejects_unknown_read_ref`）；None 带伪来源不影响其他非 None 校验
+   （`test_plan_none_source_does_not_affect_other_params`、`..._does_not_mask_wrong_payee_pointer`）。
+4. **live 语义测试边界收窄**：`test_run_scenarios_semantic_assertion_fails_exit_nonzero` 改用金额值
+   50000（adapter 不查 int 金额、语义层查）；`test_read_wrong_pointer_value_fails`/
+   `test_entity_wrong_span_fails` 改断言 `error_type=ReferenceError`（adapter 先拒，8 响应含一次 retry）。
+   金额 800/800元/1000分 与 00 拒、预算第 9 调用不触网、gather r4 顺序回归全部保留。
+
 ## 退出命令与结果（本组件无 PG）
 
 | 命令 | 结果 |
 |---|---|
 | `make lint` | ruff check + format --check 通过（259 files formatted） |
-| `.venv/bin/pytest tests/agent -q` | `73 passed`（零 skip/xfail；live 单独 `python -m` 入口不混入） |
-| `make test` | `2182 passed, 529 skipped`（skip 为无 PG 配置项，非本组件范围） |
+| `.venv/bin/pytest tests/agent -q` | `80 passed`（零 skip/xfail；live 单独 `python -m` 入口不混入） |
+| `make test` | `2189 passed, 529 skipped`（skip 为无 PG 配置项，非本组件范围） |
 | `make contracts-check` | `PASS: contracts v1 match frozen schemas` |
 
 ## 未覆盖 / 待决（交协调者或后续组件）
@@ -194,8 +220,9 @@ nullable 来源声明。故上一轮「必须 read / None 不得声明来源」�
 - `gather` 的 `read_executor` 是显式端口（C1b 用 fake；C1c 接 L2 G2）。未接 gateway HTTP/路由/持久化。
 - live 仍未由本 worker 执行（不读 key/不跑 API）；协调者复跑 `python -m services.agent.app.llm.live`，
   失败 exit1、证据脱敏、硬预算 8（plan 默认一次 validation retry）。模型未含多模态 Flash、未开启思考。
-- 本组件只在**本地结构/引用一致性**层面做来源核验（L2 才是授权判定方）：live 语义校验不替 L2 授权、不另造
-  生产金额/授权算术（分换算只按固定合成例）；基础 plan 语义不是授权器，read_executor fake 边界保留。
+- 本组件只在**本地结构/引用一致性**层面做来源核验（L2 才是授权判定方）：金额分/单位换算等业务金额语义
+  不硬编码、不复制 L2 授权器；step/derived/hint/action 来源不本地判定、留 L2；基础 plan 语义不是授权器。
+
 
 
 

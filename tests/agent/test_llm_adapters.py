@@ -13,7 +13,7 @@ from services.agent.app.graph.state import AgentContext, ReadRecord, Understandi
 from services.agent.app.llm._common import LlmToolError
 from services.agent.app.llm.client import BETA_API_BASE, MODEL, make_llm
 from services.agent.app.llm.gather import GatherAdapter, ReadResult
-from services.agent.app.llm.plan import PlanAdapter
+from services.agent.app.llm.plan import PlanAdapter, ReferenceError
 from services.agent.app.llm.understand import UnderstandAdapter
 from tests.agent.llm_mock import (
     ScriptedLLM,
@@ -453,3 +453,188 @@ def test_plan_strips_wall_from_reads_defense():
     human = body_of(scripted, 0)["messages"][1]["content"]
     assert "leak_wall" not in human
     assert "acc_a" in human
+
+
+CARD_TEXT = "冻结crd_zs_1这张卡"  # c[2] r[3] d[4] _[5] z[6] s[7] _[8] 1[9]
+
+
+def card_state():
+    return {
+        "customer_id": "cus_a",
+        "session_id": "ses_a",
+        "utterances": [UtteranceRef(id="utt_a", kind="typed", text=CARD_TEXT)],
+        "understanding": Understanding(intents=["card"], needs_write=True),
+        "reads": [
+            ReadRecord(
+                source_ref="src_card",
+                tool="get_cards",
+                data={"cards": [{"card_id": "crd_zs_1", "status": "ACTIVE"}]},
+            )
+        ],
+    }
+
+
+def freeze_plan_typed(span=(2, 10), pointer=None):
+    source = (
+        {"kind": "utterance", "ref": "utt_a", "span": list(span)}
+        if pointer is None
+        else {"kind": "read", "ref": "src_card", "pointer": pointer}
+    )
+    return {
+        "intents": ["card"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "freeze_card",
+                "args": {"card_id": "crd_zs_1"},
+                "depends_on": [],
+                "arg_sources": [{"param": "card_id", "source": source}],
+            }
+        ],
+        "rationale": "test",
+    }
+
+
+def transfer_with_reads_state():
+    return {
+        "customer_id": "cus_a",
+        "session_id": "ses_a",
+        "utterances": [UtteranceRef(id="utt_typed", kind="typed", text="给王五转800元")],
+        "understanding": Understanding(intents=["transfer"], needs_write=True),
+        "reads": [
+            ReadRecord(
+                source_ref="src_acct",
+                tool="get_accounts",
+                data={"accounts": [{"account_id": "acc_zs_chk"}]},
+            ),
+            ReadRecord(
+                source_ref="src_payee",
+                tool="list_payees",
+                data={"payees": [{"payee_id": "pye_zs_ww", "name": "王五"}]},
+            ),
+        ],
+    }
+
+
+def transfer_full_plan(payee_pointer="/payees/0/payee_id"):
+    return {
+        "intents": ["transfer"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "transfer",
+                "args": {
+                    "from_account_id": "acc_zs_chk",
+                    "payee_id": {"kind": "id", "id": "pye_zs_ww"},
+                    "to_account_id": {"kind": "none"},
+                    "amount_cents": 80000,
+                    "memo": "__NULL__",
+                },
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "from_account_id",
+                        "source": {
+                            "kind": "read",
+                            "ref": "src_acct",
+                            "pointer": "/accounts/0/account_id",
+                        },
+                    },
+                    {
+                        "param": "payee_id",
+                        "source": {"kind": "read", "ref": "src_payee", "pointer": payee_pointer},
+                    },
+                    {
+                        "param": "amount_cents",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [4, 7]},
+                    },
+                ],
+            }
+        ],
+        "rationale": "test",
+    }
+
+
+def test_plan_accepts_legal_typed_entity_span():
+    scripted = ScriptedLLM([tool_response("submit_action_plan", freeze_plan_typed(span=(2, 10)))])
+    llm = build(scripted)
+    draft = PlanAdapter(llm)(card_state(), ctx())
+    assert draft.steps[0].args.card_id == "crd_zs_1"
+    assert len(scripted.requests) == 1
+
+
+def test_plan_rejects_bad_entity_span_and_retries():
+    scripted = ScriptedLLM(
+        [
+            tool_response("submit_action_plan", freeze_plan_typed(span=(2, 9))),  # "crd_zs_"
+            tool_response("submit_action_plan", freeze_plan_typed(span=(2, 10))),
+        ]
+    )
+    llm = build(scripted)
+    draft = PlanAdapter(llm)(card_state(), ctx())
+    assert draft.steps[0].args.card_id == "crd_zs_1"
+    assert len(scripted.requests) == 2
+    human = body_of(scripted, 1)["messages"][1]["content"]
+    assert "span" in human
+
+
+def test_plan_consecutive_bad_span_raises():
+    bad = tool_response("submit_action_plan", freeze_plan_typed(span=(2, 9)))
+    scripted = ScriptedLLM([bad, bad])
+    llm = build(scripted)
+    with pytest.raises(ReferenceError):
+        PlanAdapter(llm)(card_state(), ctx())
+    assert len(scripted.requests) == 2
+
+
+def test_plan_rejects_wrong_read_pointer_value_and_retries():
+    scripted = ScriptedLLM(
+        [
+            tool_response("submit_action_plan", freeze_plan_typed(pointer="/cards/0/status")),
+            tool_response("submit_action_plan", freeze_plan_typed(pointer="/cards/0/card_id")),
+        ]
+    )
+    llm = build(scripted)
+    draft = PlanAdapter(llm)(card_state(), ctx())
+    assert draft.steps[0].args.card_id == "crd_zs_1"
+    assert len(scripted.requests) == 2
+
+
+def test_plan_rejects_unknown_read_ref():
+    plan = freeze_plan_typed(pointer="/cards/0/card_id")
+    plan["steps"][0]["arg_sources"][0]["source"]["ref"] = "src_missing"
+    bad = tool_response("submit_action_plan", plan)
+    scripted = ScriptedLLM([bad, bad])
+    llm = build(scripted)
+    with pytest.raises(ReferenceError):
+        PlanAdapter(llm)(card_state(), ctx())
+
+
+def test_plan_none_source_does_not_affect_other_params():
+    plan = transfer_full_plan()
+    plan["steps"][0]["arg_sources"].append(
+        {
+            "param": "to_account_id",
+            "source": {"kind": "utterance", "ref": "utt_missing", "span": [0, 1]},
+        }
+    )
+    scripted = ScriptedLLM([tool_response("submit_action_plan", plan)])
+    llm = build(scripted)
+    draft = PlanAdapter(llm)(transfer_with_reads_state(), ctx())
+    assert draft.steps[0].args.payee_id == "pye_zs_ww"
+    assert len(scripted.requests) == 1  # None source skipped, others correct
+
+
+def test_plan_none_source_does_not_mask_wrong_payee_pointer():
+    plan = transfer_full_plan(payee_pointer="/payees/0/name")  # "王五" != "pye_zs_ww"
+    plan["steps"][0]["arg_sources"].append(
+        {
+            "param": "to_account_id",
+            "source": {"kind": "utterance", "ref": "utt_missing", "span": [0, 1]},
+        }
+    )
+    bad = tool_response("submit_action_plan", plan)
+    scripted = ScriptedLLM([bad, bad])
+    llm = build(scripted)
+    with pytest.raises(ReferenceError):
+        PlanAdapter(llm)(transfer_with_reads_state(), ctx())
