@@ -61,7 +61,8 @@ services:
       timeout: 4s
       retries: 10
   gateway:
-    command: [python, -m, services.gateway.app.main]
+    command: [python, -m, scripts.gateway_entrypoint]
+    user: "0:0"
     build: .
     image: safebank-p0:local
     environment:
@@ -79,12 +80,19 @@ services:
     read_only: true
     tmpfs:
     - /tmp
+    - /run/gateway-private:rw,noexec,nosuid,nodev,mode=0700,size=1m
+    cap_add:
+    - CHOWN
+    - DAC_OVERRIDE
+    - SETUID
+    - SETGID
     cap_drop:
     - ALL
     security_opt:
     - no-new-privileges:true
     volumes:
-    - ./.secrets/jwt-private.pem:/run/secrets/jwt-private.pem:ro
+    - ./.secrets/jwt-private.pem:/run/bootstrap/jwt-private.pem:ro
+    - ./.secrets/demo_pins:/run/bootstrap/demo_pins:ro
     - ./.secrets/jwt-public.pem:/run/secrets/jwt-public.pem:ro
     healthcheck:
       test:

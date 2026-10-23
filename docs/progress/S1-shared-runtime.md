@@ -36,7 +36,41 @@ W4 locks integration remains pending: its fixed `customer_lock(customer_ids)` si
 
 ## Component 3 — Linux secret permissions
 
-Not yet implemented or verified.
+Implemented gateway-only `scripts.gateway_entrypoint`: root bootstrap reads regular foreign-owned 0600 source files without following symlinks, writes bounded copies to verified private tmpfs, assigns UID/GID 10001, clears supplementary groups, permanently drops UID/GID, then execs gateway. No private material is emitted. Sources remain mounted read-only in Compose. Host files are not chmodded. Final application has no effective/permitted capabilities and keeps no-new-privileges.
+
+Only gateway starts bootstrap as root. Its four temporary capabilities are CHOWN (assign private copies), DAC_OVERRIDE (read foreign-owner 0600 source), SETUID/SETGID (drop privileges). cap_drop ALL, read-only root filesystem, no-new-privileges, and both network bindings remain. Other services are unchanged. The Dockerfile remains unchanged: its existing non-root default remains for other services.
+
+Actual acceptance:
+
+- Expected red: opt-in permissions test initially failed because acceptance module/bootstrap did not exist.
+- Independent Linux container reproduced original uid10001 PermissionError reading uid20002/0600 source.
+- First negative-test fixture run failed at preparing unsafe_mode: root without FOWNER cannot chmod a foreign-owned file. A narrow independent container confirmed PermissionError. Fixture now changes ownership back to root only while preparing that intentionally unsafe file, then restores uid20002. No production capability was added for this fixture issue.
+- `GATEWAY_SECRET_TESTS=1 ...pytest .../test_permissions.py -q -s`: passed, seven container scenarios: valid copy/drop, missing key, missing PINs, unsafe source mode, symlink source, non-root bootstrap, missing tmpfs. Valid scenario asserts UID/GID 10001, empty supplementary groups, 0700 directory/0600 files owned by 10001, original source mode/owner unchanged, copied contents correct, original source still unreadable, CapEff/CapPrm zero, NoNewPrivs=1, and no secret values in logs.
+- Containers use --network none, read-only filesystem, synthetic sources in tmpfs with simulated foreign UID 20002; this tests real Linux permissions, not a full deployment against actual host secrets. Builds use unique `safebank-s1-permissions:<random>` tags and remove only their own tag; existing safebank-p0:local is not replaced.
+- `docker compose config --quiet` initially refused because this worktree has no .secrets/gateway.env (expected local deployment input missing). `docker compose config --no-env-resolution --quiet` subsequently passed without copying/creating secrets or starting the stack.
+
+Files: `scripts/{gateway_entrypoint.py,gateway_permissions_acceptance.py}`, `tests/gateway/shared_runtime/test_permissions.py`, gateway-only section of `docker-compose.yml`, Makefile appended target, gateway README.
+
+## Final exit verification (2026-10-23)
+
+Actual sequential command, Docker CLI PATH set to the installed application CLI:
+
+`make lint && make test-gateway && make test-gateway-db && make test && make test-shared-runtime`
+
+- make lint: passed; 153 files already formatted.
+- make test-gateway: 95 passed / 3 skipped (2 PG, 1 Linux explicit opt-ins).
+- make test-gateway-db: 17 passed on real isolated PostgreSQL, PGDATA explicitly tmpfs.
+- make test: 214 passed / 51 skipped (integration/PG/Linux opt-in tests skipped in this target).
+- make test-shared-runtime: 34 passed, zero skipped; real PG and seven independent Linux permission scenarios enabled.
+
+No make up/down/test-p1, no push/PR/merge, no named volume operations, and no full-stack restart ran. S1 is implemented and component-verified; full W1 business integration is not complete or claimed. Coordinator must merge W1, supply actual deployment secrets, rerun real login → session → revoke API checks and deployment acceptance, and define/configure W4 lock lifecycle. The private-key and PIN routes have no permissive production fallback.
+
+## Local commits
+
+- `d2726bb`: clarification transitions.
+- `8e1874a`: shared runtime and global fail-closed revocation wiring.
+- `5b67a76`: explicit PGDATA tmpfs fixture correction (17 real PG tests passed).
+- Final Linux/bootstrap commit SHA: see branch head / final delivery (this file is committed with that change).
 
 ## Isolated PG fixture correction
 
