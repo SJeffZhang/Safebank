@@ -21,3 +21,5 @@
 `make lint && make test && make test-gateway && make test-gateway-db && make test-customer-locks`，专项必须真实PG零skip。CI加入专项目标。独立review与协调者亲自复跑后单独PR，全部CI绿再merge。W1随后同步并移除fake lock做真实登录/撤销/竞争测试；W4原分支同步时由原owner解决重复实现，以已评审版本为准。
 
 只本地提交，不push/PR/merge；不运行make up/down/test-p1；PGDATA显式tmpfs，不删除/重建任何卷；不得自开agent。每小组件结果、未覆盖项和SHA准确记报告。
+
+已批准最小测试适配：tests/gateway/shared_runtime/test_runtime.py仅3个Fake Engine资源生命周期单测显式替换locks.configure并断言同db/max；不得全文件autouse覆盖真实pool/hook测试。除原五退出外补make test-shared-runtime。

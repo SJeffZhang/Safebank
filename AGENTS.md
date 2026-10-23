@@ -300,6 +300,10 @@
 
 | 2026-10-23 | Codex（协调者） | W4a独立评审REQUEST_CHANGES：R1清理断连未归一LockOwnershipLost，R2执行期重复configure重置Semaphore突破上限（P2，非当前启动一次路径资金绕过）；独立真实PG39通过并两探针复现，记录L2-W4a-customer-locks.md。协调者读源码确认，派原owner修复轮1，新增有等待者重配边界，未开PR。协调文档4acbcf6已提交；S1b获准最小适配旧test_state_keys：UNKNOWN claim消费409、无job claim仍验PK，普通有关job终态要求专用归档。 |
 
+| 2026-10-23 | Codex（协调者） | 继续核对PRD7.5与Code枚举，确认memo/alias敏感内容黄级缺独立code而W2已有TODO；准备S1d-memo-code任务草稿，先最小共享枚举/PRD登记，再由W2 owner消除xfail，不以红级代码代替黄级需求。只读检索一个旧W2测试文件名不存在导致exit2，依据实际源码TODO确认，未改W2业务。 |
+
+| 2026-10-23 | Codex（协调者） | S1b实现者完整退出发现旧test_ddl_drift把当前metadata等同冻结v1，在增量0002后1 failed/357 passed/138 skipped；允许仅该测试改为精确核对0002四列/CHECK增量并保留历史v1和真实PG最新drift保护，禁止改历史快照或删测试。上述及test_state_keys、W4a三fake Engine适配已补入各任务书，属于测试边界修正，仍待协调者完整复跑。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：

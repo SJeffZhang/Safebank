@@ -36,3 +36,5 @@
 `make lint && make test && make test-gateway && make test-gateway-db && make test-wave1-state && make contracts-check`。专项实际启用真实PG、零skip；CI加入相同专项。在本组件中不能声称真实L3 fence/丢包/重启竞争已通过：那些必须在W4执行组件运行评审所列真实HTTP矩阵。
 
 每小组件红绿证据、实际退出结果、未覆盖项和SHA写进报告；只本地提交，不push/PR/merge，不自开agent、不跑make up/down/test-p1。协调者亲自复跑、独立只读review、CI全绿merge commit后，W1/W3/W4同步main联调。
+
+已批准的最小测试适配：tests/gateway/shared_runtime/test_state_keys.py改为UNKNOWN有job claim不可消费（409），用无job独立claim保留PK验证；tests/gateway/test_ddl_drift.py保留历史0001/schema_v1字节不变与当前metadata仅明确0002增量的检查，不能再把当前metadata整体等同v1。真实PG最新metadata/Alembic drift仍必跑，不能删测试或改历史快照过绿。
