@@ -4,7 +4,7 @@
 
 ## 从GitHub开始
 
-无需访问原机器。先clone仓库并fetch全部分支，切到 `docs/codex-wave1-integration` 阅读本文件、AGENTS和交接材料。交接文档PR仅文档；审阅通过且当前head的unit/p1-postgres都成功后再以merge commit合入main。main截至交接前为 `44ded2f2431bdb0ce1d3f90f2c5d7d1b2ac67697`，PR #3–#10已经合并。
+无需访问原机器。先clone仓库并fetch全部分支，切到 `docs/codex-wave1-integration` 阅读本文件、AGENTS和交接材料。交接文档[PR #11](https://github.com/SJeffZhang/Safebank/pull/11)为仅文档草稿；审阅通过后转为ready，核对当前head的unit/p1-postgres都成功再以merge commit合入main。本轮已暂停，不等待CI或执行合并。main截至交接前为 `44ded2f2431bdb0ce1d3f90f2c5d7d1b2ac67697`，PR #3–#10已经合并。
 
 ```sh
 git clone https://github.com/SJeffZhang/Safebank.git
