@@ -2,8 +2,9 @@
 
 All IDs are strings (ULID / prefixed IDs per PRD §9.1). Status CHECK constraints
 are generated from ``app.schemas.enums`` so the wire values and the database
-cannot drift. ``schema_v1.json`` is the frozen rendering of this metadata; the
-drift test in ``tests/gateway/db`` fails if the two diverge.
+cannot drift. ``schema_v1.json`` remains the frozen historical 0001 rendering;
+additive revisions upgrade it to this metadata. Live DB drift tests compare the
+complete migrated schema with this model.
 """
 
 from __future__ import annotations
@@ -186,6 +187,7 @@ evaluations = Table(
     Column("policy_version", String(64), nullable=False),
     Column("view_hash", String(64)),
     Column("equivalent_to", String(256)),
+    Column("view_json", JSONB),
     Column("clock_version", BigInteger, nullable=False, server_default="0"),
     timestamp("created_at_wall", nullable=False),
     CheckConstraint("risk IN ('GREEN','YELLOW','RED') AND revision >= 1"),
@@ -215,6 +217,7 @@ otp_challenges = Table(
     metadata,
     idcol("approval_id", primary_key=True),
     Column("code_digest", String(128), nullable=False),
+    Column("code_ciphertext", Text),
     Column("view_hash", String(64), nullable=False),
     timestamp("expires_at_wall", nullable=False),
     Column("attempt_count", Integer, nullable=False, server_default="0"),
@@ -245,6 +248,8 @@ execution_jobs = Table(
     timestamp("created_at_wall", nullable=False),
     timestamp("updated_at_wall", nullable=False),
     timestamp("deadline_wall"),
+    Column("authorization_evidence", JSONB),
+    timestamp("deadline_cap_wall"),
     ForeignKeyConstraint(["plan_id"], ["plans.id"]),
     CheckConstraint(f"status IN ('{_in(ExecutionJobStatus)}')"),
 )

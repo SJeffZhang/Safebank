@@ -11,7 +11,9 @@
 ## 交付
 1. `approval/planview.py: build_view`：PlanView 与 view_hash（覆盖目标、金额、memo、频次、逐步余额、风险、不可逆标记、揭示版本；不含倒计时）。步骤标题、不可逆、是否需 OTP 从 `policy.registry` 取。
 2. `approval/service.py: create_for_evaluation`：创建审批（binding_mac 绑定 plan_hash、evaluation_id、versions、clock_version、policy_version、profile、view_hash、expires_at_wall）；每会话只有 1 个 PENDING，新审批使旧的 SUPERSEDED；ALLOW 时创建策略审批。
-3. G9、G17；G6 确认（view_hash、OTP、risk_ack + disclosure_token）；G7 拒绝；G10 OTP（HMAC 存储、2 分钟、重发 ≤ 3 次间隔 30 秒、错 5 次锁）。OTP 明文不进日志与响应。
+3. G9、G17；G6 确认（view_hash、OTP、risk_ack，严格按PRD §9.5既有wire）；G7 拒绝；G10 OTP（HMAC 存储、2 分钟、重发 ≤ 3 次间隔 30 秒、错 5 次锁）。OTP 明文不进日志与响应。
+
+协调裁定（2026-10-23）：原任务书额外要求的disclosure_token不在PRD G6或PlanView中，删除该冲突要求，不扩冻结schema。揭示全文/版本仍必须纳入view_hash及审批绑定，risk_ack按PRD校验；G9不得在字典中偷偷附加token字段。
 4. `locks.py: customer_lock`：独占 `lock_conn`、`SET lock_timeout = '5s'`、按客户 ID 排序加锁、超时 409 `EXECUTION_IN_PROGRESS`、`asyncio.Semaphore(GATEWAY_MAX_EXECUTIONS)`；必须能被 W5 的 S1 与 demo 入口复用。
 5. G8 执行编排：客户锁 → 复核审批与绑定 → `authorization_claims` 占用 → 调 W3 的 `replay`（W3 合入前用替身）→ 等价唯一判据 view_hash → 构造 authorization_evidence → L3 prepare / execute（attempt、deadline_cap）→ L3 STATE_CHANGED 时内部复演最多 2 次并 attempt+1 → 409 带 `details.decision` → 202 UNKNOWN；`execution_jobs` 状态用 `state.transition`。G5 查询。
 6. UNKNOWN 恢复工作器：查询 → reconcile（CANCELLED 墓碑）→ 只有拿到 COMMITTED / CANCELLED 才终结；UNKNOWN 重试沿用原 attempt。

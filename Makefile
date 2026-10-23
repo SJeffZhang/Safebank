@@ -81,3 +81,11 @@ test-shared-runtime:
 .PHONY: test-reserve
 test-reserve:
 	.venv/bin/pytest tests/bankcore/test_reserve.py -q
+
+.PHONY: test-customer-locks
+test-customer-locks:
+	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/customer_locks -q
+
+.PHONY: test-wave1-state
+test-wave1-state:
+	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/wave1_state -q

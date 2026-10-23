@@ -8,12 +8,14 @@
 | W4 | otp_challenges.code_ciphertext | Text nullable；重发同事务替换 | D5模拟短信需要重启后可读取；nonce+ciphertext封装，AEAD密钥从OTP_HMAC_KEY域分离，AAD用无歧义编码绑定approval_id/view_hash；验证仍只用code_digest，密文不向A/F输出 |
 | W4 | execution_jobs.authorization_evidence | JSONB nullable兼容旧无业务W0行；新任务必填，UNKNOWN恢复缺证据拒绝继续提交 | 同attempt重试必须逐字节使用原证据，不能临时重建成不同请求 |
 | W4 | execution_jobs.deadline_cap_wall | timestamptz nullable兼容旧行；新任务必填且后续不可扩展 | 持久原话/持久JWT期限上限，重新审批和恢复不得延长 |
-| W4 | execution_jobs/plan状态CHECK | 未定；先独立协议审查 | 原EXECUTING不可回退与L3明确STATE_CHANGED后的重新审批冲突，需要证明未提交、claims持久占用和重试状态一起闭合 |
+| W4 | execution_jobs.status CHECK | 新增FENCING/PAUSED；不增加PlanStatus | 独立架构审查见L2-execution-state-review.md：same-attempt过期deadline屏障，PAUSED必须ACK已落盘；专用CAS才允许执行后复演，UNKNOWN不回退 |
 
 已消除的候选增量：
 - W1无新增表列；澄清状态合法边由S1实现。
 - W2 clock_version暂不新增：保持PRD7.5 ReadEnvelope；versions+observed_at+有效sid检查，G2夹读检查clock_version，reset必须撤销所有会话/读取上下文。
 - W3首次收款人使用现有全历史transactions；拒绝窗口取评估/审批拒绝审计wall时间，不用plans.created_at_wall。
+- 不增加generation/fenced_attempt：严格每attempt无状态循环，l3_attempt+status+evaluation revision CAS，已有deadline_wall存FENCE_AT；放宽该前提需重新审查。
+- 不增加disclosure_token：它仅原W4任务书额外要求，PRD G6/PlanView均无此wire；任务书已纠正，揭示全文/版本继续进view_hash及审批绑定。
 
 迁移验收：空库upgrade两次、由0001带数据升级且数据保留、运行角色权限、CHECK/索引约束、旧缺证据行failclosed、state/tables与迁移一致，真实PG。不删或重建数据卷，不TRUNCATE现有业务库。迁移及应用schema版本/ready检查同PR，独立评审、亲自复跑、CI全绿merge commit。
 

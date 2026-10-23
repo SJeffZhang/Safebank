@@ -75,14 +75,41 @@ def test_execution_and_claim_statuses_address_actual_primary_keys(gateway_db):
                         scope_id=scope, plan_id=plan, status="CLAIMED"
                     )
                 )
+            no_job_plan = plan + "_no_job"
+            no_job_scope = scope + "_no_job"
+            async with db.begin() as conn:
+                values = (
+                    (await conn.execute(t.plans.select().where(t.plans.c.id == plan)))
+                    .mappings()
+                    .one()
+                )
+                await conn.execute(
+                    t.plans.insert().values(
+                        **{**values, "id": no_job_plan, "request_id": no_job_plan}
+                    )
+                )
+                await conn.execute(
+                    t.authorization_claims.insert().values(
+                        scope_id=no_job_scope, plan_id=no_job_plan, status="CLAIMED"
+                    )
+                )
             async with db.begin() as conn:
                 await transition(
                     conn, t.execution_jobs, id_=plan, from_statuses=["EXECUTING"], to="UNKNOWN"
                 )
+                with pytest.raises(GatewayError) as pending:
+                    await transition(
+                        conn,
+                        t.authorization_claims,
+                        id_=scope,
+                        from_statuses=["CLAIMED"],
+                        to="CONSUMED",
+                    )
+                assert pending.value.status == 409
                 await transition(
                     conn,
                     t.authorization_claims,
-                    id_=scope,
+                    id_=no_job_scope,
                     from_statuses=["CLAIMED"],
                     to="CONSUMED",
                 )
@@ -99,13 +126,21 @@ def test_execution_and_claim_statuses_address_actual_primary_keys(gateway_db):
                             t.authorization_claims.c.scope_id == scope
                         )
                     )
+                    == "CLAIMED"
+                )
+                assert (
+                    await conn.scalar(
+                        select(t.authorization_claims.c.status).where(
+                            t.authorization_claims.c.scope_id == no_job_scope
+                        )
+                    )
                     == "CONSUMED"
                 )
                 with pytest.raises(GatewayError) as exc:
                     await transition(
                         conn,
                         t.authorization_claims,
-                        id_=scope,
+                        id_=no_job_scope,
                         from_statuses=["CLAIMED"],
                         to="CONSUMED",
                     )
@@ -114,7 +149,7 @@ def test_execution_and_claim_statuses_address_actual_primary_keys(gateway_db):
                     await transition(
                         conn,
                         t.authorization_claims,
-                        id_=scope,
+                        id_=no_job_scope,
                         from_statuses=["CONSUMED"],
                         to="CLAIMED",
                     )
