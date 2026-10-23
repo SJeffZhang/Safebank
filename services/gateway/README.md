@@ -117,3 +117,25 @@ services/gateway/
 - `requirements.txt`/`requirements-test.txt` 已按锁重新导出，`.wheels` 已生成，镜像可起。
 - `gateway_admin` 尚无 LOGIN 凭证（reset 用），W5 需要补；`ALTER DEFAULT PRIVILEGES … ON SEQUENCES` 已在 0001 里补上，但对已跑过 0001 的旧卷不会重放，fresh `make up` 会带上。
 - 公共路由已挂全局 `caller_dependency`：非 `/health` 路由不带凭证一律 401（默认拒绝），处理函数经 `request.state.caller` 取 `Caller`。
+
+## 集中运行资源与秘密文件（S1）
+
+生产入口 `serve` 在启动两个监听器前进入一次 `app.runtime.gateway_runtime`，统一创建 AsyncEngine、L3Client 和 UTC wall clock；两应用共享 `app.state.db/l3/wall_now/settings`。只在两个监听器都停止后关闭资源，启动中途出错也释放已创建的资源。处理器不得另建池。单独构造 app 的单元测试仍兼容原签名；生产资源由入口负责注入。
+
+`JWT_PRIVATE_KEY_PATH` 默认 `/run/secrets/jwt-private.pem`；私钥必须是普通 0600 文件，拒绝符号链接，且必须与公钥构成 Ed25519 密钥对。`DEMO_PINS_FILE` 默认 `/run/secrets/demo_pins`，PIN 解析与哈希由 W1 `auth.pin.configured_hashes()` 提供，集中加载后放入 `app.state.pin_hashes`。W1 模块尚未合并时该资源明确未配置；S1 不提供默认 PIN 或成功替身。W1 加载函数存在但读文件失败时拒绝启动。
+
+`caller_dependency` 在验证 F/A 客户 JWT 后调用 W1 `tokens.check_revocation(conn,caller,now=...)`；DB、时钟或检查函数缺失均拒绝（503），撤销/过期/缺行错误由 W1 决定并传递。S/F/D 的纯服务凭证及控制台凭证按原授权矩阵处理。真实登录→会话→撤销验收须在 W1 合并后补跑；S1 的签名替身测试只证明依赖接线。
+
+Compose 的 gateway 使用短暂 root 引导进程 `scripts.gateway_entrypoint` 读取 `/run/bootstrap` 中只读挂载的宿主 0600 私钥和 demo_pins。它只将两文件复制到 `/run/gateway-private` 私有 tmpfs（目录 0700、文件 0600、属主 UID/GID 10001），设置进程内 JWT_PRIVATE_KEY_PATH/DEMO_PINS_FILE 后清空附加组并降到 UID/GID 10001，再 exec gateway。最终应用无 effective/permitted capabilities，保留 no-new-privileges；宿主文件权限不变。
+
+引导仅增加 CHOWN（赋予副本所有权）、DAC_OVERRIDE（读取不同宿主 UID 的 0600 文件）、SETUID/SETGID（永久降权）四项 capability；其他服务仍保持原用户及 cap_drop ALL。私钥与 PIN 不进入镜像或日志，源挂载不可写。运行目录不是独立 tmpfs、缺文件或权限错误均拒绝启动。
+
+```bash
+make test-shared-runtime # 明确启用真实临时PG与独立Linux秘密权限验收
+```
+
+该目标要求 Docker 后台可用，使用已有 `safebank-p0:local` 为 Linux 验收基底，只构建独立随机 tag，既不替换现有镜像 tag，也不启动/停止 compose 栈。临时 PG 的 PGDATA 与秘密验收均显式使用 tmpfs，不分配 Docker 数据卷。
+
+W4 锁服务接口已确定为 `locks.configure(db,max_executions=...)`；集中 runtime 在 hook 存在时传入同一个 engine，缺失时保留尚未实现状态。生产连接池为 `max(18,2*max_executions+2)`，无 overflow。
+
+S1 评审修复后，监听器由 GatewayServer 包装真实 Uvicorn 生命周期：停止监听、等待或取消并等待在途请求、完成 lifespan 后才释放 DB/L3；任一 listener 的启动/运行异常及上层取消都走此路径。Compose healthcheck 是独立进程，单独降权到 UID/GID 10001 后才发起 HTTP。状态入口按表唯一单列 PK 寻址，authorization_claims 只允许 CLAIMED→CONSUMED。

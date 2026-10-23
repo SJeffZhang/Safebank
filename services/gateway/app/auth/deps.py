@@ -13,10 +13,12 @@ from typing import Any
 
 from fastapi import Request
 from safebank_contracts.codes import Code
+from sqlalchemy.exc import SQLAlchemyError
 
 from ..errors import GatewayError
 from ..schemas.enums import ServiceKind
 from ..schemas.identity import Caller
+from . import tokens
 from .matrix import CallerSpec, lookup
 from .tokens import identify_service, verify_jwt
 
@@ -94,6 +96,26 @@ def caller_dependency(env: dict[str, str] | None = None, public_key: bytes | Non
 
     async def _dependency(request: Request) -> Caller | None:
         caller = resolve_caller(request, env=env, public_key=public_key)
+        # D console JWTs are non-customer credentials; F/A customer JWTs must
+        # still match persistent, unrevoked state after signature validation.
+        if (
+            caller is not None
+            and caller.kind in (ServiceKind.F, ServiceKind.A)
+            and caller.customer_id is not None
+        ):
+            db = getattr(request.app.state, "db", None)
+            check = getattr(tokens, "check_revocation", None)
+            clock = getattr(request.app.state, "wall_now", None)
+            if db is None or not callable(check) or not callable(clock):
+                raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503)
+            now = clock()
+            if now.tzinfo is None or now.utcoffset() is None:
+                raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503)
+            try:
+                async with db.connect() as conn:
+                    await check(conn, caller, now=now)
+            except SQLAlchemyError as exc:
+                raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503) from exc
         request.state.caller = caller
         return caller
 
