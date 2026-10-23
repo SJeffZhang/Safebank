@@ -515,17 +515,20 @@ def test_distinct_engines_keep_independent_pool_owners(gateway_db):
         locks.configure(first, 2)
         try:
             async with locks.customer_lock([cid()]) as owner_first:
-                locks.configure(second, 2)
-                async with locks.customer_lock([cid()]) as owner_second:
-                    assert owner_first.sync_connection.engine is first.sync_engine
-                    assert owner_second.sync_connection.engine is second.sync_engine
-                    await owner_first.close()
-                    with pytest.raises(locks.LockOwnershipLost):
-                        await locks.assert_lock_owner(owner_first)
+                with pytest.raises(RuntimeError):
+                    locks.configure(second, 2)
+                assert not list(second.sync_engine.pool.dispatch.checkin)
+                await locks.assert_lock_owner(owner_first)
+            # Idle reconfiguration remains supported, with independent hooks.
+            locks.configure(second, 2)
+            async with locks.customer_lock([cid()]) as owner_second:
+                assert owner_second.sync_connection.engine is second.sync_engine
+                await owner_second.close()
+                with pytest.raises(locks.LockOwnershipLost):
                     await locks.assert_lock_owner(owner_second)
             assert len(list(first.sync_engine.pool.dispatch.checkin)) == 1
             assert len(list(second.sync_engine.pool.dispatch.checkin)) == 1
-            async with second.begin() as normal:
+            async with first.begin() as normal:
                 assert await normal.scalar(text("SELECT 1")) == 1
         finally:
             await first.dispose()
@@ -558,5 +561,425 @@ def test_none_checkin_removes_record_owner_before_reuse(gateway_db):
                 assert not record_info
             finally:
                 event.remove(db.sync_engine.pool, "checkin", observe)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("cleanup_step", ["rollback", "unlock", "settings"])
+@pytest.mark.parametrize("body_outcome", ["normal", "business", "cancel"])
+def test_cleanup_disconnect_classification_preserves_original_error(
+    gateway_db, cleanup_step, body_outcome
+):
+    """Kill the actual backend AFTER the guard but BEFORE cleanup sends SQL."""
+    from sqlalchemy.util.concurrency import await_
+
+    async def run():
+        async with database(gateway_db):
+            admin = engine(gateway_db.admin_url)
+            paused, release, body_ready = asyncio.Event(), asyncio.Event(), asyncio.Event()
+            body_wait = asyncio.Event()
+            original = RuntimeError("caller business failure")
+            captured = []
+            pid = []
+            record_maps = []
+            customer = cid()
+
+            def pause(_connection, *_args):
+                paused.set()
+                await_(release.wait())
+
+            def before_cleanup(connection, _cursor, statement, *_args):
+                if (cleanup_step == "unlock" and "pg_advisory_unlock_all" in statement) or (
+                    cleanup_step == "settings" and "set_config('lock_timeout'" in statement
+                ):
+                    pause(connection)
+
+            async def holder():
+                async with locks.customer_lock([customer]) as owner:
+                    captured.append(owner)
+                    record_maps.append((await owner.get_raw_connection()).record_info)
+                    pid.append(await owner.scalar(text("SELECT pg_backend_pid()")))
+                    if cleanup_step != "rollback":
+                        await owner.commit()
+                    if cleanup_step == "rollback":
+                        event.listen(owner.sync_connection, "rollback", pause)
+                    else:
+                        # Registered after the production statement guard so
+                        # the transport loss happens inside the actual send gap.
+                        event.listen(owner.sync_connection, "before_cursor_execute", before_cleanup)
+                    body_ready.set()
+                    if body_outcome == "business":
+                        raise original
+                    if body_outcome == "cancel":
+                        await body_wait.wait()
+
+            task = asyncio.create_task(holder())
+            try:
+                async with asyncio.timeout(4):
+                    await body_ready.wait()
+                    if body_outcome == "cancel":
+                        task.cancel()
+                    await paused.wait()
+                    async with admin.begin() as killer:
+                        assert await killer.scalar(
+                            text("SELECT pg_terminate_backend(:pid)"), {"pid": pid[0]}
+                        )
+                    release.set()
+                    if body_outcome == "normal":
+                        with pytest.raises(locks.LockOwnershipLost):
+                            await task
+                    elif body_outcome == "business":
+                        with pytest.raises(RuntimeError) as error:
+                            await task
+                        assert error.value is original
+                    else:
+                        with pytest.raises(asyncio.CancelledError):
+                            await task
+                assert record_maps and not record_maps[0]
+                assert captured[0].closed
+                with pytest.raises(locks.LockOwnershipLost):
+                    await locks.assert_lock_owner(captured[0])
+                async with locks.customer_lock([customer]) as successor:
+                    await locks.assert_lock_owner(successor)
+            finally:
+                release.set()
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                if captured:
+                    sync = captured[0].sync_connection
+                    if cleanup_step == "rollback":
+                        event.remove(sync, "rollback", pause)
+                    else:
+                        event.remove(sync, "before_cursor_execute", before_cleanup)
+                await admin.dispose()
+
+    asyncio.run(run())
+
+
+def test_same_configuration_keeps_semaphore_bound_with_active_owner(gateway_db):
+    async def run():
+        async with database(gateway_db, slots=1) as db:
+            entered, release = asyncio.Event(), asyncio.Event()
+            task = None
+
+            async def contender():
+                async with locks.customer_lock([cid()]):
+                    entered.set()
+                    await release.wait()
+
+            try:
+                async with locks.customer_lock([cid()]):
+                    original_slots = locks._slots
+                    locks.configure(db, 1)
+                    task = asyncio.create_task(contender())
+                    with pytest.raises(TimeoutError):
+                        async with asyncio.timeout(0.1):
+                            await entered.wait()
+                    assert locks._slots is original_slots
+            finally:
+                release.set()
+                if task:
+                    await task
+
+    asyncio.run(run())
+
+
+def test_changed_configuration_rejected_atomically_while_owner_active(gateway_db):
+    async def run():
+        async with database(gateway_db, slots=1) as db:
+            other = engine(gateway_db.runtime_url)
+            try:
+                before = list(db.sync_engine.pool.dispatch.checkin)
+                original_slots = locks._slots
+                async with locks.customer_lock([cid()]):
+                    with pytest.raises(RuntimeError):
+                        locks.configure(other, 1)
+                    with pytest.raises(RuntimeError):
+                        locks.configure(db, 2)
+                    assert locks._engine is db and locks._slots is original_slots
+                    assert list(db.sync_engine.pool.dispatch.checkin) == before
+                    assert not list(other.sync_engine.pool.dispatch.checkin)
+            finally:
+                await other.dispose()
+
+    asyncio.run(run())
+
+
+def test_semaphore_waiter_blocks_reconfiguration_even_after_previous_owner_exits(gateway_db):
+    async def run():
+        async with database(gateway_db, slots=1) as db:
+            entered, release = asyncio.Event(), asyncio.Event()
+            original_slots = locks._slots
+            first = locks.customer_lock([cid()])
+            await first.__aenter__()
+
+            async def contender():
+                async with locks.customer_lock([cid()]):
+                    entered.set()
+                    await release.wait()
+
+            task = asyncio.create_task(contender())
+            exited = False
+            try:
+
+                async def queued():
+                    return bool(original_slots._waiters)
+
+                await wait_for(queued)
+                locks.configure(db, 1)
+                assert locks._slots is original_slots
+                await first.__aexit__(None, None, None)
+                exited = True
+                # No owner has a DB connection now. The resumed semaphore
+                # waiter has not run yet, but still captured the old config.
+                assert not entered.is_set()
+                with pytest.raises(RuntimeError):
+                    locks.configure(db, 2)
+                assert locks._slots is original_slots
+            finally:
+                if not exited:
+                    await first.__aexit__(None, None, None)
+                release.set()
+                await task
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("cancel_waiter", [False, True])
+def test_pool_waiter_blocks_changes_and_cancellation_releases_request(gateway_db, cancel_waiter):
+    async def run():
+        db = engine(gateway_db.runtime_url, pool_size=1, max_overflow=0)
+        other = engine(gateway_db.runtime_url, pool_size=1, max_overflow=0)
+        locks.configure(db, 2)
+        task = None
+        entered = False
+
+        async def contender():
+            nonlocal entered
+            async with locks.customer_lock([cid()]):
+                entered = True
+
+        try:
+            original_slots = locks._slots
+            async with db.connect():
+                # This external non-lock borrower exhausts the actual PG pool.
+                task = asyncio.create_task(contender())
+
+                async def queued():
+                    return bool(db.sync_engine.pool._pool._queue._getters)
+
+                await wait_for(queued)
+                with pytest.raises(RuntimeError):
+                    locks.configure(other, 2)
+                with pytest.raises(RuntimeError):
+                    locks.configure(db, 3)
+                assert locks._engine is db and locks._slots is original_slots
+                assert not list(other.sync_engine.pool.dispatch.checkin)
+                if cancel_waiter:
+                    task.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await task
+                    # No owner ever existed: cancellation must still drop the
+                    # captured-config request count and permit idle changes.
+                    locks.configure(other, 2)
+            if not cancel_waiter:
+                await task
+                assert entered
+                locks.configure(other, 2)
+            else:
+                assert not entered
+            async with locks.customer_lock([cid()]) as owner:
+                await locks.assert_lock_owner(owner)
+        finally:
+            if task and not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            await db.dispose()
+            await other.dispose()
+
+    asyncio.run(run())
+
+
+def test_cancelled_semaphore_waiter_does_not_leave_configuration_busy(gateway_db):
+    async def run():
+        async with database(gateway_db, slots=1) as db:
+            original_slots = locks._slots
+            async with locks.customer_lock([cid()]):
+
+                async def contender():
+                    async with locks.customer_lock([cid()]):
+                        pytest.fail("cancelled semaphore waiter entered")
+
+                task = asyncio.create_task(contender())
+
+                async def queued():
+                    return bool(original_slots._waiters)
+
+                await wait_for(queued)
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                with pytest.raises(RuntimeError):
+                    locks.configure(db, 2)
+            locks.configure(db, 2)
+            async with locks.customer_lock([cid()]) as owner:
+                await locks.assert_lock_owner(owner)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("cleanup_step", ["unlock", "settings"])
+def test_non_disconnect_cleanup_sql_error_retains_type_and_discards(gateway_db, cleanup_step):
+    async def run():
+        async with database(gateway_db):
+            captured = []
+            record_maps = []
+            customer = cid()
+
+            def fail_sql(_connection, _cursor, statement, parameters, _context, _many):
+                if (cleanup_step == "unlock" and "pg_advisory_unlock_all" in statement) or (
+                    cleanup_step == "settings" and "set_config('lock_timeout'" in statement
+                ):
+                    return "SELECT 1/0", ()
+                return statement, parameters
+
+            try:
+                with pytest.raises(DBAPIError) as error:
+                    async with locks.customer_lock([customer]) as owner:
+                        captured.append(owner)
+                        record_maps.append((await owner.get_raw_connection()).record_info)
+                        event.listen(
+                            owner.sync_connection, "before_cursor_execute", fail_sql, retval=True
+                        )
+                assert not error.value.connection_invalidated
+                assert error.value.orig.sqlstate == "22012"
+                assert captured[0].closed and not record_maps[0]
+                async with locks.customer_lock([customer]) as successor:
+                    await locks.assert_lock_owner(successor)
+            finally:
+                if captured:
+                    event.remove(captured[0].sync_connection, "before_cursor_execute", fail_sql)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("cleanup_step", ["rollback", "unlock", "settings"])
+def test_fresh_cancellation_during_cleanup_is_preserved(gateway_db, cleanup_step):
+    from sqlalchemy.util.concurrency import await_
+
+    async def run():
+        async with database(gateway_db):
+            paused = asyncio.Event()
+            release = asyncio.Event()
+            captured = []
+            record_maps = []
+            customer = cid()
+
+            def pause(_connection, *_args):
+                paused.set()
+                await_(release.wait())
+
+            def before_cleanup(connection, _cursor, statement, *_args):
+                if (cleanup_step == "unlock" and "pg_advisory_unlock_all" in statement) or (
+                    cleanup_step == "settings" and "set_config('lock_timeout'" in statement
+                ):
+                    pause(connection)
+
+            async def holder():
+                async with locks.customer_lock([customer]) as owner:
+                    captured.append(owner)
+                    record_maps.append((await owner.get_raw_connection()).record_info)
+                    await owner.scalar(text("SELECT 1"))
+                    if cleanup_step != "rollback":
+                        await owner.commit()
+                    if cleanup_step == "rollback":
+                        event.listen(owner.sync_connection, "rollback", pause)
+                    else:
+                        event.listen(owner.sync_connection, "before_cursor_execute", before_cleanup)
+
+            task = asyncio.create_task(holder())
+            try:
+                async with asyncio.timeout(3):
+                    await paused.wait()
+                    task.cancel("cleanup cancellation")
+                    with pytest.raises(asyncio.CancelledError) as error:
+                        await task
+                assert error.value.args == ("cleanup cancellation",)
+                assert captured[0].closed and not record_maps[0]
+                async with locks.customer_lock([customer]) as successor:
+                    await locks.assert_lock_owner(successor)
+            finally:
+                release.set()
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                if captured:
+                    if cleanup_step == "rollback":
+                        event.remove(captured[0].sync_connection, "rollback", pause)
+                    else:
+                        event.remove(
+                            captured[0].sync_connection, "before_cursor_execute", before_cleanup
+                        )
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("body_outcome", ["business", "cancel"])
+def test_post_discard_secondary_error_cannot_replace_pending_failure(
+    gateway_db, monkeypatch, body_outcome
+):
+    """Actual invalidate completes before injecting a secondary disposal error."""
+    original_discard = locks._discard
+
+    async def discard_then_fail(conn):
+        await original_discard(conn)
+        raise RuntimeError("secondary disposal failure after physical discard")
+
+    monkeypatch.setattr(locks, "_discard", discard_then_fail)
+
+    async def run():
+        async with database(gateway_db):
+            captured = []
+            record_maps = []
+            ready = asyncio.Event()
+            body_wait = asyncio.Event()
+            original = RuntimeError("original business error")
+            customer = cid()
+
+            def cleanup_failure(_connection, _cursor, statement, *_args):
+                if "pg_advisory_unlock_all" in statement:
+                    raise ValueError("cleanup failure")
+
+            async def holder():
+                async with locks.customer_lock([customer]) as owner:
+                    captured.append(owner)
+                    record_maps.append((await owner.get_raw_connection()).record_info)
+                    event.listen(owner.sync_connection, "before_cursor_execute", cleanup_failure)
+                    ready.set()
+                    if body_outcome == "business":
+                        raise original
+                    await body_wait.wait()
+
+            task = asyncio.create_task(holder())
+            try:
+                await ready.wait()
+                if body_outcome == "business":
+                    with pytest.raises(RuntimeError) as error:
+                        await task
+                    assert error.value is original
+                else:
+                    task.cancel("original cancellation")
+                    with pytest.raises(asyncio.CancelledError) as error:
+                        await task
+                    assert error.value.args == ("original cancellation",)
+                assert captured[0].closed and not record_maps[0]
+                async with locks.customer_lock([customer]) as successor:
+                    await locks.assert_lock_owner(successor)
+            finally:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                if captured:
+                    event.remove(
+                        captured[0].sync_connection, "before_cursor_execute", cleanup_failure
+                    )
 
     asyncio.run(run())

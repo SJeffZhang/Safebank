@@ -76,3 +76,47 @@ CI仅在 `.github/workflows/checks.yml` 既有p1-postgres job新增 `make test-c
 同步后完整六门禁均实际exit0：make lint通过（161 files already formatted）；make test **356 passed/75 skipped**（4.17s，含S2新增110项）；make test-gateway **127 passed/27 skipped**（3.45s）；make test-gateway-db **17 passed零skip**（2.91s）；make test-customer-locks **39 passed零skip**（7.59s）；make test-shared-runtime **51 passed零skip**（8.52s，原有ASGI取消测试预期traceback仍存在，测试通过）。后三者均使用后台Docker CLI及显式tmpfs隔离夹具。
 
 本轮仅同步冲突及结果记账，代码冻结，未push/PR/merge远端；立即结束本轮，留独立review槽给协调者。原W4分支继续保留不动。
+
+## 独立评审修复轮1：R1/R2（2026-10-23）
+
+评审REQUEST_CHANGES两项P2。先读并核对源码，再分别真实红绿；本轮只修改locks.py、专属PG测试及本文，未改runtime/表/迁移/CI/其他组件。
+
+### R1 清理阶段断连及异常优先级
+
+根因：原finally中的except BaseException只discard后原样抛，未采用body路径的断连归一规则，并会以cleanup错误覆盖已经传播的业务异常/CancelledError。
+
+真实红测 `pytest .../test_postgres.py -k cleanup_disconnect_classification -q --tb=short`：**9 failed**。用连接实例事件在rollback、unlock_all、set_config发送前暂停，另一实际PG连接终止原backend，再放行；分别覆盖body正常、已有业务异常、已取消。实际得到asyncpg InternalClientError / SQLAlchemy InternalError，而非预期LockOwnershipLost或原业务/取消。
+
+修复优先级（经协调者确认）：
+
+- 没有body异常时，cleanup DBAPI connection_invalidated或原物理会话已失效，可靠discard后归一为LockOwnershipLost(503)。其他非断连SQL/编程错误保留原类型，连接仍丢弃。
+- cleanup自身CancelledError原样传播；discard阶段新CancelledError亦保留取消信号。
+- body已传播业务异常或CancelledError时，cleanup断连/SQL/二次discard异常不覆盖原异常；每次仍尝试实际invalidate，finally解绑实例监听并清owner关联。
+
+同一9项真实kill矩阵随后 **9 passed**。另验证unlock/settings实际SELECT 1/0仍保留DBAPIError/22012；rollback/unlock/settings清理中发生新取消保留取消消息；两项二次discard故障测试先完成真实物理invalidate，再有意抛二次错误，原业务对象/取消均保留。二次错误是明确测试故障注入，不称为实际PG自然错误。所有路径均验证连接关闭、owner record无残留及同客户新owner可获锁。
+
+### R2 配置幂等与在途请求边界
+
+根因：每次configure都会重建Semaphore。真实PG下max=1的A仍持锁时重复同参数配置，B不同客户立即进入，突破并发上限；仅统计已yield owner也无法保护等待Semaphore或pool连接的请求。
+
+修复前六项针对性红测 **6 failed**：同参数重配突破上限、活跃owner变更未拒绝、Semaphore等待者捕获的旧对象被替换、pool等待者正常/取消边界、取消Semaphore等待者后的配置边界。
+
+现在同engine且同max直接返回，保留原Semaphore及dispatcher。不同配置在任何已捕获资源的客户锁请求存在时抛RuntimeError，且检查先于修改engine/Semaphore/候选pool dispatcher。请求计数在首次await（Semaphore/pool排队）之前同步增加，覆盖完整清理和关闭，在最外层finally减少；不以_owners数量代替。在同一服务事件循环内使用，不支持跨线程同时重配。
+
+修复后包括原engine隔离回归的定向测试 **7 passed**。保持空闲时可切换engine/max及每pool稳定单dispatcher；活跃时跨engine切换的旧测试已按新明确约束改为拒绝，空闲切换仍实际验证。取消Semaphore/pool等待者后均可空闲重配；前owner刚退出、等待者尚未恢复取得连接的间隙仍拒绝变更。未新增池、线程或依赖。
+
+### 修复轮1完整退出（最终源代码，全部exit0）
+
+| 命令 | 实际结果 |
+|---|---|
+| make lint | All checks passed；161 files already formatted |
+| make test | 356 passed / 97 skipped，4.46s |
+| make test-gateway | 127 passed / 49 skipped，3.51s |
+| make test-gateway-db | 17 passed零skip，2.67s |
+| make test-customer-locks | **61 passed零skip，9.21s**（18参数/配置单测+43真实PG；原39项+本轮22项） |
+| make test-shared-runtime | **51 passed零skip，8.80s**；原ASGI取消测试仍有预期CancelledError traceback |
+| git diff --check | 通过 |
+
+后三项沿用后台Docker CLI、显式tmpfs和随机临时PG。普通test/gateway的skip较上轮各增加22，原因是新加PG项未在普通命令启用；在专项61项全部实际启用零skip，没有把skip作通过。本轮静态检查曾发现重缩进长行和取消异常未显式chain，已仅按ruff修正字符串换行与raise ... from cleanup_error，再执行上述最终六门禁。
+
+范围保持仅R1/R2和对应回归；原W4分支继续不动。等待原独立review定点复审与协调者亲自复跑，不开PR、不push、不合并远端。修复SHA由后续本地记账记录。

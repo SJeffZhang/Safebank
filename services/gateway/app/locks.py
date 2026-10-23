@@ -18,6 +18,8 @@ from .errors import GatewayError
 
 _engine: AsyncEngine | None = None
 _slots: asyncio.Semaphore | None = None
+_max_executions: int | None = None
+_requests = 0
 _OWNER_RECORD_KEY = "safebank.gateway.customer_lock.owner"
 
 
@@ -25,12 +27,20 @@ def configure(db: AsyncEngine, max_executions: int) -> None:
     """Bind the centrally owned engine and semaphore; do not create another pool."""
     if type(max_executions) is not int or max_executions < 1:
         raise ValueError("max_executions must be a positive integer")
-    if not event.contains(db.sync_engine.pool, "checkin", _premature_return):
+    global _engine, _slots, _max_executions
+    if db is _engine and max_executions == _max_executions and _slots is not None:
+        return
+    if _requests:
+        raise RuntimeError("customer lock requests are active or waiting; cannot reconfigure")
+    # Validate the complete replacement before touching globals or installing
+    # anything on the candidate pool. Waiting requests count as users too.
+    pool = db.sync_engine.pool
+    new_slots = asyncio.Semaphore(max_executions)
+    if not event.contains(pool, "checkin", _premature_return):
         # One stable dispatcher per pool lifetime: never mutate this shared
         # listener collection while another checkin may be suspended in I/O.
-        event.listen(db.sync_engine.pool, "checkin", _premature_return)
-    global _engine, _slots
-    _engine, _slots = db, asyncio.Semaphore(max_executions)
+        event.listen(pool, "checkin", _premature_return)
+    _engine, _slots, _max_executions = db, new_slots, max_executions
 
 
 def _customer_ids(values: Iterable[str]) -> list[str]:
@@ -197,78 +207,119 @@ async def customer_lock(customer_ids: Iterable[str]) -> AsyncIterator[AsyncConne
     db, slots = _engine, _slots
     if db is None or slots is None:
         raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503)
-    async with slots:
-        async with db.connect() as conn:
-            previous_timeout = None
-            owner = None
-            listeners = []
-            failed = False
-            try:
-                raw = await conn.get_raw_connection()
-                async with conn.begin():
-                    previous_timeout = await conn.scalar(text("SHOW lock_timeout"))
-                    await conn.execute(text("SET lock_timeout = '5s'"))
-                    pid = await conn.scalar(text("SELECT pg_backend_pid()"))
-                owner = _Owner(
-                    raw.dbapi_connection, raw.driver_connection, pid, tuple(ids), raw.record_info
-                )
-                _owners[conn] = owner
-                listeners = _listen(conn.sync_connection, owner)
-                owner.record_info[_OWNER_RECORD_KEY] = owner
-                for cid in ids:
-                    try:
-                        async with conn.begin():
-                            await conn.execute(
-                                text(
-                                    "SELECT pg_advisory_lock(hashtextextended('cus:' || :cid, 0))"
-                                ),
-                                {"cid": cid},
-                            )
-                    except DBAPIError as exc:
-                        if getattr(exc.orig, "sqlstate", None) == "55P03":
-                            raise GatewayError(Code.EXECUTION_IN_PROGRESS, 409) from exc
-                        raise
-                owner.held = True
-                yield conn
-            except BaseException as exc:
-                failed = True
-                if isinstance(exc, DBAPIError) and (
-                    exc.connection_invalidated
-                    or (owner and _physical_lost(conn.sync_connection, owner))
-                ):
-                    if owner:
-                        owner.lost = True
-                        owner.reported = True
-                    raise LockOwnershipLost() from exc
-                raise
-            finally:
+    global _requests
+    # No await between capturing resources and registering their use. The count
+    # spans semaphore/pool queues and cleanup, not just yielded lock owners.
+    _requests += 1
+    try:
+        async with slots:
+            async with db.connect() as conn:
+                previous_timeout = None
+                owner = None
+                listeners = []
+                failed = False
                 try:
-                    physical_loss = owner and _physical_lost(conn.sync_connection, owner)
-                    if conn.closed or conn.invalidated or (owner and (owner.lost or physical_loss)):
-                        first_report = owner is not None and not owner.reported
+                    raw = await conn.get_raw_connection()
+                    async with conn.begin():
+                        previous_timeout = await conn.scalar(text("SHOW lock_timeout"))
+                        await conn.execute(text("SET lock_timeout = '5s'"))
+                        pid = await conn.scalar(text("SELECT pg_backend_pid()"))
+                    owner = _Owner(
+                        raw.dbapi_connection,
+                        raw.driver_connection,
+                        pid,
+                        tuple(ids),
+                        raw.record_info,
+                    )
+                    _owners[conn] = owner
+                    listeners = _listen(conn.sync_connection, owner)
+                    owner.record_info[_OWNER_RECORD_KEY] = owner
+                    for cid in ids:
+                        try:
+                            async with conn.begin():
+                                await conn.execute(
+                                    text(
+                                        "SELECT pg_advisory_lock("
+                                        "hashtextextended('cus:' || :cid, 0))"
+                                    ),
+                                    {"cid": cid},
+                                )
+                        except DBAPIError as exc:
+                            if getattr(exc.orig, "sqlstate", None) == "55P03":
+                                raise GatewayError(Code.EXECUTION_IN_PROGRESS, 409) from exc
+                            raise
+                    owner.held = True
+                    yield conn
+                except BaseException as exc:
+                    failed = True
+                    if isinstance(exc, DBAPIError) and (
+                        exc.connection_invalidated
+                        or (owner and _physical_lost(conn.sync_connection, owner))
+                    ):
                         if owner:
                             owner.lost = True
-                        await _discard(conn)
-                        if first_report and not failed:
                             owner.reported = True
-                            raise LockOwnershipLost()
-                    else:
-                        if conn.in_transaction():
-                            await conn.rollback()
-                        async with conn.begin():
-                            await conn.execute(text("SELECT pg_advisory_unlock_all()"))
-                            if previous_timeout is not None:
-                                await conn.execute(
-                                    text("SELECT set_config('lock_timeout', :value, false)"),
-                                    {"value": previous_timeout},
-                                )
-                except BaseException:
-                    await _discard(conn)
+                        raise LockOwnershipLost() from exc
                     raise
                 finally:
-                    if owner:
-                        owner.active = False
-                        if owner.record_info.get(_OWNER_RECORD_KEY) is owner:
-                            owner.record_info.pop(_OWNER_RECORD_KEY)
-                    for name, callback in listeners:
-                        event.remove(conn.sync_connection, name, callback)
+                    try:
+                        physical_loss = owner and _physical_lost(conn.sync_connection, owner)
+                        if (
+                            conn.closed
+                            or conn.invalidated
+                            or (owner and (owner.lost or physical_loss))
+                        ):
+                            first_report = owner is not None and not owner.reported
+                            if owner:
+                                owner.lost = True
+                            await _discard(conn)
+                            if first_report and not failed:
+                                owner.reported = True
+                                raise LockOwnershipLost()
+                        else:
+                            if conn.in_transaction():
+                                await conn.rollback()
+                            async with conn.begin():
+                                await conn.execute(text("SELECT pg_advisory_unlock_all()"))
+                                if previous_timeout is not None:
+                                    await conn.execute(
+                                        text("SELECT set_config('lock_timeout', :value, false)"),
+                                        {"value": previous_timeout},
+                                    )
+                    except BaseException as cleanup_error:
+                        disconnected = isinstance(cleanup_error, DBAPIError) and (
+                            cleanup_error.connection_invalidated
+                            or (owner is not None and _physical_lost(conn.sync_connection, owner))
+                        )
+                        if owner:
+                            owner.lost = True
+                        # Always try to discard, but never let a secondary disposal
+                        # failure replace a pending business error/cancellation.
+                        discard_error = None
+                        try:
+                            await _discard(conn)
+                        except BaseException as error:
+                            discard_error = error
+                        if isinstance(cleanup_error, asyncio.CancelledError):
+                            raise
+                        if isinstance(discard_error, asyncio.CancelledError):
+                            raise discard_error from cleanup_error
+                        if not failed:
+                            if disconnected:
+                                if owner:
+                                    owner.reported = True
+                                raise LockOwnershipLost() from cleanup_error
+                            # A healthy-session SQL/programming failure keeps its
+                            # original type, even though this connection is discarded.
+                            raise
+                        # An exception is already propagating out of the body.
+                        # Cleanup transport/SQL/disposal failures must not mask it.
+                    finally:
+                        if owner:
+                            owner.active = False
+                            if owner.record_info.get(_OWNER_RECORD_KEY) is owner:
+                                owner.record_info.pop(_OWNER_RECORD_KEY)
+                        for name, callback in listeners:
+                            event.remove(conn.sync_connection, name, callback)
+    finally:
+        _requests -= 1
