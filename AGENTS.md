@@ -264,6 +264,20 @@
 
 | 2026-10-23 | Codex（协调者） | 已切main并快进691cf88，再开docs/codex-wave1-integration接续协调文档；cherry-pick9978e07仅AGENTS追加日志冲突，保留双方全部日志并解决，无业务冲突。 |
 
+| 2026-10-23 | Codex（协调者） | W1七项修复检查点cc32e55亲自复跑五退出全部exit0：lint165；gateway1555 passed/23 skipped（2.01s）；PG17（2.15s）；all1674/71skip（2.36s）；W1 1514零skip（10.04s，23真实PG）。已派原review_w1定点复审d9a1b56..cc32e55，树冻结；之后同步S1 main再真实runtime联调。W2修复接近检查点，要求同样先冻结便于个人复跑。准备S1b-wave1-state任务书：独立共享agent在S2后串行实施0002与受控状态原语，不由W1–W4写迁移，不以本地PAUSED造数当真实fence通过。 |
+
+| 2026-10-23 | Codex（协调者） | W1定点复审6项ADDRESSED，原第7项仍P1：is_correction只接受逗号，“不对。/；/换行/空格 改成给赵六九百”保持旧授权。协调者亲自5形式探针确认逗号True、其余False；报告追加L2-W1-identity.md，原agent修复轮2，暂不混main同步。S2自报纯函数73项与base退出通过，尚待个人复跑；已要求同步main后冻结最终检查点。 |
+
+| 2026-10-23 | Codex（协调者） | W2修复轮1 HEAD27a067a亲自复跑全部exit0：lint162；gateway142 passed/3 skipped/1 xfail（3.10s）；PG17（2.43s）；全量261/51skip/1xfail（3.58s）；W2 81/1xfail（4.79s）。原评审定点APPROVE，3项均ADDRESSED且23定向测试通过；memo xfail、来源/F互通、真实L3/reserve仍开放，不作完整交付。 |
+
+| 2026-10-23 | Codex（协调者） | W1修复轮2 HEAD7250105亲自复跑五退出全部exit0：lint165；全量1689/102skip（2.98s）；gateway1570/54skip（1.79s）；PG17（3.07s）；W1 1560零skip（20.76s）。原review_w1定点18 passed并APPROVE，原7项缺陷均关闭；已派原owner同步main691cf88接入真实S1，W4客户锁/后续PAUSED仍不冒充验收。 |
+
+| 2026-10-23 | Codex（协调者） | S2同步main后最终8a7d6dd已冻结，协调者亲自复跑lint/test/test-reserve/contracts-check全部exit0：全量301 passed/54 skipped（4.20s），reserve73 passed（0.07s），契约冻结一致。已派独立只读review_s2对照PRD；真实生产义务数据仍待S3，尚不开PR。 |
+
+| 2026-10-23 | Codex（协调者） | 编写S1b-wave1-state与W4a-customer-locks任务书；原W4锁作为W1先决组件单独提取。native工具已从main691cf88创建并附加safebank-w4-locks，切feat/l2-customer-locks，离线安装78锁定依赖，派原W4 owner实施。明确PRD单key hashtextextended、失锁后永久无效、真实PG取消/后台断连测试；原W4检查点保留，协调者无业务代码改动。S1b待S2通过后串行启动。 |
+
+| 2026-10-23 | Codex（协调者） | S2独立评审发现P1同瞬间UTC表示被local time/weekday/月末校验误拒绝，REQUEST_CHANGES；已读源码确认并派原owner修复轮1，报告L2-S2-reserve.md，尚不开PR。W1已merge main d71784c并接入S1小组件；W4a新增assert_lock_owner(conn)发送前guard获协调固定签名，明确不消灭检查至HTTP发送间隙，失锁只UNKNOWN/reconcile。调研时错误docs/PRD通配、bank_backend与db/state路径造成只读exit1，改用rg --files确认PRD.md与app/state.py后继续。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
@@ -298,8 +312,9 @@ P0 准备阶段（决定后续一切）：
 | 状态 | 组件 | 分支 / PR | 任务书 |
 |---|---|---|---|
 | [x] | W0 基础骨架 | `feat/l2-foundation` / PR #2 已合并 | `docs/plans/briefs/W0-*.md`，评审 `docs/reviews/L2-W0-architecture.md` |
-| [ ] | W1 身份、会话与原话 | `feat/l2-identity`（检查点d9a1b56，待共享联调） | `docs/plans/briefs/W1-identity.md` |
-| [ ] | W2 读代理、参数来源与污点 | `feat/l2-provenance`（实现中，未验收） | `docs/plans/briefs/W2-provenance.md` |
+| [x] | S1 共享运行层 | PR #4，merge `691cf88`；独立评审与四CI全绿 | `docs/acceptance/L2-S1-runtime.md` |
+| [ ] | W1 身份、会话与原话 | `feat/l2-identity`（修复cc32e55，定点复审及真实共享联调待完成） | `docs/plans/briefs/W1-identity.md` |
+| [ ] | W2 读代理、参数来源与污点 | `feat/l2-provenance`（独立评审3项修复中） | `docs/plans/briefs/W2-provenance.md` |
 | [ ] | W3 快照、预演、工作流、决策与 G4 | `feat/l2-decision`（检查点3bcbe8e，共享依赖阻塞） | `docs/plans/briefs/W3-decision.md` |
 | [ ] | W4 审批与执行 | `feat/l2-execution`（实现中，未验收） | `docs/plans/briefs/W4-execution.md` |
 | [ ] | 0002_wave1 迁移（波次 1 各任务提出的表 / 字段需求，由协调者串行追加） | — | 汇总各 `docs/progress/W*.md` 的「待决」 |
