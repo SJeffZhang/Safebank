@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+from safebank_contracts.codes import Code
 from safebank_contracts.plan import InteractiveEvidence
 from sqlalchemy.pool import NullPool
 
@@ -263,6 +264,49 @@ def test_malformed_persisted_scope_json_is_controlled_conflict(gateway_db, bad_s
                             reason={},
                         )
                 assert err.value.status == 409
+                assert await snapshot(conn, ids) == before
+        finally:
+            await db.dispose()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+def test_empty_scopes_and_zero_claims_are_rejected_before_any_write(gateway_db, terminal):
+    async def run():
+        db = engine(gateway_db.runtime_url, poolclass=NullPool)
+        try:
+            async with db.begin() as conn:
+                ids, _ = await orphan(
+                    conn,
+                    job_status="UNKNOWN" if terminal else "EXECUTING",
+                    plan_status="UNKNOWN" if terminal else "EXECUTING",
+                )
+                await conn.execute(
+                    t.plans.update().where(t.plans.c.id == ids["pln"]).values(scope_ids=[])
+                )
+                await conn.execute(
+                    t.authorization_claims.delete().where(
+                        t.authorization_claims.c.plan_id == ids["pln"]
+                    )
+                )
+                before = await snapshot(conn, ids)
+                assert before["plan"]["scope_ids"] == before["claims"] == []
+                assert before["utterance"]["status"] == "ACTIVE"
+            async with db.begin() as conn:
+                with pytest.raises(GatewayError) as err:
+                    if terminal:
+                        await state.archive_orphan_execution_terminal(
+                            conn, expected=identity(ids), l3_status="CANCELLED", result=None
+                        )
+                    else:
+                        await state.mark_orphan_execution_unknown(
+                            conn,
+                            expected=identity(ids),
+                            from_status=state.ExecutionJobStatus.EXECUTING,
+                            reason={},
+                        )
+                assert err.value.status == 409 and err.value.code is Code.STATE_CHANGED
                 assert await snapshot(conn, ids) == before
         finally:
             await db.dispose()

@@ -65,3 +65,28 @@ W1真实G3/G14 HTTP撤销联调由W1 owner完成；本组件只证明savepoint�
 
 
 提交前额外AST只读核对：首次校验脚本对无返回注解的旧函数调用ast.dump(None)导致TypeError（脚本错误，未修改生产/测试）；给None显式处理后重跑，existing_function_signature_changes=[]，ExecutionIdentity_ast_unchanged=True。所有旧函数签名及原identity AST逐项与BASE一致。staged diff --check通过，暂存清单仅上述允许8文件，禁止路径无改动；随后仅本地提交。
+
+
+## 修复轮 1：独立评审唯一 P2，空 scope + 零 claims
+
+2026-10-23，修复BASE5842d44703b43811daa402b2afde08e63d1d1d28。已完整读取根repo `docs/reviews/L2-S1e-orphan-jobs.md` 并核源码：孤儿shape guard接受[]，原_claims两个空集相等，导致mark与archive都通过；现有missing_scopes测试保留原claim，未覆盖这个组合。接受该P2，普通路径不扩大修改。
+
+先仅新增两个真实PG回归，分别以EXECUTING plan/job调用mark、UNKNOWN plan/job调用CANCELLED归档；scope_ids=[]且删除该plan全部claims，调用前原话ACTIVE。要求409 STATE_CHANGED，完整plan/job/claims/utterance字段snapshot不变。红测精确命令：`PATH=/Applications/Docker.app/Contents/Resources/bin:$PATH GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/wave1_state/test_orphan_boundaries.py -k empty_scopes_and_zero_claims -q --tb=short`：2 failed / 48 deselected（2.49s），两入口均DID NOT RAISE GatewayError，符合缺口复现。
+
+生产修复仅在_locked_orphan_execution现有shape guard增加空列表拒绝（or not scopes）；不改_claims、普通路径、冻结签名、schema或其他业务。同一精确红测命令转绿：2 passed / 48 deselected（1.84s）；两例均确认409 STATE_CHANGED，完整plan/job/claims/utterance snapshot不变，ACTIVE原话未消费。
+
+
+修复轮1要求的三文件回归精确命令：`PATH=/Applications/Docker.app/Contents/Resources/bin:$PATH GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/wave1_state/test_orphan_boundaries.py tests/gateway/wave1_state/test_orphan_unknown.py tests/gateway/wave1_state/test_orphan_terminal.py -q --tb=short`：116 passed/零skip（5.69s）。
+
+随后完整按顺序重跑六退出，每条前缀均为 `PATH=/Applications/Docker.app/Contents/Resources/bin:$PATH`，全部exit0：
+
+| 修复轮1精确目标 | 实际结果 |
+|---|---|
+| make lint | ruff check通过，174 files already formatted |
+| make test | 392 passed / 302 skipped，4.29s |
+| make test-gateway | 163 passed / 254 skipped，3.82s |
+| make test-gateway-db | 17 passed / 零skip，2.19s |
+| make test-wave1-state | 231 passed / 零skip，13.20s |
+| make contracts-check | PASS: contracts v1 match frozen schemas |
+
+只有孤儿guard的空列表拒绝、两个专属PG回归和本修复日志三文件改动；普通路径、签名、schema、W1/W4及L3均不变。临时PG继续显式PGDATA+同路径tmpfs，无up/down/test-p1、无删或重建卷。仅本地冻结，未push/PR/merge、未派agent；待协调者亲自重跑与原reviewer定点复核唯一P2。真实HTTP/L3及调用者持锁真实性边界沿用初始报告，未宣称本轮覆盖。

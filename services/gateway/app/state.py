@@ -810,8 +810,10 @@ async def _locked_orphan_execution(
     if job is None or has_evaluation:
         _conflict()
     scopes = plan["scope_ids"]
-    if not isinstance(scopes, list) or any(
-        not isinstance(scope, str) or not scope for scope in scopes
+    if (
+        not isinstance(scopes, list)
+        or not scopes
+        or any(not isinstance(scope, str) or not scope for scope in scopes)
     ):
         _conflict()
     # Keep the existing strict duplicate/ownership/status checks. This orphan-
