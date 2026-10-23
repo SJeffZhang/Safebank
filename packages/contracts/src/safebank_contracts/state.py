@@ -2,22 +2,20 @@
 
 from functools import reduce
 from operator import or_
-from types import MappingProxyType
-from typing import Annotated, Literal, TypeVar
+from typing import Annotated, Literal
 
 from pydantic import (
-    AfterValidator,
     Field,
     JsonValue,
-    PlainSerializer,
     StrictBool,
     StrictInt,
     create_model,
     model_validator,
 )
 
-from .base import Cents, Contract, Timestamp
+from .base import Cents, Contract, FrozenMap, Timestamp
 from .enums import AccountType, CardStatus, Phase
+from .obligations import ObligationSnapshot
 from .tools import Id
 from .views import (
     WRITE_RESULTS,
@@ -29,11 +27,6 @@ from .views import (
     SplitView,
     SubscriptionView,
 )
-
-T = TypeVar("T")
-FrozenMap = Annotated[
-    dict[str, T], AfterValidator(MappingProxyType), PlainSerializer(dict, return_type=dict)
-]
 
 
 class Account(Contract):
@@ -202,6 +195,7 @@ class BankState(Contract):
     ops_7d: tuple[Operation, ...] = ()
     instructions: tuple[ScheduledView, ...] = ()
     subscriptions: tuple[SubscriptionView, ...] = ()
+    obligations: ObligationSnapshot | None = None
     products: tuple[ProductView, ...] = ()
     holdings: tuple[HoldingView, ...] = ()
     orders: tuple[FundOrderView, ...] = ()

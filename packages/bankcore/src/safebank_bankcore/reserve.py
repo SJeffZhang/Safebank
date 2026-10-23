@@ -5,6 +5,10 @@ Asia/Shanghai before calendar validation and recurrence. Scheduled recurrence
 uses the original monthly anchor and Shanghai local execution time; weekday
 follows datetime.weekday(): Monday=0 through Sunday=6. No wall clock, IO, or
 authorization decision is used.
+
+Since S3 the source of truth is the raw ``BankState.obligations`` snapshot
+(``ObligationSnapshot``); the legacy ``instructions``/``subscriptions`` views are
+derived projections and never override the raw snapshot.
 """
 
 from calendar import monthrange
@@ -14,8 +18,14 @@ from datetime import datetime, time, timedelta
 from types import MappingProxyType
 from zoneinfo import ZoneInfo
 
+from safebank_contracts.obligations import (
+    MerchantBilling,
+    MerchantMandate,
+    ObligationSnapshot,
+    ScheduledInstruction,
+)
 from safebank_contracts.state import Account, BankState
-from safebank_contracts.views import ScheduledView, SubscriptionView
+from safebank_contracts.views import ScheduledView
 
 BUSINESS_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
@@ -50,6 +60,68 @@ def _business_time(value: datetime) -> datetime:
     return value.astimezone(BUSINESS_TIMEZONE)
 
 
+def _next_month(due_at: datetime, anchor_day: int, local_time: time) -> datetime:
+    year = due_at.year + due_at.month // 12
+    month = due_at.month % 12 + 1
+    day = min(anchor_day, monthrange(year, month)[1])
+    return datetime.combine(
+        due_at.date().replace(year=year, month=month, day=day), local_time, tzinfo=due_at.tzinfo
+    )
+
+
+def _check_calendar(
+    *,
+    period: str,
+    anchor_day: int | None,
+    weekday: int | None,
+    local_time: time,
+    next_run: datetime,
+) -> None:
+    if next_run.time() != local_time:
+        raise ValueError("next_run_at disagrees with the local execution time")
+    if period == "WEEKLY":
+        if next_run.weekday() != weekday:
+            raise ValueError("next_run_at weekday disagrees with weekday")
+    elif period == "MONTHLY":
+        if anchor_day is None or next_run.day != min(
+            anchor_day, monthrange(next_run.year, next_run.month)[1]
+        ):
+            raise ValueError("next_run_at disagrees with anchor_day")
+
+
+def _recurrences(
+    *,
+    period: str,
+    anchor_day: int | None,
+    weekday: int | None,
+    local_time: time,
+    next_at: datetime,
+    end_at: datetime | None,
+    start: datetime,
+    end: datetime,
+) -> tuple[datetime, ...]:
+    """Single private recurrence core shared by views and raw obligations.
+
+    Yields due instants in ``(start, end]`` starting from ``next_at``, honoring an
+    inclusive ``end_at`` when supplied. Callers validate anchors via
+    ``_check_calendar`` first.
+    """
+    due_at = _business_time(next_at)
+    cutoff = min(end, _business_time(end_at)) if end_at is not None else end
+    result: list[datetime] = []
+    while due_at <= cutoff:
+        if due_at > start:
+            result.append(due_at)
+        if period == "ONCE":
+            break
+        if period == "WEEKLY":
+            due_at += timedelta(days=7)
+            continue
+        assert anchor_day is not None
+        due_at = _next_month(due_at, anchor_day, local_time)
+    return tuple(result)
+
+
 def _schedule_time(item: ScheduledView) -> time:
     if item.next_run_at is None:
         raise ValueError(f"ACTIVE instruction {item.id} has no next_run_at")
@@ -61,10 +133,8 @@ def _schedule_time(item: ScheduledView) -> time:
     if item.to_account_id == item.from_account_id:
         raise ValueError(f"instruction {item.id} source equals target")
     local_time = time.fromisoformat(item.time_of_day)
-    if local_time.tzinfo is not None or local_time != next_run.time():
-        raise ValueError(f"instruction {item.id} has inconsistent local execution time")
-    if item.end_at is not None:
-        _business_time(item.end_at)
+    if local_time.tzinfo is not None:
+        raise ValueError(f"instruction {item.id} has a timezone in time_of_day")
     if item.period == "ONCE":
         if item.anchor_day is not None or item.weekday is not None:
             raise ValueError(f"ONCE instruction {item.id} cannot have recurring anchors")
@@ -73,9 +143,8 @@ def _schedule_time(item: ScheduledView) -> time:
             type(item.weekday) is not int
             or not 0 <= item.weekday <= 6
             or item.anchor_day is not None
-            or next_run.weekday() != item.weekday
         ):
-            raise ValueError(f"WEEKLY instruction {item.id} has invalid or inconsistent weekday")
+            raise ValueError(f"WEEKLY instruction {item.id} has invalid anchors")
     elif item.period == "MONTHLY":
         if (
             type(item.anchor_day) is not int
@@ -83,21 +152,16 @@ def _schedule_time(item: ScheduledView) -> time:
             or item.weekday is not None
         ):
             raise ValueError(f"MONTHLY instruction {item.id} has invalid anchors")
-        expected_day = min(item.anchor_day, monthrange(next_run.year, next_run.month)[1])
-        if next_run.day != expected_day:
-            raise ValueError(f"instruction {item.id} next_run_at disagrees with anchor_day")
     else:
         raise ValueError(f"unsupported period for instruction {item.id}")
-    return local_time
-
-
-def _next_month(due_at: datetime, anchor_day: int, local_time: time) -> datetime:
-    year = due_at.year + due_at.month // 12
-    month = due_at.month % 12 + 1
-    day = min(anchor_day, monthrange(year, month)[1])
-    return datetime.combine(
-        due_at.date().replace(year=year, month=month, day=day), local_time, tzinfo=due_at.tzinfo
+    _check_calendar(
+        period=item.period,
+        anchor_day=item.anchor_day,
+        weekday=item.weekday,
+        local_time=local_time,
+        next_run=next_run,
     )
+    return local_time
 
 
 def scheduled_occurrences(
@@ -125,20 +189,17 @@ def scheduled_occurrences(
             continue
         local_time = _schedule_time(item)
         assert item.next_run_at is not None  # ACTIVE cannot silently lose obligations
-        due_at = _business_time(item.next_run_at)
-        cutoff = min(end, _business_time(item.end_at)) if item.end_at is not None else end
-        while due_at <= cutoff:
-            if due_at > start:
-                result.append(
-                    Obligation(due_at, 3, item.id, item.from_account_id, -item.amount_cents)
-                )
-            if item.period == "ONCE":
-                break
-            if item.period == "WEEKLY":
-                due_at += timedelta(days=7)
-                continue
-            assert item.anchor_day is not None
-            due_at = _next_month(due_at, item.anchor_day, local_time)
+        for due_at in _recurrences(
+            period=item.period,
+            anchor_day=item.anchor_day,
+            weekday=item.weekday,
+            local_time=local_time,
+            next_at=item.next_run_at,
+            end_at=item.end_at,
+            start=start,
+            end=end,
+        ):
+            result.append(Obligation(due_at, 3, item.id, item.from_account_id, -item.amount_cents))
     return tuple(sorted(result, key=lambda item: (item.due_at, item.rank, item.id)))
 
 
@@ -154,69 +215,114 @@ def _customer_account(state: BankState, account_id: str) -> Account:
     return account
 
 
-def _own_target(state: BankState, item: ScheduledView) -> str | None:
-    """Resolve ownership without granting income from another customer."""
+def _validate_scheduled_raw(state: BankState, item: ScheduledInstruction) -> None:
     source = _customer_account(state, item.from_account_id)
-    if item.to_account_id is not None:
-        target = _customer_account(state, item.to_account_id)
-        if target.customer_id != source.customer_id:
-            raise ValueError(f"instruction {item.id} direct target must be an own account")
-        return target.id
-    payee = state.payees.get(item.payee_id)
-    if payee is None or payee.customer_id != source.customer_id:
-        raise ValueError(f"unknown payee ownership for instruction {item.id}")
-    if payee.target_account_id is None:
-        return None  # explicit external payee; not an unknown internal owner
-    target = _customer_account(state, payee.target_account_id)
-    if target.customer_id == source.customer_id:
-        raise ValueError(f"instruction {item.id} must use to_account_id for own transfers")
-    return None
+    if source.customer_id != item.customer_id:
+        raise ValueError(f"instruction {item.id} source does not belong to its customer")
+    if item.next_run_at is None:
+        raise ValueError(f"ACTIVE instruction {item.id} has no next_run_at")
+    next_run = _business_time(item.next_run_at)
+    _check_calendar(
+        period=item.period,
+        anchor_day=item.anchor_day,
+        weekday=item.weekday,
+        local_time=item.time_of_day,
+        next_run=next_run,
+    )
 
 
-def _merchant_occurrences(
-    subscriptions: Iterable[SubscriptionView], start: datetime, end: datetime
-) -> tuple[Obligation, ...]:
-    """Seven-day projection only: SubscriptionView has no original monthly anchor.
+def _validate_mandate_billing(
+    state: BankState, item: MerchantMandate, snapshot: ObligationSnapshot
+) -> MerchantBilling:
+    billing = snapshot.billings.get(item.billing_id)
+    if billing is None or billing.id != item.billing_id:
+        raise ValueError(f"mandate {item.id} references an unknown billing")
+    if billing.customer_id != item.customer_id:
+        raise ValueError(f"mandate {item.id} billing belongs to a different customer")
+    if billing.merchant_id != item.merchant_id:
+        raise ValueError(f"mandate {item.id} merchant disagrees with its billing")
+    _customer_account(state, billing.account_id)
+    next_run = _business_time(billing.next_due_at)
+    _check_calendar(
+        period=billing.period,
+        anchor_day=billing.anchor_day,
+        weekday=billing.weekday,
+        local_time=billing.time_of_day,
+        next_run=next_run,
+    )
+    return billing
 
-    A monthly next_due_at must be current, since advancing an overdue value may
-    drift from a hidden 29/30/31 anchor. A next_due_at equal to start is excluded.
-    Weekly recurrence is unambiguous and retains the supplied execution time.
-    """
+
+def _raw_obligations(
+    state: BankState, snapshot: ObligationSnapshot, start: datetime, end: datetime
+) -> list[Obligation]:
     result: list[Obligation] = []
-    instruction_ids: set[str] = set()
     billing_ids: set[str] = set()
-    for item in subscriptions:
-        if item.instruction_id in instruction_ids or item.billing_id in billing_ids:
-            raise ValueError("duplicate merchant instruction or billing identity")
-        instruction_ids.add(item.instruction_id)
-        billing_ids.add(item.billing_id)
+    for item in snapshot.standing_instructions.values():
         if item.status != "ACTIVE":
             continue
-        due_at = _business_time(item.next_due_at)
-        if item.period == "MONTHLY" and due_at < start:
-            raise ValueError(f"monthly bill {item.billing_id} lacks anchor for stale next_due_at")
-        while due_at <= end:
-            if due_at > start:
+        if isinstance(item, ScheduledInstruction):
+            _validate_scheduled_raw(state, item)
+            target = snapshot.instruction_targets.get(item.id)
+            if target is None or target.instruction_id != item.id:
+                raise ValueError(f"instruction {item.id} is missing its ownership target")
+            if target.source_customer_id != item.customer_id:
+                raise ValueError(f"instruction {item.id} target owner disagrees")
+            dues = _recurrences(
+                period=item.period,
+                anchor_day=item.anchor_day,
+                weekday=item.weekday,
+                local_time=item.time_of_day,
+                next_at=item.next_run_at,
+                end_at=item.end_at,
+                start=start,
+                end=end,
+            )
+            for due_at in dues:
                 result.append(
-                    Obligation(due_at, 4, item.billing_id, item.account_id, -item.amount_cents)
+                    Obligation(due_at, 3, item.id, item.from_account_id, -item.amount_cents)
                 )
-            if item.period != "WEEKLY":
-                break
-            due_at += timedelta(days=7)
-    return tuple(result)
+                if target.ownership == "OWN":
+                    credit = _customer_account(state, target.target_account_id)
+                    if credit.customer_id != item.customer_id:
+                        raise ValueError(
+                            f"instruction {item.id} OWN target belongs to another customer"
+                        )
+                    if credit.id == item.from_account_id:
+                        raise ValueError(f"instruction {item.id} OWN target equals its source")
+                    result.append(Obligation(due_at, 3, item.id, credit.id, item.amount_cents))
+            continue
+        billing = _validate_mandate_billing(state, item, snapshot)
+        if billing.id in billing_ids:
+            raise ValueError(f"duplicate merchant billing identity {billing.id}")
+        billing_ids.add(billing.id)
+        if not billing.active:
+            continue
+        dues = _recurrences(
+            period=billing.period,
+            anchor_day=billing.anchor_day,
+            weekday=billing.weekday,
+            local_time=billing.time_of_day,
+            next_at=billing.next_due_at,
+            end_at=item.end_at,
+            start=start,
+            end=end,
+        )
+        for due_at in dues:
+            result.append(
+                Obligation(due_at, 4, billing.id, billing.account_id, -billing.amount_cents)
+            )
+    return result
 
 
 def projected_shortfall(state: BankState, *, days: int = 7) -> ShortfallReport:
     """Compute per-account prefix reserves from a complete seven-day BankState.
 
-    Callers MUST load all relevant customer accounts, ACTIVE instructions, actual
-    merchant bills and ownership data. Empty default tuples from the P1 loader
-    are not evidence of no obligations: production use remains blocked until S3.
-
-    Only integer days=7 is supported: SubscriptionView cannot express monthly
-    anchors for longer windows. scheduled_occurrences separately supports them.
-    Own-account scheduled transfers credit the target; cross-customer transfers,
-    wages, fund settlements and pending income provide no guaranteed income.
+    The raw ``state.obligations`` snapshot is the only source of obligations: a
+    null snapshot (not loaded) or a snapshot whose covered customers differ from
+    ``state.versions`` is rejected, never silently treated as empty. Own-account
+    scheduled transfers credit the target; cross-customer transfers, wages, fund
+    settlements and pending income provide no guaranteed income.
     The window and returned due_at values use Asia/Shanghai; any equivalent
     aware input offset is accepted and preserves the same business calendar.
     max_outflow_cents remains negative when obligations exceed available funds.
@@ -224,24 +330,14 @@ def projected_shortfall(state: BankState, *, days: int = 7) -> ShortfallReport:
     """
     if type(days) is not int or days != 7:
         raise ValueError("projected_shortfall supports only integer days=7")
+    snapshot = state.obligations
+    if snapshot is None:
+        raise ValueError("obligations were not loaded; cannot project reserves")
+    if set(snapshot.covered_customer_ids) != set(state.versions):
+        raise ValueError("obligation coverage does not match state versions")
     start = _business_time(state.sim_now)
     end = start + timedelta(days=days)
-    scheduled = scheduled_occurrences(state.instructions, start, end)
-    own_targets = {
-        item.id: _own_target(state, item) for item in state.instructions if item.status == "ACTIVE"
-    }
-    obligations: list[Obligation] = []
-    for debit in scheduled:
-        obligations.append(debit)
-        target_id = own_targets[debit.id]
-        if target_id is not None:
-            obligations.append(
-                Obligation(debit.due_at, debit.rank, debit.id, target_id, -debit.delta_cents)
-            )
-    for item in state.subscriptions:
-        if item.status == "ACTIVE":
-            _customer_account(state, item.account_id)
-    obligations.extend(_merchant_occurrences(state.subscriptions, start, end))
+    obligations = _raw_obligations(state, snapshot, start, end)
     obligations.sort(key=lambda item: (item.due_at, item.rank, item.id))
 
     available = {

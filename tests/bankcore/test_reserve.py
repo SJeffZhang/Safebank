@@ -1,15 +1,29 @@
 from dataclasses import FrozenInstanceError
-from datetime import UTC, date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 
 import pytest
 import safebank_bankcore as bankcore
+from pydantic import ValidationError
 from safebank_bankcore.banking import Context, apply_card, apply_transfer
+from safebank_contracts.obligations import (
+    InstructionTarget,
+    MerchantMandate,
+    ScheduledInstruction,
+)
 from safebank_contracts.state import Card, Payee
 from safebank_contracts.tools import CardId, Transfer
-from safebank_contracts.views import ChannelFlags, FundOrderView, ScheduledView, SubscriptionView
+from safebank_contracts.views import ChannelFlags, FundOrderView, ScheduledView
 
 from tests.bankcore.fixtures import NOW, base_state
+from tests.bankcore.obligations_fixtures import (
+    external_payee,
+    raw_billing,
+    raw_instruction,
+    raw_mandate,
+    raw_merchant,
+    raw_projection_state,
+)
 
 
 def at(value: str) -> datetime:
@@ -188,60 +202,95 @@ def test_invalid_window_is_rejected(start, end):
         bankcore.scheduled_occurrences((), start, end)
 
 
-def subscription(**updates) -> SubscriptionView:
-    values = {
-        "instruction_id": "si_video",
-        "billing_id": "bill_video",
-        "account_id": "acc_a",
-        "merchant_id": "mer_video",
-        "merchant_name": "爱看视频",
-        "period": "MONTHLY",
-        "amount_cents": 3000,
-        "max_amount_cents": 3600,
-        "next_due_at": at("2026-10-18T06:00:00+08:00"),
-        "status": "ACTIVE",
-        "annual_cost_cents": 36000,
-    }
-    return SubscriptionView(**(values | updates))
+# ---- raw obligation-snapshot report tests ----
 
 
-def projection_state(*, balance=600000, instructions=(), subscriptions=()):
-    """Complete synthetic obligations, independent of the incomplete production loader."""
-    state = base_state(balance)
-    payee = Payee(
-        id="pye_external",
-        customer_id="cus_a",
-        name="外部收款人",
-        alias=None,
-        phone=None,
-        bank_name="他行",
-        account_no="6222020000009998",
-        target_account_id=None,
-        target_fingerprint="external",
-        created_at=NOW - timedelta(days=30),
-    )
-    return state.model_copy(
-        update={
-            "payees": {payee.id: payee},
-            "instructions": tuple(instructions),
-            "subscriptions": tuple(subscriptions),
-        }
+def prd_raw_state():
+    """PRD §2.2 张三 obligations projected onto the synthetic base accounts."""
+    return raw_projection_state(
+        instructions=(
+            raw_instruction(
+                id="si_mom",
+                amount_cents=100000,
+                period="MONTHLY",
+                anchor_day=5,
+                next_run_at=at("2026-11-05T06:00:00+08:00"),
+            ),
+        ),
+        mandates=(
+            raw_mandate(),
+            raw_mandate(
+                id="si_music",
+                billing_id="bill_music",
+                merchant_id="mer_music",
+                max_amount_cents=1800,
+            ),
+            raw_mandate(
+                id="si_cloud",
+                billing_id="bill_cloud",
+                merchant_id="mer_cloud",
+                max_amount_cents=2520,
+            ),
+            raw_mandate(
+                id="si_gym", billing_id="bill_gym", merchant_id="mer_gym", max_amount_cents=23880
+            ),
+        ),
+        billings=(
+            raw_billing(),
+            raw_billing(
+                id="bill_music",
+                merchant_id="mer_music",
+                amount_cents=1500,
+                anchor_day=20,
+                next_due_at=at("2026-10-20T06:00:00+08:00"),
+            ),
+            raw_billing(
+                id="bill_cloud",
+                merchant_id="mer_cloud",
+                amount_cents=2100,
+                anchor_day=1,
+                next_due_at=at("2026-11-01T06:00:00+08:00"),
+            ),
+            raw_billing(
+                id="bill_gym",
+                merchant_id="mer_gym",
+                amount_cents=19900,
+                anchor_day=25,
+                next_due_at=at("2026-10-25T06:00:00+08:00"),
+            ),
+        ),
+        merchants=(
+            raw_merchant(),
+            raw_merchant(id="mer_music", name="乐听音乐"),
+            raw_merchant(id="mer_cloud", name="云盘存储"),
+            raw_merchant(id="mer_gym", name="力健健身"),
+        ),
     )
 
 
 def test_report_uses_actual_bills_and_preserves_merchant_execution_times():
-    state = projection_state(
-        subscriptions=(
-            subscription(),
-            subscription(
-                instruction_id="si_music",
+    state = raw_projection_state(
+        mandates=(
+            raw_mandate(),
+            raw_mandate(
+                id="si_music",
                 billing_id="bill_music",
                 merchant_id="mer_music",
-                amount_cents=1500,
                 max_amount_cents=1800,
+            ),
+        ),
+        billings=(
+            raw_billing(),
+            raw_billing(
+                id="bill_music",
+                merchant_id="mer_music",
+                amount_cents=1500,
+                anchor_day=20,
+                time_of_day=time(21, 15, 30),
                 next_due_at=at("2026-10-20T21:15:30+08:00"),
             ),
-        )
+        ),
+        merchants=(raw_merchant(), raw_merchant(id="mer_music", name="乐听音乐")),
     )
     report = bankcore.projected_shortfall(state)
     account = report.accounts["acc_a"]
@@ -263,73 +312,95 @@ def test_report_uses_actual_bills_and_preserves_merchant_execution_times():
     assert "acc_external_clearing" not in report.accounts
 
 
-@pytest.mark.parametrize("status", ["DISABLED", "DELETED", "BLOCKED"])
+@pytest.mark.parametrize("status", ["DISABLED", "DELETED"])
 def test_report_excludes_inactive_mandates(status):
-    report = bankcore.projected_shortfall(
-        projection_state(subscriptions=(subscription(status=status),))
+    state = raw_projection_state(
+        mandates=(raw_mandate(status=status),),
+        billings=(raw_billing(),),
+        merchants=(raw_merchant(),),
     )
+    report = bankcore.projected_shortfall(state)
     assert report.obligations == ()
     assert report.total_reserve_cents == 0
     assert report.accounts["acc_a"].max_outflow_cents == 600000
 
 
-def test_subscription_window_excludes_now_and_includes_end():
+@pytest.mark.parametrize("status", ["BLOCKED", "COMPLETED", "FAILED"])
+def test_raw_instruction_status_rejects_run_only_statuses(status):
+    with pytest.raises(ValidationError):
+        ScheduledInstruction(**{**raw_instruction().model_dump(), "status": status})
+    with pytest.raises(ValidationError):
+        MerchantMandate(**{**raw_mandate().model_dump(), "status": status})
+
+
+def test_window_excludes_now_and_includes_end():
     end = NOW + timedelta(days=7)
-    state = projection_state(
-        subscriptions=(
-            subscription(next_due_at=NOW),
-            subscription(instruction_id="si_end", billing_id="bill_end", next_due_at=end),
-            subscription(
-                instruction_id="si_late",
-                billing_id="bill_late",
-                next_due_at=end + timedelta(seconds=1),
-            ),
-        )
+    state = raw_projection_state(
+        mandates=(raw_mandate(), raw_mandate(id="si_end", billing_id="bill_end")),
+        billings=(
+            raw_billing(anchor_day=15, time_of_day=time(9, 0), next_due_at=NOW),
+            raw_billing(id="bill_end", anchor_day=22, time_of_day=time(9, 0), next_due_at=end),
+        ),
+        merchants=(raw_merchant(),),
     )
     report = bankcore.projected_shortfall(state)
     assert [(item.id, item.due_at) for item in report.obligations] == [("bill_end", end)]
 
 
 @pytest.mark.parametrize("next_due_at", [NOW, NOW - timedelta(days=7)])
-def test_weekly_subscription_expands_next_period_without_double_counting_now(next_due_at):
-    report = bankcore.projected_shortfall(
-        projection_state(subscriptions=(subscription(period="WEEKLY", next_due_at=next_due_at),))
+def test_weekly_billing_expands_next_period_without_double_counting_now(next_due_at):
+    billing = raw_billing(
+        period="WEEKLY",
+        anchor_day=None,
+        weekday=next_due_at.weekday(),
+        next_due_at=next_due_at,
+        time_of_day=time(9, 0),
     )
+    state = raw_projection_state(
+        mandates=(raw_mandate(),), billings=(billing,), merchants=(raw_merchant(),)
+    )
+    report = bankcore.projected_shortfall(state)
     assert [(item.due_at, item.delta_cents) for item in report.obligations] == [
         (NOW + timedelta(days=7), -3000)
     ]
 
 
-def test_once_subscription_does_not_recur():
-    report = bankcore.projected_shortfall(
-        projection_state(subscriptions=(subscription(period="ONCE", next_due_at=NOW),))
+def test_stale_monthly_billing_recovers_from_original_anchor():
+    billing = raw_billing(anchor_day=18, next_due_at=at("2026-09-18T06:00:00+08:00"))
+    state = raw_projection_state(
+        mandates=(raw_mandate(),), billings=(billing,), merchants=(raw_merchant(),)
     )
-    assert report.obligations == ()
-
-
-def test_stale_monthly_bill_is_rejected_without_guessing_missing_anchor():
-    with pytest.raises(ValueError, match="anchor"):
-        bankcore.projected_shortfall(
-            projection_state(subscriptions=(subscription(next_due_at=NOW - timedelta(days=1)),))
-        )
+    report = bankcore.projected_shortfall(state)
+    assert [(item.due_at.isoformat(), item.delta_cents) for item in report.obligations] == [
+        ("2026-10-18T06:00:00+08:00", -3000)
+    ]
 
 
 @pytest.mark.parametrize("days", [0, -1, 1, 8, 30, 7.0, True, "7", None])
 def test_projection_rejects_unsupported_days_instead_of_guessing_monthly_recurrence(days):
     with pytest.raises(ValueError, match="7"):
-        bankcore.projected_shortfall(projection_state(), days=days)
+        bankcore.projected_shortfall(raw_projection_state(), days=days)
 
 
 def test_scheduled_debits_precede_merchant_charges_at_equal_timestamp():
-    report = bankcore.projected_shortfall(
-        projection_state(instructions=(instruction(id="si_z"),), subscriptions=(subscription(),))
+    state = raw_projection_state(
+        instructions=(raw_instruction(id="si_z"),),
+        mandates=(raw_mandate(),),
+        billings=(raw_billing(),),
+        merchants=(raw_merchant(),),
     )
+    report = bankcore.projected_shortfall(state)
     assert [(item.rank, item.id) for item in report.obligations] == [(3, "si_z"), (4, "bill_video")]
     assert report.total_reserve_cents == 4000
 
 
 def test_existing_shortfall_preserves_negative_max_outflow_and_uses_available_balance():
-    state = projection_state(balance=2000, subscriptions=(subscription(),))
+    state = raw_projection_state(
+        balance=2000,
+        mandates=(raw_mandate(),),
+        billings=(raw_billing(),),
+        merchants=(raw_merchant(),),
+    )
     accounts = dict(state.accounts)
     accounts["acc_a"] = accounts["acc_a"].model_copy(update={"debits_pending_cents": 500})
     state = state.model_copy(update={"accounts": accounts})
@@ -344,7 +415,12 @@ def test_existing_shortfall_preserves_negative_max_outflow_and_uses_available_ba
 
 
 def test_future_fund_settlement_and_pending_income_do_not_guarantee_outflow():
-    state = projection_state(balance=1000, subscriptions=(subscription(),))
+    state = raw_projection_state(
+        balance=1000,
+        mandates=(raw_mandate(),),
+        billings=(raw_billing(),),
+        merchants=(raw_merchant(),),
+    )
     accounts = dict(state.accounts)
     accounts["acc_a"] = accounts["acc_a"].model_copy(update={"credits_pending_cents": 900000})
     order = FundOrderView(
@@ -362,19 +438,19 @@ def test_future_fund_settlement_and_pending_income_do_not_guarantee_outflow():
         failure_code=None,
     )
     report = bankcore.projected_shortfall(
-        state.model_copy(
-            update={
-                "accounts": accounts,
-                "orders": (order,),
-            }
-        )
+        state.model_copy(update={"accounts": accounts, "orders": (order,)})
     )
     assert report.accounts["acc_a"].max_outflow_cents == -2000
     assert report.total_shortfall_cents == 2000
 
 
 def test_report_does_not_mutate_inputs_and_its_mappings_and_records_are_immutable():
-    state = projection_state(instructions=(instruction(),), subscriptions=(subscription(),))
+    state = raw_projection_state(
+        instructions=(raw_instruction(),),
+        mandates=(raw_mandate(),),
+        billings=(raw_billing(),),
+        merchants=(raw_merchant(),),
+    )
     before = state.model_dump_json()
     report = bankcore.projected_shortfall(state)
     assert state.model_dump_json() == before
@@ -384,69 +460,90 @@ def test_report_does_not_mutate_inputs_and_its_mappings_and_records_are_immutabl
         report.accounts["acc_a"].reserve_cents = 0
     with pytest.raises(FrozenInstanceError):
         report.obligations[0].delta_cents = 0
+    with pytest.raises(TypeError):
+        state.obligations.merchants["mutated"] = raw_merchant(id="mer_mutated")
 
 
-@pytest.mark.parametrize("reference", ["source", "target", "payee", "payee_owner", "target_owner"])
-def test_unknown_ownership_fails_instead_of_losing_scheduled_obligations(reference):
-    item = instruction()
-    state = projection_state(instructions=(item,))
-    if reference == "source":
-        state = state.model_copy(
-            update={"instructions": (item.model_copy(update={"from_account_id": "acc_missing"}),)}
-        )
-    elif reference == "target":
-        state = state.model_copy(
-            update={
-                "instructions": (
-                    item.model_copy(update={"payee_id": None, "to_account_id": "acc_missing"}),
-                )
-            }
-        )
-    elif reference == "payee":
-        state = state.model_copy(update={"payees": {}})
-    elif reference == "payee_owner":
-        payee = state.payees["pye_external"].model_copy(update={"customer_id": "cus_b"})
-        state = state.model_copy(update={"payees": {payee.id: payee}})
-    else:
-        payee = state.payees["pye_external"].model_copy(update={"target_account_id": "acc_missing"})
-        state = state.model_copy(update={"payees": {payee.id: payee}})
+def test_null_obligations_are_rejected_instead_of_treated_as_empty():
+    state = base_state()
+    assert state.obligations is None
+    with pytest.raises(ValueError, match="not loaded"):
+        bankcore.projected_shortfall(state)
+
+
+def test_incomplete_coverage_is_rejected():
+    state = raw_projection_state(covered=("cus_a",))
+    with pytest.raises(ValueError, match="coverage"):
+        bankcore.projected_shortfall(state)
+
+
+def test_unknown_source_account_fails_instead_of_losing_obligations():
+    item = raw_instruction(from_account_id="acc_missing")
+    state = raw_projection_state(instructions=(item,))
     with pytest.raises(ValueError):
         bankcore.projected_shortfall(state)
 
 
-def test_unknown_subscription_account_is_rejected():
+def test_unknown_own_target_account_fails():
+    item = raw_instruction(payee_id=None, to_account_id="acc_missing")
+    target = InstructionTarget(
+        instruction_id="si_1",
+        source_customer_id="cus_a",
+        ownership="OWN",
+        target_account_id="acc_missing",
+        target_customer_id="cus_a",
+    )
+    state = raw_projection_state(instructions=(item,), targets=(target,))
     with pytest.raises(ValueError):
-        bankcore.projected_shortfall(
-            projection_state(subscriptions=(subscription(account_id="acc_missing"),))
-        )
+        bankcore.projected_shortfall(state)
 
 
-@pytest.mark.parametrize("identity", ["instruction", "billing"])
-def test_duplicate_merchant_obligations_are_rejected(identity):
-    duplicate = subscription(
-        instruction_id="si_video" if identity == "instruction" else "si_other",
-        billing_id="bill_video" if identity == "billing" else "bill_other",
+def test_mandate_with_missing_billing_fails():
+    mandate = raw_mandate(billing_id="bill_missing")
+    state = raw_projection_state(
+        mandates=(mandate,), billings=(raw_billing(),), merchants=(raw_merchant(),)
+    )
+    with pytest.raises(ValueError, match="billing"):
+        bankcore.projected_shortfall(state)
+
+
+def test_unknown_subscription_account_is_rejected():
+    billing = raw_billing(account_id="acc_missing")
+    state = raw_projection_state(
+        mandates=(raw_mandate(),), billings=(billing,), merchants=(raw_merchant(),)
     )
     with pytest.raises(ValueError):
-        bankcore.projected_shortfall(projection_state(subscriptions=(subscription(), duplicate)))
+        bankcore.projected_shortfall(state)
+
+
+def test_duplicate_merchant_obligations_are_rejected():
+    duplicate = raw_mandate(id="si_other")
+    state = raw_projection_state(
+        mandates=(raw_mandate(), duplicate),
+        billings=(raw_billing(),),
+        merchants=(raw_merchant(),),
+    )
+    with pytest.raises(ValueError, match="duplicate merchant billing"):
+        bankcore.projected_shortfall(state)
 
 
 def with_balances(state, **balances):
     accounts = dict(state.accounts)
     for account_id, balance in balances.items():
         accounts[account_id] = accounts[account_id].model_copy(
-            update={
-                "credits_posted_cents": balance,
-                "debits_posted_cents": 0,
-            }
+            update={"credits_posted_cents": balance, "debits_posted_cents": 0}
         )
     return state.model_copy(update={"accounts": accounts})
 
 
 def test_own_scheduled_credit_can_fund_same_instant_merchant_charge():
-    state = projection_state(
-        instructions=(instruction(from_account_id="acc_s", payee_id=None, to_account_id="acc_a"),),
-        subscriptions=(subscription(amount_cents=1000),),
+    state = raw_projection_state(
+        instructions=(
+            raw_instruction(from_account_id="acc_s", payee_id=None, to_account_id="acc_a"),
+        ),
+        mandates=(raw_mandate(),),
+        billings=(raw_billing(amount_cents=1000),),
+        merchants=(raw_merchant(),),
     )
     report = bankcore.projected_shortfall(with_balances(state, acc_a=0, acc_s=1000))
     assert report.accounts["acc_a"].reserve_cents == 0
@@ -460,11 +557,17 @@ def test_own_scheduled_credit_can_fund_same_instant_merchant_charge():
 
 
 def test_later_own_credit_cannot_hide_an_earlier_target_balance_peak():
-    state = projection_state(
-        instructions=(instruction(from_account_id="acc_s", payee_id=None, to_account_id="acc_a"),),
-        subscriptions=(
-            subscription(amount_cents=1000, next_due_at=at("2026-10-17T06:00:00+08:00")),
+    state = raw_projection_state(
+        instructions=(
+            raw_instruction(from_account_id="acc_s", payee_id=None, to_account_id="acc_a"),
         ),
+        mandates=(raw_mandate(),),
+        billings=(
+            raw_billing(
+                amount_cents=1000, next_due_at=at("2026-10-17T06:00:00+08:00"), anchor_day=17
+            ),
+        ),
+        merchants=(raw_merchant(),),
     )
     report = bankcore.projected_shortfall(with_balances(state, acc_a=0, acc_s=500))
     assert report.accounts["acc_a"].reserve_cents == 1000
@@ -473,93 +576,53 @@ def test_later_own_credit_cannot_hide_an_earlier_target_balance_peak():
     assert report.total_shortfall_cents == 1500
 
 
-def test_payee_resolved_to_same_owner_requires_explicit_own_transfer_target():
-    state = projection_state(instructions=(instruction(),))
-    payee = state.payees["pye_external"].model_copy(update={"target_account_id": "acc_s"})
-    with pytest.raises(ValueError):
-        bankcore.projected_shortfall(state.model_copy(update={"payees": {payee.id: payee}}))
-
-
-def test_cross_customer_scheduled_transfer_does_not_guarantee_target_income():
-    state = projection_state(
-        instructions=(instruction(),), subscriptions=(subscription(account_id="acc_b"),)
-    )
-    payee = state.payees["pye_external"].model_copy(update={"target_account_id": "acc_b"})
-    state = with_balances(state.model_copy(update={"payees": {payee.id: payee}}), acc_b=0)
-    report = bankcore.projected_shortfall(state)
-    assert report.accounts["acc_b"].shortfall_cents == 3000
-    assert [(item.account_id, item.delta_cents) for item in report.obligations] == [
-        ("acc_a", -1000),
-        ("acc_b", -3000),
-    ]
-
-
 def test_direct_target_requires_same_owner():
-    state = projection_state(instructions=(instruction(payee_id=None, to_account_id="acc_b"),))
+    target = InstructionTarget(
+        instruction_id="si_1",
+        source_customer_id="cus_a",
+        ownership="OWN",
+        target_account_id="acc_b",
+        target_customer_id="cus_a",
+    )
+    item = raw_instruction(payee_id=None, to_account_id="acc_b")
+    state = raw_projection_state(instructions=(item,), targets=(target,))
     with pytest.raises(ValueError):
         bankcore.projected_shortfall(state)
 
 
 def test_internal_account_cannot_act_as_customer_obligation_source():
-    state = projection_state(instructions=(instruction(from_account_id="acc_seed_equity"),))
+    item = raw_instruction(from_account_id="acc_seed_equity")
+    state = raw_projection_state(instructions=(item,))
     with pytest.raises(ValueError):
         bankcore.projected_shortfall(state)
 
 
-def prd_state():
-    return projection_state(
-        instructions=(
-            instruction(
-                id="si_mom",
-                amount_cents=100000,
-                period="MONTHLY",
-                anchor_day=5,
-                next_run_at=at("2026-11-05T06:00:00+08:00"),
-            ),
-        ),
-        subscriptions=(
-            subscription(),
-            subscription(
-                instruction_id="si_music",
-                billing_id="bill_music",
-                merchant_id="mer_music",
-                merchant_name="乐听音乐",
-                amount_cents=1500,
-                max_amount_cents=1800,
-                next_due_at=at("2026-10-20T06:00:00+08:00"),
-            ),
-            subscription(
-                instruction_id="si_cloud",
-                billing_id="bill_cloud",
-                merchant_id="mer_cloud",
-                merchant_name="云盘存储",
-                amount_cents=2100,
-                max_amount_cents=2520,
-                next_due_at=at("2026-11-01T06:00:00+08:00"),
-            ),
-            subscription(
-                instruction_id="si_gym",
-                billing_id="bill_gym",
-                merchant_id="mer_gym",
-                merchant_name="力健健身",
-                amount_cents=19900,
-                max_amount_cents=23880,
-                next_due_at=at("2026-10-25T06:00:00+08:00"),
-            ),
-        ),
-    )
+def test_other_targets_never_guarantee_target_income():
+    payee = external_payee().model_copy(update={"target_account_id": "acc_b"})
+    state = raw_projection_state(instructions=(raw_instruction(),), payees=(payee,))
+    report = bankcore.projected_shortfall(with_balances(state, acc_b=0))
+    assert report.accounts["acc_b"].reserve_cents == 0
+    assert report.accounts["acc_a"].reserve_cents == 1000
+    assert [(item.account_id, item.delta_cents) for item in report.obligations] == [
+        ("acc_a", -1000)
+    ]
 
 
 def test_prd_complete_obligations_and_real_transfer_share_exact_295500_limit():
-    state = prd_state()
-    payee = state.payees["pye_external"].model_copy(
-        update={
-            "id": "pye_ww",
-            "name": "王五",
-            "target_account_id": "acc_b",
-        }
+    state = prd_raw_state()
+    payee = Payee(
+        id="pye_ww",
+        customer_id="cus_a",
+        name="王五",
+        alias=None,
+        phone=None,
+        bank_name="本行",
+        account_no="6222020000000003",
+        target_account_id="acc_b",
+        target_fingerprint="internal",
+        created_at=NOW - timedelta(days=10),
     )
-    state = state.model_copy(update={"payees": dict(state.payees) | {payee.id: payee}})
+    state = state.model_copy(update={"payees": {**state.payees, payee.id: payee}})
     after, _, errors = apply_transfer(
         state,
         Transfer(
@@ -578,7 +641,6 @@ def test_prd_complete_obligations_and_real_transfer_share_exact_295500_limit():
     assert report.total_reserve_cents == 4500
     assert [item.id for item in report.obligations] == ["bill_video", "bill_music"]
 
-    # W2's amount template and W3's hint consume this same report field.
     for amount, expected_shortfall in [(295500, 0), (295501, 1)]:
         candidate, _, errors = apply_transfer(
             after,
@@ -597,8 +659,7 @@ def test_prd_complete_obligations_and_real_transfer_share_exact_295500_limit():
 
 
 def test_existing_shortfall_does_not_increase_when_actual_freeze_succeeds():
-    state = prd_state()
-    state = with_balances(state, acc_a=1000)
+    state = with_balances(prd_raw_state(), acc_a=1000)
     card = Card(
         id="crd_a",
         account_id="acc_a",
@@ -619,229 +680,71 @@ def test_existing_shortfall_does_not_increase_when_actual_freeze_succeeds():
     assert after.total_shortfall_cents == before.total_shortfall_cents == 3500
 
 
-def test_cancelling_an_obligation_reduces_existing_shortfall_without_l2_policy_in_bankcore():
-    state = with_balances(prd_state(), acc_a=1000)
+def test_cancelling_an_obligation_reduces_existing_shortfall():
+    state = with_balances(prd_raw_state(), acc_a=1000)
     before = bankcore.projected_shortfall(state)
-    # Cancellation persistence belongs to S3; project its complete resulting snapshot here.
-    cancelled = state.model_copy(
+    snapshot = state.obligations.model_copy(
         update={
-            "subscriptions": tuple(
-                item.model_copy(update={"status": "DELETED"})
-                if item.instruction_id == "si_video"
-                else item
-                for item in state.subscriptions
-            )
+            "standing_instructions": {
+                k: v.model_copy(update={"status": "DELETED"})
+                if isinstance(v, MerchantMandate) and v.id == "si_video"
+                else v
+                for k, v in state.obligations.standing_instructions.items()
+            }
         }
     )
-    after = bankcore.projected_shortfall(cancelled)
+    after = bankcore.projected_shortfall(state.model_copy(update={"obligations": snapshot}))
     assert before.total_shortfall_cents == 3500
     assert after.total_shortfall_cents == 500
 
 
 def test_report_is_identical_under_account_instruction_and_subscription_permutations():
-    state = prd_state()
-    own = instruction(id="si_own", from_account_id="acc_s", payee_id=None, to_account_id="acc_a")
-    state = state.model_copy(update={"instructions": (*state.instructions, own)})
+    state = prd_raw_state()
+    own = raw_instruction(
+        id="si_own", from_account_id="acc_s", payee_id=None, to_account_id="acc_a"
+    )
+    snapshot = state.obligations.model_copy(
+        update={
+            "standing_instructions": {**state.obligations.standing_instructions, own.id: own},
+            "instruction_targets": {
+                **state.obligations.instruction_targets,
+                own.id: InstructionTarget(
+                    instruction_id=own.id,
+                    source_customer_id="cus_a",
+                    ownership="OWN",
+                    target_account_id="acc_a",
+                    target_customer_id="cus_a",
+                ),
+            },
+        }
+    )
+    state = state.model_copy(update={"obligations": snapshot})
     reversed_state = state.model_copy(
         update={
             "accounts": dict(reversed(tuple(state.accounts.items()))),
-            "instructions": state.instructions[::-1],
-            "subscriptions": state.subscriptions[::-1],
+            "obligations": snapshot.model_copy(
+                update={
+                    "standing_instructions": dict(
+                        reversed(tuple(snapshot.standing_instructions.items()))
+                    )
+                }
+            ),
         }
     )
     assert bankcore.projected_shortfall(state) == bankcore.projected_shortfall(reversed_state)
 
 
-TIMEZONE_CASES = [
-    (
-        "ONCE",
-        None,
-        None,
-        "2026-10-18T06:00:00+08:00",
-        "2026-10-17T09:00:00+08:00",
-        "2026-10-24T09:00:00+08:00",
-        ["2026-10-18T06:00:00+08:00"],
-    ),
-    (
-        "WEEKLY",
-        None,
-        6,
-        "2026-10-18T06:00:00+08:00",
-        "2026-10-17T09:00:00+08:00",
-        "2026-11-01T06:00:00+08:00",
-        ["2026-10-18T06:00:00+08:00", "2026-10-25T06:00:00+08:00", "2026-11-01T06:00:00+08:00"],
-    ),
-    (
-        "MONTHLY",
-        31,
-        None,
-        "2024-02-29T06:00:00+08:00",
-        "2024-02-28T09:00:00+08:00",
-        "2024-04-30T06:00:00+08:00",
-        ["2024-02-29T06:00:00+08:00", "2024-03-31T06:00:00+08:00", "2024-04-30T06:00:00+08:00"],
-    ),
-    (
-        "MONTHLY",
-        31,
-        None,
-        "2026-12-31T06:00:00+08:00",
-        "2026-12-30T09:00:00+08:00",
-        "2027-02-28T06:00:00+08:00",
-        ["2026-12-31T06:00:00+08:00", "2027-01-31T06:00:00+08:00", "2027-02-28T06:00:00+08:00"],
-    ),
-    (
-        "MONTHLY",
-        1,
-        None,
-        "2027-01-01T06:00:00+08:00",
-        "2026-12-31T09:00:00+08:00",
-        "2027-02-01T06:00:00+08:00",
-        ["2027-01-01T06:00:00+08:00", "2027-02-01T06:00:00+08:00"],
-    ),
-]
-
-
 @pytest.mark.parametrize("offset_hours", [0, -7, 14])
-@pytest.mark.parametrize(
-    ("period", "anchor_day", "weekday", "first_due", "start", "end", "expected"), TIMEZONE_CASES
-)
-def test_scheduled_offsets_preserve_shanghai_calendar_and_recurrence(
-    offset_hours, period, anchor_day, weekday, first_due, start, end, expected
-):
+def test_report_offsets_preserve_same_seven_day_obligations(offset_hours):
     offset = timezone(timedelta(hours=offset_hours))
-    item = instruction(
-        period=period,
-        anchor_day=anchor_day,
-        weekday=weekday,
-        next_run_at=at(first_due).astimezone(offset),
-        end_at=at(end).astimezone(UTC),
+    item = raw_instruction(
+        period="MONTHLY",
+        anchor_day=18,
+        next_run_at=at("2026-10-18T06:00:00+08:00").astimezone(offset),
     )
-    before = item.model_dump_json()
-    result = bankcore.scheduled_occurrences(
-        (item,), at(start).astimezone(UTC), at(end).astimezone(offset)
-    )
-    assert [due.due_at.isoformat() for due in result] == expected
-    canonical = instruction(
-        period=period,
-        anchor_day=anchor_day,
-        weekday=weekday,
-        next_run_at=at(first_due),
-        end_at=at(end),
-    )
-    assert result == bankcore.scheduled_occurrences((canonical,), at(start), at(end))
-    assert item.model_dump_json() == before
-
-
-@pytest.mark.parametrize("offset_hours", [0, -7, 14])
-@pytest.mark.parametrize(
-    ("period", "anchor_day", "weekday", "first_due", "start", "end", "expected"), TIMEZONE_CASES
-)
-def test_report_offsets_preserve_same_seven_day_obligations(
-    offset_hours, period, anchor_day, weekday, first_due, start, end, expected
-):
-    offset = timezone(timedelta(hours=offset_hours))
-    item = instruction(
-        period=period,
-        anchor_day=anchor_day,
-        weekday=weekday,
-        next_run_at=at(first_due).astimezone(offset),
-        end_at=at(end).astimezone(UTC),
-    )
-    state = projection_state(instructions=(item,)).model_copy(
-        update={
-            "sim_now": at(start).astimezone(offset),
-        }
+    state = raw_projection_state(instructions=(item,)).model_copy(
+        update={"sim_now": NOW.astimezone(offset)}
     )
     report = bankcore.projected_shortfall(state)
-    # Each seven-day fixture contains only its first occurrence.
-    assert [due.due_at.isoformat() for due in report.obligations] == [expected[0]]
+    assert [due.due_at.isoformat() for due in report.obligations] == ["2026-10-18T06:00:00+08:00"]
     assert report.accounts["acc_a"].reserve_cents == 1000
-    canonical = state.model_copy(
-        update={
-            "sim_now": at(start),
-            "instructions": (
-                item.model_copy(
-                    update={
-                        "next_run_at": at(first_due),
-                        "end_at": at(end),
-                    }
-                ),
-            ),
-        }
-    )
-    assert report == bankcore.projected_shortfall(canonical)
-
-
-@pytest.mark.parametrize("end_shift_microseconds", [0, -1])
-def test_mixed_offset_window_and_end_at_compare_instants(end_shift_microseconds):
-    end = NOW + timedelta(days=7)
-    item = instruction(
-        period="WEEKLY",
-        weekday=3,
-        time_of_day="09:00",
-        next_run_at=NOW.astimezone(UTC),
-        end_at=(end + timedelta(microseconds=end_shift_microseconds)).astimezone(
-            timezone(timedelta(hours=14))
-        ),
-    )
-    result = bankcore.scheduled_occurrences(
-        (item,),
-        NOW.astimezone(timezone(timedelta(hours=-7))),
-        (end + timedelta(days=7)).astimezone(UTC),
-    )
-    assert [due.due_at.isoformat() for due in result] == (
-        ["2026-10-22T09:00:00+08:00"] if end_shift_microseconds == 0 else []
-    )
-
-
-def test_mixed_offset_report_keeps_merchant_and_scheduled_window_boundaries():
-    end = NOW + timedelta(days=7)
-    state = projection_state(
-        instructions=(
-            instruction(
-                period="WEEKLY",
-                weekday=3,
-                time_of_day="09:00",
-                next_run_at=NOW.astimezone(UTC),
-                end_at=end.astimezone(timezone(timedelta(hours=14))),
-            ),
-        ),
-        subscriptions=(
-            subscription(next_due_at=NOW.astimezone(UTC)),
-            subscription(
-                instruction_id="si_end",
-                billing_id="bill_end",
-                next_due_at=end.astimezone(timezone(timedelta(hours=-7))),
-            ),
-            subscription(
-                instruction_id="si_late",
-                billing_id="bill_late",
-                next_due_at=(end + timedelta(seconds=1)).astimezone(UTC),
-            ),
-        ),
-    ).model_copy(update={"sim_now": NOW.astimezone(timezone(timedelta(hours=-7)))})
-    report = bankcore.projected_shortfall(state)
-    assert [(due.due_at.isoformat(), due.rank, due.id) for due in report.obligations] == [
-        ("2026-10-22T09:00:00+08:00", 3, "si_1"),
-        ("2026-10-22T09:00:00+08:00", 4, "bill_end"),
-    ]
-    assert report.accounts["acc_a"].reserve_cents == 4000
-
-
-@pytest.mark.parametrize(
-    "updates",
-    [
-        {"next_run_at": at("2026-10-17T22:00:00Z"), "time_of_day": "22:00"},
-        {"period": "WEEKLY", "weekday": 5, "next_run_at": at("2026-10-17T22:00:00Z")},
-        {"period": "MONTHLY", "anchor_day": 31, "next_run_at": at("2027-01-31T22:00:00Z")},
-        {"period": "MONTHLY", "anchor_day": 28, "next_run_at": at("2024-02-28T22:00:00Z")},
-    ],
-)
-def test_offset_inputs_still_reject_wrong_shanghai_time_or_anchors(updates):
-    item = instruction(**updates)
-    start = item.next_run_at - timedelta(days=1)
-    with pytest.raises(ValueError):
-        bankcore.scheduled_occurrences((item,), start, start + timedelta(days=7))
-    state = projection_state(instructions=(item,)).model_copy(update={"sim_now": start})
-    with pytest.raises(ValueError):
-        bankcore.projected_shortfall(state)

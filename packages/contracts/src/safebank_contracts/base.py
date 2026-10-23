@@ -3,7 +3,8 @@
 import re
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
-from typing import Annotated, Any
+from types import MappingProxyType
+from typing import Annotated, Any, TypeVar
 
 from pydantic import (
     AfterValidator,
@@ -68,6 +69,12 @@ def timestamp_input(value: Any):
 
 
 Timestamp = Annotated[datetime, BeforeValidator(timestamp_input), AfterValidator(aware)]
+
+
+T = TypeVar("T")
+FrozenMap = Annotated[
+    dict[str, T], AfterValidator(MappingProxyType), PlainSerializer(dict, return_type=dict)
+]
 
 
 class Contract(BaseModel):

@@ -4203,6 +4203,194 @@
           "title": "HoldingView",
           "type": "object"
         },
+        "InstructionRun": {
+          "additionalProperties": false,
+          "properties": {
+            "account_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Account Id",
+              "type": "string"
+            },
+            "amount_cents": {
+              "ge": 0,
+              "gt": 0,
+              "le": 100000000,
+              "title": "Amount Cents",
+              "type": "integer"
+            },
+            "billing_id": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Billing Id"
+            },
+            "code": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Code"
+            },
+            "customer_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Customer Id",
+              "type": "string"
+            },
+            "due_at": {
+              "format": "date-time",
+              "title": "Due At",
+              "type": "string"
+            },
+            "event_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Event Id",
+              "type": "string"
+            },
+            "id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Id",
+              "type": "string"
+            },
+            "instruction_id": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Instruction Id"
+            },
+            "kind": {
+              "enum": [
+                "SCHEDULED_TRANSFER",
+                "MERCHANT_MANDATE"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "SUCCESS",
+                "FAILED_INSUFFICIENT",
+                "BLOCKED",
+                "SKIPPED_REAPPROVAL"
+              ],
+              "title": "Status",
+              "type": "string"
+            },
+            "transfer_id": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Transfer Id"
+            }
+          },
+          "required": [
+            "id",
+            "customer_id",
+            "account_id",
+            "kind",
+            "instruction_id",
+            "billing_id",
+            "due_at",
+            "event_id",
+            "status",
+            "code",
+            "amount_cents",
+            "transfer_id"
+          ],
+          "title": "InstructionRun",
+          "type": "object"
+        },
+        "InstructionTarget": {
+          "additionalProperties": false,
+          "properties": {
+            "instruction_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Instruction Id",
+              "type": "string"
+            },
+            "ownership": {
+              "enum": [
+                "OWN",
+                "OTHER",
+                "EXTERNAL"
+              ],
+              "title": "Ownership",
+              "type": "string"
+            },
+            "source_customer_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Source Customer Id",
+              "type": "string"
+            },
+            "target_account_id": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Target Account Id"
+            },
+            "target_customer_id": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Target Customer Id"
+            }
+          },
+          "required": [
+            "instruction_id",
+            "source_customer_id",
+            "ownership",
+            "target_account_id",
+            "target_customer_id"
+          ],
+          "title": "InstructionTarget",
+          "type": "object"
+        },
         "JsonValue": {},
         "LedgerTransfer": {
           "additionalProperties": false,
@@ -4338,6 +4526,275 @@
           "title": "LedgerTransfer",
           "type": "object"
         },
+        "Merchant": {
+          "additionalProperties": false,
+          "properties": {
+            "category": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Category",
+              "type": "string"
+            },
+            "id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Id",
+              "type": "string"
+            },
+            "mcc": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Mcc",
+              "type": "string"
+            },
+            "name": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Name",
+              "type": "string"
+            },
+            "usage_expected": {
+              "title": "Usage Expected",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "mcc",
+            "category",
+            "usage_expected"
+          ],
+          "title": "Merchant",
+          "type": "object"
+        },
+        "MerchantBilling": {
+          "additionalProperties": false,
+          "properties": {
+            "account_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Account Id",
+              "type": "string"
+            },
+            "active": {
+              "title": "Active",
+              "type": "boolean"
+            },
+            "amount_cents": {
+              "ge": 0,
+              "gt": 0,
+              "le": 100000000,
+              "title": "Amount Cents",
+              "type": "integer"
+            },
+            "anchor_day": {
+              "anyOf": [
+                {
+                  "ge": 1,
+                  "le": 31,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Anchor Day"
+            },
+            "created_at": {
+              "format": "date-time",
+              "title": "Created At",
+              "type": "string"
+            },
+            "customer_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Customer Id",
+              "type": "string"
+            },
+            "id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Id",
+              "type": "string"
+            },
+            "merchant_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Merchant Id",
+              "type": "string"
+            },
+            "next_due_at": {
+              "format": "date-time",
+              "title": "Next Due At",
+              "type": "string"
+            },
+            "period": {
+              "enum": [
+                "WEEKLY",
+                "MONTHLY"
+              ],
+              "title": "Period",
+              "type": "string"
+            },
+            "time_of_day": {
+              "format": "time",
+              "title": "Time Of Day",
+              "type": "string"
+            },
+            "weekday": {
+              "anyOf": [
+                {
+                  "ge": 0,
+                  "le": 6,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Weekday"
+            }
+          },
+          "required": [
+            "id",
+            "customer_id",
+            "account_id",
+            "merchant_id",
+            "amount_cents",
+            "period",
+            "anchor_day",
+            "weekday",
+            "time_of_day",
+            "next_due_at",
+            "active",
+            "created_at"
+          ],
+          "title": "MerchantBilling",
+          "type": "object"
+        },
+        "MerchantMandate": {
+          "additionalProperties": false,
+          "properties": {
+            "amount_type": {
+              "const": "DUES",
+              "default": "DUES",
+              "title": "Amount Type",
+              "type": "string"
+            },
+            "billing_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Billing Id",
+              "type": "string"
+            },
+            "created_at": {
+              "format": "date-time",
+              "title": "Created At",
+              "type": "string"
+            },
+            "customer_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Customer Id",
+              "type": "string"
+            },
+            "end_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End At"
+            },
+            "from_account_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "From Account Id",
+              "type": "string"
+            },
+            "grant_scope_hash": {
+              "title": "Grant Scope Hash",
+              "type": "string"
+            },
+            "id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Id",
+              "type": "string"
+            },
+            "kind": {
+              "const": "MERCHANT_MANDATE",
+              "default": "MERCHANT_MANDATE",
+              "title": "Kind",
+              "type": "string"
+            },
+            "max_amount_cents": {
+              "ge": 0,
+              "gt": 0,
+              "le": 100000000,
+              "title": "Max Amount Cents",
+              "type": "integer"
+            },
+            "merchant_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Merchant Id",
+              "type": "string"
+            },
+            "priority": {
+              "enum": [
+                "URGENT",
+                "HIGH",
+                "MEDIUM",
+                "LOW"
+              ],
+              "title": "Priority",
+              "type": "string"
+            },
+            "recurrence": {
+              "const": "AS_PER_DUES",
+              "default": "AS_PER_DUES",
+              "title": "Recurrence",
+              "type": "string"
+            },
+            "source_plan_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Source Plan Id",
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "ACTIVE",
+                "DISABLED",
+                "DELETED"
+              ],
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "customer_id",
+            "status",
+            "from_account_id",
+            "merchant_id",
+            "billing_id",
+            "max_amount_cents",
+            "end_at",
+            "priority",
+            "grant_scope_hash",
+            "source_plan_id",
+            "created_at"
+          ],
+          "title": "MerchantMandate",
+          "type": "object"
+        },
         "NavPoint": {
           "additionalProperties": false,
           "properties": {
@@ -4357,6 +4814,72 @@
             "nav"
           ],
           "title": "NavPoint",
+          "type": "object"
+        },
+        "ObligationSnapshot": {
+          "additionalProperties": false,
+          "properties": {
+            "billings": {
+              "additionalProperties": {
+                "$ref": "#/$defs/MerchantBilling"
+              },
+              "title": "Billings",
+              "type": "object"
+            },
+            "covered_customer_ids": {
+              "items": {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              "title": "Covered Customer Ids",
+              "type": "array"
+            },
+            "instruction_targets": {
+              "additionalProperties": {
+                "$ref": "#/$defs/InstructionTarget"
+              },
+              "title": "Instruction Targets",
+              "type": "object"
+            },
+            "merchants": {
+              "additionalProperties": {
+                "$ref": "#/$defs/Merchant"
+              },
+              "title": "Merchants",
+              "type": "object"
+            },
+            "runs": {
+              "items": {
+                "$ref": "#/$defs/InstructionRun"
+              },
+              "title": "Runs",
+              "type": "array"
+            },
+            "standing_instructions": {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ScheduledInstruction"
+                  },
+                  {
+                    "$ref": "#/$defs/MerchantMandate"
+                  }
+                ]
+              },
+              "title": "Standing Instructions",
+              "type": "object"
+            }
+          },
+          "required": [
+            "covered_customer_ids",
+            "merchants",
+            "billings",
+            "standing_instructions",
+            "runs",
+            "instruction_targets"
+          ],
+          "title": "ObligationSnapshot",
           "type": "object"
         },
         "Operation": {
@@ -4663,6 +5186,199 @@
             "due_at"
           ],
           "title": "RunView",
+          "type": "object"
+        },
+        "ScheduledInstruction": {
+          "additionalProperties": false,
+          "properties": {
+            "amount_cents": {
+              "ge": 0,
+              "gt": 0,
+              "le": 100000000,
+              "title": "Amount Cents",
+              "type": "integer"
+            },
+            "amount_type": {
+              "const": "FIXED",
+              "default": "FIXED",
+              "title": "Amount Type",
+              "type": "string"
+            },
+            "anchor_day": {
+              "anyOf": [
+                {
+                  "ge": 1,
+                  "le": 31,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Anchor Day"
+            },
+            "created_at": {
+              "format": "date-time",
+              "title": "Created At",
+              "type": "string"
+            },
+            "customer_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Customer Id",
+              "type": "string"
+            },
+            "end_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End At"
+            },
+            "from_account_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "From Account Id",
+              "type": "string"
+            },
+            "grant_scope_hash": {
+              "title": "Grant Scope Hash",
+              "type": "string"
+            },
+            "id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Id",
+              "type": "string"
+            },
+            "kind": {
+              "const": "SCHEDULED_TRANSFER",
+              "default": "SCHEDULED_TRANSFER",
+              "title": "Kind",
+              "type": "string"
+            },
+            "next_run_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Next Run At"
+            },
+            "payee_id": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Payee Id"
+            },
+            "period": {
+              "enum": [
+                "ONCE",
+                "WEEKLY",
+                "MONTHLY"
+              ],
+              "title": "Period",
+              "type": "string"
+            },
+            "priority": {
+              "enum": [
+                "URGENT",
+                "HIGH",
+                "MEDIUM",
+                "LOW"
+              ],
+              "title": "Priority",
+              "type": "string"
+            },
+            "recurrence": {
+              "const": "PERIODIC",
+              "default": "PERIODIC",
+              "title": "Recurrence",
+              "type": "string"
+            },
+            "source_plan_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Source Plan Id",
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "ACTIVE",
+                "DISABLED",
+                "DELETED"
+              ],
+              "title": "Status",
+              "type": "string"
+            },
+            "time_of_day": {
+              "format": "time",
+              "title": "Time Of Day",
+              "type": "string"
+            },
+            "to_account_id": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To Account Id"
+            },
+            "weekday": {
+              "anyOf": [
+                {
+                  "ge": 0,
+                  "le": 6,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Weekday"
+            }
+          },
+          "required": [
+            "id",
+            "customer_id",
+            "status",
+            "from_account_id",
+            "payee_id",
+            "to_account_id",
+            "amount_cents",
+            "period",
+            "anchor_day",
+            "weekday",
+            "time_of_day",
+            "next_run_at",
+            "end_at",
+            "priority",
+            "grant_scope_hash",
+            "source_plan_id",
+            "created_at"
+          ],
+          "title": "ScheduledInstruction",
           "type": "object"
         },
         "ScheduledView": {
@@ -5125,6 +5841,17 @@
           },
           "title": "Instructions",
           "type": "array"
+        },
+        "obligations": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ObligationSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "ops_7d": {
           "default": [],
