@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import text
 from sqlalchemy.pool import NullPool
@@ -51,6 +52,27 @@ def test_append_tx_commits_own_transaction(gateway_db):
             )
         async with db.connect() as conn:
             ok, detail = await verify_chain(conn, "cus_3")
+            assert ok, detail
+        await db.dispose()
+
+    asyncio.run(run())
+
+
+def test_verify_accepts_non_utc_clock_probe_c(gateway_db):
+    async def run():
+        db = _runtime(gateway_db)
+        plus8 = timezone(timedelta(hours=8))
+        async with db.begin() as conn:
+            await append(
+                conn,
+                customer_id="cus_5",
+                event_id="z_evt_0",
+                event_type="t",
+                payload={"i": 0},
+                now_wall=datetime(2026, 10, 15, 9, 0, 0, 123456, tzinfo=plus8),
+            )
+        async with db.connect() as conn:
+            ok, detail = await verify_chain(conn, "cus_5")
             assert ok, detail
         await db.dispose()
 

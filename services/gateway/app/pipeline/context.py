@@ -5,13 +5,16 @@ objects; they must not change the shape of ``EvalContext`` or ``Stage``. Each
 result slot has exactly one owning stage and is read by later stages only.
 
 Stage → slot ownership:
-  ② entity      writes ``provenance``/``intent`` prerequisites, reads lazy state
+  ② entity      writes ``ctx.steps`` and the resolved references, reads lazy state
   ③ provenance  writes ``ctx.provenance``
   ④ intent      writes ``ctx.intent``
   ⑤ snapshot    writes ``ctx.snapshot`` (pins versions/clock_version)
   ⑥ preflight   writes ``ctx.preflight``
   ⑦ workflow    writes ``ctx.workflow``
   ⑧ decision    writes ``ctx.decision``
+
+Each result dataclass is owned by its stage's task: the owner may add fields to
+its own result class, but must not remove or change existing fields.
 """
 
 from __future__ import annotations
@@ -67,8 +70,23 @@ DISABLED_BY_PROFILE: dict[str, frozenset[str]] = {
 
 
 @dataclass
+class ResolvedStep:
+    """② writes. Resolved plan step + registry-derived metadata.
+
+    Populated by the entity stage for every step; ③④⑥⑦⑧ read it.
+    """
+
+    step_id: str
+    tool: str
+    args: dict[str, Any]
+    action_kind: str
+    base_risk: str
+    outflow: bool
+
+
+@dataclass
 class ProvenanceResult:
-    """③ writes. Source/taint labels per (step, param) and referenced reads."""
+    """③ writes (owned by W2). W2 may add fields; existing fields stay."""
 
     arg_sources: dict[str, Any] = field(default_factory=dict)
     read_refs: tuple[str, ...] = ()
@@ -76,7 +94,7 @@ class ProvenanceResult:
 
 @dataclass
 class IntentResult:
-    """④ writes. Matched scope vs plan steps."""
+    """④ writes (owned by W2). W2 may add fields; existing fields stay."""
 
     matched: bool = True
     notes: tuple[str, ...] = ()
@@ -84,7 +102,7 @@ class IntentResult:
 
 @dataclass
 class PreflightResult:
-    """⑥ writes. bankcore Simulation over the snapshot."""
+    """⑥ writes (owned by W3). W3 may add fields; existing fields stay."""
 
     executable: bool = True
     violations: tuple[dict[str, Any], ...] = ()
@@ -92,7 +110,7 @@ class PreflightResult:
 
 @dataclass
 class WorkflowResult:
-    """⑦ writes. Cross-session sequence matches and shadow events."""
+    """⑦ writes (owned by W3). W3 may add fields; existing fields stay."""
 
     findings: tuple[dict[str, Any], ...] = ()
 
@@ -120,6 +138,7 @@ class EvalContext:
     preflight: PreflightResult | None = None
     workflow: WorkflowResult | None = None
     decision: Decision | None = None
+    steps: tuple[ResolvedStep, ...] = ()
 
     findings: list[Finding] = field(default_factory=list)
     stage_status: dict[str, StageStatus] = field(default_factory=dict)
@@ -137,15 +156,21 @@ class EvalContext:
 
         ② entity uses this for ownership checks; ⑤ snapshot reuses the cached
         state and pins versions/clock_version, so the snapshot is not fetched
-        twice.
+        twice. The snapshot is requested with the plan steps so payee directory
+        and counterparty customer data are loaded.
         """
         if self._lazy_state is None:
             if self.l3 is None:
                 raise RuntimeError("EvalContext.l3 is required to load bank state")
-            response = await self.l3.snapshot(
-                {"customer_id": self.customer_id, "steps": [], "event_id": None}
+            steps = (
+                [step.model_dump(mode="json") for step in self.plan_draft.steps]
+                if self.plan_draft is not None
+                else []
             )
-            self._lazy_state = BankState.model_validate(response.json())
+            response = await self.l3.snapshot(
+                {"customer_id": self.customer_id, "steps": steps, "event_id": None}
+            )
+            self._lazy_state = BankState.model_validate(response)
         return self._lazy_state
 
     def add_finding(self, finding: Finding) -> None:

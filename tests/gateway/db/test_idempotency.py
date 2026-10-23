@@ -75,6 +75,43 @@ def test_different_body_conflicts(gateway_db):
     asyncio.run(run())
 
 
+def test_produce_exception_leaves_id_retryable(gateway_db):
+    async def run():
+        db = _runtime(gateway_db)
+        attempts = []
+
+        async def flaky():
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise RuntimeError("boom")
+            return 200, {"ok": True}
+
+        async with db.begin() as conn:
+            with pytest.raises(RuntimeError):
+                await request_idempotent(
+                    conn,
+                    customer_id="cus_4",
+                    route="POST /plans/evaluate",
+                    request_id="req_4",
+                    body={"steps": []},
+                    produce=flaky,
+                )
+        async with db.begin() as conn:
+            status, body, replayed = await request_idempotent(
+                conn,
+                customer_id="cus_4",
+                route="POST /plans/evaluate",
+                request_id="req_4",
+                body={"steps": []},
+                produce=flaky,
+            )
+            assert replayed is False
+            assert body == {"ok": True}
+        await db.dispose()
+
+    asyncio.run(run())
+
+
 def test_concurrent_same_id_single_execution(gateway_db):
     async def run():
         db = _runtime(gateway_db)

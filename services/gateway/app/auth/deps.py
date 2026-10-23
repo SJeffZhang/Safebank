@@ -86,9 +86,15 @@ def resolve_caller(
 
 
 def caller_dependency(env: dict[str, str] | None = None, public_key: bytes | None = None) -> Any:
-    """FastAPI dependency wrapping :func:`resolve_caller` with injected config."""
+    """FastAPI dependency wrapping :func:`resolve_caller` with injected config.
+
+    The resolved :class:`Caller` is also stored on ``request.state.caller`` so
+    route handlers can read it without redeclaring the dependency.
+    """
 
     async def _dependency(request: Request) -> Caller | None:
-        return resolve_caller(request, env=env, public_key=public_key)
+        caller = resolve_caller(request, env=env, public_key=public_key)
+        request.state.caller = caller
+        return caller
 
     return _dependency

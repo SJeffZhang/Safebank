@@ -43,6 +43,12 @@ def chain_hash(prev_hash: str, event_without_hash: dict[str, Any]) -> str:
     return hashlib.sha256(prev_hash.encode() + canonical(event_without_hash)).hexdigest()
 
 
+def _normalize_wall(created_at_wall: datetime) -> str:
+    if created_at_wall.tzinfo is None or created_at_wall.utcoffset() is None:
+        raise ValueError("created_at_wall must be timezone-aware")
+    return created_at_wall.astimezone(UTC).isoformat(timespec="microseconds")
+
+
 def _event(
     *,
     event_id: str,
@@ -63,7 +69,7 @@ def _event(
         "payload": payload,
         "prev_hash": prev_hash,
         "plan_id": plan_id,
-        "created_at_wall": created_at_wall.isoformat(),
+        "created_at_wall": _normalize_wall(created_at_wall),
     }
 
 

@@ -44,7 +44,15 @@ def _routes(app: FastAPI) -> list[tuple[Any, str]]:
 def build_public_app(
     settings: Settings, *, env: dict[str, str] | None = None, public_key: bytes | None = None
 ) -> FastAPI:
-    app = FastAPI(title="SafeBank Gateway", docs_url=None, redoc_url=None, openapi_url=None)
+    # The global dependency enforces the auth matrix on every route (open routes
+    # return None; anything else must present a valid F/A/D credential + JWT).
+    app = FastAPI(
+        title="SafeBank Gateway",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+        dependencies=[Depends(caller_dependency(env, public_key))],
+    )
     install_middleware(app)
 
     @app.get("/health")
@@ -79,11 +87,11 @@ def build_internal_app(
     )
     install_middleware(app)
 
-    @app.get("/internal/health", dependencies=[Depends(caller_dependency(env))])
+    @app.get("/internal/health", dependencies=[Depends(caller_dependency(env, public_key))])
     async def internal_health():
         return {"service": "gateway-internal", "status": "ok"}
 
-    app.include_router(scheduled.router, dependencies=[Depends(caller_dependency(env))])
+    app.include_router(scheduled.router, dependencies=[Depends(caller_dependency(env, public_key))])
 
     errors = coverage_errors(_routes(app), demo_mounted=False, internal=True)
     if errors:

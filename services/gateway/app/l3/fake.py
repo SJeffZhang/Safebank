@@ -214,7 +214,16 @@ class FakeL3:
             existing = self.intents.get(key)
             if existing is not None and existing["status"] == CANCELLED:
                 return self._error(Code.EXECUTION_CANCELLED.value, 409)
-            self.intents[key] = {"status": PREPARED, "result": None}
+            if existing is not None and existing["plan_hash"] != data["plan_hash"]:
+                return self._error(Code.IDEMPOTENCY_CONFLICT.value, 409)
+            if existing is not None:
+                return {"status": PREPARED, "attempt": existing["attempt"]}
+            self.intents[key] = {
+                "status": PREPARED,
+                "result": None,
+                "plan_hash": data["plan_hash"],
+                "attempt": data.get("attempt", 1),
+            }
             if self._current_behavior == "prepare_drop":
                 self._pending_drop = True
             return {"status": PREPARED, "attempt": data.get("attempt", 1)}
@@ -234,16 +243,24 @@ class FakeL3:
                 return gated
             key = (data["customer_id"], data["plan_id"])
             existing = self.intents.get(key)
-            if existing is not None and existing["status"] == CANCELLED:
+            if existing is None:
+                return self._error(Code.STATE_CHANGED.value, 409)
+            if existing["status"] == CANCELLED:
                 return self._error(Code.EXECUTION_CANCELLED.value, 409)
-            if existing is not None and existing["status"] == COMMITTED:
+            if existing["plan_hash"] != data["plan_hash"]:
+                return self._error(Code.IDEMPOTENCY_CONFLICT.value, 409)
+            if existing["status"] == COMMITTED:
                 result = dict(existing["result"])
                 result["replayed"] = True
                 return result
             result = self._execute_result or self._minimal_execution_result(data["plan_id"])
             if self._current_behavior == "business_fail":
+                # §7.10.6: a business failure rolls back the ledger; the intent
+                # stays PREPARED so a retry can still execute.
                 result = self._failed_result(data["plan_id"])
-            self.intents[key] = {"status": COMMITTED, "result": result}
+                self.intents[key] = {**existing, "result": None}
+            else:
+                self.intents[key] = {**existing, "status": COMMITTED, "result": result}
             if self._current_behavior == "commit_then_drop":
                 self._pending_drop = True
             return result

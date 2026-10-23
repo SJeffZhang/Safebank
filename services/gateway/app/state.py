@@ -1,13 +1,16 @@
 """Single entry point for status transitions on shared tables (conductor decision).
 
 W1, W3 and W4 all write ``plans.status`` / ``approvals.status`` /
-``utterances.status``. They must go through :func:`transition`, which performs a
-conditional ``UPDATE … WHERE status = ANY(:from) RETURNING`` and raises 409 when
-no row matched. This pins the legal transitions in one place so the parallel
-tasks cannot diverge.
+``utterances.status`` / ``execution_jobs.status``. They must go through
+:func:`transition`, which validates the requested edge against the legal tables
+below and then performs a conditional ``UPDATE … WHERE status = ANY(:from)
+RETURNING`` (0 rows -> 409). A task that needs a different edge must raise it in
+its progress「待决」for the conductor; it must not edit this file.
 
-The tables below are the initial legal set. A task that needs a different edge
-must raise it in its progress「待决」for the conductor; it must not edit this file.
+EXECUTING timing: §7.10.4 re-runs ①–⑧ on a fresh snapshot *before* the plan is
+marked EXECUTING, so the re-evaluation can change a CONFIRMED/EVALUATED plan to
+PENDING_APPROVAL / DENIED / REPLAN; EXECUTING itself is only entered once the
+final decision permits execution and never transitions back to a decision state.
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ from sqlalchemy import Table
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .errors import GatewayError
-from .schemas.enums import ApprovalStatus, PlanStatus, UtteranceStatus
+from .schemas.enums import ApprovalStatus, ExecutionJobStatus, PlanStatus, UtteranceStatus
 
 PLAN_TRANSITIONS: dict[PlanStatus, frozenset[PlanStatus]] = {
     PlanStatus.EVALUATED: frozenset(
@@ -44,12 +47,17 @@ PLAN_TRANSITIONS: dict[PlanStatus, frozenset[PlanStatus]] = {
             PlanStatus.EXECUTING,
         }
     ),
+    # §7.10.4-5: a re-run before execution can change the decision, sending a
+    # previously CONFIRMED plan back to PENDING_APPROVAL / DENIED / REPLAN.
     PlanStatus.CONFIRMED: frozenset(
         {
             PlanStatus.EXECUTING,
             PlanStatus.EXPIRED,
             PlanStatus.SUPERSEDED,
             PlanStatus.REJECTED,
+            PlanStatus.PENDING_APPROVAL,
+            PlanStatus.DENIED,
+            PlanStatus.REPLAN,
         }
     ),
     PlanStatus.EXECUTING: frozenset({PlanStatus.UNKNOWN, PlanStatus.EXECUTED, PlanStatus.FAILED}),
@@ -90,10 +98,28 @@ UTTERANCE_TRANSITIONS: dict[UtteranceStatus, frozenset[UtteranceStatus]] = {
     UtteranceStatus.CANCELLED: frozenset(),
 }
 
+EXECUTION_JOB_TRANSITIONS: dict[ExecutionJobStatus, frozenset[ExecutionJobStatus]] = {
+    ExecutionJobStatus.EXECUTING: frozenset(
+        {
+            ExecutionJobStatus.UNKNOWN,
+            ExecutionJobStatus.EXECUTED,
+            ExecutionJobStatus.FAILED,
+            ExecutionJobStatus.CANCELLED,
+        }
+    ),
+    ExecutionJobStatus.UNKNOWN: frozenset(
+        {ExecutionJobStatus.EXECUTED, ExecutionJobStatus.FAILED, ExecutionJobStatus.CANCELLED}
+    ),
+    ExecutionJobStatus.EXECUTED: frozenset(),
+    ExecutionJobStatus.FAILED: frozenset(),
+    ExecutionJobStatus.CANCELLED: frozenset(),
+}
+
 TRANSITIONS: dict[str, dict] = {
     "plans": PLAN_TRANSITIONS,
     "approvals": APPROVAL_TRANSITIONS,
     "utterances": UTTERANCE_TRANSITIONS,
+    "execution_jobs": EXECUTION_JOB_TRANSITIONS,
 }
 
 
@@ -113,12 +139,31 @@ async def transition(
     to: str,
     code: Code = Code.STATE_CHANGED,
 ) -> None:
-    """Conditionally move ``table.status`` from one of ``from_statuses`` to ``to``."""
+    """Move ``table.status`` from one of ``from_statuses`` to ``to``.
+
+    Every requested edge must be legal per ``TRANSITIONS[table.name]``; an
+    illegal edge is a programming error and raises ``ValueError`` (not 409).
+    """
+    table_rules = TRANSITIONS.get(table.name)
+    if table_rules is None:
+        raise ValueError(f"no transition table for {table.name!r}")
+    from_list = list(from_statuses)
+    for from_status in from_list:
+        allowed = table_rules.get(_member(table_rules, from_status))
+        if allowed is None or _member(table_rules, to) not in allowed:
+            raise ValueError(f"illegal {table.name} transition {from_status} -> {to}")
     result = await conn.execute(
         table.update()
-        .where(table.c.id == id_, table.c.status.in_(list(from_statuses)))
+        .where(table.c.id == id_, table.c.status.in_(from_list))
         .values(status=to)
         .returning(table.c.id)
     )
     if result.rowcount == 0:
         raise GatewayError(code, 409)
+
+
+def _member(table: dict, value: str):
+    for member in table:
+        if member.value == value:
+            return member
+    return None

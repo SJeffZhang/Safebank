@@ -30,6 +30,13 @@ def upgrade():
         text("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO gateway_app")
     )
     bind.execute(text("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO gateway_app"))
+    # Future sequences must also be usable by the runtime role.
+    bind.execute(
+        text(
+            "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
+            "GRANT USAGE, SELECT ON SEQUENCES TO gateway_app"
+        )
+    )
     # audit_events is append-only for the runtime role (PRD §7.12).
     bind.execute(text("REVOKE UPDATE, DELETE ON audit_events FROM gateway_app"))
     # Future wave migrations run as the same migration role; keep gateway_app

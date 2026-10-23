@@ -1,9 +1,12 @@
 """Persistent route-scoped request idempotency (PRD §9.1).
 
-The in-memory ``IdempotencyStore`` is gone; gateway request_id semantics are now
-backed by the ``request_dedup`` table. ``status_code`` uses ``0`` as the
-"in-flight" sentinel, so a concurrent same-id request observes RUN_IN_PROGRESS
-instead of duplicating the work.
+``status_code`` uses ``0`` as the "in-flight" sentinel, so a concurrent same-id
+request observes 409 EXECUTION_IN_PROGRESS instead of duplicating the work.
+
+The INSERT, ``produce()`` and the final UPDATE must all run in the SAME caller
+transaction; on ``produce`` failure the in-flight row is deleted so the same
+request_id can be retried. Do NOT put an L3/HTTP call inside this transaction —
+G8's execution idempotency goes through ``plans`` / ``execution_jobs`` instead.
 """
 
 from __future__ import annotations
@@ -12,7 +15,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from safebank_contracts.codes import Code
-from sqlalchemy import select, text, update
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -36,7 +39,7 @@ async def request_idempotent(
 
     Returns ``(status_code, response, replayed)``. A different body under the
     same id raises 409 IDEMPOTENCY_CONFLICT; a concurrent in-flight id raises
-    409 RUN_IN_PROGRESS.
+    409 EXECUTION_IN_PROGRESS.
     """
     digest = digest_hex(body)
     inserted = await conn.execute(
@@ -53,7 +56,17 @@ async def request_idempotent(
         .on_conflict_do_nothing()
     )
     if inserted.rowcount == 1:
-        status, response = await produce()
+        try:
+            status, response = await produce()
+        except BaseException:
+            await conn.execute(
+                delete(t.request_dedup).where(
+                    t.request_dedup.c.customer_id == customer_id,
+                    t.request_dedup.c.route == route,
+                    t.request_dedup.c.request_id == request_id,
+                )
+            )
+            raise
         await conn.execute(
             update(t.request_dedup)
             .where(
@@ -81,5 +94,5 @@ async def request_idempotent(
     if row["request_hash"] != digest:
         raise GatewayError(Code.IDEMPOTENCY_CONFLICT, 409)
     if row["status_code"] == IN_FLIGHT:
-        raise GatewayError(Code.RUN_IN_PROGRESS, 409)
+        raise GatewayError(Code.EXECUTION_IN_PROGRESS, 409)
     return row["status_code"], row["response"], True

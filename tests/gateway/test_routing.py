@@ -52,12 +52,15 @@ def test_scheduled_authorize_is_registered_but_stubbed():
     asyncio.run(run())
 
 
-def test_public_route_stubs_return_503():
+def test_public_routes_require_auth_probe_a():
     async def run():
         transport = httpx.ASGITransport(app=build_public_app(_settings()))
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
             resp = await client.post("/plans/evaluate", json={})
-            assert resp.status_code == 503
-            assert resp.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+            assert resp.status_code == 401
+            assert resp.json()["error"]["code"] == "UNAUTHENTICATED"
+            resp = await client.get("/approvals/apv_1")
+            assert resp.status_code == 401
+            assert resp.json()["error"]["code"] == "UNAUTHENTICATED"
 
     asyncio.run(run())

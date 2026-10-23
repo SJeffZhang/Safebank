@@ -246,3 +246,136 @@
 
 **W5（波次 2）**
 - S1、通知、G11、G16、D 接口，在已有占位路由模块上实现，复用 `locks`、`state`、`audit`。
+
+---
+
+## 第二轮复审（3059b53，相对 378ba67）
+
+- 复审人：只读评审 subagent（Claude），2026-10-23
+- 我自己复跑了 `make test-gateway`（52 passed）和 `make test-gateway-db`（14 passed）。`make lint`、`make test`、`make up`、`make test-p1` 沿用指挥的复跑结果。
+- 另外跑了 4 个只读探针：
+  - **探针 A**：public_app 在不带任何凭证的情况下调 `POST /plans/evaluate` 和 `GET /approvals/apv_1`，都返回 503 `DEPENDENCY_UNAVAILABLE`，而不是 401。说明公共路由**没有挂接授权依赖**。
+  - **探针 B**：用 `EvalContext(l3=L3Client(transport=FakeL3().transport()))` 调 `await ctx.bank_state()`，抛出 `AttributeError: 'dict' object has no attribute 'json'`。
+  - **探针 C**：在临时 Postgres 16 上 `upgrade head`，然后用 `append_tx(now_wall=2026-10-15T09:00+08:00)` 追加一条审计，`verify_chain` 返回 `(False, 'tampered content at e1')`。同一流程用默认的 UTC 时钟追加则 `(True, …)`。
+  - **探针 D**：通读代码。`state.transition` 没有调用 `legal()`，合法迁移表不起约束作用；仓库中不存在 `approval/service.py`、`approval/planview.py`、`evaluation/repo.py`、`locks.py` 中的任何一个，也不存在复演接口。
+
+### 一、逐条核对
+
+| 编号 | 判定 | 证据与说明 |
+|---|---|---|
+| P0-1 EvalContext 传数据 | **部分** | `pipeline/context.py:100-127` 已按阶段分好结果位置，有 mode、profile、wall_now、conn、l3、stage_status。剩下三个缺口：① 没有放「已解析步骤 + 每步 ActionKind、基础等级、outflow」的位置，而 ③④⑥⑦⑧ 都要用它；② `ProvenanceResult`、`IntentResult` 等（69-97 行）只是空壳，比如 `arg_sources: dict[str, Any]`、`matched: bool`，而文件头又写明「must not change the shape」，W2 和 W3 没法补自己需要的字段；③ `bank_state()`（135-149 行）运行即报错（探针 B，见 N3），而且它以 `steps=[]` 取快照，取不到收款人目录与对方客户，⑤ 还得再取一次，指挥决定 #4 的「只取一次」做不到 |
+| P0-2 短路与 profile | **已修复** | `pipeline/__init__.py:40-64`：DENY 只跳过 ⑤⑥⑦；`decision.py:8` 中 `always_run=True`；E 类错误抛 GatewayError；`DISABLED_BY_PROFILE`（context.py:59-66）；`evaluate(mode=…)` |
+| P0-3 对外模型与注册表 | **部分，必须在 W0 补完** | `schemas/**` 的模型和枚举都齐了（`enums.py:91-108` 定义了 ActionKind）。但 `policies/tools.yaml` 和 `app/policy/registry.py` 都不存在，见下方单独说明 |
+| P0-4 路由与矩阵 | **部分** | 已做：路由模块拆分（`api/*.py`、`internal/scheduled.py`）；矩阵改成按 path_format 作键、值是多种凭证的元组，并登记了全表（`auth/matrix.py:51-102`）；双向覆盖检查（125-158 行）；`Caller` 带 utts 和 origin。**未做**：`build_public_app`（`main.py:54-66`）`include_router` 时没有挂 `Depends(caller_dependency(...))`，只有 internal_app 挂了（82、86 行）。公共路由实际上不鉴权（探针 A），也就不满足「未登记默认拒绝」。另外 `public_key` 参数接收了但没有用（`main.py:45`），JWT 路由永远拿不到公钥 |
+| P0-5 共享状态与交叉接口 | **部分（核心未做）** | `state.py` 有迁移表和 `transition`，但第 107-124 行**没有校验迁移是否在 `TRANSITIONS` 里**：调用方传什么 `from_statuses` 和 `to`，它就执行什么，例如 EXECUTED → EVALUATED 也能执行。`test_state.py` 只测了「源状态不符时失败」，没有测「非法迁移被拒」。指挥决定 #1 要求的接口占位（G4 用的「创建审批、计算 view_hash」，W4 用的「执行前复演」，以及 `append_evaluation`、`customer_lock`）**没有任何代码**，只在进度文件中用文字描述。W3 和 W4 依然要各自设计这些签名 |
+| P0-6 表与字段、迁移规则 | **已修复**（request_dedup 有新问题，见 N5） | `tables.py` 新增 `request_dedup`、`pin_failures`、`ip_ratelimit`、`auth_sessions`，以及第一轮列出的全部字段与约束（如 `evaluations` 加了 `UNIQUE(plan_id, revision)`）。防漂移测试有两个：`test_ddl_drift.py` 和 `db/test_drift.py`（compare_metadata）。README 写了「波次 1 不写迁移」 |
+| P0-7 运行镜像依赖 | **已修复** | `requirements.txt`、`requirements-test.txt` 已重新导出；指挥实测 `make up` 6 个服务 healthy |
+| P1-8 fake L3 | **基本修复**（剩余问题见 N7） | `l3/fake.py:52-69` 用自定义 transport 抛出真实的 ReadTimeout 和 RemoteProtocolError；intent 状态机（213-285 行）；按调用次数设定行为（99-107 行）；令牌校验与 `customer_id` 校验；`set_snapshot`、`set_result`；`calls` 调用日志 |
+| P1-9 L3 客户端分类 | **已修复** | `l3/client.py:79-101`：三类异常，并解析业务错误体；超时可注入（58 行） |
+| P1-10 框架错误统一 | **已修复** | `middleware.py:86-103` |
+| P1-11 JWT 严格校验 | **已修复** | `auth/tokens.py:92-106`：aud 必须是等于期望值的字符串，scope 和 utts 必须是 `list[str]` |
+| P1-12 库所有权与迁移接线 | **已修复** | `scripts/gateway_database.py`（库 owner 改为 postgres、建 `gateway_admin`、写 migration env）；`0001_gateway.py:35-51`（默认权限）；Makefile 的 `up` 已接入；有「不能 DROP」测试。小问题见 N9 |
+| P1-13 审计哈希 | **部分** | 哈希已覆盖 `created_at_wall`，也有了 `append_tx`。但时区没有规范化，非 UTC 时钟会被误判为篡改（探针 C，见 N4） |
+| P1-14 阶段归属 | **已修复（文档层面）** | README 分工表按指挥决定 #3 写了。② 依赖的 `bank_state()` 不可用，问题归入 P0-1 / N3 |
+
+### 二、P0-3 的单独判断：`tools.yaml` 和注册表能不能留给 W2？
+
+**不能，必须在 W0 补上。** worker 把它算作 P2 并留给 W2，这会让三个并行任务依赖一个还不存在、结构也由别人决定的接口：
+
+- **W3**：⑧ 的风险等级是「基础等级 + 升级」，基础等级来自 `tools.yaml`（PRD §5.0、§7.9）。⑦ 的 RISKY_SEQUENCE、CUMULATIVE_OUTFLOW 需要每个工具的 ActionKind 判定和 outflow 标记。⑥ 的 B1 只能逐步预演，也要按工具分类。
+- **W4**：PlanView 的步骤标题、`irreversible` 标记、OTP 要求（红级），都需要按工具查注册表。
+- **W1**：G19 要校验 `action_kind` 与 `fields` 是否等于对应 W 工具的 args，这需要 ActionKind 到工具的映射。
+- **W2**：③ 的敏感参数和 `allowed_origins` 来自注册表。
+
+只有枚举不够：注册表的结构（字段名、卡类 LOOSEN / TIGHTEN 的判定函数签名、加载方式）如果由 W2 在并行期间定，W3 和 W4 只能先写死或自造 fixture，合入时必然要返工。这正是 L2-plan §0 要避免的情况。
+
+**修改建议**：W0 新增 `services/gateway/policies/tools.yaml` 和 `app/policy/registry.py`，至少包括：
+- `ToolPolicy` 数据类，字段为 tool、base_risk、sensitive_params、allowed_origins、outflow、irreversible、title_template；
+- `action_kind(tool, args, shadow_state) -> ActionKind`，卡类工具按影子状态判定放松还是收紧（§7.6）；
+- 加载函数与校验：工具集合必须等于 `WRITE_ARGS` 的 14 个工具，不允许缺失或多出；
+- 按 PRD §9.4 的「基础等级、ActionKind、敏感参数」逐项填好 14 个工具的值。
+
+之后 W2 只能提交值的修正，不能改结构。
+
+### 三、第二轮新引入或遗留的问题
+
+**P0（阻塞）**
+
+- **N1 公共路由没有鉴权**（P0-4 遗留）
+  - 位置：`main.py:54-66`
+  - 问题：探针 A 已证实。W1–W4 写真实处理函数时，如果忘了加依赖，接口就会裸奔；矩阵覆盖检查只检查「登记了没有」，不检查「执行了没有」。
+  - 修改建议：`FastAPI(dependencies=[Depends(caller_dependency(env, public_key))])` 加在 public_app 上，或在每次 `include_router` 时都加；处理函数通过 `request.state.caller` 或依赖返回值拿到 `Caller`；`build_public_app` 必须把 `public_key` 传进去。补测试：对矩阵中每个非开放路由，不带凭证、只带服务令牌、凭证换成另一种组合，都应返回 401 或 403，不得进入处理函数。
+
+- **N2 状态迁移入口不执行合法迁移表**（P0-5 遗留）
+  - 位置：`state.py:107-124`
+  - 修改建议：
+    - `transition` 先根据 `table.name` 查 `TRANSITIONS`，要求每个 `from_statuses` 到 `to` 都合法，否则直接抛错（代码错误，不是 409）；
+    - 加 `test_illegal_transition_rejected`；
+    - 同时补齐复演与重新审批需要的边（§7.10.4–5）：CONFIRMED → PENDING_APPROVAL、DENIED、REPLAN（复演后 view_hash 变化，或升级为 DENY / REPLAN），EVALUATED → PENDING_APPROVAL（已有）。
+    - EXECUTING 状态是在复演之前写入还是之后写入，在 `state.py` 的注释里写明；如果是之前，还需要 EXECUTING → PENDING_APPROVAL、DENIED、REPLAN 这几条边。
+    - `execution_jobs` 也纳入迁移表。
+
+- **N2b 交叉接口占位不存在**（P0-5 遗留，指挥决定 #1）
+  - 修改建议：按第一轮 P0-5 (b) 建立以下文件，每个函数给出签名、输入输出模型，函数体 `raise NotImplementedError`，并在文件头写明由谁实现：
+    - `approval/service.py: create_for_evaluation`（W4）
+    - `approval/planview.py: build_view -> (PlanView, view_hash)`（W4）
+    - `evaluation/repo.py: append_evaluation`（W3）
+    - `locks.py: customer_lock`（W4）
+    - 执行前复演的入口，例如 `execution/replay.py: replay(ctx) -> Decision`（W3 实现、W4 调用；如果直接复用 `pipeline.evaluate`，就写明 EXECUTE_REPLAY 模式下各阶段的差异）
+
+**P1（开工前应修）**
+
+- **N3 `bank_state()` 不可用，取快照的范围也不对**
+  - 位置：`context.py:145-148`
+  - 问题：客户端现在返回 dict，这里却调用 `.json()`（探针 B）。另外以 `steps=[]` 取快照拿不到收款人目录与对方客户。
+  - 修改建议：
+    - 改成 `BankState.model_validate(await self.l3.snapshot(...))`；
+    - 请求时带上 `plan_draft.steps`；
+    - 规定 ⑤ 只能复用这份快照、钉住其中的 versions，不得再次拉取；
+    - 补一条用 fake L3 的单元测试，断言只调用了一次 snapshot。
+
+- **N4 审计链对非 UTC 时钟误报篡改**
+  - 位置：`audit/chain.py:66`
+  - 问题：asyncpg 读回的是 UTC 时间，`isoformat()` 与写入时 +08:00 的字符串不一致（探针 C）。
+  - 修改建议：`_event` 中统一使用 `created_at_wall.astimezone(UTC).isoformat(timespec="microseconds")`；拒绝 naive datetime；DB 测试补一条 +08:00 时钟的用例。
+
+- **N5 `request_dedup` 的进行中行可能永久残留，错误码也用错了**
+  - 位置：`idempotency.py:42-66`
+  - 问题：
+    - `produce()` 抛异常时没有清理 IN_FLIGHT 行。如果调用方插入 IN_FLIGHT 和执行 `produce()` 不在同一个事务里，例如自动提交、或者 G8 先提交 IN_FLIGHT 再调 L3，异常或进程崩溃后，这个 request_id 会永远返回 409。
+    - 进行中返回的是 `RUN_IN_PROGRESS`，这是 L1 线程的错误码；按 §9.8 应该用 `EXECUTION_IN_PROGRESS`。
+  - 修改建议：在文档字符串里规定「插入、produce、更新必须在同一个调用方事务里；不得把 HTTP 调用放进这个事务，G8 的执行幂等走 `plans`、`execution_jobs`，不走这里」；`produce` 异常时删除这一行（同事务内回滚即可）；改用 `EXECUTION_IN_PROGRESS`；补「produce 抛异常后可以用同一 ID 重试」的测试。
+
+- **N6 结果类型的所有权**
+  - 位置：`context.py:69-97`
+  - 修改建议：把各阶段的结果类型移到各自拥有者的模块里（例如 `pipeline/results/provenance.py` 归 W2，`preflight.py`、`workflow.py` 归 W3），`context.py` 只 import 它们；或者明确规定「拥有者可以在自己的结果类里新增字段，不能删改已有字段」。另外由 W0 在 `EvalContext` 上新增 `steps: tuple[ResolvedStep, ...]`，含 step、tool、action_kind、base_risk、outflow，规定由 ② 写入。这样既不让 W2、W3 争同一个文件，也不让它们被空壳结构卡住。
+
+**P2（可在后续任务中处理）**
+
+- **N7 fake L3 的遗留问题**
+  - 位置：`fake.py:222-249`
+  - 问题：
+    - 不经过 prepare 就能直接 execute 并提交；
+    - `business_fail` 把 intent 记成 COMMITTED，而 §7.10.6 规定业务失败回滚后 intent 应保持 PREPARED；
+    - 同一 plan 用不同的 `plan_hash` 重复 prepare 时不报 IDEMPOTENCY_CONFLICT；
+    - `_current_behavior` 和 `_pending_drop` 是整个 fake 共享的字段，W4 的并发双花测试会互相串扰。
+  - 修改建议：W4 开工后由 W4 修，或者 W0 顺手修掉。
+
+- **N8 schema 校验不全**
+  - 问题：`AppFormPlanRequest.form_action_ids` 没有 1..5 的长度约束（§9.5）；`ExecutionAccepted.status` 应该是 `Literal["UNKNOWN"]`。
+
+- **N9 角色权限细节**
+  - 问题：`gateway_admin` 没有 LOGIN，也没有凭证，reset 用不了，W5 需要补；默认权限没有覆盖以后新建的序列（`ALTER DEFAULT PRIVILEGES … ON SEQUENCES`）。
+
+### 四、最终结论
+
+**否，还不能作为 W1–W4 并行基础。** 第二轮已修复的部分：P0-2、P0-6、P0-7、P1-9 至 P1-12，以及 P1-8 的大部分，基础设施质量明显提升。
+
+剩余阻塞项都集中在「共享接触面没做实」：
+
+1. **P0-3**：`policies/tools.yaml` 和 `app/policy/registry.py` 必须由 W0 建好结构并按 §9.4 填值，否则 W1、W3、W4 依赖一个不存在的注册表。
+2. **N1（P0-4）**：公共路由要挂上授权依赖并传入 public_key，补「每个非开放路由不带凭证都返回 401 或 403」的测试。
+3. **N2 与 N2b（P0-5）**：`transition` 要执行合法迁移表，并补齐复演与重新审批的边；交叉接口占位（审批创建、PlanView 与 view_hash、评估落库、客户锁、复演入口）要落成真实的签名文件。
+4. **开工前顺手修完的 P1**：N3（`bank_state` 报错与取快照范围）、N4（审计时区）、N5（幂等的进行中行与错误码）、N6（结果类型的所有权与 `steps` 位置）。每条改动都很小，但不修的话 W2、W3 第一天就会撞上，或者被迫去改共享文件。
+
+以上修完后，只需要定点复核：探针 A–D 全部变成符合预期的结果，新增测试通过。之后即可开启波次 1。如果时间紧，可以先只修 1、2、3 与 N3、N4，N5、N6 写进 W1、W3 的任务书作为首项，但这不是推荐做法。

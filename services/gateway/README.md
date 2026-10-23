@@ -61,13 +61,19 @@ services/gateway/
     ├── middleware.py           # trace-id、404/405/500 统一错误、契约 details
     ├── db.py                   # engine / ready
     ├── tables.py               # gateway 库全部表（CHECK 由 schemas.enums 生成）
-    ├── state.py                # 状态迁移唯一入口（legal 迁移表 + transition）—— 只此一处改状态
+    ├── state.py                # 状态迁移唯一入口（legal 迁移表 + transition 校验）—— 只此一处改状态
     ├── idempotency.py          # request_dedup 持久幂等辅助（request_idempotent）
+    ├── locks.py                # customer_lock（W4 实现、W5 复用）
     ├── schemas/                # 对外的 Pydantic 模型 + 枚举（仅 W0 改，改即接口变更）
+    ├── policy/
+    │   └── registry.py         # ToolPolicy + action_kind + 加载校验（结构仅 W0 改，W2 只改值）
+    ├── approval/               # W4：service.create_for_evaluation / planview.build_view
+    ├── evaluation/             # W3：repo.append_evaluation
+    ├── execution/              # W4：replay（W3 实现、W4 调用）
     ├── auth/
     │   ├── tokens.py           # F/A/S/D 令牌 + 严格 EdDSA JWT 校验/测试签发（W1 扩展签发）
     │   ├── matrix.py           # 静态授权矩阵全表 + lookup + 覆盖断言（仅 W0/指挥改）
-    │   └── deps.py             # resolve_caller / caller_dependency（解析 Caller、推导 origin）
+    │   └── deps.py             # resolve_caller / caller_dependency（解析 Caller、推导 origin、写 request.state.caller）
     ├── api/                    # 公共路由模块，各任务只改自己的
     │   ├── auth.py sessions.py          # W1（G1/G14/G22；G3/G15/G18–G22a）
     │   ├── tools.py                      # W2（G2）
@@ -78,21 +84,25 @@ services/gateway/
     ├── internal/scheduled.py   # W5（S1）
     ├── l3/
     │   ├── client.py           # httpx 客户端（prepare 3s/execute 10s/其余 5s，可注入；L3NotDelivered/L3OutcomeUnknown/L3BusinessError）
-    │   └── fake.py             # 有状态 fake L3：真实超时/丢包/commit_then_drop、令牌校验、可编程快照与结果
-    ├── audit/chain.py          # 审计哈希链 append / append_tx / verify（hash 覆盖 created_at_wall）
+    │   └── fake.py             # 有状态 fake L3：真实超时/丢包/commit_then_drop、令牌校验、intent 状态机、可编程快照与结果
+    ├── audit/chain.py          # 审计哈希链 append / append_tx / verify（hash 覆盖 created_at_wall，时区规范到 UTC）
     └── pipeline/               # 评估流水线（仅 W0 改 __init__.py / context.py）
         ├── __init__.py         # 编排 + DENY 只短路 ⑤⑥⑦ + profile 开关
-        ├── context.py          # EvalContext（每阶段一个结果槽 + 惰性 L3 状态访问器）/ Finding / Stage
+        ├── context.py          # EvalContext（每阶段一个结果槽 + steps + 惰性 L3 状态访问器）/ Finding / Stage
         └── {contract,entity,provenance,intent,snapshot,preflight,workflow,decision,audit}.py
 ```
+
+`policies/tools.yaml` 在 `services/gateway/policies/`（注册表 `app/policy/registry.py` 读取并校验 14 个写工具）。
 
 ## 分工与共享规则（W1–W4 阅读）
 
 - **阶段归属**：① contract、② entity、③ provenance、④ intent → **W2**；⑤ snapshot、⑥ preflight、⑦ workflow、⑧ decision、⑨ audit 阶段 + G4 组装 → **W3**；W1 生产原话/scope，W4 审批与执行。
-- **不改的文件**：`pipeline/__init__.py`、`pipeline/context.py`、`schemas/**`、`auth/matrix.py`、`state.py`、`tables.py`、`migrations/**`、`main.py`、`pyproject.toml`、`uv.lock`、compose。需要改就写「待决」由指挥统一改。
-- **状态变更**只能调 `state.transition`；**request_id 接口**只能用 `app.idempotency.request_idempotent`；错误只能 `raise GatewayError(Code.X)`；调 L3 只能用 `L3Client`（测试用 fake L3 的 `transport()`）；审计只能用 `audit.append_tx`（不要在含 HTTP 调用的事务里 append）。
+- **不改的文件**：`pipeline/__init__.py`、`pipeline/context.py`、`schemas/**`、`auth/matrix.py`、`state.py`、`tables.py`、`migrations/**`、`main.py`、`policy/registry.py` 的结构、`policies/tools.yaml` 的结构、`pyproject.toml`、`uv.lock`、compose。需要改就写「待决」由指挥统一改。
+- **工具注册表**：`policies/tools.yaml` 的结构与 14 个工具的集合由 W0 锁定，W2 之后只能提交值的修正。
+- **状态变更**只能调 `state.transition`（会校验合法迁移表，非法边直接 `ValueError`）；**request_id 接口**只能用 `app.idempotency.request_idempotent`（进行中返回 409 `EXECUTION_IN_PROGRESS`，produce 抛异常清进行中行）；错误只能 `raise GatewayError(Code.X)`；调 L3 只能用 `L3Client`（测试用 fake L3 的 `transport()`）；审计只能用 `audit.append_tx`（不要在含 HTTP 调用的事务里 append）。
+- **交叉接口占位**（签名已定，实现方标注在 docstring）：`approval.service.create_for_evaluation`（W4）、`approval.planview.build_view`（W4）、`evaluation.repo.append_evaluation`（W3）、`locks.customer_lock`（W4）、`execution.replay.replay`（W3 实现、W4 调用）。
 - **波次 1 不写迁移**：需要改表写进「待决」，由指挥在集成分支串行加 `0002_wave1`。
-- **② 实体阶段**用 `ctx.bank_state()`（惰性、带缓存的 L3 快照）核对所有权；⑤ 只钉住 versions/clock_version，不重复拉取。
+- **② 实体阶段**用 `ctx.bank_state()`（惰性、带缓存的 L3 快照，带计划步骤）核对所有权并写 `ctx.steps`；⑤ 只钉住 versions/clock_version，不重复拉取。
 
 ## 流水线插件接口
 
@@ -104,4 +114,5 @@ services/gateway/
 
 - `BANK_BACKEND_URL` 与 `ExecutionJobStatus`/`WorkflowEventStatus` 的取值请补记 PRD §11.1 / §7.2。
 - `requirements.txt`/`requirements-test.txt` 已按锁重新导出，`.wheels` 已生成，镜像可起。
-- `make up` 会在本 worktree 生成新 `.secrets` 并重建 `safebank_pg-bank`/`safebank_pg-agent` 卷（旧 P1 卷已按任务书删除重建）；主 checkout 的旧 `.secrets` 与新卷不匹配，指挥在集成分支重新 `make keys && make up` 即可。
+- `gateway_admin` 尚无 LOGIN 凭证（reset 用），W5 需要补；`ALTER DEFAULT PRIVILEGES … ON SEQUENCES` 已在 0001 里补上，但对已跑过 0001 的旧卷不会重放，fresh `make up` 会带上。
+- 公共路由已挂全局 `caller_dependency`：非 `/health` 路由不带凭证一律 401（默认拒绝），处理函数经 `request.state.caller` 取 `Caller`。

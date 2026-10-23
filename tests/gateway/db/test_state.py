@@ -42,6 +42,19 @@ def test_legal_helper():
     assert legal("utterances", "ACTIVE", "CONSUMED")
 
 
+def test_illegal_transition_rejected(gateway_db):
+    async def run():
+        db = _runtime(gateway_db)
+        async with db.begin() as conn:
+            with pytest.raises(ValueError):
+                await transition(
+                    conn, t.plans, id_="pln_x", from_statuses=["EXECUTED"], to="EVALUATED"
+                )
+        await db.dispose()
+
+    asyncio.run(run())
+
+
 def test_transition_applies_and_rejects(gateway_db):
     async def run():
         db = _runtime(gateway_db)

@@ -58,3 +58,37 @@
 - W3：可改 `api/plans.py`、`pipeline/{contract,snapshot,preflight,workflow,decision,audit}.py`、`evaluation/repo.py`、`workflow/**`、`policies/{thresholds,workflow}.yaml`。预演只调 bankcore；REQUIRE_APPROVAL 时调 W4 的 `approval.service.create_for_evaluation`（W4 未合入前是占位）；实现 profile 开关与 SHADOW_B1。
 - W4：可改 `api/{approvals,execution}.py`、`approval/**`（PlanView/view_hash/binding_mac/OTP）、`execution/**`、`locks.py`。复演调 `pipeline.evaluate(ctx, mode=EXECUTE_REPLAY)`，结果用 W3 的 `append_evaluation` 落库；`locks.customer_lock` 必须能被 W5 复用。
 - W5（波次 2）：S1/通知/G11/G16/D 接口在已有占位路由模块上实现，复用 `locks`、`state`、`audit`。
+
+---
+
+## 第三轮（复审阻塞项修复）
+
+第二轮复审结论：P0-3 工具注册表、N1（公共路由鉴权）、N2/N2b（状态迁移与交叉接口占位）、N3–N6（bank_state / 审计时区 / 幂等进行中行 / 结果类型所有权）必须补。本轮全部修复，探针 A–D 转成正式测试。
+
+| 项 | 处理 | 证据 |
+|---|---|---|
+| P0-3 工具注册表 | 新建 `services/gateway/policies/tools.yaml` 与 `app/policy/registry.py`：`ToolPolicy`（base_risk/sensitive_params/allowed_origins/outflow/irreversible/otp_required/title_template）+ `action_kind`（transfer 本人/对外、卡类 LOOSEN/TIGHTEN）+ `load_policies`（校验工具集 == 14 个 WRITE_ARGS）。README 写明 W2 只改值不改结构 | `tests/gateway/test_policy.py`（14 工具、风险/敏感参数/OTP、action_kind 转移与卡方向） |
+| N1 公共路由鉴权 | `build_public_app` 加 `FastAPI(dependencies=[Depends(caller_dependency(env, public_key))])`，`caller_dependency` 写 `request.state.caller`，public_key 透传 | 探针 A 转 `test_routing.py::test_public_routes_require_auth_probe_a`（无凭证 401） |
+| N2 状态迁移 | `transition` 先按 `TRANSITIONS[table.name]` 校验每条边，非法边抛 `ValueError`；补 CONFIRMED→PENDING_APPROVAL/DENIED/REPLAN；新增 `execution_jobs` 迁移表；注释写明 EXECUTING 在复演之后写入 | `db/test_state.py::test_illegal_transition_rejected` |
+| N2b 交叉接口占位 | 新增 `approval/service.py`（create_for_evaluation，W4）、`approval/planview.py`（build_view，W4）、`evaluation/repo.py`（append_evaluation，W3）、`locks.py`（customer_lock，W4）、`execution/replay.py`（replay，W3 实现 W4 调用），签名+NotImplementedError+owner docstring | `test_probes.py::test_cross_interface_placeholders_exist_probe_d` |
+| N3 bank_state | `BankState.model_validate(response)`（client 返回 dict），快照带 `plan_draft.steps` | 探针 B 转 `test_probes.py::test_bank_state_returns_and_caches_probe_b`（返回 BankState + 只调一次 snapshot） |
+| N4 审计时区 | `_event` 统一 `astimezone(UTC).isoformat(timespec="microseconds")`，拒绝 naive | 探针 C 转 `db/test_audit_chain.py::test_verify_accepts_non_utc_clock_probe_c`（+08:00 不误报） |
+| N5 幂等进行中行 | `EXECUTION_IN_PROGRESS` 替代 `RUN_IN_PROGRESS`；produce 抛异常时删除进行中行；docstring 规定同事务、不放 HTTP 调用 | `db/test_idempotency.py::test_produce_exception_leaves_id_retryable` |
+| N6 结果类型所有权 | `ResolvedStep` + `ctx.steps`（② 写）；各结果 dataclass 标注 owner 可加字段不可删改；README 记录 | `context.py` 注释 + README |
+| P1-13 时区 | 见 N4 | 同上 |
+| N7 fake L3（P2 顺手修） | execute 需先 prepare（否则 409）；business_fail 保持 intent PREPARED；同 plan 不同 plan_hash 重复 prepare → 409 IDEMPOTENCY_CONFLICT；`_current_behavior/_pending_drop` 的并发串扰留给 W4 | `test_l3.py` 更新 prepare-first |
+| N8 schema | `AppFormPlanRequest.form_action_ids` 1..5；`ExecutionAccepted.status` Literal["UNKNOWN"] | `schemas/requests.py` / `execution.py` |
+| N9 序列默认权限 | 0001 加 `ALTER DEFAULT PRIVILEGES … ON SEQUENCES`；gateway_admin LOGIN 留给 W5（见 README 待决） | `0001_gateway.py` |
+
+## 第三轮退出命令实测
+
+| 命令 | 结果 |
+|---|---|
+| `make lint` | 通过（145 文件） |
+| `make test-gateway` | 59 passed |
+| `make test-gateway-db` | 17 passed |
+| `make test` | 177 passed, 48 skipped |
+| `make up`（现有卷，未删卷） | 全部 6 服务 healthy（gateway 重建为第三轮镜像，`Existing dataset preserved`） |
+| `make test-p1` | 33 passed |
+
+本轮未删除、重建或 `docker volume rm` 任何数据卷；`make up` 复用第二轮的 `safebank_pg-bank`/`safebank_pg-agent` 卷与 `.secrets`。

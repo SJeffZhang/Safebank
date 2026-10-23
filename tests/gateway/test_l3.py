@@ -186,6 +186,7 @@ def test_fake_commit_then_drop_then_query_recovery():
         fake = FakeL3()
         fake.behaviors["execute"] = "commit_then_drop"
         client = L3Client("http://l3", "gateway-token", transport=fake.transport())
+        await client.prepare(valid_prepare_body())
         with pytest.raises(L3OutcomeUnknown):
             await client.execute(valid_execute_body())
         status = await client.execution("cus_zs", "pln_1")
@@ -226,6 +227,7 @@ def test_fake_custom_result_and_snapshot():
             )
         )
         client = L3Client("http://l3", "gateway-token", transport=fake.transport())
+        await client.prepare(valid_prepare_body())
         result = await client.execute(valid_execute_body())
         assert result["status"] == "FAILED"
         assert result["plan_id"] == "pln_9"
