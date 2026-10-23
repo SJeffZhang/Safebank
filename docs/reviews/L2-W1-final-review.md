@@ -61,3 +61,49 @@
 
 - 若 plans 行 `origin` 被直接篡改为非 agent/app_form，`state.ExecutionIdentity.__post_init__`/`OrphanExecutionIdentity.__post_init__`（`state.py:231-239,751-762`）会抛 ValueError，进而中止整笔撤销事务（500 回滚）而非将该 plan 隔离为 pending。与「ValueError 不吞」一致、fail-closed，但单条坏行会阻塞整客户撤销；实际 origin 恒由 L2 写入，概率极低。
 - 本环境未亲跑 PG 用例（docker 被拒）；上述 PG 结论基于源码与测试文件核对，最终以协调者复跑的完整五退出（test-w1 1687/0 skip）为准。
+
+## 增量定点复审（2026-10-24，358bd48..159d811）
+
+范围：`git diff 358bd48..159d811`（service.py correction 守卫、intent_lexicon 死键删除、两个测试调整、docs）；另核对 358bd48 合并 origin/main 仅引入 main 侧已合内容。未改代码；未运行 make up/down/test-p1/test-integration；未碰 Docker 数据卷；未读 .env/.secrets。定点验证：`test_w1_runtime_resources.py -k customer_labels`（1 passed）、`test_matrix.py`（18 passed）；correction 计数测试为真实 PG 用例，本环境 docker 被拒未亲跑，已按源码逐项推演。
+
+## 结论：APPROVE
+
+无 P0 / P1。五条核对全部通过。
+
+### 1. correction 守卫（service.py:336,382,465）
+
+`supersede_session`（lifecycle.py:129-133）=`supersede(keep=())` + `invalidate_ui`，已覆盖：旧写 scope（ACTIVE 且 `action_kinds` 非空 → SUPERSEDED，lifecycle.py:89-93）、该 sid 全部 plan 与 PENDING/CONFIRMED approval（`_invalidate_plans`，lifecycle.py:194-221）、UI（澄清取消 + 未用 form_actions/hints 过期，lifecycle.py:224-231）。correction 分支 `parent_ids` 恒为 `()`（只在 clarification/hint-ACT 路径赋值），与通用块 `keep=parent_ids` 等价，故 `already_superseded` 只消除重复的第二次 `_invalidate_plans`，无任何漏失效。普通 typed 替代（非 correction）、clarification、hint、action 路径 `already_superseded` 恒为 False，行为不变；标志为函数局部变量（service.py:336），无跨请求泄漏。
+
+### 2. 新测试
+
+monkeypatch `lifecycle._invalidate_plan`（`_invalidate_plans` 经模块全局名调用，lifecycle.py:206，可拦截）；seed 一条 CONFIRMED/PAUSED plan 后 `calls.clear()`（测试第 636 行）。correction 恰一次——修复前第二次 `supersede` 再跑 `_invalidate_plans`→`_invalidate_plan`，`calls==[plan,plan]` 红；replacement 仍恰一次——`_invalidate_plans`（lifecycle.py:194-204）对 sid 全 plan 无状态过滤逐一调用，已 UNKNOWN 的 live job 走 `mark_execution_unknown(from_status=UNKNOWN)` 幂等成功（`_job_update` 的 `status==from_status` 匹配）返回 False，故 `calls==[plan]` 断言准确，且能同时区分「一次 vs 两次」与「误跳过 supersede」。
+
+### 3. intent_lexicon 死键
+
+全仓 grep 无 `LEXICON["question"/"periods"/"correction"]` 或任何其他读取点；parser 只用 actions/phonetic/grammar/cancel（parser.py:70,72,90,138,389），service 用 predicates（service.py:74,89,91），sessions 用 cancel（api/sessions.py:111）；改口检测走 `CORRECTION_PREFIX` 正则（parser.py:101-115）。删除正确，无残留读取。
+
+### 4. 404 断言
+
+`from_env({})`（config.py:76-77）忽略 os.environ → demo_mode=False；S1f `main.py:118-119` 仅 demo/eval 开才挂 G22，coverage_errors（matrix.py:154-155,164-165）关时允许 G22 缺失，故路由未注册 → 404。若误读进程 `DEMO_MODE=true`，则 demo_mode=True、路由挂载、handler 因 `app.state.settings` 为 None（仅 runtime.install 设置，runtime.py:96，本测试未传 runtime）返回 503 而非 404——404 判据对「回退到进程环境」敏感；原 503 判据因 settings-None 主导对 demo_mode 不敏感，新断言反而更严格，未丢失该性质。
+
+### 5. 冻结与合并
+
+增量仅 6 文件（utterance/service.py、intent_lexicon.yaml、2 个 W1 测试、2 个 docs），无 state.py/tables.py/迁移/config/registry/errors/audit/schemas/packages/docker-compose/pyproject/uv.lock/requirements/PRD.md。358bd48 合并仅引入 main 侧 S1f（main.py/matrix.py/README/test_matrix.py）与已合 docs，无 Makefile/.github 改动，grep 无冲突标记，W1 自有文件零被合并触及；`_public_auth_router` 的过滤与 auth.py:149 `GET /auth/demo-customers` 精确匹配（methods=={"GET"}、path 一致）。
+
+## 发现
+
+### P0
+
+无。
+
+### P1
+
+无。
+
+### P2
+
+无。
+
+## 未确认（非发现，记录）
+
+- `test_correction_invalidates_each_plan_once_but_replacement_still_does` 为真实 PG 用例，本环境 docker 被拒未亲跑；结论基于源码推演 + 协调者已实测（修复前红、修复后绿），最终以协调者复跑完整 `make test-w1` 为准。
