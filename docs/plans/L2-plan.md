@@ -29,17 +29,19 @@
 | 定时授权 S1、演示 / 评测 D 接口的 gateway 侧 | §7.11、§9.5a、§9.7 |
 | 网关层安全验收：授权矩阵、A8 绕过、A1/A2/A3/A5 网关层用例 | §3.2、§10.2、§10.3 |
 
-**不做**（各自在后续阶段）
+**本 L2 组件分工之外**（并行流和暂停项分别如下）
 
 - 前端与 BFF（F1–F13）：用户下令前不开工。测试中直接用 F 服务令牌 + app JWT 调 gateway，代替 BFF。
-- L1 LangGraph 图（P2 的 L1 部分）：测试中用 A 服务令牌 + assistant JWT 直接调 gateway，代替 L1。
+- L1 LangGraph 图（PRD §13 流 C）：用户于2026-10-24在本会话明确授权立即与L2并行，任务书见 `briefs/C1-agent.md`。L2独立测试仍可用A服务令牌+assistant JWT；契约fake不能算真实联调通过。L1只改services/agent与tests/agent，逐小组件验收。
 - L3 新业务（定时、AA、订阅、基金、时钟推进、事件 job、演示注入）：属于 PRD P4–P6。gateway 侧照契约实现，用**契约测试替身**（fake L3）验证；真实联调在对应 L3 能力交付后补做，并在本文件 §7 登记。
+
+> 2026-10-24更正：此前把L1列入“不做”是协调者收窄范围，用户只暂停前端/BFF；现已确认流C立即并行。实现与评审均用本机DeepSeek CLI，当前启动以 `scripts/ds-worker.sh` 的权限白名单和禁用项为准，不使用下方历史宽白名单示例。
 
 ## 2. 工作方式
 
 ### 2.1 角色
 
-- **指挥（主会话 Claude）**：拆任务、写任务书、启动 worker、验收、合并、记日志。不写业务代码。
+- **指挥（当前为 Codex）**：拆任务、写任务书、启动 worker、验收、合并、记日志。不写业务代码。
 - **worker**：本机 Claude Code CLI 无头模式（`claude -p`），模型走 `~/.claude/settings.json` 中的 DeepSeek（`deepseek-v4-pro`；Haiku 档为 `deepseek-flash`）。每个 worker 一个 git worktree、一个分支，互不共享工作目录。
 
 ### 2.2 启动方式（指挥执行）
@@ -80,7 +82,7 @@ env -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_API_KEY \
 **每完成一个完整组件（一个 W 任务），测试通过就开 PR，逐步审核，CI 通过就合并入 `main`。** 不再攒到集成分支最后合。
 
 1. worker 完成 → 指挥在其 worktree 里复跑退出条件命令，看 diff 规模与关键文件；不合格让同一 worker 续改（`claude -p --resume <session>`）。
-2. 审核：指挥审查 + 只读评审 subagent 对照 PRD 审查（W0 另加架构评审关卡）；问题修完才进入下一步。
+2. 审核：指挥审查 + 本机 DeepSeek CLI 只读评审 worker 对照 PRD 审查（W0 另加架构评审关卡）；问题修完才进入下一步。
 3. 推送该组件分支，开 PR（base `main`）；PR 描述写明范围、退出命令结果、审核结论与遗留项。
 4. CI 全绿 → 指挥合并（merge commit），本地 `main` 同步；这是用户给出的长期授权，满足「审核通过 + CI 全绿」即合并，不再逐个询问。CI 失败则交回 worker 修复后重新走 1–4。
 5. 后续组件的 worktree 从最新 `main` 拉出；已开工的分支在合并前先同步 `main` 并复跑测试。
@@ -163,10 +165,10 @@ env -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_API_KEY \
 
 | 时点 | 动作 |
 |---|---|
-| W0 完成 | 复跑退出命令；**架构评审关卡**：指挥审查插件接口、表结构、凭证中间件、L3 客户端与 fake L3，另派 1 个只读评审 subagent 对照 PRD 审架构合理性与可扩展性（报告写 `docs/reviews/L2-W0-architecture.md`）；问题全部修完后合入 `feat/l2-gateway`，再以它为基线开波次 1。若评审认为某两路仍会改同一处，改为串行 |
+| W0 完成 | 复跑退出命令；**架构评审关卡**：指挥审查插件接口、表结构、凭证中间件、L3 客户端与 fake L3，另派 1 个本机 DeepSeek CLI 只读评审 worker 对照 PRD 审架构合理性与可扩展性（报告写 `docs/reviews/L2-W0-architecture.md`）；问题全部修完后合入 `feat/l2-gateway`，再以它为基线开波次 1。若评审认为某两路仍会改同一处，改为串行 |
 | 波次 1 每个完成 | 复跑其退出命令；依次合入集成分支并跑 `make test-gateway` + `make lint`；冲突由指挥解决或让对应 worker 续改 |
 | 波次 1 全部合入 | 指挥跑全栈 `make up` + `make test-p1` + 网关层冒烟；推送集成分支、开 PR、看 CI |
-| 波次 2 完成 | 同上；开 PR；**请用户确认后合入 main** |
+| 波次 2 完成 | 同上；开 PR；按§2.5长期授权，精确head四CI成功后合并 |
 
 ## 6. 退出条件（L2 阶段完成的定义）
 
