@@ -1306,7 +1306,7 @@ scheduler job 用真实时间 lease 防重复工作器；金融执行幂等由 e
 - 表中 `?` 表示 nullable；输入字段除 cursor/limit 默认值外均显式填写（可 null），与 strict schema 转换后的模型一一对应。`limit` 默认 50，1–100；cursor 是服务端不透明游标，分页按稳定 `(occurred_at,id)` 排序，返回 `items,next_cursor`。读快照限制查询最多 180 天。
 - 读工具响应 `ReadEnvelope={data,source_ref,untrusted_paths:string[],versions:object,observed_at}`。source_ref 为 src ID；路径使用 JSON Pointer。App 和 L1 读取都保存会话读取账本。来自实体名称等文本即使正常也标不可信。
 - HTTP：成功读取/评估/确认 200，创建会话/原话 201，推进时钟 202；401 身份无效、403 scope/origin 禁止、404 无权/不存在、409 状态冲突、422 契约错误、429 频率限制、503 依赖不可用。业务 DENY/REPLAN 是成功评估的 200 Decision，不能当网络错误自动重试。
-- 统一错误 `{error:{code,message,details,trace_id}}`，details 为字段错误或版本冲突，不含密钥/其他客户数据；执行/复演产生的 `STATE_CHANGED` 的 `details` 为 `{decision: Decision}`（plan_id 不变，需要批准时 `decision.approval_id` 为新审批）；G3/G14已提交撤销但旧任务清理受阻时，409 `STATE_CHANGED` 的 details 为 `{authorization_revoked:true,cleanup_pending:true}`，不含Decision、不声称在途执行已回滚；请求 `X-Request-ID` 回显 trace_id。修改接口的 request_id 在路由+主体作用域幂等；相同 ID 不同 body 为 IDEMPOTENCY_CONFLICT。
+- 统一错误 `{error:{code,message,details,trace_id}}`，details 为字段错误或版本冲突，不含密钥/其他客户数据；执行/复演产生的 `STATE_CHANGED` 的 `details` 为 `{decision: Decision}`（plan_id 不变，需要批准时 `decision.approval_id` 为新审批）；G3/G14已提交撤销但旧任务清理受阻时，409 `STATE_CHANGED` 的 details 为 `{authorization_revoked:true,cleanup_pending:true}`，不含Decision、不声称在途执行已回滚；请求 `X-Request-ID` 回显 trace_id；本类撤销待清理错误重放保持状态码/code/message/details，trace_id作为每请求元数据按当次请求重建。修改接口的 request_id 在路由+主体作用域幂等；相同 ID 不同 body 为 IDEMPOTENCY_CONFLICT。
 
 ### 9.2 六场景需求与接口覆盖
 

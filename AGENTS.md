@@ -374,6 +374,8 @@
 
 | 2026-10-23 | Codex（协调者） | S1d已push head d6b8f4e并创建PR #10/附加任务，CI待完成。只读架构核对确认稳定畸形claim不能靠重试恢复；协调裁定W1提交撤销+缓存409、事务外重建GatewayError，details双true标明已失效/待清理，不新发替代授权。仅错误分支用现有audit.append同无HTTP短事务原子记审计，避免postcommit崩溃窗口，冻结helper不改；新写scope每次重扫该sid live jobs。已迭代PRD7.10/9.1、common精确例外和W1-revocation-deferred任务书，待设计报告核对后交owner。复用S2干净worktree预备S3a分支main6815547，派owner只读提出typed字段/迁移设计，尚不实施，仍等S1d合并。 |
 
+| 2026-10-23 | Codex（协调者） | W1撤销待清理只读设计报告完成（L2-W1-revocation-design.md），确认既有producer返回409即可原子缓存、事务外重建抛错可保留统一trace；无需改冻结helper。已补任务禁止广义catch/提前RESOLVED、新ID防跳过、原子审计与完整真实PG故障矩阵，PRD9.1补错误回放的当次trace约定；现交原W1 owner按固定双true details实施，矩阵仅需求、未跑不记通过。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：

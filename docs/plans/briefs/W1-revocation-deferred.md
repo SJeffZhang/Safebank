@@ -2,11 +2,14 @@
 
 2026-10-23，协调裁定。只补W1当前集成组件；不新增共享实现、不改冻结state/idempotency/errors/audit函数、表、Code或成功响应结构。依据PRD7.4/7.10及S1e：不能因预期409回滚用户撤销，也不能放宽畸形scope/claim。
 
+只读设计依据见[设计报告](../../reviews/L2-W1-revocation-design.md)。报告中建议details字段以本任务固定双true字段为准。
+
 ## 固定语义
 
 - 在真实客户锁及同连接短事务中，正常revision/status竞争用savepoint隔离并有界重读，按新快照选普通/孤儿CAS。只捕获预期GatewayError(STATE_CHANGED,409)；真正SQL/连接异常、程序ValueError不能吞成成功。
 - 稳定畸形scope/claim或有界竞争未解决时，不补数据、不改job/claim来绕guard。继续撤销其他plan/审批/clarification/UI源及G14所有sid/auth session；原授权CANCELLED或SUPERSEDED、应有epoch/logout仍提交。失败任务保留原状态与字段，审计清楚记录待清理，不宣称阻止已在途提交。
-- G3当前请求不得发布replacement写scope、assistant JWT或消费新的action/hint；随后任何准备发布写scope的请求都须重扫该sid现存live jobs，不以本次是否刚替代ACTIVE原话为条件。仍受阻则继续409；正常UNKNOWN经合法幂等清理通过不一律禁新授权。G18的utts=[]只读token保持原规则。
+- 不得catch整个register/logout的所有GatewayError后提交；前置验证、来源所有权/期限、普通解析或合槽失败仍走原错误路径，只有已确定合法撤销后的预期清理409可收敛。
+- G3当前请求不得发布replacement写scope、assistant JWT或消费新的action/hint；也不得留下替代的clarification RESOLVED/new root；随后任何准备发布写scope的请求都须重扫该sid现存live jobs，不以本次是否刚替代ACTIVE原话为条件。仍受阻则继续409；正常UNKNOWN经合法幂等清理通过不一律禁新授权。G18的utts=[]只读token保持原规则。
 - 错误固定HTTP409、Code.STATE_CHANGED、details={authorization_revoked:true,cleanup_pending:true}，message明确原写授权已失效而旧执行清理待处理；没有Decision，未声称执行已失败或资金已回滚。外部不需暴露畸形行或其他客户数据。
 - producer把该GatewayError.body(trace_id)作为(409,body)正常返回给既有request_idempotent，使撤销和错误缓存同事务提交。事务外从缓存code/message/details重建并raise GatewayError，保留统一错误格式及本次trace。成功分支保持原wire；不得改冻结helper。
 - G3同request_id重放不再增epoch/撤销或生成token；同ID不同body仍冲突。G14旧JWT因全局撤销返回401；新有效JWT重放原request_id取得缓存409，不再次登出新会话，新logout须新request_id。鉴权不因回放放松。
