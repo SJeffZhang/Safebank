@@ -67,15 +67,21 @@ class GatherAdapter:
             messages.append(message)
             prepared, rejected = self._validate_calls(calls)
             if rejected:
-                # Never execute a partially-valid batch: feed sanitized errors back instead.
-                for call, summary in rejected:
-                    messages.append(
-                        ToolMessage(content=f"参数无效：{summary}", tool_call_id=call["id"])
-                    )
-                for call, _, _ in prepared:
-                    messages.append(
-                        ToolMessage(content="未执行：同轮存在非法参数", tool_call_id=call["id"])
-                    )
+                # Never execute a partially-valid batch: feed sanitized errors back in the
+                # original tool_calls order, exactly one message per call id.
+                rejected_by_id = {call["id"]: summary for call, summary in rejected}
+                for call in calls:
+                    if call["id"] in rejected_by_id:
+                        messages.append(
+                            ToolMessage(
+                                content=f"参数无效：{rejected_by_id[call['id']]}",
+                                tool_call_id=call["id"],
+                            )
+                        )
+                    else:
+                        messages.append(
+                            ToolMessage(content="未执行：同轮存在非法参数", tool_call_id=call["id"])
+                        )
                 continue
             for call, name, args in prepared:
                 reads.append(self._execute(name, args, call, messages))

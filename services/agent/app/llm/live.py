@@ -12,7 +12,6 @@ import hashlib
 import json
 import sys
 import time
-from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -98,76 +97,68 @@ def _read_value(reads: list[ReadRecord], ref: str, pointer: str):
         return None
 
 
-def _check_read_param(sources, param, expected, reads, ref, pointer) -> list[str]:
+def _entity_source(sources, param, expected, reads, text, utt_id) -> list[str]:
+    """A non-None entity param may come from a real read (the model's own pointer must resolve
+    to the expected value) or a typed utterance (span slice must equal the entity id)."""
+
     problems = []
     source = sources.get(param)
     if source is None:
         problems.append(f"{param} has no source")
-    elif source.kind != "read":
-        problems.append(f"{param} source kind {source.kind} != read")
-    elif source.ref != ref:
-        problems.append(f"{param} ref {source.ref} != {ref}")
-    else:
-        value = _read_value(reads, ref, pointer)
-        if value != expected:
+        return problems
+    if source.kind == "read":
+        value = _read_value(reads, source.ref, source.pointer)
+        if value is None:
+            problems.append(f"{param} read ref/pointer unresolved: {source.ref} {source.pointer}")
+        elif value != expected:
             problems.append(f"{param} read value {value!r} != {expected!r}")
-    return problems
-
-
-def _check_utterance_param(sources, param, text, digits) -> list[str]:
-    problems = []
-    source = sources.get(param)
-    if source is None:
-        problems.append(f"{param} has no source")
-    elif source.kind != "utterance":
-        problems.append(f"{param} source kind {source.kind} != utterance")
-    else:
+        return problems
+    if source.kind == "utterance":
+        if source.ref != utt_id:
+            problems.append(f"{param} utterance ref {source.ref} != {utt_id}")
+            return problems
         span = source.span
         if not (0 <= span[0] < span[1] <= len(text)):
             problems.append(f"{param} span {span} out of bounds")
-        elif text[span[0] : span[1]] not in (digits, digits + "元"):
-            problems.append(f"{param} span {span} slice {text[span[0] : span[1]]!r} != {digits!r}")
+        elif text[span[0] : span[1]] != expected:
+            problems.append(f"{param} span slice {text[span[0] : span[1]]!r} != {expected!r}")
+        return problems
+    problems.append(f"{param} source kind {source.kind} not read/utterance")
     return problems
 
 
-def _source_problems(draft: PlanDraft, utterances: list, reads: list[ReadRecord]) -> list[str]:
-    problems: list[str] = []
-    utt_by_id = {utterance.id: utterance for utterance in utterances}
-    read_by_ref = {read.source_ref: read for read in reads}
-    step_ids: set[str] = set()
-    for step in draft.steps:
-        for source in step.arg_sources:
-            kind = source.source.kind
-            if kind in ("hint", "action", "derived"):
-                problems.append(f"unexpected source kind {kind} in live sample")
-            elif kind == "utterance":
-                ref = source.source.ref
-                if ref not in utt_by_id:
-                    problems.append(f"utterance ref {ref} not provided")
-                else:
-                    span = source.source.span
-                    length = len(utt_by_id[ref].text)
-                    if not (0 <= span[0] < span[1] <= length):
-                        problems.append(f"utterance span {span} out of bounds for {ref}")
-            elif kind == "read":
-                ref = source.source.ref
-                if ref not in read_by_ref:
-                    problems.append(f"read ref {ref} not provided")
-                else:
-                    try:
-                        resolve_pointer(read_by_ref[ref].data, source.source.pointer)
-                    except ValueError as exc:
-                        problems.append(f"read pointer {source.source.pointer} not in {ref}: {exc}")
-            elif kind == "step":
-                if source.source.ref not in step_ids:
-                    problems.append(f"step ref {source.source.ref} not defined earlier")
-        step_ids.add(step.step_id)
+def _amount_source(sources, param, text, digits, units) -> list[str]:
+    """Amount must be a typed utterance; slice must be digits (optionally + unit)."""
+
+    problems = []
+    source = sources.get(param)
+    if source is None:
+        problems.append(f"{param} has no source")
+        return problems
+    if source.kind != "utterance":
+        problems.append(f"{param} source kind {source.kind} != utterance")
+        return problems
+    span = source.span
+    if not (0 <= span[0] < span[1] <= len(text)):
+        problems.append(f"{param} span {span} out of bounds")
+        return problems
+    accepted = (digits, *(digits + unit for unit in units))
+    if text[span[0] : span[1]] not in accepted:
+        problems.append(f"{param} span slice {text[span[0] : span[1]]!r} != {digits!r}")
     return problems
 
 
-def _check_transfer(draft: PlanDraft, state: dict) -> list[str]:
+def _none_diagnostics(sources, params) -> list[str]:
+    diagnostics = []
+    for param in params:
+        if param in sources:
+            diagnostics.append(f"{param}=None source ignored (L2 ignores null-param sources)")
+    return diagnostics
+
+
+def _check_transfer(draft: PlanDraft, state: dict) -> tuple[list[str], list[str]]:
     if not draft.steps or draft.steps[0].tool != "transfer":
-        return ["expected transfer step"]
+        return ["expected transfer step"], []
     step = draft.steps[0]
     args = step.args
     problems = []
@@ -180,57 +171,57 @@ def _check_transfer(draft: PlanDraft, state: dict) -> list[str]:
     if args.amount_cents != 80000:
         problems.append(f"amount_cents={args.amount_cents}")
     sources = {source.param: source.source for source in step.arg_sources}
-    if not sources:
-        problems.append("empty arg_sources")
     reads = state["reads"]
-    problems += _check_read_param(
-        sources, "from_account_id", "acc_zs_chk", reads, "src_syn_acct", "/accounts/0/account_id"
-    )
-    problems += _check_read_param(
-        sources, "payee_id", "pye_zs_ww", reads, "src_syn_payee", "/payees/0/payee_id"
-    )
-    problems += _check_utterance_param(sources, "amount_cents", state["utterances"][0].text, "800")
-    return problems + _source_problems(draft, state["utterances"], reads)
+    text = state["utterances"][0].text
+    utt_id = state["utterances"][0].id
+    problems += _entity_source(sources, "from_account_id", "acc_zs_chk", reads, text, utt_id)
+    problems += _entity_source(sources, "payee_id", "pye_zs_ww", reads, text, utt_id)
+    problems += _amount_source(sources, "amount_cents", text, "800", ("元",))
+    diagnostics = _none_diagnostics(sources, ("to_account_id", "memo"))
+    return problems, diagnostics
 
 
-def _check_freeze(draft: PlanDraft, state: dict) -> list[str]:
+def _check_freeze(draft: PlanDraft, state: dict) -> tuple[list[str], list[str]]:
     if not draft.steps or draft.steps[0].tool != "freeze_card":
-        return ["expected freeze_card step"]
+        return ["expected freeze_card step"], []
     step = draft.steps[0]
     if step.args.card_id != "crd_zs_1":
-        return [f"card_id={step.args.card_id}"]
+        return [f"card_id={step.args.card_id}"], []
     sources = {source.param: source.source for source in step.arg_sources}
-    problems = []
-    if not sources:
-        problems.append("empty arg_sources")
-    problems += _check_read_param(
-        sources, "card_id", "crd_zs_1", state["reads"], "src_syn_card", "/cards/0/card_id"
+    problems = _entity_source(
+        sources,
+        "card_id",
+        "crd_zs_1",
+        state["reads"],
+        state["utterances"][0].text,
+        state["utterances"][0].id,
     )
-    return problems + _source_problems(draft, state["utterances"], state["reads"])
+    return problems, []
 
 
-def _check_limits(draft: PlanDraft, state: dict) -> list[str]:
+def _check_limits(draft: PlanDraft, state: dict) -> tuple[list[str], list[str]]:
     if not draft.steps or draft.steps[0].tool != "update_card_limits":
-        return ["expected update_card_limits step"]
+        return ["expected update_card_limits step"], []
     step = draft.steps[0]
     args = step.args
     if args.card_id != "crd_zs_1" or args.single_limit_cents != 1000:
-        return [f"card_id={args.card_id} single_limit_cents={args.single_limit_cents}"]
+        return [f"card_id={args.card_id} single_limit_cents={args.single_limit_cents}"], []
     if args.daily_limit_cents is not None:
-        return [f"daily_limit_cents={args.daily_limit_cents} expected None"]
+        return [f"daily_limit_cents={args.daily_limit_cents} expected None"], []
     sources = {source.param: source.source for source in step.arg_sources}
-    problems = []
-    if not sources:
-        problems.append("empty arg_sources")
-    problems += _check_read_param(
-        sources, "card_id", "crd_zs_1", state["reads"], "src_syn_card", "/cards/0/card_id"
+    problems = _entity_source(
+        sources,
+        "card_id",
+        "crd_zs_1",
+        state["reads"],
+        state["utterances"][0].text,
+        state["utterances"][0].id,
     )
-    problems += _check_utterance_param(
-        sources, "single_limit_cents", state["utterances"][0].text, "1000"
+    problems += _amount_source(
+        sources, "single_limit_cents", state["utterances"][0].text, "1000", ("分",)
     )
-    if "daily_limit_cents" in sources:
-        problems.append("daily_limit_cents must not declare a source (sentinel)")
-    return problems + _source_problems(draft, state["utterances"], state["reads"])
+    diagnostics = _none_diagnostics(sources, ("daily_limit_cents",))
+    return problems, diagnostics
 
 
 def _plan_state(text: str, utt_id: str, reads: list[ReadRecord], intents: tuple[str, ...]) -> dict:
@@ -261,12 +252,12 @@ def run_scenarios(llm) -> tuple[list[dict], int]:
     ]
     failed = 0
 
-    def record(name: str, fn, check: Callable[[object], list[str]] | None = None) -> None:
+    def record(name: str, fn, check=None) -> None:
         nonlocal failed
         started = time.perf_counter()
         try:
             result = fn()
-            problems = check(result) if check is not None else []
+            problems, diagnostics = check(result) if check is not None else ([], [])
             entry = {
                 "name": name,
                 "ok": not problems,
@@ -279,6 +270,8 @@ def run_scenarios(llm) -> tuple[list[dict], int]:
             if problems:
                 entry["problems"] = problems
                 failed += 1
+            if diagnostics:
+                entry["diagnostics"] = diagnostics
             records.append(entry)
         except Exception as exc:  # noqa: BLE001 — sanitized live evidence
             entry = {

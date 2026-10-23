@@ -118,9 +118,57 @@ def limits_plan() -> dict:
 
 def limits_plan_with_hint() -> dict:
     plan = limits_plan()
+    # hint on a NON-None param (card_id) → must fail (no hint provenance in live)
+    plan["steps"][0]["arg_sources"][0] = {
+        "param": "card_id",
+        "source": {"kind": "hint", "ref": "hnt_x"},
+    }
+    return plan
+
+
+def limits_plan_typed_card() -> dict:
+    plan = limits_plan()
+    # card_id is literally present in the utterance: "把crd_zs_1..." at [1, 9]
+    plan["steps"][0]["arg_sources"][0] = {
+        "param": "card_id",
+        "source": {"kind": "utterance", "ref": "utt_syn_t3", "span": [1, 9]},
+    }
+    return plan
+
+
+def limits_plan_none_with_source() -> dict:
+    plan = limits_plan()
+    # daily_limit_cents=None still carries a read declaration; L2 ignores it → non-blocking
     plan["steps"][0]["arg_sources"].append(
-        {"param": "daily_limit_cents", "source": {"kind": "hint", "ref": "hnt_x"}}
+        {
+            "param": "daily_limit_cents",
+            "source": {"kind": "read", "ref": "src_syn_card", "pointer": "/cards/0/card_id"},
+        }
     )
+    return plan
+
+
+def limits_plan_wrong_pointer() -> dict:
+    plan = limits_plan()
+    # correct ref but pointer resolves to a different field's value ("ACTIVE" != "crd_zs_1")
+    plan["steps"][0]["arg_sources"][0] = {
+        "param": "card_id",
+        "source": {"kind": "read", "ref": "src_syn_card", "pointer": "/cards/0/status"},
+    }
+    return plan
+
+
+def transfer_plan_no_payee_source() -> dict:
+    plan = transfer_plan()
+    plan["steps"][0]["arg_sources"] = [
+        s for s in plan["steps"][0]["arg_sources"] if s["param"] != "payee_id"
+    ]
+    return plan
+
+
+def limits_plan_wrong_span() -> dict:
+    plan = limits_plan_typed_card()
+    plan["steps"][0]["arg_sources"][0]["source"]["span"] = [2, 9]  # "rd_zs_1" != "crd_zs_1"
     return plan
 
 
@@ -187,7 +235,70 @@ def test_run_scenarios_catches_unprovided_hint():
     assert exit_code == 1
     limits_record = next(r for r in records if r["name"] == "plan:limits")
     assert limits_record["ok"] is False
-    assert any("unexpected source kind hint" in p for p in limits_record["problems"])
+    assert any("hint" in p for p in limits_record["problems"])
+
+
+def test_limits_typed_card_id_passes():
+    responses = valid_responses()
+    responses[4] = tool_response("submit_action_plan", limits_plan_typed_card())
+    scripted = ScriptedLLM(responses)
+    records, exit_code = run(scripted)
+    assert exit_code == 0
+
+
+def test_read_wrong_pointer_value_fails():
+    responses = valid_responses()
+    responses[4] = tool_response("submit_action_plan", limits_plan_wrong_pointer())
+    scripted = ScriptedLLM(responses)
+    records, exit_code = run(scripted)
+    assert exit_code == 1
+    limits_record = next(r for r in records if r["name"] == "plan:limits")
+    assert any("read value" in p for p in limits_record["problems"])
+
+
+def test_none_param_with_source_is_ignored():
+    responses = valid_responses()
+    responses[4] = tool_response("submit_action_plan", limits_plan_none_with_source())
+    scripted = ScriptedLLM(responses)
+    records, exit_code = run(scripted)
+    assert exit_code == 0
+    limits_record = next(r for r in records if r["name"] == "plan:limits")
+    assert limits_record["ok"] is True
+    assert any("None source ignored" in d for d in limits_record.get("diagnostics", []))
+
+
+def test_non_null_param_without_source_fails():
+    responses = valid_responses()
+    responses[2] = tool_response("submit_action_plan", transfer_plan_no_payee_source())
+    scripted = ScriptedLLM(responses)
+    records, exit_code = run(scripted)
+    assert exit_code == 1
+    transfer_record = next(r for r in records if r["name"] == "plan:transfer")
+    assert any("payee_id has no source" in p for p in transfer_record["problems"])
+
+
+def test_entity_wrong_span_fails():
+    responses = valid_responses()
+    responses[4] = tool_response("submit_action_plan", limits_plan_wrong_span())
+    scripted = ScriptedLLM(responses)
+    records, exit_code = run(scripted)
+    assert exit_code == 1
+    limits_record = next(r for r in records if r["name"] == "plan:limits")
+    assert any("span slice" in p for p in limits_record["problems"])
+
+
+def test_amount_slices_accept_digits_with_unit():
+    # "800元" (span [4,8]) and "1000分" (span [16,21]) are valid amount slices.
+    transfer = transfer_plan()
+    transfer["steps"][0]["arg_sources"][2]["source"]["span"] = [4, 8]  # "800元"
+    limits = limits_plan()
+    limits["steps"][0]["arg_sources"][1]["source"]["span"] = [16, 21]  # "1000分"
+    responses = valid_responses()
+    responses[2] = tool_response("submit_action_plan", transfer)
+    responses[4] = tool_response("submit_action_plan", limits)
+    scripted = ScriptedLLM(responses)
+    records, exit_code = run(scripted)
+    assert exit_code == 0
 
 
 def test_run_scenarios_catches_wrong_amount_span():

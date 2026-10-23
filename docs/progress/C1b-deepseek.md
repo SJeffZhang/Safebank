@@ -154,13 +154,37 @@ plan:transfer 工具/金额/账户/对方正确，但金额来源 `span(5,7)` �
 6. **预算 transport 实测**：`test_budget_transport_enforces_hard_limit` 用底层计数 transport 证明第 9 请求抛
    `RuntimeError` 且不触底层；gather/plan 重试共享同一预算，超限明确 fail 不无限刷。
 
+## 修复轮 4（验收纠偏，2026-10-24）
+
+协调者真实 live 7 请求 exit1（旧证据 31 行保留）：仅 limits 失败——card_id 来源 kind=utterance 被上一轮
+「强制 read」校验拒绝、daily_limit_cents=None 带 read 来源也被拒。协调者核证：limits 合成原话本就含
+crd_zs_1；PRD §7.5 允许 typed 原话作为敏感实体来源（不要求 read 唯一）；冻结 L2 `provenance.run` 对
+`value is None` 直接 `trust=null` 并 `continue`（不消费该参数 arg_sources）；冻结 PlanBody 允许多余
+nullable 来源声明。故上一轮「必须 read / None 不得声明来源」是过严假阴性。本轮**核验收方法本身**并纠偏，
+先红测再修，不篡改旧证据、不为好看删响应：
+
+1. **实体来源可 read 或 typed**：`_entity_source` 接受 read（必须按**模型实际的 `source.pointer`** 解析且值
+   == 参数值，不再硬编码 pointer）或 typed 原话（真实 ref + span 切片 == entity id）；其他 kind/hint/action/
+   错 span/错 ref/错误字段值/无来源 → fail。红：旧 `_check_read_param` 硬编码 pointer 且强制 kind=read。
+2. **nullable None 与 L2 同语义**：None 参数不需要来源、附带声明按 L2 忽略并记**非阻塞 diagnostics**（不 fail、
+   不改模型返回 source、不当授权证据）；只有非 None 参数才逐值核来源。transfer 的 to_account_id/memo、
+   limits 的 daily_limit_cents 同规则；源质量检查只针对参与实际求值的声明。
+3. **回归**：合法 typed card ID 通过（`test_limits_typed_card_id_passes`）；同值 read 通过；同 kind 错 span /
+   错 pointer 字段值失败（`test_entity_wrong_span_fails`、`test_read_wrong_pointer_value_fails`）；
+   None 带来源不 fail（`test_none_param_with_source_is_ignored`，assert diagnostics）；空来源 / 伪 hint /
+   无来源非空值失败（`test_non_null_param_without_source_fails`、hint 移至非空 card_id）；
+   金额 "800"/"800元"/"1000分" 合法（`test_amount_slices_accept_digits_with_unit`）、"00" 拒。
+4. **gather 反馈顺序**：混合批参数错误反馈 ToolMessage 按原 tool_calls 顺序、每 id 恰一条（仍先整批校验、
+   一非法整批零执行）。`test_gather_mixed_valid_and_invalid_args_executes_none` 断言 tool_call_id 顺序
+   [call_0, call_1] 且跳过/错误内容各归其位。
+
 ## 退出命令与结果（本组件无 PG）
 
 | 命令 | 结果 |
 |---|---|
 | `make lint` | ruff check + format --check 通过（259 files formatted） |
-| `.venv/bin/pytest tests/agent -q` | `67 passed`（零 skip/xfail；live 单独 `python -m` 入口不混入） |
-| `make test` | `2176 passed, 529 skipped`（skip 为无 PG 配置项，非本组件范围） |
+| `.venv/bin/pytest tests/agent -q` | `73 passed`（零 skip/xfail；live 单独 `python -m` 入口不混入） |
+| `make test` | `2182 passed, 529 skipped`（skip 为无 PG 配置项，非本组件范围） |
 | `make contracts-check` | `PASS: contracts v1 match frozen schemas` |
 
 ## 未覆盖 / 待决（交协调者或后续组件）
@@ -170,8 +194,9 @@ plan:transfer 工具/金额/账户/对方正确，但金额来源 `span(5,7)` �
 - `gather` 的 `read_executor` 是显式端口（C1b 用 fake；C1c 接 L2 G2）。未接 gateway HTTP/路由/持久化。
 - live 仍未由本 worker 执行（不读 key/不跑 API）；协调者复跑 `python -m services.agent.app.llm.live`，
   失败 exit1、证据脱敏、硬预算 8（plan 默认一次 validation retry）。模型未含多模态 Flash、未开启思考。
-- 本组件只在**本地结构/引用一致性**层面做来源核验（L2 才是授权判定方）：live 语义校验不替 L2 授权，也不
-  另造生产金额/授权算术（分换算只按固定合成例）；derived 模板三场景明确拒绝，未来真实 derived 另验。
+- 本组件只在**本地结构/引用一致性**层面做来源核验（L2 才是授权判定方）：live 语义校验不替 L2 授权、不另造
+  生产金额/授权算术（分换算只按固定合成例）；基础 plan 语义不是授权器，read_executor fake 边界保留。
+
 
 
 

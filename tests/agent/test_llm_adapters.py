@@ -357,6 +357,12 @@ def test_gather_mixed_valid_and_invalid_args_executes_none():
     result = GatherAdapter(llm, executor)(plan_state(), ctx())
     assert executed == []
     assert len(result) == 0
+    # feedback ToolMessages keep the original tool_calls order, one per call id
+    second = body_of(scripted, 1)
+    tool_msgs = [m for m in second["messages"] if m["role"] == "tool"]
+    assert [m["tool_call_id"] for m in tool_msgs] == ["call_0", "call_1"]
+    assert "未执行" in tool_msgs[0]["content"]  # valid call skipped because batch is invalid
+    assert "参数无效" in tool_msgs[1]["content"]  # invalid call gets the sanitized error
 
 
 def test_plan_prompt_includes_reads_utterances_and_derived():
