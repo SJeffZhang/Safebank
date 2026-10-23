@@ -64,9 +64,18 @@ async def fetch_read(
         state = BankState.model_validate(
             await l3.snapshot({"customer_id": customer_id, "steps": [], "event_id": None})
         )
-        if expected is not None and (
-            dict(state.versions) != dict(expected.versions)
-            or state.clock_version != expected.clock_version
+        # The plan snapshot may include transfer counterparties that this read
+        # never touches. Every customer actually returned by the read snapshot
+        # must still be present and unchanged in the expected snapshot.
+        if customer_id not in state.versions or (
+            expected is not None
+            and (
+                any(
+                    expected.versions.get(id_) != version for id_, version in state.versions.items()
+                )
+                or state.clock_version != expected.clock_version
+                or state.sim_now != expected.sim_now
+            )
         ):
             raise GatewayError(
                 Code.DEPENDENCY_UNAVAILABLE, 503, message="consistent read unavailable"
@@ -104,7 +113,13 @@ async def fetch_read(
         raise GatewayError(code, exc.status, details=exc.details) from exc
     except (L3Error, ValidationError) as exc:
         raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503) from exc
-    if dict(state.versions) != dict(after.versions) or state.clock_version != after.clock_version:
+    # Bracketing snapshots have the same read scope: keep exact key/value
+    # equality here, including a missing/new key, plus the simulated clock.
+    if (
+        dict(state.versions) != dict(after.versions)
+        or state.clock_version != after.clock_version
+        or state.sim_now != after.sim_now
+    ):
         raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503, message="consistent read unavailable")
     return ReadEnvelope(
         data=data,

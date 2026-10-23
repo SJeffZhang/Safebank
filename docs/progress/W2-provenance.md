@@ -48,3 +48,30 @@
 新增：services/gateway/app/taint/{__init__,entities,records,text}.py；services/gateway/policies/{trust,injection_patterns}.yaml；tests/gateway/w2/{__init__,test_contract_entity,test_read,test_provenance,test_sources,test_derived,test_intent,test_predicates,test_llm_fields_ignored}.py；tests/gateway/w2/db/{conftest,test_read_ledger,test_saved_sources}.py；本进度文档。
 
 冻结文件未由 W2 修改；测试 fixture 的 `614ec9b` 为协调者单独同步的前置提交。提交前自审：只写 ctx.steps / provenance / intent / findings，没有 Decision 赋值、业务数据库写入、额外依赖或密钥文件。
+
+## 独立评审修复轮 1（1699091 之后）
+
+已全文读取协调者的 `docs/reviews/L2-W2-provenance.md`：规格 FAIL、质量 REQUEST_CHANGES，开放 2 P1 + 1 P2。本轮只修改 W2 所有权内的三项，**没有混入 W1 来源链 / W3 FORM 适配或 S1 同步**。
+
+### 修复内容与回归证据
+
+1. **P1 明确参数不可删除**：`_fields_match` 区分原作用域未指定（可以 KEEP）与明确指定后被计划改为 null（拒绝）。卡渠道 `online=False,atm=False` 不可仅保留 online；卡双限额同理。明确 amount_cents 也不能被旁边的 derived_template 标记覆盖。两项卡回归首次 `2 failed`；金额回归首次 `1 failed / 22 passed`，均实际复现后修复。合法完整参数和未指定保持的原有用例仍通过。
+2. **P1 非转账一对一授权**：每个 scope 按 ActionKind 形成单次可消费许可；`instruction_ids` 和当前闲置订阅集合展开为每实体一项。用完整二分匹配避免 scope 重用，也避免贪心匹配误拒“宽谓词 + 精确产品”这种存在完整配对的组合。产品 A/B、两卡、两条取消指令均覆盖“重复 A 遗漏 B”拒绝及合法反序正例；首次 `3 failed / 2 passed`。当前谓词重新求值一次后供匹配消费，不信历史候选列表，不给选购谓词增加购买次数。保留既有 X2 固定派生组合正例，并新增闲置集合 + 单独明确订阅的合法组合和缺项/重复反例。
+3. **P2 读取实际客户范围**：读取快照必须包含 caller customer 的版本；与计划 expected 比较时，要求读取实际出现的每个客户都在 expected 中且版本相等，忽略只存在于计划、未参与该次读取的对方客户键。读取前后仍要求整个版本键集合和值严格相同，且 clock_version / sim_now 相同。稳定 `{cus_a:0}` 对 `{cus_a:0,cus_b:0}` 首次实际 `1 failed / 14 passed`，修复后通过。owner 版本变化、owner 缺失、expected 缺失实际读取客户、夹读缺键/增键/改值、expected 时钟变化和夹读时钟变化均继续拒绝 503。
+
+新增 `tests/gateway/w2/test_review_round1.py` 共 23 项回归；使用现有冻结契约、已解析步骤 fixture 与 FakeL3 validating transport，不声称完成真实订阅/理财后端联调。生产仅改 `app/api/tools.py`、`app/pipeline/intent.py`；另更新本进度文档。没有修改 EvalContext、schema、契约、bankcore、L3、表/迁移、注册表、依赖或 Decision 逻辑。
+
+### 本轮实际命令结果
+
+- 红阶段：两项卡删除失败、三项重复授权失败、稳定不同客户范围读取失败，以及明确金额被模板覆盖失败，均见上述具体计数；先复现后修复。
+- 分组件：`pytest test_review_round1.py test_intent.py` 12 passed；加入一对一匹配后关联 intent/predicate/derived 20 passed；读取范围修复后 review/read 21 passed；合法谓词与派生组合阶段关联测试 25 passed。
+- 首次完整退出停在 lint：新增测试的循环闭包 B023 与本地 import 排序；限定新测试修复后重跑。未将该次失败算通过。
+- **最后一轮（最终代码、同步 main 之前）**：`make lint` 通过，162 files already formatted；`make test-gateway` **142 passed / 3 skipped / 1 xfailed**；`make test-gateway-db` **17 passed**；`make test` **261 passed / 51 skipped / 1 xfailed**；`make test-w2` **81 passed / 1 xfailed**。五项命令连续执行 exit 0，3 项 W2 真 PG 测试实际执行。
+- memo 缺 `MEMO_SENSITIVE_CONTENT` 的严格 xfail 仍然是**未完成要求**；S2/S3 与真实 W1/W3 联测等此前限制仍保留，没有宣称 W2 全验收。
+
+### 跨 owner 最小语义方案（协调者已裁定，留待独立组件）
+
+- **A 路径**：scope_ids 保持本次已加载 ACTIVE utterance IDs，授权单元身份与 hint/action 的源记录 ID 分开；W2 后续从这些 DB utterances 的 kind/source_id/parent_ids 核源链。必须 `source.used_by == 本次 adopted utterance.id`，同 sid/customer/epoch、有效期和 ACTIVE 条件成立。未采纳源不能使用；绝不能接受任意 used_by，也不能仅把 scope_ids 当 hint ID 查。
+- **F direct FORM**：只有 `origin=app_form` 的受信适配可使用已核验 act IDs 作为内部 ref/utterance_ids，statuses 对应 ACTIVE，scope_ids 为这些表单动作；source.used_by 仅允许空或同 plan。W3 使用 W1 的 scope_from_form 统一生成完整转账/周期作用域，不只填写 fields。A 令牌不能借该适配绕过 utts。
+- 上述来源链与 FORM 修复按协调者要求**另做独立后续集成组件**，本轮代码保持原状，未用宽松放行掩盖跨分支错配。
+- main 已有 S1 PR #4，但协调者最新要求本轮提交后冻结工作树/git，待其亲自复跑和原评审读取后再通知同步；当前没有 merge/cherry-pick 新 main。

@@ -147,44 +147,36 @@ class IntentStage(Stage):
                         for scope in scopes
                     ):
                         self._reject(ctx, Code.INTENT_SCOPE_EXCEEDED, step.step_id)
-            else:
-                matching = [s for s in scopes if step.action_kind in s.action_kinds]
-                if not any(self._fields_match(ctx, step, s.fields) for s in matching):
-                    self._reject(ctx, Code.INTENT_SCOPE_EXCEEDED, step.step_id)
         if proposed != expected or proposed_schedules != expected_schedules:
             # Exact equality prevents duplicate transfers, mismatched pairings,
             # source-account substitution and silently dropping a requested leg.
             self._reject(ctx, Code.INTENT_SCOPE_EXCEEDED)
-        await self._predicates(ctx, scopes, state)
+        targets = await self._predicates(ctx, scopes, state)
+        permits = self._non_transfer_permits(ctx, scopes, targets)
+        candidates = [s for s in ctx.steps if s.tool not in ("transfer", "schedule_transfer")]
+        if not self._match_permits(ctx, candidates, permits, targets):
+            self._reject(ctx, Code.INTENT_SCOPE_EXCEEDED)
 
     @staticmethod
-    def _fields_match(ctx, step, fields):
+    def _fields_match(ctx, step, fields, targets):
         for param in policy(step.tool).sensitive_params:
             value = step.args.get(param)
             if value is None:
-                continue
-            if param == "instruction_id" and "instruction_ids" in fields:
-                if value not in fields["instruction_ids"]:
+                if fields.get(param) is not None:
                     return False
-            elif (
+                continue
+            if (
                 param == "product_id"
                 and "product_id" not in fields
-                and fields.get("predicates", {}).get("robust_products")
+                and "robust_products" in fields.get("predicates", {})
             ):
-                continue  # recomputed independently below, never trust these IDs
+                if value not in targets.get("robust_products", set()):
+                    return False
             elif (
-                param == "card_id"
-                and "card_id" not in fields
-                and fields.get("predicates", {}).get("suspicious_cards")
+                param == "amount_cents"
+                and "amount_cents" not in fields
+                and fields.get("derived_template")
             ):
-                continue
-            elif (
-                param == "instruction_id"
-                and "instruction_id" not in fields
-                and fields.get("predicates", {}).get("idle_subscriptions")
-            ):
-                continue
-            elif param == "amount_cents" and fields.get("derived_template"):
                 if not IntentStage._derived_verified(ctx, step, fields["derived_template"]):
                     return False
             elif type(fields.get(param)) is not type(value) or fields[param] != value:
@@ -203,6 +195,7 @@ class IntentStage(Stage):
 
     async def _predicates(self, ctx, scopes, state):
         names = {p for scope in scopes for p in scope.fields.get("predicates", {})}
+        targets = {}
         if "idle_subscriptions" in names:
             data = await self._read(ctx, state, "detect_subscriptions", {"lookback_days": 180})
             allowed = {
@@ -210,11 +203,7 @@ class IntentStage(Stage):
                 for x in data["items"]
                 if x["is_idle"] and x.get("instruction_id")
             }
-            actual = {
-                s.args["instruction_id"] for s in ctx.steps if s.tool == "cancel_subscription"
-            }
-            if actual != allowed:
-                self._reject(ctx, Code.INTENT_SCOPE_EXCEEDED)
+            targets["idle_subscriptions"] = allowed
         if "robust_products" in names:
             customer = state.customers.get(ctx.customer_id)
             if (
@@ -231,12 +220,7 @@ class IntentStage(Stage):
                     for p in state.products
                     if p.risk_label in ("稳健", "平衡") and p.risk_level <= customer.risk_level
                 }
-                if any(
-                    s.args["product_id"] not in allowed
-                    for s in ctx.steps
-                    if s.tool == "subscribe_product"
-                ):
-                    self._reject(ctx, Code.INTENT_SCOPE_EXCEEDED)
+                targets["robust_products"] = allowed
         if "suspicious_cards" in names:
             first = state.sim_now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
             start = (first - timedelta(days=1)).replace(day=1)
@@ -255,19 +239,83 @@ class IntentStage(Stage):
                 for x in data["items"]
                 if x["transaction"].get("card_id")
             }
-            actual = {s.args["card_id"] for s in ctx.steps if s.tool == "freeze_card"}
+            targets["suspicious_cards"] = allowed
             if not allowed:
                 self._reject(ctx, Code.INTENT_UNCLEAR)
-            elif len(allowed) != 1 or actual != allowed:
-                self._reject(ctx, Code.INTENT_SCOPE_EXCEEDED)
-        # Explicit list cancellation also uses equality: no partial completion.
+        return targets
+
+    @staticmethod
+    def _non_transfer_permits(ctx, scopes, targets):
+        """Expand set-valued predicates, without changing the saved authorization.
+
+        Every resulting permit is a single consumable action. A predicate can
+        choose its current entities, but never creates additional fund purchases.
+        """
+        permits = []
         for scope in scopes:
-            if "instruction_ids" in scope.fields:
-                actual = {
-                    s.args["instruction_id"] for s in ctx.steps if s.tool == "cancel_subscription"
-                }
-                if actual != set(scope.fields["instruction_ids"]):
-                    self._reject(ctx, Code.INTENT_SCOPE_EXCEEDED)
+            for kind in scope.action_kinds:
+                if kind in ("TRANSFER_EXTERNAL", "TRANSFER_SELF", "SCHEDULE_CREATE"):
+                    continue
+                fields = scope.fields
+                predicates = fields.get("predicates", {})
+                if kind in ("MANDATE_CANCEL", "SCHEDULE_CANCEL"):
+                    ids = None
+                    if "instruction_ids" in fields:
+                        ids = set(fields["instruction_ids"])
+                    if kind == "MANDATE_CANCEL" and "idle_subscriptions" in predicates:
+                        current = targets.get("idle_subscriptions", set())
+                        if ids is not None and ids != current:
+                            IntentStage._reject(ctx, Code.INTENT_SCOPE_EXCEEDED)
+                        ids = current
+                    if ids is not None:
+                        permits.extend(
+                            (kind, fields | {"instruction_id": id_}) for id_ in sorted(ids)
+                        )
+                        continue
+                if kind == "CARD_FREEZE" and "suspicious_cards" in predicates:
+                    current = targets.get("suspicious_cards", set())
+                    chosen = fields.get("card_id")
+                    if chosen is None and len(current) == 1:
+                        chosen = next(iter(current))
+                    if chosen is None or chosen not in current:
+                        IntentStage._reject(ctx, Code.INTENT_SCOPE_EXCEEDED)
+                        continue
+                    fields = fields | {"card_id": chosen}
+                permits.append((kind, fields))
+        return permits
+
+    @staticmethod
+    def _match_permits(ctx, steps, permits, targets):
+        """Find a complete one-to-one matching, including overlapping predicates.
+
+        An augmenting path avoids the greedy error where a broad predicate takes
+        the only step that could satisfy a separate, exact product permission.
+        """
+        if len(steps) != len(permits):
+            return False
+        edges = [
+            [
+                i
+                for i, (kind, fields) in enumerate(permits)
+                if step.action_kind == kind
+                and IntentStage._fields_match(ctx, step, fields, targets)
+            ]
+            for step in steps
+        ]
+        assigned = {}
+
+        def assign(step_index, seen):
+            for permit_index in edges[step_index]:
+                if permit_index in seen:
+                    continue
+                seen.add(permit_index)
+                previous = assigned.get(permit_index)
+                if previous is None or assign(previous, seen):
+                    assigned[permit_index] = step_index
+                    return True
+            return False
+
+        return all(assign(index, set()) for index in range(len(steps)))
 
     @staticmethod
     async def _read(ctx, state, tool, args):
