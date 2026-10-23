@@ -122,3 +122,41 @@ CI仅在 `.github/workflows/checks.yml` 既有p1-postgres job新增 `make test-c
 范围保持仅R1/R2和对应回归；原W4分支继续不动。等待原独立review定点复审与协调者亲自复跑，不开PR、不push、不合并远端。修复SHA由后续本地记账记录。
 
 修复轮1实现SHA：`b8dd8edf06196fded205bbe665a7d9ff4d127053`（本地，未push）。提交后工作树干净，本条只记账并冻结等待复审。
+
+
+## 修复轮2：当前pool保护安装（2026-10-23）
+
+协调者在22d8e04完整复跑中得到真实失败：lint161文件、普通test356 passed/97 skipped、gateway127 passed/49 skipped、gateway-db17 passed均通过；customer-locks **1 failed / 60 passed（8.78s）**，None-checkin观察到dbapi=None但record_info仍保留active且lost=False的owner。其后shared-runtime因命令短路没有运行，不能计为通过。独立复审因额度错误未完成，当前没有APPROVE。
+
+本轮先保留原断言复跑：单项1 passed（2.54s），完整61 passed（9.88s），确认该失败与pool生命周期有关而非稳定单项失败。没有增加重试或删除断言。R1异常优先级、R2同参数幂等及所有活跃/等待请求重配保护均保留。
+
+### 根因与实际机制
+
+锁文件固定SQLAlchemy **2.1.6**。读取本地安装源码确认：`pool/impl.py:QueuePool.recreate()`用`_dispatch=self.dispatch`使dispose后的新pool继承原listener；`event/registry.py:_EventKey._key`只以`(id(target), identifier, fn_key)`索引，contains只判断该键存在。旧pool目标已释放，但继承dispatcher仍存活，会使原注册索引继续存在。一个新建的无关pool复用旧对象ID后，contains返回True，即使它自己的checkin列表没有保护函数；此前configure因此漏安装保护。
+
+独立无数据库诊断实际观察：dispose后旧pool的weakref已死，新pool `contains=False / actual=True`；创建/销毁候选engine时，第311个候选pool真实复用旧ID，得到 `contains=True / actual=False`。该实际ID复用是定位证据，不作为必须碰巧发生的测试断言。另一个保留大量disposed engine的初始长探针未出现不一致，后中断；不把它计为验收通过。
+
+最小生产修改只将配置时的`event.contains`检查换成当前`pool.dispatch.checkin`的实际成员检查。SQLAlchemy `_stored_in_collection`按listener collection的owner.ref区分，新pool collection即使事件索引键冲突仍可安装实际回调。dispose后已继承回调时也不再重复安装。仍只在配置期安装稳定每pool单dispatcher，不在dispatch过程中增删；没有新增连接或池，也没有改全局fixture或R2计数。
+
+### 两项确定性红绿
+
+- `test_stale_event_registry_cannot_skip_current_pool_protection`仅注入注册查询假阳性，实际pool、owner、invalidate、None checkin和后继owner都用真实PG；修复前准确复现`assert not record_info`失败（active=True/lost=False）。不把此查询注入称为自然ID碰撞。
+- `test_disposed_pool_inherited_dispatcher_is_not_installed_twice`真实dispose并重配同engine不同空闲max，修复前实际checkin有2个相同回调而预期1个。修复后实际提前close与新owner所有权均验证。
+
+生产改动前两项 **2 failed（2.03s）**；改动后连同原None-checkin项 **3 passed（4.61s）**。原None-checkin断言完整保留。
+
+### 修复轮2完整六退出（全部exit0）
+
+| 命令 | 实际结果 |
+|---|---|
+| make lint | All checks passed；161 files already formatted |
+| make test | 356 passed / 99 skipped，4.58s |
+| make test-gateway | 127 passed / 51 skipped，3.43s |
+| make test-gateway-db | 17 passed零skip，2.78s |
+| make test-customer-locks | **63 passed零skip，8.72s**（18参数/配置单测+45真实PG） |
+| make test-shared-runtime | **51 passed零skip，9.00s**；原ASGI取消测试仍有预期CancelledError traceback |
+| git diff --check | 通过 |
+
+两个普通目标的skip各增加2，对应新PG回归未在普通命令启用；专项全部启用，没有以skip或查询注入替代实际PG验证。全部数据库门禁仍用后台Docker CLI、显式PGDATA tmpfs夹具及随机临时PG；未运行up/down/test-p1，未触及数据卷。
+
+本轮只改`services/gateway/app/locks.py`、`tests/gateway/customer_locks/test_postgres.py`和本文。未改共享runtime、schemas、state、迁移、CI、Makefile或原W4；只读核实原feat/l2-execution仍为3856a4c。既有check-to-send窗口限制不变。等待协调者亲自复跑与独立只读复审；未获APPROVE，不推送、不建PR、不合并。提交SHA由后续记账记录。

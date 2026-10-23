@@ -36,7 +36,10 @@ def configure(db: AsyncEngine, max_executions: int) -> None:
     # anything on the candidate pool. Waiting requests count as users too.
     pool = db.sync_engine.pool
     new_slots = asyncio.Semaphore(max_executions)
-    if not event.contains(pool, "checkin", _premature_return):
+    # dispose() recreates a pool with inherited listeners. SQLAlchemy's event
+    # registry keys the original target by id(), which can later be reused by
+    # an unrelated pool. Only this pool's actual dispatcher proves protection.
+    if _premature_return not in pool.dispatch.checkin:
         # One stable dispatcher per pool lifetime: never mutate this shared
         # listener collection while another checkin may be suspended in I/O.
         event.listen(pool, "checkin", _premature_return)

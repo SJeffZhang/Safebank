@@ -537,6 +537,60 @@ def test_distinct_engines_keep_independent_pool_owners(gateway_db):
     asyncio.run(run())
 
 
+def test_stale_event_registry_cannot_skip_current_pool_protection(gateway_db, monkeypatch):
+    async def run():
+        db = engine(gateway_db.runtime_url, pool_size=1, max_overflow=0)
+        pool = db.sync_engine.pool
+        registered = event.contains
+
+        def stale_contains(target, name, callback):
+            # SQLAlchemy indexes registrations by id(target). A disposed pool's
+            # inherited dispatcher can outlive that target, whose id is reused.
+            if target is pool and name == "checkin" and callback is locks._premature_return:
+                return True
+            return registered(target, name, callback)
+
+        try:
+            with monkeypatch.context() as patch:
+                patch.setattr(event, "contains", stale_contains)
+                locks.configure(db, 2)
+            async with locks.customer_lock([cid()]) as owner:
+                record_info = (await owner.get_raw_connection()).record_info
+                await owner.invalidate()
+                assert not record_info
+                with pytest.raises(locks.LockOwnershipLost):
+                    await locks.assert_lock_owner(owner)
+            assert list(pool.dispatch.checkin).count(locks._premature_return) == 1
+            async with locks.customer_lock([cid()]) as successor:
+                await locks.assert_lock_owner(successor)
+        finally:
+            await db.dispose()
+
+    asyncio.run(run())
+
+
+def test_disposed_pool_inherited_dispatcher_is_not_installed_twice(gateway_db):
+    async def run():
+        db = engine(gateway_db.runtime_url, pool_size=1, max_overflow=0)
+        try:
+            locks.configure(db, 2)
+            await db.dispose()
+            # dispose recreates the pool with the existing dispatcher. Its event
+            # registry key still identifies the old pool, not the current one.
+            locks.configure(db, 3)
+            assert list(db.sync_engine.pool.dispatch.checkin).count(locks._premature_return) == 1
+            async with locks.customer_lock([cid()]) as owner:
+                await owner.close()
+                with pytest.raises(locks.LockOwnershipLost):
+                    await locks.assert_lock_owner(owner)
+            async with locks.customer_lock([cid()]) as successor:
+                await locks.assert_lock_owner(successor)
+        finally:
+            await db.dispose()
+
+    asyncio.run(run())
+
+
 def test_none_checkin_removes_record_owner_before_reuse(gateway_db):
     async def run():
         async with database(gateway_db) as db:
