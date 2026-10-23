@@ -66,3 +66,14 @@
 - FIRST_TRANSFER_TO_PAYEE 使用快照已有全历史transactions，不用ops_7d缺记录推断“从未”。
 - IRREVERSIBLE_STEP升红按PRD §7.7仅挂失/申购，不将工具展示用irreversible旗标一概当作升红条件。
 - 共享冻结缺口另见 wave1-shared-gaps.md；用户决定前不变更冻结区。
+
+### W4 启动时需确认
+
+- W1取消原话将ACTIVE→CANCELLED，保留EXECUTING/UNKNOWN计划与claims；执行终态消费不得尝试非法CANCELLED→CONSUMED，需在客户锁内按实际终态处理。
+- W3检查点3bcbe8e并非完成：G4/repo/replay仍未验收，拒绝wall时间仍待修；所有“拟定/约定”不等于代码已联通。
+- W3 resolved_steps当前带来源/metadata，W4重建领域steps须核对真实契约，不能直接传metadata给L3；跨模块未定之处先回报协调者。
+- S1集中runtime将注入settings，并需与W4收敛锁服务初始化接口；固定customer_lock(customer_ids)签名不变，创建资源只在集中生命周期。
+- 用户已批准受控共享依赖补缺；W4仍只修改原白名单，缺状态表/错误码/数据库字段必须列待决，由共享任务串行处理。
+
+- 环境纠正：原PG fixture镜像隐含VOLUME，虽未显式挂卷也可能创建并自动清理匿名卷；此前“未删任何卷”不能覆盖此隐式行为。S1改显式tmpfs，后续所有PG测试使用修正夹具；两个safebank持久卷保留。
+- W2对echoed新收款人+转出判TAINTED后，即使流水线DENY短路⑤–⑦，G4仍须按受污染指纹持久化24h cooldown；不得因workflow未运行漏掉。

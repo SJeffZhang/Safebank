@@ -42,7 +42,7 @@
 | 调研 | 开源项目元数据和 DeepSeek 官方信息已核实；评分/提交已从官网公开 JS 核实（docs/acceptance/official-v1.md）；竞品「明鉴」未核实 |
 | PRD | **`PRD.md` = v2.1 定稿**（1,764 行，§0–§16；三轮多 agent 审核 + 两次修订复核，决议 D1–D47 见 §0.5）。v1.2 与作废的 v2.0 草稿在 `docs/archive/`；审核报告在 `docs/reviews/` |
 | 代码 | **P1 完成并逐组件验收**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116项单元+33项真实PG通过，契约v1已冻结。分支 feat/l3-core，P1代码已提交并推送私有仓库（功能提交7fd7a26）；CI权限修复70dcabe已推送，远端unit与p1-postgres均通过（run 39929405919） |
-| L2 网关 | **W0 基础骨架已合入 main**（PR #2，merge e2e91db，2026-10-23；经 4 轮架构评审 + 1 次 CI 修复）。波次 1 已启动：W1/W2/W3 在独立 worktree 实现，W4 已建分支、等待并发槽位。计划 `docs/plans/L2-plan.md`，任务书 `docs/plans/briefs/` |
+| L2 网关 | **W0 基础骨架已合入 main**（PR #2，merge e2e91db，2026-10-23；经 4 轮架构评审 + 1 次 CI 修复）。波次 1 已启动：W1/W3已有待联调检查点，W2/W4与共享S1按槽位推进。计划 `docs/plans/L2-plan.md`，任务书 `docs/plans/briefs/` |
 | 前端 | **暂停**，用户亲自下令才开工（§2 第 13 条） |
 | 下一步 | L2 波次 1：W1 身份与原话、W2 读代理与来源、W3 预演·工作流·决策、W4 审批与执行，四路并行（见 §5「L2 进度」）。2026-10-23 起工作转到 Codex，交接说明见 `docs/handoff/CODEX-HANDOFF.md` |
 
@@ -221,6 +221,24 @@
 
 | 2026-10-23 | Codex（协调者） | 为保留未提交协调文档、便于后续main同步，准备在docs/codex-wave1-launch仅本地提交启动/共享缺口/S1/S2任务书与日志；diff --check已通过，无业务变更。后续随首个共享组件接受独立评审后推送，不直接推main。G2夹读版本竞争裁定DEPENDENCY_UNAVAILABLE 503，不能伪造无plan的STATE_CHANGED Decision；失败不得存source_ref。 |
 
+| 2026-10-23 | Codex（协调者） | 协调文档已本地提交28a0c21（docs/codex-wave1-launch），尚未推送。补W4接入清单：取消后的原话CANCELLED不得非法转CONSUMED；执行中/UNKNOWN claims持久保留；W3 metadata重建和锁初始化需联测。S1收到独立镜像tag要求，不覆盖共享栈镜像。所有进行中的worker自测均待协调者复跑，不以消息数字直接计验收。 |
+
+| 2026-10-23 | Codex（协调者） | S1组件2自报本地提交8e1874a（待协调者复跑）。S1核查原tests/gateway/db/conftest.py使用postgres镜像隐含VOLUME：即使不传-v也可能创建匿名卷并由--rm自动清理，故纠正此前“未删除任何卷”的过宽表述；已证实保留的是safebank_pg-bank/pg-agent两个持久卷。已让W1/W2暂停新PG启动，S1给fixture加显式tmpfs后由协调者同步；不主动清理任何已有匿名卷。W2报告TAINTED新目标24h冷静期在DENY短路时仍须由G4持久化，已登记W3联调清单。 |
+
+| 2026-10-23 | Codex（协调者） | S1给出tmpfs修正5b67a76，协调者检查diff后提取仅fixture两行为独立提交b514274，再cherry-pick到W1/W2形成614ec9b；其未提交业务改动未动，已通知恢复PG/git操作。S1原提交含依赖前序的报告，未整批搬入。正在亲自复跑tmpfs夹具既有17项PG门禁。W2自报检查点有1项memo敏感内容xfail，明确不算完整退出；将于修正fixture后复验。 |
+
+| 2026-10-23 | Codex（协调者） | S1本地交付060e0f4，协调者亲自复跑五条全部exit0：lint153 files；gateway95 passed/3 skipped（1.00s）；既有PG17 passed（2.19s）；全量214 passed/51 skipped（1.28s）；S1专项34 passed零跳过（4.40s，真实PG及7种独立Linux权限情形）。另root tmpfs夹具复验17 passed（2.76s）。已派独立只读review_s1对照PRD评审；初报P1双listener异常时cancel可能不执行Uvicorn shutdown，待完整报告后修，不开PR。W1交付本地检查点d9a1b56，协调者正在复跑；W4已派独立agent，原worktree先补tmpfs提交0705452。 |
+
+| 2026-10-23 | Codex（协调者） | S1独立评审FAIL/REQUEST_CHANGES：R1异常cancel跳过Uvicorn shutdown（P1），R2healthcheck随Compose root配置继续特权运行（P2）；报告记录docs/reviews/L2-S1-runtime.md。按receiving-code-review核对源码；另只构造DB池实测size5/overflow10，低于PRD≥18；W4发现execution_jobs主键plan_id与state硬编码id不符，claims也需CLAIMED→CONSUMED登记。进入S1修复轮1，不开PR。W1协调者复跑全部通过：lint163、gateway1510/11skip、PG17、全量1629/59skip、W1 1457零skip（6.44s），仍保留共享联调限制。W2检查点1699091自报含1xfail，待亲自复跑。 |
+
+| 2026-10-23 | Codex（协调者） | W4提出并核实必要持久字段：evaluations.view_json、otp_challenges.code_ciphertext、execution_jobs.authorization_evidence/deadline_cap_wall，汇总到wave1-migration-requirements.md，尚未改表/迁移。OTP按D5模拟短信同事务密文持久化，不为不存在的真实短信服务引入outbox；AEAD域分离与无歧义AAD，明文不进A/F/日志。W4发现EXECUTING禁止回退与L3明确STATE_CHANGED后的重新审批冲突，要求其停在独立组件检查点，待独立架构审查再实现G8。必要迁移将于四路待决汇总后、完整联调前串行实施，避免缺列下伪造通过。已派独立review_w1，S1原agent在修复轮1。 |
+
+| 2026-10-23 | Codex（协调者） | W2检查点1699091亲自复跑：lint161文件；gateway119 passed/3 skipped/1 xfail（1.65s）；PG17 passed（2.71s）；全量238 passed/51 skipped/1 xfail（1.95s）；W2 58 passed/1 xfail（2.81s）。memo黄码仍缺，xfail不算验收，不开PR。W1独立评审7项P1、FAIL/REQUEST_CHANGES，记录L2-W1-identity.md；协调者亲自复现否定/条件/事实句错误scope、分单位放大、来源默认错误、收款人子串错误，安排原agent修复轮1。查找fix-loop首次路径错误exit1，随后按references路径完整读取。W4报告过时probe仍断言审批NotImplementedError，交共享接线组件替换真实failclosed验收；未为过绿保留假实现。 |
+
+| 2026-10-23 | Codex（协调者） | 阅读真实L3 prepare/execute/reconcile与L2状态表，记录执行状态独立架构审查问题L2-execution-state-question.md：单个STATE_CHANGED不能直接证明无其他迟到提交，需核查attempt fence与重新审批证据，禁止给UNKNOWN通用回退边。核查CI实际文件checks.yml（初按ci.yml读取失败exit1后定位），要求S1增加gateway真实PG及shared-runtime/Linux目标，避免CI绿但漏组件门禁。 |
+
+| 2026-10-23 | Codex（协调者） | W4检查点3856a4c（实现8abc82b）亲自复跑五条命令：lint151文件通过；真实PG17 passed（4.76s）；W4 26 passed零skip（8.47s）；gateway 1 failed/81 passed/8 skipped（0.89s）；全量1 failed/200 passed/56 skipped（1.67s）。两失败均test_create_for_evaluation_is_not_implemented旧占位断言，当前缺依赖正确抛503而非NotImplementedError；需共享接线组件更新测试。G8/G5/UNKNOWN未实现，未开PR。已派独立review_execution_state审查迟到请求与重新审批协议，W4暂停实施。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
@@ -255,10 +273,10 @@ P0 准备阶段（决定后续一切）：
 | 状态 | 组件 | 分支 / PR | 任务书 |
 |---|---|---|---|
 | [x] | W0 基础骨架 | `feat/l2-foundation` / PR #2 已合并 | `docs/plans/briefs/W0-*.md`，评审 `docs/reviews/L2-W0-architecture.md` |
-| [ ] | W1 身份、会话与原话 | `feat/l2-identity`（实现中，未验收） | `docs/plans/briefs/W1-identity.md` |
+| [ ] | W1 身份、会话与原话 | `feat/l2-identity`（检查点d9a1b56，待共享联调） | `docs/plans/briefs/W1-identity.md` |
 | [ ] | W2 读代理、参数来源与污点 | `feat/l2-provenance`（实现中，未验收） | `docs/plans/briefs/W2-provenance.md` |
 | [ ] | W3 快照、预演、工作流、决策与 G4 | `feat/l2-decision`（检查点3bcbe8e，共享依赖阻塞） | `docs/plans/briefs/W3-decision.md` |
-| [ ] | W4 审批与执行 | `feat/l2-execution`（worktree 已建，排队） | `docs/plans/briefs/W4-execution.md` |
+| [ ] | W4 审批与执行 | `feat/l2-execution`（实现中，未验收） | `docs/plans/briefs/W4-execution.md` |
 | [ ] | 0002_wave1 迁移（波次 1 各任务提出的表 / 字段需求，由协调者串行追加） | — | 汇总各 `docs/progress/W*.md` 的「待决」 |
 | [ ] | W5 定时授权、通知、审计接口、D 接口 | 波次 2，任务书未写 | L2-plan §3 W5 |
 | [ ] | W6 网关层安全验收（A8、A1/A2/A3/A5） | 波次 2，任务书未写 | L2-plan §3 W6 |
