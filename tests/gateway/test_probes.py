@@ -6,6 +6,7 @@ from safebank_contracts.state import BankState
 from services.gateway.app import locks
 from services.gateway.app.approval import planview, service
 from services.gateway.app.evaluation import repo
+from services.gateway.app.errors import GatewayError
 from services.gateway.app.execution import replay
 from services.gateway.app.l3.client import L3Client
 from services.gateway.app.l3.fake import FakeL3
@@ -39,9 +40,10 @@ def test_cross_interface_placeholders_exist_probe_d():
         assert fn.__doc__
 
 
-def test_create_for_evaluation_is_not_implemented():
+def test_create_for_evaluation_fails_closed_when_unconfigured():
     async def run():
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(GatewayError) as exc:
             await service.create_for_evaluation(None, plan=None, evaluation=None, view=None)
+        assert exc.value.status == 503
 
     asyncio.run(run())
