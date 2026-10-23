@@ -8,6 +8,8 @@ never manufactures a success or an authorization verdict — that belongs to L2.
 
 from __future__ import annotations
 
+import math
+import re
 from typing import Any
 from urllib.parse import quote
 
@@ -34,6 +36,10 @@ from services.agent.app.graph.state import AgentContext
 
 _MAX_UTTERANCE_IDS = 100
 
+# L2 trace ids are generated ids like ``trc_<ulid>``; anything else is treated as unsafe
+# server text and omitted rather than persisted or surfaced.
+_TRACE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,256}$")
+
 
 class GatewayClient:
     def __init__(
@@ -48,13 +54,16 @@ class GatewayClient:
             raise ValueError("base_url is required")
         if not isinstance(service_token, str) or not service_token:
             raise ValueError("service_token is required")
-        if timeout <= 0:
-            raise ValueError("timeout must be positive")
+        try:
+            timeout = float(timeout)
+        except (TypeError, ValueError):
+            raise ValueError("timeout must be a finite positive number") from None
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("timeout must be a finite positive number")
         self._base_url = base_url.rstrip("/")
         self._service_token = service_token
-        self._client = http_client or httpx.Client(
-            timeout=httpx.Timeout(float(timeout)), follow_redirects=False
-        )
+        self._timeout = timeout
+        self._client = http_client or httpx.Client(follow_redirects=False)
 
     # -- read paths ---------------------------------------------------------
 
@@ -85,11 +94,11 @@ class GatewayClient:
 
     def read_tool(self, tool: str, args: dict, context: AgentContext) -> GatewayReadEnvelope:
         if tool not in READ_ARGS:
-            raise ValueError(f"unknown or non-read tool {tool!r}")
+            raise ValueError("unknown or non-read tool")
         try:
             validated_args = READ_ARGS[tool].model_validate(args).model_dump(mode="json")
-        except ValidationError as exc:
-            raise ValueError(f"invalid args for read tool {tool!r}") from exc
+        except ValidationError:
+            raise ValueError(f"invalid args for read tool {tool}") from None
         body = {"session_id": context.session_id, "args": validated_args}
         status, payload = self._call(
             "POST", f"/tools/read/{quote(tool, safe='')}", context, body=body
@@ -109,8 +118,8 @@ class GatewayClient:
         if not isinstance(draft, PlanDraft):
             try:
                 draft = PlanDraft.model_validate(draft)
-            except ValidationError as exc:
-                raise ValueError("invalid plan draft") from exc
+            except ValidationError:
+                raise ValueError("invalid plan draft") from None
         if draft.session_id != context.session_id:
             raise ValueError("draft.session_id does not match context.session_id")
         status, payload = self._call(
@@ -182,10 +191,16 @@ class GatewayClient:
         params: dict | None = None,
     ) -> tuple[int, Any]:
         url = f"{self._base_url}{path}"
+        headers = self._headers(context)
         try:
-            response = self._client.request(
-                method, url, params=params, json=body, headers=self._headers(context)
+            request = self._client.build_request(
+                method, url, params=params, json=body, headers=headers
             )
+            # Enforce a finite per-request timeout and disable redirects regardless of the
+            # injected client's defaults: a shared follow_redirects=True client must never
+            # forward X-Service-Token to a cross-host redirect target.
+            request.extensions["timeout"] = httpx.Timeout(self._timeout)
+            response = self._client.send(request, follow_redirects=False)
         except httpx.HTTPError:
             raise GatewayTransportError() from None
         status = response.status_code
@@ -212,19 +227,24 @@ class GatewayClient:
             code = Code(code_value)
         except ValueError:
             raise GatewayProtocolError(status) from None
-        details = error.get("details", {})
-        if details is None:
-            details = {}
-        if not isinstance(details, dict):
+        raw_details = error.get("details", {})
+        if raw_details is None:
+            raw_details = {}
+        if not isinstance(raw_details, dict):
             raise GatewayProtocolError(status)
+        # Keep only the route-relevant, wire-validated decision (from the model dump, not
+        # a raw copy of the server dict).  Any other server-supplied ``details`` keys are
+        # dropped so they cannot be persisted or logged as authoritative text.
         decision = None
-        if "decision" in details:
+        details: dict[str, Any] = {}
+        if "decision" in raw_details:
             try:
-                decision = GatewayDecision.model_validate(details["decision"])
+                decision = GatewayDecision.model_validate(raw_details["decision"])
             except ValidationError:
                 raise GatewayProtocolError(status) from None
+            details = {"decision": decision.model_dump(mode="json")}
         trace_id = error.get("trace_id", "")
-        if not isinstance(trace_id, str):
+        if not isinstance(trace_id, str) or not _TRACE_ID_RE.fullmatch(trace_id):
             trace_id = ""
         return GatewayResponseError(
             status=status, code=code, details=details, trace_id=trace_id, decision=decision

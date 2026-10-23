@@ -76,7 +76,7 @@ def test_utterance_full_wire_roundtrip():
     assert parsed.kind == "typed"
     assert parsed.text == "给王五转 800"
     assert parsed.parse_status == "SCOPED"
-    assert parsed.scope["action_kinds"] == ["TRANSFER_EXTERNAL"]
+    assert parsed.scope.action_kinds == ("TRANSFER_EXTERNAL",)
 
 
 def test_utterance_hint_and_action_null_text_accepted():
@@ -193,6 +193,70 @@ def test_decision_non_replan_finding_rejects_resolver():
         GatewayDecision.model_validate(decision(findings=[finding]))
 
 
+def test_decision_shadow_b1_is_recursive_gateway_decision():
+    with pytest.raises(ValidationError):
+        GatewayDecision.model_validate(decision(shadow_b1={"decision": "MAYBE", "risk": "ORANGE"}))
+
+
+def test_utterance_kind_is_open_string():
+    parsed = GatewayUtterance.model_validate(utterance("utt_a", kind="future_kind"))
+    assert parsed.kind == "future_kind"
+
+
+def test_utterance_parse_status_is_closed():
+    with pytest.raises(ValidationError):
+        GatewayUtterance.model_validate(utterance("utt_a", parse_status="GARBAGE"))
+
+
+def test_utterance_scope_transfer_amount_must_be_cents():
+    scope = {
+        "action_kinds": ["TRANSFER_EXTERNAL"],
+        "from_account_id": "acc_a",
+        "transfers": [{"target_fingerprint": "fp_1", "amount_cents": 1.5}],
+    }
+    with pytest.raises(ValidationError):
+        GatewayUtterance.model_validate(utterance("utt_a", scope=scope))
+
+
+def test_utterance_scope_transfer_roundtrips_legit_fields():
+    scope = {
+        "action_kinds": ["TRANSFER_EXTERNAL"],
+        "from_account_id": "acc_a",
+        "transfers": [
+            {"target_fingerprint": "fp_1", "amount_cents": 80000, "from_account_id": "acc_a"}
+        ],
+        "period": "ONCE",
+        "channel": "app",
+        "fields": {"alias": "王五"},
+    }
+    parsed = GatewayUtterance.model_validate(utterance("utt_a", scope=scope))
+    assert parsed.scope.transfers[0].amount_cents == 80000
+    assert parsed.scope.transfers[0].from_account_id == "acc_a"
+    assert parsed.scope.fields == {"alias": "王五"}
+
+
+def test_clarification_kind_is_closed():
+    with pytest.raises(ValidationError):
+        GatewayClarification.model_validate(
+            {
+                "id": "clr_1",
+                "kind": "GARBAGE",
+                "parent_utterance_ids": ["utt_a"],
+                "required_fields": ["payee_id"],
+                "partial_scope": {"action_kinds": []},
+                "candidates": [],
+                "expires_at_wall": "2026-10-24T00:10:00Z",
+            }
+        )
+
+
+def test_finding_code_is_closed():
+    with pytest.raises(ValidationError):
+        GatewayDecision.model_validate(
+            decision(findings=[{"code": "NOT_A_REAL_CODE", "effect": "INFO"}])
+        )
+
+
 def test_clarification_null_shape_is_rejected_but_handled_by_client():
     # The G21 wire value is ``{clarification: {...}|null}``; the model only validates the
     # non-null member.  The client turns the null member into ``None`` (see client tests).
@@ -204,7 +268,7 @@ def test_clarification_null_shape_is_rejected_but_handled_by_client():
                 "parent_utterance_ids": ["utt_a"],
                 "required_fields": ["payee_id"],
                 "prompt_template_id": "select_missing_slot",
-                "partial_scope": {},
+                "partial_scope": {"action_kinds": []},
                 "candidates": [
                     {
                         "field": "payee_id",

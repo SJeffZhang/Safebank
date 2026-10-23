@@ -25,6 +25,7 @@ class ScriptedGateway:
                 "url": str(request.url),
                 "headers": dict(request.headers),
                 "body": json.loads(request.content) if request.content else None,
+                "timeout": request.extensions.get("timeout"),
             }
         )
         response = self.responses.pop(0)

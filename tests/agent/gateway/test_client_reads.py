@@ -3,15 +3,32 @@
 from __future__ import annotations
 
 import pytest
+from safebank_contracts.tools import READ_ARGS
 
 from services.agent.app.gateway import GatewayClient
 from services.agent.app.gateway.errors import GatewayProtocolError
 from services.agent.app.gateway.wire import GatewayClarification, GatewayReadEnvelope
 from services.agent.app.graph.state import AgentContext
+from tests.agent.gateway.read_cases import READ_CASES
 from tests.agent.gateway.transport import ScriptedGateway, json_response
 
 SERVICE_TOKEN = "TEST_AGENT_SERVICE_TOKEN"
 SECRET = "TEST_ONLY_ASSISTANT_TOKEN_SECRET"
+
+_REQUIRED_ARG_TOOLS = [
+    tool
+    for tool in sorted(READ_ARGS)
+    if any(field.is_required() for field in READ_ARGS[tool].model_fields.values())
+]
+
+
+def _envelope(data: dict) -> dict:
+    return {
+        "data": data,
+        "source_ref": "src_1",
+        "versions": {},
+        "observed_at": "2026-10-24T00:00:00Z",
+    }
 
 
 def ctx(customer="cus_a", session="ses_a", token=SECRET) -> AgentContext:
@@ -126,7 +143,7 @@ def test_get_clarification_null_and_full():
         "parent_utterance_ids": ["utt_a"],
         "required_fields": ["payee_id"],
         "prompt_template_id": "select_missing_slot",
-        "partial_scope": {},
+        "partial_scope": {"action_kinds": []},
         "candidates": [
             {"field": "payee_id", "entity_id": "pye_b", "label": "王五", "source_ref": "src_1"}
         ],
@@ -202,3 +219,34 @@ def test_read_tool_malformed_result_data_is_protocol_error():
     client = GatewayClient("http://gw", SERVICE_TOKEN, http_client=transport.client)
     with pytest.raises(GatewayProtocolError):
         client.read_tool("get_accounts", {"history_days": 30}, ctx())
+
+
+@pytest.mark.parametrize("tool", sorted(READ_CASES))
+def test_read_tool_happy_all_18_tools(tool):
+    args, data = READ_CASES[tool]
+    transport = ScriptedGateway([json_response(200, _envelope(data))])
+    client = GatewayClient("http://gw", SERVICE_TOKEN, http_client=transport.client)
+    envelope = client.read_tool(tool, args, ctx())
+    assert isinstance(envelope, GatewayReadEnvelope)
+    assert envelope.data == data
+    assert envelope.source_ref == "src_1"
+
+
+@pytest.mark.parametrize("tool", sorted(READ_CASES))
+def test_read_tool_malformed_result_all_18_tools(tool):
+    args, data = READ_CASES[tool]
+    malformed = dict(data)
+    malformed.pop(next(iter(malformed)))  # every fixture lists a required field first
+    transport = ScriptedGateway([json_response(200, _envelope(malformed))])
+    client = GatewayClient("http://gw", SERVICE_TOKEN, http_client=transport.client)
+    with pytest.raises(GatewayProtocolError):
+        client.read_tool(tool, args, ctx())
+
+
+@pytest.mark.parametrize("tool", _REQUIRED_ARG_TOOLS)
+def test_read_tool_required_args_never_invented(tool):
+    transport = ScriptedGateway([])
+    client = GatewayClient("http://gw", SERVICE_TOKEN, http_client=transport.client)
+    with pytest.raises(ValueError):
+        client.read_tool(tool, {}, ctx())
+    assert transport.requests == []

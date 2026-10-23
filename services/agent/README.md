@@ -45,15 +45,20 @@ G20/G21/G2/G4/G8 的严格 HTTP/wire 边界。生产 HTTP 入口仍是 P0 探针
 ## C1c1 gateway 协议客户端（`services/agent/app/gateway/`）
 
 - `GatewayClient(base_url, service_token, *, http_client=None, timeout=10.0)`：A 服务令牌只进客户端
-  配置，assistant JWT 每次调用从 `AgentContext` 取；`follow_redirects=False`、有限 timeout、写/评估不
-  自动重试、不轮询 `UNKNOWN`、不新建 plan 代替 UNKNOWN。
+  配置，assistant JWT 每次调用从 `AgentContext` 取；每次调用经 `send(request, follow_redirects=False)`
+  + `request.extensions["timeout"]` 强制有限正超时与禁重定向（不信任注入 client 默认，构造器拒
+  NaN/Inf/0/负数 timeout）；写/评估不自动重试、不轮询 `UNKNOWN`、不新建 plan 代替 UNKNOWN。
 - 只读：`get_utterances`（G20，ids 精确匹配无重复/漏项/跨请求）、`get_clarification`（G21，null→None）、
   `read_tool`（G2，18 个 `READ_ARGS` 白名单，必填字段不补猜，结果经 `READ_RESULTS` 校验、原始 data 原样）。
 - 写：`evaluate`（G4，PlanDraft 原样 body，无 extra origin/auth，`session_id` 与 context 不符零 HTTP）、
   `execute`（G8，body 仅 `{request_id}`，200 复用冻结 `ExecutionResult`、202 `UnknownExecution`，均须
   `plan_id` 等于目标；409 `STATE_CHANGED`/`POLICY_CHANGED` 的 `details.decision` 完整保留且绑定原 plan）。
+- wire 严格：`decision`/`risk`/`parse_status`/clarification `kind`/finding `code` 闭集；`scope`/
+  `partial_scope`/replan-hint `scope` 为结构化 `NormalizedScope` mirror（transfer 金额严格 `Cents`，
+  `fields` free map）；`shadow_b1` 递归 `GatewayDecision | None`；`kind` 保持开放 `str`。
 - 错误三类 `GatewayResponseError`/`GatewayProtocolError`/`GatewayTransportError`（`category` 供 C1c2
-  路由；`__str__` 只含固定类别/状态/code，不回显凭证、原始 httpx 异常或服务端 message）。
+  路由；`__str__` 只含固定类别/状态/code，不回显凭证、原始 httpx 异常或服务端 message；`details` 只保留
+  wire 校验后的 `decision` 模型 dump，其余键丢弃；`trace_id` 只接受受限安全形状否则省略）。
 - 全部自动测试走 `httpx.MockTransport`（fake），**不构成真实 L1→L2→L3 联调**；G4/G8 当前仍是 L2 stub。
   错误路由、REPLAN 定向补读、typed/hint/action 语义与 `GatherAdapter.ReadExecutor` 桥接留 C1c2。
 

@@ -3,8 +3,9 @@
 Three fixed categories, none of which manufactures a success or a fund-failure verdict:
 
 - ``RESPONSE`` — a well-formed L2 error ``{error:{code,message,details,trace_id}}`` whose
-  ``code`` is a known frozen ``Code``; carries ``status`` / ``code`` / ``details`` (with
-  the wire-validated ``decision`` for ``STATE_CHANGED`` / ``POLICY_CHANGED``).
+  ``code`` is a known frozen ``Code``; carries ``status`` / ``code`` and the route-relevant
+  ``decision`` (wire-validated, with ``details`` holding only its model dump).  Other
+  server-supplied ``details`` keys and unsafe ``trace_id`` are dropped.
 - ``PROTOCOL`` — a response arrived but is not a valid gateway payload (non-JSON, 302,
   unknown code, malformed success/error shape).
 - ``TRANSPORT`` — no usable HTTP response (timeout, connection, DNS).  On ``execute`` this

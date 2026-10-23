@@ -6,23 +6,28 @@ only decide whether a payload is well-formed enough to route on.
 
 Strictness rules that matter for the security boundary:
 
-- ``decision`` / ``risk`` / finding ``effect`` are closed enums — an unknown value is a
-  protocol failure, never a success.
-- Financial amounts (cents, versions, clock versions) reject ``float`` / ``bool`` /
-  string coercion via the frozen ``safebank_contracts`` scalar types.
+- ``decision`` / ``risk`` / finding ``effect`` / ``parse_status`` / clarification ``kind``
+  and finding ``code`` are closed enums — an unknown value is a protocol failure, never a
+  success.
+- Financial amounts (cents, versions, clock versions, scope-transfer amounts) reject
+  ``float`` / ``bool`` / string coercion via the frozen ``safebank_contracts`` scalar types.
+- ``scope`` / ``partial_scope`` / replan-hint ``scope`` are a structured ``NormalizedScope``
+  mirror (``fields`` stays a free map per the real contract), so a float transfer amount is
+  rejected instead of passing through a free ``dict``.
 - A success ``Decision`` must bind its ``plan_id`` / ``evaluation_id`` / ``revision``;
-  a malformed or missing field fails validation.
-- Legitimate hint/action utterances may carry ``text=null`` and all wire fields; the
-  model preserves them without treating them as typed authorization (that distinction is
-  a downstream C1c2 routing concern).
+  ``shadow_b1`` is a recursive ``GatewayDecision | None`` (null for the agent caller).
+- Legitimate hint/action utterances may carry ``text=null``; ``kind`` is genuinely an open
+  ``str`` on the wire and is preserved as such (typed-vs-hint is a C1c2 routing concern).
 """
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import Field, StrictBool, StrictInt, model_validator
 from safebank_contracts.base import Cents, Contract
+from safebank_contracts.codes import Code
 from safebank_contracts.tools import Id
 
 _DECISION = Literal["ALLOW", "REQUIRE_APPROVAL", "REPLAN", "DENY"]
@@ -31,14 +36,49 @@ _EFFECT = Literal["DENY", "REPLAN", "RISK_YELLOW", "RISK_RED", "INFO"]
 _RESOLVER = Literal["agent", "user"]
 
 
+class GatewayParseStatus(StrEnum):
+    """Mirror of gateway ``ParseStatus`` (schemas/enums.py)."""
+
+    SCOPED = "SCOPED"
+    NO_WRITE = "NO_WRITE"
+    INTENT_UNCLEAR = "INTENT_UNCLEAR"
+    CLARIFYING = "CLARIFYING"
+
+
+class GatewayClarificationKind(StrEnum):
+    """Mirror of gateway ``ClarificationKind`` (schemas/enums.py)."""
+
+    SLOTS = "SLOTS"
+    FORM_REQUIRED = "FORM_REQUIRED"
+
+
+class GatewayScopeTransfer(Contract):
+    """Mirror of gateway ``ScopeTransfer``; ``amount_cents`` is strict ``Cents``."""
+
+    target_fingerprint: str
+    amount_cents: Cents
+    from_account_id: Id | None = None
+
+
+class GatewayNormalizedScope(Contract):
+    """Mirror of gateway ``NormalizedScope``; ``fields`` stays a free map."""
+
+    action_kinds: tuple[str, ...]
+    from_account_id: Id | None = None
+    transfers: tuple[GatewayScopeTransfer, ...] = ()
+    period: str | None = None
+    channel: str | None = None
+    fields: dict[str, Any] = {}
+
+
 class GatewayUtterance(Contract):
     """G20 item (gateway ``UtteranceRef``). ``text`` may be null for hint/action."""
 
     id: Id
     kind: str
     text: str | None = None
-    scope: dict[str, Any]
-    parse_status: str
+    scope: GatewayNormalizedScope
+    parse_status: GatewayParseStatus
     echoes_untrusted: StrictBool = False
     parent_ids: tuple[Id, ...] = ()
     clarification_id: Id | None = None
@@ -57,11 +97,11 @@ class GatewayClarification(Contract):
     """G21 clarification member (the client maps the ``null`` wrapper to ``None``)."""
 
     id: Id
-    kind: str
+    kind: GatewayClarificationKind
     parent_utterance_ids: tuple[Id, ...]
     required_fields: tuple[str, ...]
     prompt_template_id: str | None = None
-    partial_scope: dict[str, Any] = {}
+    partial_scope: GatewayNormalizedScope
     candidates: tuple[GatewayCandidate, ...] = ()
     expires_at_wall: str
 
@@ -77,7 +117,7 @@ class GatewayReadEnvelope(Contract):
 
 
 class GatewayFinding(Contract):
-    code: str
+    code: Code
     effect: _EFFECT
     step_id: Id | None = None
     resolver: _RESOLVER | None = None
@@ -97,7 +137,7 @@ class GatewayFinding(Contract):
 class GatewayReplanHint(Contract):
     id: Id
     label: str
-    scope: dict[str, Any]
+    scope: GatewayNormalizedScope
     expires_at_wall: str
 
 
@@ -149,7 +189,7 @@ class GatewayDecision(Contract):
     versions: dict[str, StrictInt] = {}
     clock_version: StrictInt = 0
     policy_version: str = ""
-    shadow_b1: dict[str, Any] | None = None
+    shadow_b1: GatewayDecision | None = None
 
 
 class UnknownExecution(Contract):
@@ -157,3 +197,6 @@ class UnknownExecution(Contract):
 
     plan_id: Id
     status: Literal["UNKNOWN"] = "UNKNOWN"
+
+
+GatewayDecision.model_rebuild()

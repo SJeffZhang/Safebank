@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import traceback
+
 import httpx
 import pytest
 
@@ -25,6 +27,32 @@ def ctx() -> AgentContext:
 
 def client_with(transport) -> GatewayClient:
     return GatewayClient("http://gw", SERVICE_TOKEN, http_client=transport.client)
+
+
+def full_decision(**overrides) -> dict:
+    body = {
+        "plan_id": "pln_a",
+        "evaluation_id": "evl_a",
+        "revision": 2,
+        "decision": "DENY",
+        "risk": "RED",
+        "approval_id": None,
+        "findings": [],
+        "replan_hints": [],
+        "preflight": {
+            "executable": True,
+            "steps": [],
+            "balances": [],
+            "holdings": [],
+            "scheduled_reserve_cents": 0,
+        },
+        "versions": {"cus_a": 2},
+        "clock_version": 2,
+        "policy_version": "sha256:abc",
+        "shadow_b1": None,
+    }
+    body.update(overrides)
+    return body
 
 
 def test_non_json_body_is_protocol_error_without_leak():
@@ -91,34 +119,153 @@ def test_malformed_decision_in_details_is_protocol_error():
 
 
 def test_well_formed_decision_in_details_is_preserved():
-    decision = {
-        "plan_id": "pln_a",
-        "evaluation_id": "evl_a",
-        "revision": 2,
-        "decision": "DENY",
-        "risk": "RED",
-        "approval_id": None,
-        "findings": [],
-        "replan_hints": [],
-        "preflight": {
-            "executable": True,
-            "steps": [],
-            "balances": [],
-            "holdings": [],
-            "scheduled_reserve_cents": 0,
-        },
-        "versions": {"cus_a": 2},
-        "clock_version": 2,
-        "policy_version": "sha256:abc",
-        "shadow_b1": None,
-    }
     transport = ScriptedGateway(
-        [error_response(409, "POLICY_CHANGED", details={"decision": decision})]
+        [error_response(409, "POLICY_CHANGED", details={"decision": full_decision()})]
     )
     with pytest.raises(GatewayResponseError) as info:
         client_with(transport).get_utterances(("utt_a",), ctx())
     assert isinstance(info.value.decision, GatewayDecision)
     assert info.value.decision.revision == 2
+
+
+def test_error_details_only_keep_model_dumped_decision():
+    transport = ScriptedGateway(
+        [
+            error_response(
+                409, "STATE_CHANGED", details={"decision": full_decision(), "extra": SECRET}
+            )
+        ]
+    )
+    with pytest.raises(GatewayResponseError) as info:
+        client_with(transport).get_utterances(("utt_a",), ctx())
+    error = info.value
+    assert set(error.details.keys()) == {"decision"}
+    assert SECRET not in str(error.details)
+    assert error.decision.plan_id == "pln_a"
+
+
+def test_credentials_in_error_message_details_and_trace_are_dropped():
+    transport = ScriptedGateway(
+        [
+            httpx.Response(
+                500,
+                json={
+                    "error": {
+                        "code": "DEPENDENCY_UNAVAILABLE",
+                        "message": f"boom {SERVICE_TOKEN} {SECRET}",
+                        "details": {"extra": f"{SERVICE_TOKEN} {SECRET}"},
+                        "trace_id": f"{SERVICE_TOKEN} {SECRET}",
+                    }
+                },
+            )
+        ]
+    )
+    with pytest.raises(GatewayResponseError) as info:
+        client_with(transport).get_utterances(("utt_a",), ctx())
+    error = info.value
+    assert SERVICE_TOKEN not in str(error)
+    assert SECRET not in str(error)
+    assert SERVICE_TOKEN not in repr(error)
+    assert error.details == {}
+    assert error.trace_id == ""
+
+
+def test_trace_id_unsafe_shape_is_omitted_but_safe_shape_preserved():
+    unsafe = ScriptedGateway(
+        [error_response(500, "DEPENDENCY_UNAVAILABLE", trace_id="trc <script>")]
+    )
+    with pytest.raises(GatewayResponseError) as info:
+        client_with(unsafe).get_utterances(("utt_a",), ctx())
+    assert info.value.trace_id == ""
+
+    safe = ScriptedGateway([error_response(500, "DEPENDENCY_UNAVAILABLE", trace_id="trc_01JABC")])
+    with pytest.raises(GatewayResponseError) as info:
+        client_with(safe).get_utterances(("utt_a",), ctx())
+    assert info.value.trace_id == "trc_01JABC"
+
+
+def test_invalid_args_do_not_leak_raw_input_in_output():
+    transport = ScriptedGateway([])
+    client = client_with(transport)
+    with pytest.raises(ValueError) as info:
+        client.read_tool("get_accounts", {"history_days": 1.5, "memo_secret": "TOP_SECRET"}, ctx())
+    error = info.value
+    assert "TOP_SECRET" not in str(error)
+    assert "TOP_SECRET" not in repr(error)
+    # ``raise ... from None`` sets the cause to None so the raw Pydantic error is not
+    # rendered in the chained traceback.  (``__context__`` still references the original
+    # error internally — we do not assert on it; the security boundary is the rendered
+    # output and the cause, not interpreter-internal attributes.)
+    assert error.__cause__ is None
+    rendered = "".join(traceback.format_exception_only(type(error), error))
+    assert "TOP_SECRET" not in rendered
+    assert transport.requests == []
+
+
+def test_unknown_tool_does_not_echo_raw_input():
+    transport = ScriptedGateway([])
+    client = client_with(transport)
+    with pytest.raises(ValueError) as info:
+        client.read_tool("TOP_SECRET_TOOL", {}, ctx())
+    assert "TOP_SECRET_TOOL" not in str(info.value)
+    assert "TOP_SECRET_TOOL" not in repr(info.value)
+    assert transport.requests == []
+
+
+def test_injected_client_cross_host_redirect_is_not_followed():
+    seen = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        return httpx.Response(302, headers={"location": "http://evil.example/x"})
+
+    injected = httpx.Client(
+        transport=httpx.MockTransport(handler), follow_redirects=True, timeout=None
+    )
+    client = GatewayClient("http://gw", SERVICE_TOKEN, http_client=injected, timeout=5.0)
+    with pytest.raises(GatewayProtocolError):
+        client.get_utterances(("utt_a",), ctx())
+    assert seen == ["http://gw/sessions/ses_a/utterances?ids=utt_a"]
+
+
+def test_injected_client_timeout_is_enforced_via_request_extensions():
+    data = {
+        "accounts": [],
+        "daily_outflow_cents": 0,
+        "daily_outflow_limit_cents": 0,
+        "remaining_daily_outflow_cents": 0,
+        "balance_history": [],
+    }
+    transport = ScriptedGateway(
+        [
+            json_response(
+                200,
+                {
+                    "data": data,
+                    "source_ref": "src_1",
+                    "versions": {},
+                    "observed_at": "2026-10-24T00:00:00Z",
+                },
+            )
+        ]
+    )
+    injected = httpx.Client(
+        transport=httpx.MockTransport(transport), follow_redirects=True, timeout=None
+    )
+    client = GatewayClient("http://gw", SERVICE_TOKEN, http_client=injected, timeout=5.0)
+    client.read_tool("get_accounts", {"history_days": 30}, ctx())
+    timeout = transport.requests[0]["timeout"]
+    assert isinstance(timeout, httpx.Timeout)
+    assert timeout.connect == 5.0
+    assert timeout.read == 5.0
+    assert timeout.write == 5.0
+    assert timeout.pool == 5.0
+
+
+@pytest.mark.parametrize("bad", [0, -1, float("nan"), float("inf"), float("-inf"), "not-a-number"])
+def test_constructor_rejects_non_positive_or_non_finite_timeout(bad):
+    with pytest.raises(ValueError):
+        GatewayClient("http://gw", SERVICE_TOKEN, timeout=bad)
 
 
 def test_error_category_hierarchy_for_routing():
