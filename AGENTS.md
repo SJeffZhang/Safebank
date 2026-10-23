@@ -42,11 +42,11 @@
 | 调研 | 开源项目元数据和 DeepSeek 官方信息已核实；评分/提交已从官网公开 JS 核实（docs/acceptance/official-v1.md）；竞品「明鉴」未核实 |
 | PRD | **`PRD.md` = v2.1 定稿**（§0–§16；三轮多 agent 审核 + 两次修订复核，决议 D1–D47 见 §0.5；执行屏障增量约定见ADR-008）。v1.2 与作废的 v2.0 草稿在 `docs/archive/`；审核报告在 `docs/reviews/` |
 | 代码 | **P1 完成并逐组件验收**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116项单元+33项真实PG通过，契约v1已冻结。分支 feat/l3-core，P1代码已提交并推送私有仓库（功能提交7fd7a26）；CI权限修复70dcabe已推送，远端unit与p1-postgres均通过（run 39929405919） |
-| L2 网关 | main `0c2499d`（W1 PR #13、worker启动修复 PR #14 已合）；S3a `f7223d0`亲验七退出、同生产代码五全栈与W1真PG通过，最终独审APPROVE，准备PR；W2a `118603f`亲验六退出/234专项零skip，独审APPROVE，准备PR；W2b default reserve 等待S3a合入，W3/W4仅早期检查点。 |
-| L1 Agent | **用户2026-10-24确认立即并行**；C1a `ba02aa0`亲验22项/全量1959绿，恢复身份P0与空输入P2已独审关闭；原worker正补文案/拒绝路径断言P2。只内存saver与fake端口，不算真实LLM/L2/PG联调。 |
+| L2 网关 | main `eea02a6`；S3a PR #15（3508bd1）、W2a PR #16（53b7573）均亲验/独审/精确head四CI成功后已合。真实完整义务快照可用；W2b default reserve生产接线待实施；W3/W4仍为早期检查点。 |
+| L1 Agent | C1a PR #17已精确head四CI成功合并（eea02a6），图骨架/状态/身份绑定22项通过。仅内存saver与fake端口；下一组件C1b DeepSeek strict适配，C1c–e未实施。 |
 | 前端 | **暂停**，用户亲自下令才开工（§2 第 13 条） |
 | 协调状态 | **2026-10-24 Codex 同机接手**：实现与评审均由本机 Claude Code CLI（DeepSeek V4 Pro）无头 worker 完成，协调者只复跑、推送、开 PR、合并、记日志。接续计划 `docs/plans/L2-resume-2026-10-24.md`。本机 worktree 在 `../Fintech2026-wt/<名>`，`.secrets` 软链到与本机数据卷匹配的 W0 worktree 密钥 |
-| 下一步 | S3a、W2a准备逐组件PR；C1a完成小P2后复验/复审开PR；精确head四CI成功后合并，再做W2b及W3a→W4b→W3b→W4c；前端/BFF保持暂停。 |
+| 下一步 | 合并main跨组件回归 → W2b真实S3预留接线，与C1b DeepSeek strict适配并行；W2后按W3a→W4b→W3b→W4c；前端/BFF继续暂停。 |
 
 ### 已确认事实
 
@@ -291,8 +291,8 @@
 | 2026-10-23 | Codex（协调者） | W1 S1接线42c86f5亲自五退出全exit0：lint178、all1739/112skip（5.32s）、gateway1620/64skip（4.45s）、PG17（2.14s）、W1 1569零skip（21.25s）；原评审定向4 passed并APPROVE，真实客户锁与PIN路径仍开放。执行设计文档复核发现8.5 UNKNOWN重试与7.10矛盾P1及4项责任边界；协调者核对现有L3源码后按建议修正PRD和S1b任务书，待复核，未改业务。 |
 
 | 2026-10-23 | Codex（协调者） | S2同步main691cf88后独立评审发现UTC与上海同瞬间误拒绝（P1），原owner修复e25b140。协调者亲自四退出全部exit0：lint158、全量338/54skip（4.30s）、reserve110零skip（0.09s）、contracts PASS；原review_s2定点110 passed并APPROVE，R1关闭。新增docs/acceptance/L2-S2-reserve.md，准备单独base main PR；只交付纯预留组件，真实L3快照/其他窗口仍待S3，尚未远端CI或合并。 |
-
 | 2026-10-23 | Codex（协调者） | W2来源链269469b独立review_w2_lineage规格PASS/质量APPROVE，真实PG46+关联25通过，协调者五退出记录在L2-W2-lineage验收报告。按用户逐组件推送要求，推送feat/l2-provenance检查点留存；完整W2仍有memo严格xfail、S3与跨W1/W3联调缺口，不作为完整交付开合并PR。 |
+
 | 2026-10-23 | Codex（协调者） | PR #5精确head665f6b4的push/PR两套unit+p1-postgres四检查全部COMPLETED SUCCESS，执行gh pr merge 5 --merge --match-head-commit成功，merge a9d72cf49f518fbb2bd89d2e666f0d0e1196a4c9，14:26:59Z。fetch后协调分支merge origin/main成功，无冲突。S2纯函数组件完成，开始S1b串行共享实施；W2原owner独立启动自身来源链适配，跨真实W1和生产义务仍待后续。原execution_state文档复核5项全ADDRESSED/APPROVE，仅文档不算运行通过。W4a允许最小适配S1资源单测的fake Engine configure hook，不改共享生产代码、不扩大测试替身。 |
 
 | 2026-10-23 | Codex（协调者） | S1b worktree已先快进最新main a9d72cf，再纳入已评审协调文档97d5a33，派独立s1b_wave1_state实施0002与五类受控CAS；S2已合并，共享实施保持串行。准备S3a义务数据任务草稿，将存储/真实快照与后续读工具/领域写拆组件，要求增量迁移保留现有账本，当前未派发或改银行代码。 |
@@ -461,6 +461,19 @@
 
 | 2026-10-24 | Codex（协调者） | 已在S3a/W2各自保存最终独审与协调者验收文档（b342fd7、bc70e06），同步main0c2499d后逐项比对：services/packages/tests/Makefile/依赖/CI相对各已验业务head均零diff；仅协调文档与启动脚本同步。S3a全栈使用相同生产fd82290证据的范围已明确写入验收；W2a专项L3 fake及W2b未做边界已注明，不增加重复测试冒充新覆盖。准备diff/凭据扫描后逐组件推送PR。 |
 
+| 2026-10-24 | Codex（协调者） | S3a候选28文件、W2a候选38文件diffcheck与敏感路径/凭据模式扫描均无命中；推送S3a c10d827d5591befca9c1bfa73ca816f9e4d37c84并开base main PR #15，W2a 3b913172f297641e7d8021233a6e17e7b1b81aec开PR #16，均已附加本会话。PR明确W2b未做与L3 fake边界、S3a同生产全栈证据来源。新PR只作初次CI触发检查，不定时轮询，不在CI未完成时合并。 |
+
+| 2026-10-24 | Codex（协调者） | PR #15/#16仅初查时均四项IN_PROGRESS，未合并、不定时轮询。C1a原worker提交8ed1f7c，只改AgentInput文案、三身份拒绝测试respond/verify断言与错thread用例命名、进度；本协调者已亲看diff无业务逻辑变化，五退出正在复跑，并续接原89c4f3b6独审R-C1a-fix-r2。原worker简报漏提第三用例断言，但实际diff三用例均已补，按实际代码核对。 |
+
+| 2026-10-24 | Codex（协调者） | C1a 8ed1f7c亲自五退出全exit0：lint212、agent22零skip/xfail、test1959/461skip（6.06s）、contracts PASS、actionlint；日志/private/tmp/sbg-codex-c1a-r2-20261024。原独审R-C1a-fix-r2 8轮APPROVE无未闭项，文案/三拒绝计数/错thread真实路径均关闭，另跑22 passed。保存验收与独审ac911de，带入L1并行计划、W3/W4先决顺序及C1d输入边界义务，merge main后业务/测试/构建/依赖相对8ed1f7c零diff；18候选文件diffcheck/敏感扫描无命中，发布head4e4a7fc59899909619a6a468c2d7ae15e43e4d24，开并附加PR #17。仅初查CI触发，不定时轮询，C1b须C1a合入后才开工。 |
+
+| 2026-10-24 | Codex（协调者） | 用户告知CI完成；逐个校验PR #15 headc10d827、#16 head3b91317、#17 head4e4a7fc各四检查全部COMPLETED SUCCESS，并用Actions API确认两运行的head_sha与push/pull_request事件：15=40011028146/40011018708，16=40011045516/40011035969，17=40011458264/40011451337。随后逐个gh pr merge --merge --match-head-commit完整SHA成功：#15→3508bd1f58ed04ce946949e62b53fca4fc68d303（03:38:40+08），#16→53b75738f61afc6dd71dc79010df1a78b4db40a4（03:38:44+08），#17→eea02a669bf2379701d8e6bb5b077e5a2a26cf7a（03:38:48+08）。未跳过检查/改已验head。 |
+| 2026-10-24 | Codex（协调者） | main安全快进eea02a6前，全部协调WIP备份/private/tmp/sbg-main-before-15-17-ff-20261024并stash保留；恢复后补回远端独有旧W2来源链日志，逐行确认远端全部历史日志保留。S3a/C1a标完成，W2仅a完成，b尚未实施；准备合并main真实跨组件回归，前端/BFF暂停。 |
+
+| 2026-10-24 | Codex（协调者） | 已细化C1b-deepseek与W2b-reserve-integration任务书（尚未派发），固定最小组件/红绿/真实与fake边界。核查现有CI p1-postgres尚未跑test-w2；W2b明确授权只追加该一步及test-w2的OBLIGATIONS_DB_TESTS=1，确保后续真PG专项在CI运行，不改job名或放松门禁。读取不存在的tests/test_deepseek.py、contracts/llm.py与tests/conftest.py已确认非实际路径，后续沿用现有schema.py/probe与根conftest，不新造替代模块。合并main回归运行中。 |
+
+| 2026-10-24 | Codex（协调者） | 合并main eea02a6在干净main-baseline首次跨组件九退出全部exit0：setup78依赖、lint243、test2131/529skip（10.35s）、contracts PASS、W2 234零skip（9.01s）、obligations30零skip（4.85s，既有FK环warning）、gateway-db17（2.09s）、agent22零skip（0.22s）、actionlint。日志/private/tmp/sbg-main-15-17-regression-20261024；这是组合后真实PG专项，不称未跑的完整demo或新全栈通过。准备从此main派W2b与C1b独立组件，沿用现有W2/C1 worktree和原impl会话，无业务共享文件冲突。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
@@ -492,7 +505,8 @@ P0 准备阶段（决定后续一切）：
 
 ### L1 进度（用户2026-10-24授权并行）
 
-- [ ] C1a 图骨架与AgentState → C1b DeepSeek strict → C1c gateway客户端与路由 → C1d持久化/审批/服务 → C1e输出/卡片/回放。任务书 `docs/plans/briefs/C1-agent.md`，每个小组件独立门禁，前端/BFF暂停不变。
+- [x] C1a 图骨架与AgentState：PR #17已合eea02a6，22专项零skip、独审APPROVE、当前head四CI成功。
+- [ ] C1b DeepSeek strict → C1c gateway客户端与路由 → C1d持久化/审批/服务 → C1e输出/卡片/回放。任务书 `docs/plans/briefs/C1-agent.md`；每小组件独立门禁，前端/BFF暂停不变。
 
 ### L2 进度（Security Gateway 后端，计划 `docs/plans/L2-plan.md`）
 
@@ -503,7 +517,7 @@ P0 准备阶段（决定后续一切）：
 | [x] | S2 七天预留纯函数 | PR #5，merge `a9d72cf`；真实生产接入待S3 | `docs/acceptance/L2-S2-reserve.md` |
 | [x] | W4a 客户锁先决组件 | PR #7 merge d5ac9ed（六退出、独立评审及四CI全绿） | `docs/plans/briefs/W4a-customer-locks.md` |
 | [x] | W1 身份、会话与原话 | PR #13 已合并，merge `79dc943`；精确head `8dfdec1` push/PR两套四CI成功，五退出亲验与独立APPROVE已记录 | `docs/plans/briefs/W1-identity.md`；`W1-revocation-deferred.md` |
-| [ ] | W2 读代理、参数来源与污点 | W2a `118603f`亲验六退出（234专项零skip）、最终独审APPROVE，待PR；W2b待S3a合入 | `docs/plans/briefs/W2-real-integration.md` |
+| [ ] | W2 读代理、参数来源与污点 | W2a PR #16已合53b7573；234专项/独审/四CI通过；W2b实际预留接线待做，完整W2尚未交付 | `docs/plans/briefs/W2-real-integration.md` |
 | [ ] | W3 快照、预演、工作流、决策与 G4 | `feat/l2-decision`（检查点3bcbe8e，共享依赖阻塞） | `docs/plans/briefs/W3-decision.md` |
 | [ ] | W4 审批与执行 | `feat/l2-execution`（3856a4c部分检查点，G8待共享状态与真实依赖） | `docs/plans/briefs/W4-execution.md` |
 | [x] | S1b / 0002_wave1 迁移与受控状态 | PR #6已合并94e40fe（四CI成功，真实现有库升级与集成通过） | `docs/plans/briefs/S1b-wave1-state.md` |
@@ -511,7 +525,7 @@ P0 准备阶段（决定后续一切）：
 | [x] | S1e 孤儿job受控对账 | PR #9 merge `6815547`；独立APPROVE、亲自六退出/231专项及四CI全绿 | `docs/plans/briefs/S1e-orphan-jobs.md` |
 | [x] | S1d memo敏感内容黄级code | PR #10 merge `44ded2f`；亲自三退出/独立APPROVE/四CI全绿 | `docs/plans/briefs/S1d-memo-code.md` |
 | [x] | S1f G22条件挂载 | PR #12已四CI成功合并cca074b | `docs/plans/briefs/S1f-demo-route-mount.md`；`docs/acceptance/L2-S1f-demo-route.md` |
-| [ ] | S3a 真实完整义务数据 | `f7223d0`七退出绿、同生产五全栈/W1真PG通过、最终独审APPROVE，待PR与四CI | `docs/plans/briefs/S3a-obligations-data.md`；`S3a-model-proposal.md` |
+| [x] | S3a 真实完整义务数据 | PR #15已合3508bd1；七退出、同生产五全栈/W1真PG、独审与精确head四CI通过 | `docs/acceptance/L2-S3a-obligations-data.md` |
 | [ ] | W5 定时授权、通知、审计接口、D 接口 | 波次2，任务书已准备，待W4依赖门禁 | `docs/plans/briefs/W5-ops.md` |
 | [ ] | W6 网关层安全验收（A8、A1/A2/A3/A5） | 波次2，任务书已准备，待前序依赖门禁 | `docs/plans/briefs/W6-acceptance.md` |
 
@@ -531,7 +545,7 @@ P0 准备阶段（决定后续一切）：
 | `AGENTS.md` | 本文件 |
 | `packages/contracts/` | 已实现并冻结v1的三层共享 Pydantic 契约。**修改它就等于修改接口，必须同步三层并更新 PRD §6.2 与 §9** |
 | `packages/bankcore/` | 已实现P1的纯函数领域规则，L2 预演与 L3 执行共用 |
-| `services/{bank-backend,gateway,agent}/` | L3为真实P1服务；L1/L2仍是探针骨架 |
+| `services/{bank-backend,gateway,agent}/` | L3 P1与L2 W1/共享组件已合；L1图骨架C1a待PR #17四CI，尚无生产业务HTTP入口 |
 | `evaluation/` | 目录骨架，正常 / 攻击 / 绕过runner尚未实现 |
 | `docs/decisions/ADR-*.md` | 架构决策记录（ADR-001–007） |
 
