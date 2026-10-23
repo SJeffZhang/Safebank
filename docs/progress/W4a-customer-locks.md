@@ -160,3 +160,5 @@ CI仅在 `.github/workflows/checks.yml` 既有p1-postgres job新增 `make test-c
 两个普通目标的skip各增加2，对应新PG回归未在普通命令启用；专项全部启用，没有以skip或查询注入替代实际PG验证。全部数据库门禁仍用后台Docker CLI、显式PGDATA tmpfs夹具及随机临时PG；未运行up/down/test-p1，未触及数据卷。
 
 本轮只改`services/gateway/app/locks.py`、`tests/gateway/customer_locks/test_postgres.py`和本文。未改共享runtime、schemas、state、迁移、CI、Makefile或原W4；只读核实原feat/l2-execution仍为3856a4c。既有check-to-send窗口限制不变。等待协调者亲自复跑与独立只读复审；未获APPROVE，不推送、不建PR、不合并。提交SHA由后续记账记录。
+
+修复轮2实现SHA：`ccbcafe1b0b9a2b7f84efd00a42635dbb72cebff`（本地，未push）。本条仅记录实现SHA；工作冻结等待独立复审与协调者复跑。
