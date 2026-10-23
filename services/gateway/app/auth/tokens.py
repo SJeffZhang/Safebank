@@ -11,12 +11,15 @@ from __future__ import annotations
 import secrets
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import jwt
 from safebank_contracts.codes import Code
+from sqlalchemy.ext.asyncio import AsyncConnection
 
 from ..errors import GatewayError
 from ..schemas.enums import ServiceKind
+from ..schemas.identity import Caller
 
 ISSUER = "safebank-gateway"
 APP_AUDIENCE = "gateway-app"
@@ -89,6 +92,8 @@ def verify_jwt(
     except jwt.InvalidTokenError as exc:
         raise GatewayError(Code.UNAUTHENTICATED, 401) from exc
 
+    if any(type(payload.get(name)) is not int for name in ("exp", "nbf")):
+        raise GatewayError(Code.UNAUTHENTICATED, 401)
     aud = payload.get("aud")
     if not isinstance(aud, str) or aud != expected_aud:
         raise GatewayError(Code.UNAUTHENTICATED, 401, message="aud must match exactly")
@@ -146,3 +151,140 @@ def sign_jwt(
     if utts is not None:
         payload["utts"] = utts
     return jwt.encode(payload, private_key_pem, algorithm="EdDSA")
+
+
+async def issue_app(
+    conn: AsyncConnection,
+    private_key_pem: bytes,
+    customer_id: str,
+    now: datetime,
+) -> tuple[str, datetime]:
+    """Issue and persist a two-hour browser login; never attach a session id."""
+    return await _issue(
+        conn,
+        private_key_pem,
+        customer_id,
+        now,
+        aud=APP_AUDIENCE,
+        scope=["app", "approve"],
+        ttl=7200,
+    )
+
+
+async def issue_assistant(
+    conn: AsyncConnection,
+    private_key_pem: bytes,
+    customer_id: str,
+    sid: str,
+    ids: list[str],
+    now: datetime,
+    *,
+    expires_at: datetime | None = None,
+) -> tuple[str, datetime]:
+    """Bind only this registration's effective references; renewal has ids=[]."""
+    ttl = 600
+    if expires_at is not None:
+        ttl = min(ttl, int((expires_at - now).total_seconds()))
+    if ttl <= 0:
+        raise GatewayError(Code.UTTERANCE_EXPIRED, 409)
+    return await _issue(
+        conn,
+        private_key_pem,
+        customer_id,
+        now,
+        aud=ASSISTANT_AUDIENCE,
+        scope=["assistant"],
+        ttl=ttl,
+        sid=sid,
+        ids=ids,
+    )
+
+
+async def _issue(
+    conn: AsyncConnection,
+    private_key_pem: bytes,
+    customer_id: str,
+    now: datetime,
+    *,
+    aud: str,
+    scope: list[str],
+    ttl: int,
+    sid: str | None = None,
+    ids: list[str] | None = None,
+) -> tuple[str, datetime]:
+    from .. import tables as t
+
+    jti = f"jti-{secrets.token_hex(16)}"
+    expiry = datetime.fromtimestamp(int(now.timestamp()) + ttl, tz=now.tzinfo)
+    token = sign_jwt(
+        private_key_pem,
+        sub=customer_id,
+        aud=aud,
+        scope=scope,
+        sid=sid,
+        utts=ids,
+        jti=jti,
+        now=int(now.timestamp()),
+        ttl=ttl,
+    )
+    await conn.execute(
+        t.auth_sessions.insert().values(
+            jti=jti,
+            customer_id=customer_id,
+            created_at_wall=now,
+            expires_at_wall=expiry,
+        )
+    )
+    return token, expiry
+
+
+async def check_revocation(
+    conn: AsyncConnection,
+    caller: Caller,
+    *,
+    now: datetime | None = None,
+) -> None:
+    """Fail closed on missing/expired/revoked login or revoked/wrong-owner sid.
+
+    Shared auth dependency must invoke this after signature verification. W1
+    also calls it at its route boundary and from load_for_plan for defense in depth.
+    """
+    from sqlalchemy import select
+
+    from .. import tables as t
+
+    now = now or datetime.now(UTC)
+    if caller.customer_id is None:
+        return
+    row = (
+        (
+            await conn.execute(
+                select(t.auth_sessions).where(
+                    t.auth_sessions.c.jti == caller.jti,
+                    t.auth_sessions.c.customer_id == caller.customer_id,
+                )
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if row is None or row["revoked_at_wall"] is not None:
+        raise GatewayError(Code.UNAUTHENTICATED, 401)
+    if row["expires_at_wall"] <= now:
+        raise GatewayError(Code.TOKEN_EXPIRED, 401)
+    if caller.sid:
+        session = (
+            (
+                await conn.execute(
+                    select(t.sessions).where(
+                        t.sessions.c.id == caller.sid,
+                        t.sessions.c.customer_id == caller.customer_id,
+                        t.sessions.c.revoked_at_wall.is_(None),
+                    )
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if session is None:
+            raise GatewayError(Code.UNAUTHENTICATED, 401)
