@@ -16,13 +16,20 @@ final decision permits execution and never transitions back to a decision state.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from enum import StrEnum
 
 from safebank_contracts.codes import Code
 from sqlalchemy import Table
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .errors import GatewayError
-from .schemas.enums import ApprovalStatus, ExecutionJobStatus, PlanStatus, UtteranceStatus
+from .schemas.enums import (
+    ApprovalStatus,
+    ClarificationStatus,
+    ExecutionJobStatus,
+    PlanStatus,
+    UtteranceStatus,
+)
 
 PLAN_TRANSITIONS: dict[PlanStatus, frozenset[PlanStatus]] = {
     PlanStatus.EVALUATED: frozenset(
@@ -115,7 +122,28 @@ EXECUTION_JOB_TRANSITIONS: dict[ExecutionJobStatus, frozenset[ExecutionJobStatus
     ExecutionJobStatus.CANCELLED: frozenset(),
 }
 
+CLARIFICATION_TRANSITIONS: dict[ClarificationStatus, frozenset[ClarificationStatus]] = {
+    ClarificationStatus.OPEN: frozenset(
+        {ClarificationStatus.RESOLVED, ClarificationStatus.CANCELLED}
+    ),
+    ClarificationStatus.RESOLVED: frozenset(),
+    ClarificationStatus.CANCELLED: frozenset(),
+}
+
+
+class _ClaimStatus(StrEnum):
+    CLAIMED = "CLAIMED"
+    CONSUMED = "CONSUMED"
+
+
+CLAIM_TRANSITIONS: dict[_ClaimStatus, frozenset[_ClaimStatus]] = {
+    _ClaimStatus.CLAIMED: frozenset({_ClaimStatus.CONSUMED}),
+    _ClaimStatus.CONSUMED: frozenset(),
+}
+
 TRANSITIONS: dict[str, dict] = {
+    "authorization_claims": CLAIM_TRANSITIONS,
+    "pending_clarifications": CLARIFICATION_TRANSITIONS,
     "plans": PLAN_TRANSITIONS,
     "approvals": APPROVAL_TRANSITIONS,
     "utterances": UTTERANCE_TRANSITIONS,
@@ -144,6 +172,10 @@ async def transition(
     Every requested edge must be legal per ``TRANSITIONS[table.name]``; an
     illegal edge is a programming error and raises ``ValueError`` (not 409).
     """
+    primary_keys = list(table.primary_key.columns)
+    if len(primary_keys) != 1:
+        raise ValueError("status transitions require a single-column primary key")
+    primary_key = primary_keys[0]
     table_rules = TRANSITIONS.get(table.name)
     if table_rules is None:
         raise ValueError(f"no transition table for {table.name!r}")
@@ -154,9 +186,9 @@ async def transition(
             raise ValueError(f"illegal {table.name} transition {from_status} -> {to}")
     result = await conn.execute(
         table.update()
-        .where(table.c.id == id_, table.c.status.in_(from_list))
+        .where(primary_key == id_, table.c.status.in_(from_list))
         .values(status=to)
-        .returning(table.c.id)
+        .returning(primary_key)
     )
     if result.rowcount == 0:
         raise GatewayError(code, 409)

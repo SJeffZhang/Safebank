@@ -70,6 +70,10 @@ test-gateway:
 test-gateway-db:
 	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/db -q
 
+.PHONY: test-shared-runtime
+test-shared-runtime:
+	GATEWAY_DB_TESTS=1 GATEWAY_SECRET_TESTS=1 .venv/bin/pytest tests/gateway/shared_runtime -q -s
+
 .PHONY: test-reserve
 test-reserve:
 	.venv/bin/pytest tests/bankcore/test_reserve.py -q
