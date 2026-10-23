@@ -14,6 +14,7 @@ from safebank_contracts.codes import Code
 
 from services.gateway.app.errors import GatewayError
 from services.gateway.app.pipeline.provenance import ProvenanceStage
+from services.gateway.app.schemas.enums import FindingEffect
 from tests.bankcore.fixtures import NOW
 from tests.bankcore.obligations_fixtures import (
     raw_billing,
@@ -139,3 +140,92 @@ def test_fail_closed_on_unknown_reserve_target_account(monkeypatch):
     with pytest.raises(GatewayError) as exc:
         _trust(monkeypatch, state, 100, account_id="acc_missing")
     assert exc.value.code is Code.DEPENDENCY_UNAVAILABLE
+
+
+def _mixed_deny_ctx(steps):
+    ctx = authorized(context(steps))
+    return ctx
+
+
+def _records_with_deny_and_acct():
+    return {
+        "src_memo": {
+            "tool": "get_transactions",
+            "response": {"memo": "备注"},
+            "versions": {"cus_a": 0, "cus_b": 0},
+            "observed_at": NOW,
+            "untrusted_paths": ["/memo"],
+            "created_at_wall": datetime.now(UTC),
+        },
+        "src_bad": {
+            "tool": "get_transactions",
+            "response": {"memo": "任意"},
+            "versions": {"cus_a": 0, "cus_b": 0},
+            "observed_at": NOW,
+            "untrusted_paths": ["/memo"],
+            "created_at_wall": datetime.now(UTC),
+        },
+        "src_acct": {
+            "tool": "get_accounts",
+            "response": {"accounts": [{"id": "acc_a"}]},
+            "versions": {"cus_a": 0, "cus_b": 0},
+            "observed_at": NOW,
+            "untrusted_paths": [],
+            "created_at_wall": datetime.now(UTC),
+        },
+    }
+
+
+def test_in_loop_deny_survives_later_derived_reserve(monkeypatch):
+    # Step 1 adds a hard DENY from an untrusted memo; step 2's derived reserve on
+    # an obligations-less state must not raise 503 and hide that DENY.
+    t = step(payee_id="pye_b", memo="备注")
+    t.update(step_id="t1")
+    t["arg_sources"] = [source("memo", "read", ref="src_memo", pointer="/memo")]
+    s = step("subscribe_product", account_id="acc_a", product_id="prd_a", amount_cents=100)
+    s.update(step_id="s2")
+    s["arg_sources"] = [
+        source(
+            "amount_cents",
+            "derived",
+            template="available_less_7d_charges",
+            inputs=[{"kind": "read", "ref": "src_acct", "pointer": "/accounts/0/id"}],
+        )
+    ]
+    ctx = _mixed_deny_ctx([t, s])
+
+    async def records(*_a, **_k):
+        return _records_with_deny_and_acct()
+
+    monkeypatch.setattr("services.gateway.app.pipeline.provenance.load_records", records)
+    asyncio.run(ProvenanceStage().run(ctx))
+    assert any(
+        f.code is Code.TAINTED_SENSITIVE_ARG and f.effect is FindingEffect.DENY
+        for f in ctx.findings
+    )
+
+
+def test_same_step_param_order_deny_survives_derived_reserve(monkeypatch):
+    # account_id (earlier param) adds DENY before amount_cents (derived) runs.
+    s = step("subscribe_product", account_id="acc_a", product_id="prd_a", amount_cents=100)
+    s.update(step_id="s1")
+    s["arg_sources"] = [
+        source("account_id", "read", ref="src_bad", pointer="/memo"),
+        source(
+            "amount_cents",
+            "derived",
+            template="available_less_7d_charges",
+            inputs=[{"kind": "read", "ref": "src_acct", "pointer": "/accounts/0/id"}],
+        ),
+    ]
+    ctx = _mixed_deny_ctx([s])
+
+    async def records(*_a, **_k):
+        return _records_with_deny_and_acct()
+
+    monkeypatch.setattr("services.gateway.app.pipeline.provenance.load_records", records)
+    asyncio.run(ProvenanceStage().run(ctx))
+    assert any(
+        f.code is Code.TAINTED_SENSITIVE_ARG and f.effect is FindingEffect.DENY
+        for f in ctx.findings
+    )

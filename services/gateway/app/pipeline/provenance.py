@@ -252,6 +252,10 @@ class ProvenanceStage(Stage):
                     resolver=Resolver.USER,
                 )
                 return "unknown"
+            if ctx.has_hard_deny():
+                # An earlier step or parameter already produced a hard DENY; do not
+                # let a reserve dependency failure mask it. The DENY stays in findings.
+                return "unknown"
             expected = self._reserve_max_outflow(state, step.args.account_id)
             return "derived" if type(expected) is int and expected == value else "unknown"
         cancellations = {sid: s for sid, s in previous.items() if s.tool == "cancel_subscription"}

@@ -225,3 +225,29 @@ W3 适配输入需求已报协调者：复用 W1 `utterance/service.py:scope_fro
 
 - 本组件证明阶段③派生模板对唯一 `projected_shortfall` 的真实接线；**不宣称** W3 完整 Decision、W4 执行、demo/replay 或全六场景联调（make demo 仍实现前不可用）。
 - `cancelled_monthly_fees` 仍依赖真实持久化订阅视图（`state.subscriptions` 为 S3 原始 obligations 的派生视图）；未实现取消领域写，只验证来源与范围，不把未实现取消写说成执行通过。
+
+
+## W2b 评审修复轮 1（2026-10-24，REQUEST_CHANGES）
+
+按 `docs/reviews/L2-W2b-reserve-review.md` 只修两项并保留全部既有覆盖，未做 W3。
+
+### P1：循环内 DENY 不被派生预留 503 遮盖
+
+- `provenance.py` `_derived` 的 `available_less_7d_charges` 分支在调用 `_reserve_max_outflow` 前 `if ctx.has_hard_deny(): return "unknown"`（入口检查之外的循环内再检查）；DENY 已留在 findings，最终决策不降级为 REPLAN；无 hard deny 时缺数据仍 503。
+- 新增回归（`test_reserve_default.py`）：多步骤 `[transfer(memo untrusted→DENY) + subscribe(derived)]` 与同 step 参数顺序 `[account_id read→DENY + amount derived]`。先红：两测试实际 **2 failed**（抛 503 遮 DENY）；修复后 6 项 reserve 测试全绿。
+
+### P2：cancelled_monthly_fees 真实持久化视图来源验收
+
+- 扩展 `test_reserve_integration.py` 新增 `test_real_s3_cancelled_monthly_fees`：独立 bank tmpfs PG（TRUNCATE 重置）→ 真实 L3 HTTP snapshot → 默认 `ProvenanceStage`。MONTHLY 真实 persisted 账单/授权（video 3000 + music 1500）→ derived 4500；重复 cancel、来源缺失（ScheduledInstruction 非订阅）、跨账户（从 acc_zs_chk2）、目标非本人储蓄、非月度（新增 WEEKLY billing）均 unknown。临时 PG 内新增 WEEKLY billing/mandate 与第二个本人 CHECKING 账户用于隔离负例，未装长期卷数据。只证明来源/范围，未声称取消领域写或实际定时执行。
+
+### 实际退出命令（连续 exit 0）
+
+- `make lint`：**246 files already formatted**。
+- `make test-gateway`：**1890 passed / 471 skipped**（7.68s）。
+- `make test-gateway-db`：**17 passed**（2.01s）。
+- `make test`：**2141 passed / 531 skipped**（8.25s）。
+- `make test-w2`：**246 passed，零 skip/xfail**（10.94s）。
+- `make test-obligations`：**30 passed**（4.58s，既有 FK 环 SAWarning）。
+- `make contracts-check`：**PASS**。
+
+未改 Makefile/CI（本项无需变化）、未写独审报告/AGENTS/PRD/共享接口/L3/bankcore/迁移/deps；未 push/PR/merge/派 agent/全栈/业务卷操作；actionlint 由协调者另跑。
