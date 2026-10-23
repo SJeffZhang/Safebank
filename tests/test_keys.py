@@ -1,3 +1,4 @@
+import os
 import stat
 
 import pytest
@@ -23,10 +24,25 @@ def test_generation_is_private_isolated_and_idempotent(tmp_path):
     assert not generate(root)
     assert (root / "gateway.env").read_bytes() == before
     for item in root.iterdir():
-        assert stat.S_IMODE(item.stat().st_mode) == 0o600
+        expected = 0o644 if item.name == "jwt-public.pem" else 0o600
+        assert stat.S_IMODE(item.stat().st_mode) == expected
+    assert stat.S_IMODE((root / "jwt-private.pem").stat().st_mode) == 0o600
     for name in ("agent.env", "frontend.env"):
         assert "GATEWAY_SERVICE_TOKEN" not in (root / name).read_text()
         assert "DEMO_CONSOLE_TOKEN" not in (root / name).read_text()
+
+
+def test_existing_public_key_permissions_are_fixed_to_0644(tmp_path):
+    root = tmp_path / "secrets"
+    assert generate(root)
+    # Simulate a legacy 0600 public key written by an older keys.py.
+    os.chmod(root / "jwt-public.pem", 0o600)
+    assert stat.S_IMODE((root / "jwt-public.pem").stat().st_mode) == 0o600
+    assert not generate(root)
+    assert stat.S_IMODE((root / "jwt-public.pem").stat().st_mode) == 0o644
+    # Private key and other secrets stay 0600.
+    assert stat.S_IMODE((root / "jwt-private.pem").stat().st_mode) == 0o600
+    assert stat.S_IMODE((root / "gateway.env").stat().st_mode) == 0o600
 
 
 def test_partial_generation_cannot_silently_rotate(tmp_path):
