@@ -59,3 +59,9 @@ contracts-check:
 
 test-postgres-bootstrap:
 	$(PYTHON) -m scripts.postgres_bootstrap_acceptance
+
+test-gateway:
+	.venv/bin/pytest tests/gateway --ignore=tests/gateway/db -q
+
+test-gateway-db:
+	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/db -q

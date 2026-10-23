@@ -89,4 +89,17 @@ psycopg/psycopg-binary 仅 POC 使用，按其 LGPL 及附带依赖许可证保�
 | Mako | 1.4.3 | MIT | mako-1.4.3.dist-info/licenses/LICENSE |
 | MarkupSafe | 3.0.4 | BSD-3-Clause | markupsafe-3.0.4.dist-info/licenses/LICENSE.txt |
 
+## W0（L2 基础骨架）新增依赖
+
+2026-10-23 由 `uv add` 解析精确版本并写入 pyproject.toml / uv.lock；许可证从本机 .venv 已安装 wheel 的 dist-info LICENSE 原文核实（均为 MIT）。
+
+| 包 | 精确版本 | 许可证 | wheel 许可证路径 |
+|---|---|---|---|
+| pyjwt | 2.15.1 | MIT | pyjwt-2.15.1.dist-info/licenses/LICENSE |
+| argon2-cffi | 25.1.0 | MIT | argon2_cffi-25.1.0.dist-info/licenses/LICENSE |
+| argon2-cffi-bindings | 26.1.0 | MIT | argon2_cffi_bindings-26.1.0.dist-info/licenses/LICENSE |
+| pypinyin | 0.55.0 | MIT | pypinyin-0.55.0.dist-info/licenses/LICENSE.txt |
+
+用途：PyJWT 承载 EdDSA JWT 签验（W0 校验接口，W1 签发登录）；argon2-cffi 用于 W1 PIN 哈希；pypinyin 用于 W1 意图解析近音候选。W0 只实际使用 PyJWT，argon2-cffi 与 pypinyin 按 L2-plan §4 由 W0 一次性锁定，供 W1 使用。
+
 P1 银行业务代码自研。TigerBeetle 账本原则、Blnk 预演思想为文档参考，未引入其运行时或复制源码；具体映射与来源见 PRD §4。

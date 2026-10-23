@@ -61,6 +61,7 @@ services:
       timeout: 4s
       retries: 10
   gateway:
+    command: [python, -m, services.gateway.app.main]
     build: .
     image: safebank-p0:local
     environment:
