@@ -29,6 +29,7 @@ from services.agent.app.graph.state import (
 from services.agent.app.llm.client import load_api_key, make_llm
 from services.agent.app.llm.gather import GatherAdapter, ReadResult
 from services.agent.app.llm.plan import PlanAdapter
+from services.agent.app.llm.redact import resolve_pointer
 from services.agent.app.llm.schema import read_tools, understanding_tool
 from services.agent.app.llm.understand import UnderstandAdapter
 
@@ -82,33 +83,83 @@ def _draft_summary(draft: PlanDraft) -> dict:
     }
 
 
-def _check_transfer(draft: PlanDraft) -> list[str]:
-    problems = []
-    if not draft.steps or draft.steps[0].tool != "transfer":
-        return ["expected transfer step"]
-    args = draft.steps[0].args
-    if args.amount_cents != 80000:
-        problems.append(f"amount_cents={args.amount_cents}")
-    if args.payee_id != "pye_zs_ww":
-        problems.append(f"payee_id={args.payee_id}")
+def _source_problems(draft: PlanDraft, utterances: list, reads: list[ReadRecord]) -> list[str]:
+    problems: list[str] = []
+    utt_by_id = {utterance.id: utterance for utterance in utterances}
+    read_by_ref = {read.source_ref: read for read in reads}
+    step_ids: set[str] = set()
+    for step in draft.steps:
+        for source in step.arg_sources:
+            kind = source.source.kind
+            if kind in ("hint", "action"):
+                problems.append(f"unprovided source kind {kind}")
+            elif kind == "utterance":
+                ref = source.source.ref
+                if ref not in utt_by_id:
+                    problems.append(f"utterance ref {ref} not provided")
+                else:
+                    span = source.source.span
+                    length = len(utt_by_id[ref].text)
+                    if not (0 <= span[0] < span[1] <= length):
+                        problems.append(f"utterance span {span} out of bounds for {ref}")
+            elif kind == "read":
+                ref = source.source.ref
+                if ref not in read_by_ref:
+                    problems.append(f"read ref {ref} not provided")
+                else:
+                    try:
+                        resolve_pointer(read_by_ref[ref].data, source.source.pointer)
+                    except ValueError as exc:
+                        problems.append(f"read pointer {source.source.pointer} not in {ref}: {exc}")
+            elif kind == "step":
+                if source.source.ref not in step_ids:
+                    problems.append(f"step ref {source.source.ref} not defined earlier")
+        step_ids.add(step.step_id)
     return problems
 
 
-def _check_freeze(draft: PlanDraft) -> list[str]:
+def _amount_span_ok(draft: PlanDraft, text: str, digits: str) -> list[str]:
+    problems = []
+    for source in draft.steps[0].arg_sources:
+        if source.param == "amount_cents" and source.source.kind == "utterance":
+            span = source.source.span
+            if text[span[0] : span[1]] != digits:
+                problems.append(f"amount span {span} slice != {digits!r}")
+    return problems
+
+
+def _check_transfer(draft: PlanDraft, state: dict) -> list[str]:
+    if not draft.steps or draft.steps[0].tool != "transfer":
+        return ["expected transfer step"]
+    args = draft.steps[0].args
+    problems = []
+    if args.from_account_id != "acc_zs_chk":
+        problems.append(f"from_account_id={args.from_account_id}")
+    if args.payee_id != "pye_zs_ww":
+        problems.append(f"payee_id={args.payee_id}")
+    if args.to_account_id is not None:
+        problems.append(f"to_account_id={args.to_account_id}")
+    if args.amount_cents != 80000:
+        problems.append(f"amount_cents={args.amount_cents}")
+    problems += _amount_span_ok(draft, state["utterances"][0].text, "800")
+    return problems + _source_problems(draft, state["utterances"], state["reads"])
+
+
+def _check_freeze(draft: PlanDraft, state: dict) -> list[str]:
     if not draft.steps or draft.steps[0].tool != "freeze_card":
         return ["expected freeze_card step"]
     if draft.steps[0].args.card_id != "crd_zs_1":
         return [f"card_id={draft.steps[0].args.card_id}"]
-    return []
+    return _source_problems(draft, state["utterances"], state["reads"])
 
 
-def _check_limits(draft: PlanDraft) -> list[str]:
+def _check_limits(draft: PlanDraft, state: dict) -> list[str]:
     if not draft.steps or draft.steps[0].tool != "update_card_limits":
         return ["expected update_card_limits step"]
     args = draft.steps[0].args
     if args.card_id != "crd_zs_1" or args.single_limit_cents != 1000:
         return [f"card_id={args.card_id} single_limit_cents={args.single_limit_cents}"]
-    return []
+    return _source_problems(draft, state["utterances"], state["reads"])
 
 
 def _plan_state(text: str, utt_id: str, reads: list[ReadRecord], intents: tuple[str, ...]) -> dict:
@@ -127,7 +178,7 @@ def run_scenarios(llm) -> tuple[list[dict], int]:
         usage.append(dict(message.usage_metadata or {}))
 
     understand = UnderstandAdapter(llm, max_retries=0, observer=observer)
-    plan = PlanAdapter(llm, max_retries=0, observer=observer)
+    plan = PlanAdapter(llm, max_retries=1, observer=observer)
 
     records: list[dict] = [
         {
@@ -201,9 +252,21 @@ def run_scenarios(llm) -> tuple[list[dict], int]:
     limits_state = _plan_state(
         "把crd_zs_1的单笔限额降到1000分", "utt_syn_t3", [card_read], ("card",)
     )
-    record("plan:transfer", lambda: plan(transfer_state, _ctx()), _check_transfer)
-    record("plan:freeze", lambda: plan(freeze_state, _ctx()), _check_freeze)
-    record("plan:limits", lambda: plan(limits_state, _ctx()), _check_limits)
+    record(
+        "plan:transfer",
+        lambda: plan(transfer_state, _ctx()),
+        lambda draft: _check_transfer(draft, transfer_state),
+    )
+    record(
+        "plan:freeze",
+        lambda: plan(freeze_state, _ctx()),
+        lambda draft: _check_freeze(draft, freeze_state),
+    )
+    record(
+        "plan:limits",
+        lambda: plan(limits_state, _ctx()),
+        lambda draft: _check_limits(draft, limits_state),
+    )
 
     def fake_read(_name: str, _args: dict) -> ReadResult:
         return ReadResult(

@@ -358,3 +358,52 @@ def test_network_error_surfaces_without_retry():
     with pytest.raises(OpenAIConnectionError):
         UnderstandAdapter(llm)(understand_state(), ctx())
     assert len(scripted.requests) == 1
+
+
+def test_plan_prompt_explains_sentinels_and_source_tags():
+    scripted = ScriptedLLM([tool_response("submit_action_plan", strict_plan())])
+    llm = build(scripted)
+    PlanAdapter(llm)(plan_state(), ctx())
+    system = body_of(scripted, 0)["messages"][0]["content"]
+    assert "__NULL__" in system
+    assert "不存在 none" in system
+    assert "不可信数据" in system
+    assert "derived" in system
+
+
+def test_plan_retry_note_has_sanitized_locations():
+    bad = {"intents": [], "steps": [], "rationale": "x"}
+    scripted = ScriptedLLM(
+        [
+            tool_response("submit_action_plan", bad),
+            tool_response("submit_action_plan", strict_plan()),
+        ]
+    )
+    llm = build(scripted)
+    PlanAdapter(llm)(plan_state(), ctx())
+    human = body_of(scripted, 1)["messages"][1]["content"]
+    assert "too_short" in human
+    assert "steps" in human
+    assert "ValidationError" not in human
+
+
+def test_plan_strips_wall_from_reads_defense():
+    state = {
+        "customer_id": "cus_a",
+        "session_id": "ses_a",
+        "utterances": [UtteranceRef(id="utt_a", kind="typed", text="给王五转800元")],
+        "understanding": Understanding(intents=["transfer"], needs_write=True),
+        "reads": [
+            ReadRecord(
+                source_ref="src_a",
+                tool="get_accounts",
+                data={"accounts": [{"account_id": "acc_a", "leak_wall": "secret"}]},
+            )
+        ],
+    }
+    scripted = ScriptedLLM([tool_response("submit_action_plan", strict_plan())])
+    llm = build(scripted)
+    PlanAdapter(llm)(state, ctx())
+    human = body_of(scripted, 0)["messages"][1]["content"]
+    assert "leak_wall" not in human
+    assert "acc_a" in human

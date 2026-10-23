@@ -67,6 +67,14 @@ def limits_plan() -> dict:
     }
 
 
+def limits_plan_with_hint() -> dict:
+    plan = limits_plan()
+    plan["steps"][0]["arg_sources"] = [
+        {"param": "card_id", "source": {"kind": "hint", "ref": "hnt_x"}}
+    ]
+    return plan
+
+
 def run(scripted: ScriptedLLM) -> tuple[list[dict], int]:
     llm = make_llm(api_key="test-key", http_client=scripted.client)
     return run_scenarios(llm)
@@ -92,12 +100,21 @@ def test_run_scenarios_success_exits_zero():
 
 
 def test_run_scenarios_plan_validation_failure_exits_nonzero():
-    responses = valid_responses()
     bad = {"intents": [], "steps": [], "rationale": "x"}
-    responses[2] = tool_response("submit_action_plan", bad)
+    responses = [
+        tool_response("report_understanding", UNDERSTANDING),
+        tool_response("report_understanding", UNDERSTANDING),
+        tool_response("submit_action_plan", bad),  # transfer attempt 1
+        tool_response("submit_action_plan", bad),  # transfer validation retry
+        tool_response("submit_action_plan", freeze_plan()),
+        tool_response("submit_action_plan", limits_plan()),
+        tool_response("get_accounts", {"history_days": 7}),
+        text_response("done"),
+    ]
     scripted = ScriptedLLM(responses)
     records, exit_code = run(scripted)
     assert exit_code == 1
+    assert len(scripted.requests) == 8
     plan_records = [r for r in records if r["name"].startswith("plan:")]
     assert any(r["ok"] is False and "validation_errors" in r for r in plan_records)
 
@@ -111,6 +128,17 @@ def test_run_scenarios_semantic_assertion_fails_exit_nonzero():
     transfer_record = next(r for r in records if r["name"] == "plan:transfer")
     assert transfer_record["ok"] is False
     assert "problems" in transfer_record
+
+
+def test_run_scenarios_catches_unprovided_hint():
+    responses = valid_responses()
+    responses[4] = tool_response("submit_action_plan", limits_plan_with_hint())
+    scripted = ScriptedLLM(responses)
+    records, exit_code = run(scripted)
+    assert exit_code == 1
+    limits_record = next(r for r in records if r["name"] == "plan:limits")
+    assert limits_record["ok"] is False
+    assert any("unprovided source kind hint" in p for p in limits_record["problems"])
 
 
 def test_run_scenarios_budget_exhaustion_fails():
