@@ -41,7 +41,7 @@
 | 调研 | 开源项目元数据和 DeepSeek 官方信息已核实；评分/提交已从官网公开 JS 核实（docs/acceptance/official-v1.md）；竞品「明鉴」未核实 |
 | PRD | **`PRD.md` = v2.1 定稿**（1,764 行，§0–§16；三轮多 agent 审核 + 两次修订复核，决议 D1–D47 见 §0.5）。v1.2 与作废的 v2.0 草稿在 `docs/archive/`；审核报告在 `docs/reviews/` |
 | 代码 | P0 已开始：已 `git init -b main`，最小脚手架已建立：8 项独立测试、lint/format、6 容器健康及真实网络/凭证/DB角色验收通过；DeepSeek 330 次实验已记录，采用关闭思考回退。尚无银行业务实现 |
-| 下一步 | P0 工程基线验收完毕；私有仓库已创建，正在提交推送。随后按组件进入 P1（不得把骨架当业务完成） |
+| 下一步 | P0 工程基线验收完毕；已推送私有仓库 https://github.com/SJeffZhang/Safebank （首次提交 ffcfe23）。随后按组件进入 P1（不得把骨架当业务完成） |
 
 ### 已确认事实
 
@@ -115,6 +115,8 @@
 | 2026-10-23 | Codex | P0 组件 C03–C06 验收：8 个 pytest 全通过、ruff check/format 通过；6 容器 healthy；真实网络/服务令牌/DB CONNECT 隔离全通过。首次构建 DNS 失败，改锁文件URL+哈希校验离线 wheel；DB默认库CONNECT越权测试失败后已修复并复跑通过。DeepSeek 原始300次：E1 180/180、E3/E4/E5各30/30通过，E2开启思考+指定工具30/30 HTTP400；独立关闭思考回退30/30通过，LangChain适配器live一次成功。内存LangGraph中断/恢复与runtime context不写checkpoint测试通过，Postgres saver待对应组件验收。创建ADR-001/002/003、third-party、服务README与验收证据。V1官网JS核实40/30/30评分、必交物、PPT≤10分钟/视频可选≤5分钟，已同步PRD。未运行银行业务/并发/ASR测试（尚未实现）。 |
 
 | 2026-10-23 | Codex | P0 最终复验 make test/lint 通过（8 passed），make up + make test-integration 重跑通过。提交前65个暂存文件检查通过：未含实际API key、私钥、.env/.secrets/.wheels/.venv。已按用户授权创建 https://github.com/SJeffZhang/SafeBank-Gateway ，创建参数明确 --private；准备首次提交推送。P0证据见 docs/acceptance/P0.md，业务实现仍未开始。 |
+
+| 2026-10-23 | Codex | 首次提交 ffcfe23 已推送 origin/main；GitHub 查询 visibility=PRIVATE。用户要求仓库名简化且首字母大写，已将 SafeBank-Gateway 改名 Safebank，本地 origin 同步 https://github.com/SJeffZhang/Safebank.git 。首次 CI 已触发；本地组件与集成验收已通过，远端结果待单独核实。 |
 
 ## 5. 下一步待办（按顺序）
 
