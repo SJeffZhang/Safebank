@@ -50,6 +50,20 @@ class Engine:
         self.closed += 1
 
 
+@pytest.fixture
+def fake_engine_lock_hook(monkeypatch):
+    """Only lifecycle unit tests using Engine fake replace this dependency."""
+    from services.gateway.app import locks
+
+    configured = []
+
+    def configure(db, max_executions):
+        configured.append((db, max_executions))
+
+    monkeypatch.setattr(locks, "configure", configure)
+    return configured
+
+
 class Client:
     def __init__(self, url, token):
         assert url == "http://bank-backend:8300"
@@ -74,7 +88,9 @@ def fake_lock_configuration(monkeypatch):
     return calls
 
 
-def test_runtime_owns_resources_once_and_both_apps_consume_them(secret_settings):
+def test_runtime_owns_resources_once_and_both_apps_consume_them(
+    secret_settings, fake_engine_lock_hook
+):
     from services.gateway.app.runtime import gateway_runtime
 
     async def run():
@@ -91,6 +107,7 @@ def test_runtime_owns_resources_once_and_both_apps_consume_them(secret_settings)
             l3_factory=make_client,
             pin_hashes={"cus_zs": "hash"},
         ) as runtime:
+            assert fake_engine_lock_hook == [(db, secret_settings.max_executions)]
             public = build_public_app(secret_settings, runtime=runtime)
             internal = build_internal_app(secret_settings, runtime=runtime)
             assert public.state.settings is internal.state.settings is secret_settings
@@ -108,7 +125,7 @@ def test_runtime_owns_resources_once_and_both_apps_consume_them(secret_settings)
     asyncio.run(run())
 
 
-def test_partial_start_failure_disposes_created_pool(secret_settings):
+def test_partial_start_failure_disposes_created_pool(secret_settings, fake_engine_lock_hook):
     from services.gateway.app.runtime import gateway_runtime
 
     async def run():
@@ -123,6 +140,7 @@ def test_partial_start_failure_disposes_created_pool(secret_settings):
             ):
                 pytest.fail("startup must fail")
         assert db.closed == 1
+        assert fake_engine_lock_hook == [(db, secret_settings.max_executions)]
 
     asyncio.run(run())
 
@@ -181,7 +199,9 @@ def test_missing_runtime_configuration_refuses_start(secret_settings):
     asyncio.run(run())
 
 
-def test_unavailable_w1_pin_loader_is_unconfigured_not_success(secret_settings, monkeypatch):
+def test_unavailable_w1_pin_loader_is_unconfigured_not_success(
+    secret_settings, monkeypatch, fake_engine_lock_hook
+):
     import services.gateway.app.runtime as module
 
     original = module.import_module
@@ -198,6 +218,7 @@ def test_unavailable_w1_pin_loader_is_unconfigured_not_success(secret_settings, 
             secret_settings, db_factory=lambda url: Engine(), l3_factory=Client
         ) as runtime:
             assert runtime.pin_hashes is None
+            assert fake_engine_lock_hook == [(runtime.db, secret_settings.max_executions)]
 
     asyncio.run(run())
 
