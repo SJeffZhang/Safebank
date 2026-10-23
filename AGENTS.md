@@ -40,11 +40,11 @@
 | 模块 | 状态 |
 |---|---|
 | 调研 | 开源项目元数据和 DeepSeek 官方信息已核实；评分/提交已从官网公开 JS 核实（docs/acceptance/official-v1.md）；竞品「明鉴」未核实 |
-| PRD | **`PRD.md` = v2.1 定稿**（1,764 行，§0–§16；三轮多 agent 审核 + 两次修订复核，决议 D1–D47 见 §0.5）。v1.2 与作废的 v2.0 草稿在 `docs/archive/`；审核报告在 `docs/reviews/` |
+| PRD | **`PRD.md` = v2.1 定稿**（§0–§16；三轮多 agent 审核 + 两次修订复核，决议 D1–D47 见 §0.5；执行屏障增量约定见ADR-008）。v1.2 与作废的 v2.0 草稿在 `docs/archive/`；审核报告在 `docs/reviews/` |
 | 代码 | **P1 完成并逐组件验收**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116项单元+33项真实PG通过，契约v1已冻结。分支 feat/l3-core，P1代码已提交并推送私有仓库（功能提交7fd7a26）；CI权限修复70dcabe已推送，远端unit与p1-postgres均通过（run 39929405919） |
-| L2 网关 | **W0 基础骨架已合入 main**（PR #2，merge e2e91db，2026-10-23；经 4 轮架构评审 + 1 次 CI 修复）。波次 1 已启动：W1/W3已有待联调检查点，W2/W4与共享S1按槽位推进。计划 `docs/plans/L2-plan.md`，任务书 `docs/plans/briefs/` |
+| L2 网关 | **W0 基础骨架已合入 main**（PR #2，merge e2e91db，2026-10-23；经 4 轮架构评审 + 1 次 CI 修复）。波次1进行中：S1共享运行PR #4与S2预留PR #5已全绿合并；W1七缺陷与S1接线评审通过，W2来源链集成中；W4a锁修复及S1b迁移/状态实施中，W3/W4完整接线仍待依赖。计划 `docs/plans/L2-plan.md`，任务书 `docs/plans/briefs/` |
 | 前端 | **暂停**，用户亲自下令才开工（§2 第 13 条） |
-| 下一步 | L2 波次 1：W1 身份与原话、W2 读代理与来源、W3 预演·工作流·决策、W4 审批与执行，四路并行（见 §5「L2 进度」）。2026-10-23 起工作转到 Codex，交接说明见 `docs/handoff/CODEX-HANDOFF.md` |
+| 下一步 | L2 波次 1：W1 身份与原话、W2 读代理与来源、W3 预演·工作流·决策、W4 审批与执行，按接口依赖与可用槽位分批并行，共享补缺逐组件串行（见 §5「L2 进度」）。2026-10-23 起工作转到 Codex，交接说明见 `docs/handoff/CODEX-HANDOFF.md` |
 
 ### 已确认事实
 
@@ -297,6 +297,8 @@
 | 2026-10-23 | Codex（协调者） | S1b新增ExecutionIdentity及五类CAS接口已协调固定；L3真实reconcile返回CANCELLED/result=None，终态归档允许None但仅FAILED，COMMITTED须匹配plan且真实EXECUTED结果。W2发现澄清root只保存补答文本，已明确仅持久parent链可追溯span/采纳源、root仍唯一claim且不合并父scope，补common约定。W4a在旧main完成六退出自报，尚非协调者验收；已要求先同步S2最新main再冻结后亲自复跑与独立评审。 |
 
 | 2026-10-23 | Codex（协调者） | W4a HEADd582752协调者六退出全exit0：lint161、all356/75skip（4.16s）、gateway127/27skip（3.39s）、PG17（2.11s）、customer-locks39零skip（7.40s）、shared-runtime51零skip（8.53s，含7Linux秘密配置及非roothealthcheck）；独立review_w4a尚在审查，不开PR。准备S1c显式Settings PIN路径任务，拆W1自己新增loader与共享runtime接线两个owner，不让W1越界。 |
+
+| 2026-10-23 | Codex（协调者） | W4a独立评审REQUEST_CHANGES：R1清理断连未归一LockOwnershipLost，R2执行期重复configure重置Semaphore突破上限（P2，非当前启动一次路径资金绕过）；独立真实PG39通过并两探针复现，记录L2-W4a-customer-locks.md。协调者读源码确认，派原owner修复轮1，新增有等待者重配边界，未开PR。协调文档4acbcf6已提交；S1b获准最小适配旧test_state_keys：UNKNOWN claim消费409、无job claim仍验PK，普通有关job终态要求专用归档。 |
 
 ## 5. 下一步待办（按顺序）
 
