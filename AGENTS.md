@@ -31,6 +31,7 @@
 10. 作品提交截止为 **2026-11-02**（已确认）。遇到取舍时，按 PRD §13 的「削减顺序」处理。
 11. **LLM 使用 DeepSeek V4 Pro（API 接入）**；只有需要多模态（图片输入）时才调用 **DeepSeek V4.1 Flash**。不要换用其他模型。从图片中抽取的内容一律视为不可信数据。
 12. 主办方不提供 LLM、沙箱或数据：API 自备，L3 就是沙箱，演示数据全部自造（合成数据，不含真实个人信息）。
+13. **前端暂停**（用户 2026-10-23 决定）：前端 App 与 BFF（PRD §9.6 F1–F13、§9.10 页面）**一律不开工**，直到用户亲自下令。在此之前只做后端；需要浏览器 / BFF 的地方，测试中直接用 F 服务令牌 + app JWT 调 gateway 代替。L2 阶段计划见 [docs/plans/L2-plan.md](docs/plans/L2-plan.md)。
 
 ## 3. 当前状态（每次工作后更新）
 
@@ -165,6 +166,8 @@
 | 2026-10-23 | Codex | 按用户要求核对记录并统计P1规模：截至已推送54c2f58，相对P0基线c3bd537，核心Python3933行（contracts1718、bankcore668、L3含迁移1547），测试/样本1836行，Python工具脚本新增587行及Shell14行；合计新增代码6370行（含注释/空行，脚本另删1行）。107个变更文件，共新增30415/删除40行，主要额外体积来自生成Schema/文档/证据23659行，不能当业务代码量。§3/§4/§5及验收目录已覆盖P1各组件、失败修复、推送和最终CI通过；本次只补充统计说明，未修改业务、未新提交推送。 |
 
 | 2026-10-23 | Claude（主会话 89da7fbc） | 验收 P1 分支 `feat/l3-core`（用户要求以 CI 为准）。核实：GitHub 上此前**没有 PR**，只有已推送分支；CI 运行 39929405919（提交 70dcabe）unit 与 p1-postgres 两个 job 全部 success，6 个验收步骤（bootstrap、make up、test-p1、并发、一致性、integration、contracts-check）均实际执行；HEAD 54c2f58 为 [skip ci]，只改 5 个文档文件。抽查 PRD 约束：bankcore 无 IO；`load_bank_state` / `persist` 仅在 L3 `app/state.py`；写事务 READ COMMITTED、快照 REPEATABLE READ；`execution_intents` 含 attempt / deadline_cap_wall 与 CHECK；客户账户余额边界与累计量非负 CHECK；20 笔并发、同计划 20 次重试、双向互转与冻结竞争、超额并发、pending 竞争测试齐全；金额代码无 float。本机未重跑测试。注意：P1 种子为测试用 `cus_a/cus_b`，PRD §2.2 的完整演示种子留待后续阶段。验收通过，提交本日志后开 PR 并合并入 main。 |
+| 2026-10-23 | Claude（主会话 89da7fbc） | 日志提交 3b3badb 推送到 `feat/l3-core`；创建 PR https://github.com/SJeffZhang/Safebank/pull/1 并以 merge commit 合入 main（d22b855，2026-10-23T10:11:43Z）；本地切到 main 并 fast-forward。`feat/l3-core` 分支保留未删。本条日志尚未提交。 |
+| 2026-10-23 | Claude（主会话 89da7fbc） | 用户要求：L2 阶段由主会话只做指挥，具体开发交给本机 Claude Code CLI（已在 `~/.claude/settings.json` 接入 DeepSeek）并行完成。核实：`claude` 2.1.307 可用；主会话环境继承了桌面 App 的 `ANTHROPIC_BASE_URL=api.anthropic.com` 与凭证，直接启动会走 Anthropic 账户，故启动 worker 前必须 `env -u` 清掉 `ANTHROPIC_*`；清掉后无头调用实测 `modelUsage=deepseek-v4-pro[1m]`（CLI 提示 unrecognized_model、自报费用按 Claude 价估算，不代表 DeepSeek 实际费用）。用户决定前端暂停：写入本文件 §2 第 13 条与 PRD §13。新建 `docs/plans/L2-plan.md`（W0 骨架 → 波次 1 四路并行 W1–W4 → 波次 2 W5/W6；worktree 隔离、命令白名单、进度写 `docs/progress/`、并发测试隔离、合入 main 前请用户确认）。尚未启动任何 worker。 |
 
 ## 5. 下一步待办（按顺序）
 
