@@ -136,4 +136,6 @@ make test-shared-runtime # 明确启用真实临时PG与独立Linux秘密权限�
 
 该目标要求 Docker 后台可用，使用已有 `safebank-p0:local` 为 Linux 验收基底，只构建独立随机 tag，既不替换现有镜像 tag，也不启动/停止 compose 栈。临时 PG 的 PGDATA 与秘密验收均显式使用 tmpfs，不分配 Docker 数据卷。
 
-W4 锁服务的集中初始化接口仍待 W4 定义（建议 `locks.configure(db,max_executions=...)`），S1 未伪造该实现。
+W4 锁服务接口已确定为 `locks.configure(db,max_executions=...)`；集中 runtime 在 hook 存在时传入同一个 engine，缺失时保留尚未实现状态。生产连接池为 `max(18,2*max_executions+2)`，无 overflow。
+
+S1 评审修复后，监听器由 GatewayServer 包装真实 Uvicorn 生命周期：停止监听、等待或取消并等待在途请求、完成 lifespan 后才释放 DB/L3；任一 listener 的启动/运行异常及上层取消都走此路径。Compose healthcheck 是独立进程，单独降权到 UID/GID 10001 后才发起 HTTP。状态入口按表唯一单列 PK 寻址，authorization_claims 只允许 CLAIMED→CONSUMED。

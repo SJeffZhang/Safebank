@@ -304,3 +304,35 @@ def test_lock_configuration_failure_releases_pool(secret_settings, monkeypatch):
         assert db.closed == 1
 
     asyncio.run(run())
+
+
+def test_production_pool_holds_eighteen_real_connections(secret_settings, gateway_db):
+    from sqlalchemy import text
+
+    from services.gateway.app.runtime import gateway_runtime
+
+    async def run():
+        ready, release = asyncio.Event(), asyncio.Event()
+        backends = set()
+        async with gateway_runtime(
+            replace(secret_settings, database_url=gateway_db.runtime_url),
+            l3_factory=Client,
+            pin_hashes={},
+        ) as runtime:
+
+            async def hold():
+                async with runtime.db.connect() as conn:
+                    backends.add(await conn.scalar(text("SELECT pg_backend_pid()")))
+                    if len(backends) == 18:
+                        ready.set()
+                    await release.wait()
+
+            tasks = [asyncio.create_task(hold()) for _ in range(18)]
+            try:
+                await asyncio.wait_for(ready.wait(), 3)
+                assert len(backends) == 18
+            finally:
+                release.set()
+                await asyncio.gather(*tasks)
+
+    asyncio.run(run())

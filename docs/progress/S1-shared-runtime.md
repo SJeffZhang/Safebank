@@ -99,3 +99,11 @@ Actual `GATEWAY_SECRET_TESTS=1 ...pytest tests/gateway/shared_runtime/test_permi
 Actual production-factory tests first failed: pool_size was 5 (not required 18/42), missing lock initialization, and lock-hook failure did not fail startup (5 failed / 10 passed / 1 skipped). The centralized production factory now sets pool_size=max(18,2*max_executions+2), max_overflow=0: one dedicated lock slot plus one short-transaction slot per executor and two additional slots, with PRD's minimum eighteen. Existing explicitly injected single-argument test factories remain compatible.
 
 When W4 `locks.configure(db,max_executions=...)` exists, runtime calls it with the very same engine and configured execution limit before L3 construction. Hook failure disposes the pool and refuses startup. If absent, the existing NotImplemented lock remains unchanged; no lock implementation or success substitute was introduced. Actual SQLAlchemy pool objects (not mock parameter assertions) verify capacities 18,18,42 for limits 1,8,20. Runtime suite after fix: 15 passed / 1 skipped (real PG opt-in).
+
+### R4 — actual single-column primary keys and claim consumption
+
+New tests reproduced all four failures: missing authorization_claims registration, absent explicit rejection for zero/composite primary keys, and execution_jobs raising AttributeError on hardcoded .id. The unchanged `transition(conn,table,*,id_,from_statuses,to,code)` signature now obtains the sole declared primary-key column and uses it for conditional UPDATE and RETURNING; zero/composite keys raise ValueError before DML. Authorization claims use a private state.py StrEnum: CLAIMED → CONSUMED, terminal has no outgoing edges. No schemas/tables/migrations were changed.
+
+Actual real-PG state regression command covering new key tests, clarifications and existing state tests: 11 passed. Query assertions independently check execution_jobs.plan_id → UNKNOWN and authorization_claims.scope_id → CONSUMED; stale competing-source update returns 409 STATE_CHANGED and reclaim attempts raise ValueError.
+
+Additional R3 real-PG verification holds eighteen simultaneously checked-out connections from the actual production factory and checks eighteen distinct pg_backend_pid values. Combined runtime/key suite: 21 passed, zero skipped with GATEWAY_DB_TESTS=1.
