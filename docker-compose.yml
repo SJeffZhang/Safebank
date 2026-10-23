@@ -96,6 +96,7 @@ services:
       timeout: 4s
       retries: 10
   bank-backend:
+    command: [python, -m, uvicorn, app.main:factory, --factory, --host, 0.0.0.0, --port, "8300"]
     build: .
     image: safebank-p0:local
     environment:
@@ -118,7 +119,7 @@ services:
       - CMD
       - python
       - -c
-      - import urllib.request,os; r=urllib.request.Request('http://127.0.0.1:8300/health');
+      - import urllib.request,os; r=urllib.request.Request('http://127.0.0.1:8300/readyz');
         r.add_header('X-Service-Token',os.environ['GATEWAY_SERVICE_TOKEN']); urllib.request.urlopen(r,timeout=3)
       interval: 5s
       timeout: 4s
@@ -159,6 +160,32 @@ services:
       interval: 5s
       timeout: 4s
       retries: 10
+  bank-maintenance:
+    profiles: [maintenance]
+    image: safebank-p0:local
+    command: [python, -m, alembic, -c, services/bank-backend/alembic.ini, upgrade, head]
+    env_file:
+    - .secrets/bank.env
+    - .secrets/bank-migration.env
+    networks: [bank-net]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  p1-tests:
+    profiles:
+    - test
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    image: safebank-p1-test:local
+    env_file:
+    - .secrets/bank.env
+    - .secrets/p1-test.env
+    networks:
+    - bank-net
+    environment:
+      PYTHONPATH: /app:/app/packages/contracts/src:/app/packages/bankcore/src:/app/services/bank-backend
 networks:
   agent-net:
     ipam:

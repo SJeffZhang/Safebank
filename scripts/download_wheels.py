@@ -25,7 +25,20 @@ def main() -> None:
     tags = set(cpython_tags((3, 12), platforms=platforms)) | set(
         compatible_tags((3, 12), platforms=platforms)
     )
-    required = set(re.findall(r"^([\w-]+)==", Path("requirements.txt").read_text(), re.M))
+    required = set(
+        re.findall(
+            r"^([\w-]+)==",
+            (
+                Path("requirements.txt").read_text()
+                + (
+                    Path("requirements-test.txt").read_text()
+                    if Path("requirements-test.txt").exists()
+                    else ""
+                )
+            ),
+            re.M,
+        )
+    )
     locked = tomllib.loads(Path("uv.lock").read_text())["package"]
     root = Path(".wheels")
     root.mkdir(exist_ok=True)

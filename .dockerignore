@@ -4,3 +4,12 @@
 !scripts/
 scripts/__pycache__/
 !.wheels/
+!requirements-test.txt
+!packages/
+!services/
+!tests/
+!Dockerfile.test
+!pyproject.toml
+
+**/__pycache__/
+**/*.pyc

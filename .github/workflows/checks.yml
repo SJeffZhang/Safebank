@@ -12,3 +12,21 @@ jobs:
       - run: uv run --group poc pytest -q
       - run: uv run ruff check .
       - run: uv run ruff format --check .
+  p1-postgres:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.23'
+      - run: make setup
+      - run: make up
+      - run: make test-p1
+      - run: make test-p1-concurrency
+      - run: make test-p1-consistency
+      - run: make test-integration
+      - run: make contracts-check
+      - if: failure()
+        run: docker compose logs --tail=100
+      - if: always()
+        run: docker compose down

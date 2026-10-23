@@ -40,8 +40,8 @@
 |---|---|
 | 调研 | 开源项目元数据和 DeepSeek 官方信息已核实；评分/提交已从官网公开 JS 核实（docs/acceptance/official-v1.md）；竞品「明鉴」未核实 |
 | PRD | **`PRD.md` = v2.1 定稿**（1,764 行，§0–§16；三轮多 agent 审核 + 两次修订复核，决议 D1–D47 见 §0.5）。v1.2 与作废的 v2.0 草稿在 `docs/archive/`；审核报告在 `docs/reviews/` |
-| 代码 | P0 已开始：已 `git init -b main`，最小脚手架已建立：8 项独立测试、lint/format、6 容器健康及真实网络/凭证/DB角色验收通过；DeepSeek 330 次实验已记录，采用关闭思考回退。尚无银行业务实现 |
-| 下一步 | P0 工程基线验收完毕；已推送私有仓库 https://github.com/SJeffZhang/Safebank （首次提交 ffcfe23）。随后按组件进入 P1（不得把骨架当业务完成） |
+| 代码 | **P1 完成并逐组件验收**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116项单元+33项真实PG通过，契约v1已冻结。分支 feat/l3-core，用户已于本轮授权提交与推送 |
+| 下一步 | P1已结束，等待用户指定下一步；按PRD后续P2实现L2/L1的单笔需确认转账闭环，仍须逐组件验收。本轮不启动P2 |
 
 ### 已确认事实
 
@@ -61,7 +61,7 @@
 
 - 模板细则、上传大小与登录提交入口权限（评分/必交物与时长已核实）。
 - 竞品「明鉴」的实际实现。
-- 需要实际运行才能确认的能力：DeepSeek strict + 思考模式 + 强制 `tool_choice` 的组合、完整 `submit_action_plan` Schema 能否被接受（PRD §6.6 E1–E6）；LangGraph `configurable` 是否写入 checkpoint metadata（§6.1）。Invariant、assistant-ui、AgentDojo runner 已决定不用，不再验证。
+- P0/P1实测：指定tool_choice与思考模式的组合被拒，固定关闭思考；13工具生产Schema已完成3个DeepSeek实际样本并通过本地Schema/运行时校验（docs/acceptance/p1-contracts-live）。LangGraph内存检查点上下文隔离已通过；真实Postgres saver及完整银行图仍留后续阶段。Invariant、assistant-ui、AgentDojo runner 已决定不用。
 - 注意：之前出现过一版技术选型报告，其中包含**编造的** L2/L3 star 数、devbanksdk 行号、明鉴的描述和官网日期。那一版已经作废。如果你在别处看到这些数字，不要相信。
 
 ## 4. 进度日志（追加写，最新在下）
@@ -118,6 +118,36 @@
 
 | 2026-10-23 | Codex | 首次提交 ffcfe23 已推送 origin/main；GitHub 查询 visibility=PRIVATE。用户要求仓库名简化且首字母大写，已将 SafeBank-Gateway 改名 Safebank，本地 origin 同步 https://github.com/SJeffZhang/Safebank.git 。首次 CI 已完成且 conclusion=success（run 39912891423）；本地组件与集成验收也已通过。 |
 
+| 2026-10-23 | Codex | 用户明确授权实施完整 P1；创建 feat/l3-core 分支，将计划写入 §5。按 P1.1→P1.8 顺序实现，组件验收前不铺后续实现；尚未通过 P1 测试，不提交或推送本轮更改。 |
+
+| 2026-10-23 | Codex | P1.1：基础金融类型、不可变额外字段拒绝模型、枚举和PRD代码全集已落盘；.venv/bin/pytest tests/contracts/test_base.py -q：15 passed。覆盖bool/float/string金额拒绝、bigint边界、Decimal特殊值/精度、时间缺时区、JSON往返。尚未实现业务/DB。 |
+
+| 2026-10-23 | Codex | P1.2：18读/14写参数和结果、计划/来源/DAG、不可变影子状态、领域效果与执行协议已定义。tests/contracts：82 passed。最终生产13工具strict Schema→DeepSeek V4 Pro三样本HTTP200，Schema及Pydantic校验全部通过（docs/acceptance/p1-contracts-live）。首次date-time注解被API拒绝，已在转换器去除；首次模型返回无效span被运行时拒绝后固定探针来源重测；未放宽源字段检查。实体kind/空值及渠道哨兵有双向转换。 |
+
+| 2026-10-23 | Codex | P1.3：纯函数账本TB-1/2/3/5/9及确定性ID已实现；tests/bankcore/test_ledger.py：6 passed（含3种部分/全部确认参数）。守恒、原状态不变、不透支、幂等冲突、pending终结唯一/超时/释放均通过。已读TigerBeetle官方account/two-phase/linked文档，docstring记来源，不复制代码。DB尚未实现。 |
+
+| 2026-10-23 | Codex | P1.4：SQLAlchemy[asyncio]2.1.6/asyncpg0.32.0/Alembic1.20.1精确锁定。独立bank_p1_test首次及重复upgrade head成功；真实Postgres tests/integration/test_database.py：4 passed，验证DDL/TRUNCATE拒绝、账户不透支/同账号约束、append-only触发器、readiness/隔离级别/连接失败。迁移凭证仅测试驱动持有，运行角色不是表owner。测试镜像白名单漏pyproject导致首次build失败已修复。未清空生产bank数据。 |
+
+| 2026-10-23 | Codex | P1.5：唯一scope/load_bank_state/persist及独立p1_core_v1数据已落盘；tests/integration/test_state.py真实Postgres：2 passed，验证READ ONLY拒写、完整JSON往返、接收方联系方式脱敏、pending SQL与影子账户/账本一致及事务回滚无残留。seed用同一纯函数账本开户入金，未声称完整baseline_v1。底层ledger算术提取为共享account_deltas后6项账本回归通过；并发最终由P1.7/P1.8门禁验收。 |
+
+| 2026-10-23 | Codex | P1.6：转账/新增收款人/卡限额渠道冻结解冻挂失补卡纯函数已实现，tests/bankcore：19 passed；真实Postgres test_state：3 passed（补卡/收款人/操作事件/outbox提交后重载一致）。新增/已有payee引用解析实际ID；外转结果不泄露接收方余额；本人互转不计累计。Docker后台socket中断，--help意外启动默认前端，已停止该次进程并显式 -with-frontend=false -unattended 启动后台；恢复后真实验收通过。 |
+
+| 2026-10-23 | Codex | P1.7：prepare/execute/query/reconcile与原子结果/操作/outbox已实现。真实Postgres test_execution.py：6 passed，覆盖重试只记一次、提交后服务重建恢复、第二步失败/SQL故障全回滚、prepare前取消挡迟到、attempt/证据/不可变cap、版本/时钟冲突、锁等待过期与execute/reconcile竞争。修订prepare增加deadline_cap_wall：原PRD仅传min后的deadline无法实现重新审批上限；已同步PRD与ADR-006。并发20笔与HTTP阶段验收进入P1.8。 |
+
+| 2026-10-23 | Codex | P1.8 进行中：真实 PostgreSQL 集成已 30 passed（新/复用收款人用例最初误传 strict 格式被拒，已修正测试为内部引用并通过）。新增真实 L3 HTTP 应用、后台迁移/独立测试凭证、核心 CLI 种子、并发/一致性 Make 目标和 CI 配置；锁超时、实际进程重启和网络最终门禁仍待跑，未标记 P1 完成。 |
+
+| 2026-10-23 | Codex | P1.8 修复与补测：从空 bank_p1_test 迁移/重复升级及完整集成 32 passed；真实 HTTP、凭证/网络边界、实际 L3 restart 恢复已通过。修复首建触发器 f-string 与 bank owner 切换后的 CONNECT 授权；区分解析后 steps_digest 与原请求摘要（0002_identity、ADR-007）；固化历史迁移 DDL。重复 make up 暴露固定 IP 的临时种子容器冲突，改用动态 IP 维护容器；修复后最终回归待跑。 |
+
+| 2026-10-23 | Codex | P1.8：完整P1最终门禁通过：make test=116 passed/33 skipped（集成仅由真实PG目标验收）；make lint通过；空bank_p1_test迁移+重复upgrade head通过；make test-p1-db=33 passed；make test-p1-concurrency=5 passed；make test-p1-consistency=17 passed；make test-integration真实网络/凭证/角色、HTTP转账及实际L3重启恢复通过；make contracts-check通过，冻结contracts v1。P1.8证据与限制见docs/acceptance/P1.8.md。CI已配置但本轮未提交/推送、未在GitHub实际运行；不进入P2。 |
+
+| 2026-10-23 | Codex | P1 收尾文档：更新根/后端/共享包README、第三方6个新增依赖的wheel许可、PRD执行摘要与outbox消费约定、ADR-007、冻结v1 Schema与SHA256及CI漂移检查。扩展一致性测试首次8项失败因UTC与+08:00字符串表示差异，改为比较同一datetime业务时间点后全部通过；未忽略金额、状态、流水或操作事件。元数据脚本首次误用系统Python找不到asyncpg，已在.venv重跑。实际本地API key扫描未进入Git候选文件，.env/.secrets保持忽略。 |
+
+| 2026-10-23 | Codex | P1最终总入口复跑：make test-p1 从空独立库重建、两次upgrade head、33项真实PG全部通过（14.88s）；116单元、lint和冻结契约复核通过，最终原始输出已落盘docs/acceptance/p1-final/。同步关键文件地图与常用命令，未运行远端CI，未提交或推送；P1结束。 |
+
+| 2026-10-23 | Codex | 用户明确要求推送P1；提交前git diff --check与实际本地API/service key、数据库口令的Git候选文件扫描通过，.env/.secrets未混入。按功能分支feat/l3-core交付到SJeffZhang/Safebank；原有验收结果保持，未改变业务代码。 |
+
+| 2026-10-23 | Codex | 暂存后git diff --cached --check发现新验收日志含Docker输出尾随空格，首次提交前检查因此终止，尚未产生提交；仅清理p1-final文本行尾空格后重试，未修改测试结果或业务代码。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
@@ -132,6 +162,23 @@ P0 准备阶段（决定后续一切）：
 
 之后按 PRD §13 的日程推进（四条并行流，10-30 功能冻结，11-01 上午缓冲）。先打通一条贯穿三层的细线（P2：在 App 里让小安完成一笔需确认的转账），再横向铺开场景。
 
+### P1 实施计划（2026-10-23，用户授权）
+
+目标：PRD §13 的 L3 核心，为 P2 提供真实后端。公共契约18读/14写齐全，P1业务仅转账/卡片；其他工具明确拒绝，不伪造成功。
+
+| 状态 | 组件 | 交付与独立验收 |
+|---|---|---|
+| [x] | P1.1 基础契约 | 严格整数分、4位Decimal、带时区时间、枚举/错误码；合法/边界/非法/额外字段/JSON往返 |
+| [x] | P1.2 接口契约 | 18读/14写、PlanDraft/BankState/LedgerEffect/ExecutionResult/执行协议；每工具正常及非法样本、DAG/引用/来源重复/目标互斥、13工具strict生产Schema+DeepSeek小样本 |
+| [x] | P1.3 纯函数账本 | 四累计量、确定性ID、posted/pending/部分确认/释放；守恒、不透支、状态不变、终结唯一/超时 |
+| [x] | P1.4 数据库迁移 | 精确锁SQLAlchemy/asyncpg/Alembic，核心表/约束/索引/只追加；真实Postgres迁移、权限、readiness及失败路径 |
+| [x] | P1.5 状态与持久化 | scope/load_bank_state/persist唯一实现，核心测试数据独立标识；只读快照、往返、回滚、effects一致、对方信息脱敏 |
+| [x] | P1.6 转账与卡 | 本人/本行/他行、新收款人、限额/渠道/冻结/解冻/挂失补卡；全边界、复用引用、归属、补卡不清累计 |
+| [x] | P1.7 原子执行恢复 | prepare/execute/query/reconcile；attempt/deadline/证据/锁序/版本/幂等/墓碑；回滚、重试、丢包、迟到竞争 |
+| [x] | P1.8 L3集成验收 | 真实L3替换探针、服务凭证、核心5读/snapshot/执行/outbox；真实HTTP→DB、20并发/双向转账/冻结竞争、预演一致性、P0回归与CI |
+
+门禁：每组件证据写 docs/acceptance/P1.N.md，并追加 §4。任何失败先修复；没有实际运行不得标通过。P1.8全部通过后冻结契约v1，再进入P2；不实现L2审批/OTP/业务Agent/UI/调度器。保留指定DeepSeek V4 Pro、beta、strict、关闭思考。数据库测试不使用SQLite；容器只走后台CLI，不启动Desktop窗口。保留 make test/lint/test-integration，新增P1并发和一致性目标。
+
 ## 6. 关键文件地图
 
 | 文件 | 内容 |
@@ -140,13 +187,13 @@ P0 准备阶段（决定后续一切）：
 | `docs/reviews/` | 第二、三轮审核与修订复核报告 |
 | `docs/archive/` | PRD v1.2、作废的 v2.0 草稿 |
 | `01-技术选型综合报告.md` | 调研结论，以及「已核实 / 待核实」清单 |
-| `docs/third-party.md` | （待建）实际引入的第三方依赖：版本、license、用途 |
+| `docs/third-party.md` | 实际引入的第三方依赖：版本、license、用途 |
 | `AGENTS.md` | 本文件 |
-| `packages/contracts/` | （待建）三层共享的 Pydantic 契约。**修改它就等于修改接口，必须同步三层并更新 PRD §6.2 与 §9** |
-| `packages/bankcore/` | （待建）纯函数领域规则，L2 预演与 L3 执行共用 |
-| `services/{bank-backend,gateway,agent}/` | （待建）三层服务 |
-| `evaluation/` | （待建）正常 / 攻击 / 绕过用例与 runner |
-| `docs/decisions/ADR-*.md` | （待建）架构决策记录 |
+| `packages/contracts/` | 已实现并冻结v1的三层共享 Pydantic 契约。**修改它就等于修改接口，必须同步三层并更新 PRD §6.2 与 §9** |
+| `packages/bankcore/` | 已实现P1的纯函数领域规则，L2 预演与 L3 执行共用 |
+| `services/{bank-backend,gateway,agent}/` | L3为真实P1服务；L1/L2仍是探针骨架 |
+| `evaluation/` | 目录骨架，正常 / 攻击 / 绕过runner尚未实现 |
+| `docs/decisions/ADR-*.md` | 架构决策记录（ADR-001–007） |
 
 调研时的临时克隆位于 `/tmp/sbg-research/`（可能已被系统清理，不要依赖它）。
 
@@ -200,8 +247,13 @@ P0 准备阶段（决定后续一切）：
 
 ```bash
 make up          # 启动全部服务
-make reset       # 重置种子数据与模拟时钟
-make test        # 全部单元测试
+make reset       # P1仍明确拒绝；正式种子/时钟重置在后续实现
+make test        # 单元测试；无PG配置时集成项显示skipped
+make test-p1     # 独立空库迁移+全部真实PG验收
+make test-p1-concurrency # 并发门禁（先test-p1构建）
+make test-p1-consistency # 预演/持久化一致性
+make test-integration # 真实网络、HTTP及进程重启恢复
+make contracts-check # 冻结契约v1漂移检查
 make demo        # replay 模式运行演示脚本
 make eval        # 运行评测，生成 evaluation/reports/<ts>/
 make logs        # 查看各服务日志

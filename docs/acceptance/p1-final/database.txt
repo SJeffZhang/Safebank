@@ -1,0 +1,5 @@
+docker compose run --rm p1-tests python -m pytest tests/integration -q
+ Container safebank-p1-tests-run-0656d982aaf7 Creating
+ Container safebank-p1-tests-run-0656d982aaf7 Created
+.................................                                        [100%]
+33 passed in 13.74s

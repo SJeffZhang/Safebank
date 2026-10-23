@@ -5,5 +5,8 @@ COPY requirements.txt .
 COPY .wheels /wheels
 RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt && rm -rf /wheels && useradd --uid 10001 --create-home safebank
 COPY scripts ./scripts
+COPY packages ./packages
+COPY services ./services
+ENV PYTHONPATH=/app/packages/contracts/src:/app/packages/bankcore/src:/app/services/bank-backend
 USER safebank
 CMD ["python", "-m", "scripts.health_app"]
