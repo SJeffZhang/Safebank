@@ -354,6 +354,8 @@
 
 | 2026-10-23 | Codex（协调者） | W1按授权以本地WIP4f88c63保留真实孤儿红测，再同步main304adda为e2e5095；自报两Settings/相反env的8项runtime PG通过，五退出尚有孤儿1失败及旧pytest同名模块冲突，非协调者验收。允许仅重命名W1旧test_identity避免与共享state测试同名，并精确追加checks.yml p1-postgres的make test-w1一行，使正式PR的W1 PG不被默认skip漏掉；其余CI结构不变，之后个人actionlint/五退出与独立审。 |
 
+| 2026-10-23 | Codex（协调者） | W1冻结65fc97d；协调者亲自actionlint exit0，并对该精确代码运行两个PIN/runtime真实PG测试文件：8 passed（3.22s，零skip）。证明Settings两文件/相反env/重启材料，不冒称完整W1通过；其自报完整五退出仍1617通过+孤儿1失败。另派只读map_backend_components核对剩余13读/7写的实际底层缺口与最小组件依赖，供后续任务书使用，不实施/不扩大当前共享串行范围。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
