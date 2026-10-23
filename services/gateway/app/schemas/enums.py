@@ -68,6 +68,8 @@ class ParseStatus(StrEnum):
 
 class ExecutionJobStatus(StrEnum):
     EXECUTING = "EXECUTING"
+    FENCING = "FENCING"
+    PAUSED = "PAUSED"
     UNKNOWN = "UNKNOWN"
     EXECUTED = "EXECUTED"
     FAILED = "FAILED"
