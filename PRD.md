@@ -1037,7 +1037,7 @@ L2 对每个敏感参数独立验证 arg_sources：
 
 app_form 使用 L2 保存的规范化表单代替文本来源，同样执行所有权、业务、工作流和审批检查；问卷答案只允许此入口。app_form 也做**值级污点检查**（口径同 §7.4 复述检测）：表单中的账号与同 sid `read_records` untrusted 自由文本路径中的数字串相同、且不是已有收款人指纹时，升红 `INJECTION_SUSPECTED`，面板显示来源警示；若同一计划同时新增该收款人并向其转出，DENY。表单初值的来源限制见 §9.10。
 
-`memo`（转账、AA）与 `alias`（收款人）列为敏感参数：来源只能是 utterance、action 或 null；非空时必须原样出现在 PlanView 中并纳入 view_hash；含 ≥ 8 位数字或金额格式时升黄并提示（防止被当作外泄渠道）。
+`memo`（转账、AA）与 `alias`（收款人）列为敏感参数：来源只能是 utterance、action 或 null；非空时必须原样出现在 PlanView 中并纳入 view_hash；含 ≥ 8 位数字或金额格式时以 `MEMO_SENSITIVE_CONTENT` 升黄（YELLOW）并提示（防止被当作外泄渠道）。
 
 中文注入启发式只产生 `INJECTION_SUSPECTED`（升红），不判断是否可执行，不增加任何授权。
 
@@ -1512,6 +1512,7 @@ App 切换客户必须退出并新建会话，不能复用旧 sid。新消息若
 | TAINTED_SENSITIVE_ARG | D | 不可信输入决定敏感参数 |
 | UTTERANCE_EXPIRED / AUTHORIZATION_CONSUMED / AUTHORIZATION_CANCELLED | E409 | 用户授权超时、已消费、已撤销 |
 | INJECTION_SUSPECTED | R | 启发式命中，仅升级 |
+| MEMO_SENSITIVE_CONTENT | Y（YELLOW） | memo / alias 含 ≥ 8 位数字或金额格式时升黄并提示；来源限制与 PlanView 原文绑定仍按 §7.5 |
 | INSUFFICIENT_FUNDS / CARD_SINGLE_LIMIT / CARD_DAILY_LIMIT | RU | 余额、卡限额（或无卡账户的账户级限额）不足；L3 执行同样拒绝 |
 | SCHEDULED_SHORTFALL | RU | 未来 7 天预留缺口扩大；只是 L2 策略，L3 不拒绝（§7.7） |
 | RUN_IN_PROGRESS | E409 | L1 同一线程已有运行中的 run |
