@@ -107,3 +107,22 @@ New tests reproduced all four failures: missing authorization_claims registratio
 Actual real-PG state regression command covering new key tests, clarifications and existing state tests: 11 passed. Query assertions independently check execution_jobs.plan_id → UNKNOWN and authorization_claims.scope_id → CONSUMED; stale competing-source update returns 409 STATE_CHANGED and reclaim attempts raise ValueError.
 
 Additional R3 real-PG verification holds eighteen simultaneously checked-out connections from the actual production factory and checks eighteen distinct pg_backend_pid values. Combined runtime/key suite: 21 passed, zero skipped with GATEWAY_DB_TESTS=1.
+
+### CI verification wiring (coordinator-authorized addition)
+
+`.github/workflows/checks.yml` p1-postgres now runs `make test-gateway-db` and `make test-shared-runtime` immediately after `make up`, which supplies the local runtime image needed by independent Linux acceptance. The job sets `UV_CACHE_DIR: ${{ runner.temp }}/sbg-uv-cache`, avoiding the Makefile's macOS default /private path on Ubuntu. YAML parsing and step-order/env checks passed. A real local Make→uv probe confirmed an externally supplied writable temporary UV_CACHE_DIR is preserved and exported by Make's `?=` configuration. No remote CI execution is claimed: no push/PR was performed.
+
+### Repair-round complete exit verification
+
+Actual `make lint && make test-gateway && make test-gateway-db && make test && make test-shared-runtime`, with installed Docker CLI PATH:
+
+- lint: passed, 156 files formatted.
+- gateway: 108 passed / 6 skipped (4 real PG + 2 Linux explicit opt-ins).
+- gateway-db: 17 passed, real isolated PGDATA tmpfs.
+- full suite: 227 passed / 54 skipped (opt-in/integration tests are not implied passing here).
+- shared-runtime: 50 passed / zero skipped; real PG, eighteen concurrent backend connections, seven real-Uvicorn socket lifecycle cases, seven secret permission scenarios, and actual Compose healthcheck privilege/HTTP test enabled. The intentional graceful-timeout case emits Uvicorn's expected CancelledError log for its cancelled synthetic request; it is not a test failure.
+- `docker compose config --no-env-resolution --quiet` and git diff --check passed.
+
+No shared-stack commands, Docker data-volume operations, push/PR/merge, schemas/tables/migrations/business changes, or additional agents. W1 live login/revoke and full deployed-stack acceptance remain for integration, and real W4 configure behavior remains for W4 integration; S1 verifies its confirmed interface with a signature-compatible hook only.
+
+Repair commits so far: `02062b7` R1; `2822027` R2; `ade0cee` R3/hook; `23c4070` R4 and real eighteen-connection proof. CI wiring/final record committed separately; branch head is supplied in final handoff.
