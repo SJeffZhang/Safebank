@@ -64,4 +64,4 @@ B2 红测 `... pytest tests/gateway/wave1_state/test_resume.py -q --tb=line`：2
 
 ## 冻结与下一步
 
-当前业务与测试已完成本地六退出，待本地 checkpoint SHA；只本地提交，协调者亲自复跑和独立评审后才可 PR。W1/W3/W4 必须按本报告接口接线，W4 后续完成真实客户锁、HTTP fence/迟到/丢回包/崩溃/reconcile矩阵；此处本地PAUSED造数不构成这些协议验收。
+当前业务与测试已完成本地六退出，实现 checkpoint `4b364968d278b5a74e972b9133a0307fe67031ba` 已本地提交（20文件）；随后仅同步本段SHA文档。工作树提交前 staged diff --check通过，冻结历史/契约/bank/秘密路径均无暂存改动。只本地提交，协调者亲自复跑和独立评审后才可 PR。W1/W3/W4 必须按本报告接口接线，W4 后续完成真实客户锁、HTTP fence/迟到/丢回包/崩溃/reconcile矩阵；此处本地PAUSED造数不构成这些协议验收。

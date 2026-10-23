@@ -33,4 +33,4 @@
 
 两个最小测试例外由协调者明确批准：test_state_keys中UNKNOWN claim消费改409、独立无job claim保留PK测试；test_ddl_drift保留历史精确漂移保护并白名单回退四列/新CHECK。没有删除或skip失败断言。
 
-仅本地checkpoint，尚未push/PR/merge；CI已增加专项但远端未运行。协调者复跑与独立只读评审仍待完成。
+实现 checkpoint `4b364968d278b5a74e972b9133a0307fe67031ba`，随后仅同步SHA文档；尚未push/PR/merge；CI已增加专项但远端未运行。协调者复跑与独立只读评审仍待完成。
