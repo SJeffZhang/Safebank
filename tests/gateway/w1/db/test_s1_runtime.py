@@ -1,7 +1,7 @@
 """S1 integration: real auth dependency, revocation persistence and installed resources.
 
-The existing harness retains only the explicitly disclosed W4 customer-lock
-substitute. No auth checker or clarification transition is replaced.
+The harness uses production W4a customer locks. Only the external L3 transport
+is fake; no auth checker or clarification transition is replaced.
 """
 
 import asyncio
@@ -134,7 +134,7 @@ def test_real_s1_runtime_loads_secrets_once_and_enforces_persistent_jti(
 
     async def run():
         # No customer-lock substitute is installed here. Login, shared middleware,
-        # DB revocation and G20 reads use production S1/W1 paths without W4.
+        # DB revocation and G20 reads require no submitted job or L3 fund write.
         async with gateway_runtime(settings, l3_factory=client_factory) as runtime:
             public = build_public_app(settings, env=ENV, runtime=runtime)
             internal = build_internal_app(settings, env=ENV, runtime=runtime)

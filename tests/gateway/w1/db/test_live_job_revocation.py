@@ -241,36 +241,54 @@ def test_orphaned_job_revocation_cannot_restore_authorization(gateway_db, monkey
             plan, _, _ = await seed_job(
                 db, sid, old, clock[0], "EXECUTING", "EXECUTING", evaluation=False
             )
-            response = await revoke(client, token, sid, "cancel", new_id("req"))
-            async with db.connect() as conn:
-                assert (
-                    await conn.scalar(
-                        select(t.utterances.c.status).where(
-                            t.utterances.c.id == old["utterance"]["id"]
+            try:
+                response = await revoke(client, token, sid, "cancel", new_id("req"))
+                async with db.connect() as conn:
+                    assert (
+                        await conn.scalar(
+                            select(t.utterances.c.status).where(
+                                t.utterances.c.id == old["utterance"]["id"]
+                            )
                         )
+                        == "CANCELLED"
+                    ), response.text
+                    assert (
+                        await conn.scalar(
+                            select(t.sessions.c.authorization_epoch).where(t.sessions.c.id == sid)
+                        )
+                        == 1
                     )
-                    == "CANCELLED"
-                ), response.text
-                assert (
-                    await conn.scalar(
-                        select(t.sessions.c.authorization_epoch).where(t.sessions.c.id == sid)
+                    assert (
+                        await conn.scalar(
+                            select(t.execution_jobs.c.status).where(
+                                t.execution_jobs.c.plan_id == plan
+                            )
+                        )
+                        == "UNKNOWN"
                     )
-                    == 1
-                )
-                assert (
-                    await conn.scalar(
-                        select(t.execution_jobs.c.status).where(t.execution_jobs.c.plan_id == plan)
+                    assert (
+                        await conn.scalar(
+                            select(t.authorization_claims.c.status).where(
+                                t.authorization_claims.c.plan_id == plan
+                            )
+                        )
+                        == "CLAIMED"
                     )
-                    == "UNKNOWN"
-                )
-                assert (
-                    await conn.scalar(
-                        select(t.authorization_claims.c.status).where(
+            finally:
+                # Teardown removes ONLY this test-owned orphan from the ephemeral
+                # gateway fixture. It creates no L3 terminal proof, never consumes
+                # a claim, and must not turn this failing assertion into a pass.
+                # Without teardown its broken row poisons unrelated logout tests.
+                async with db.begin() as conn:
+                    await conn.execute(
+                        t.authorization_claims.delete().where(
                             t.authorization_claims.c.plan_id == plan
                         )
                     )
-                    == "CLAIMED"
-                )
+                    await conn.execute(
+                        t.execution_jobs.delete().where(t.execution_jobs.c.plan_id == plan)
+                    )
+                    await conn.execute(t.plans.delete().where(t.plans.c.id == plan))
 
     asyncio.run(run())
 
