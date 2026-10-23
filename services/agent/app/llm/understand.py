@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from collections.abc import Callable
+
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import ValidationError
 
 from services.agent.app.graph.state import AgentContext, AgentState, Understanding
@@ -17,17 +19,25 @@ _SYSTEM = (
 
 
 class UnderstandAdapter:
-    def __init__(self, llm, max_retries: int = 1) -> None:
+    def __init__(
+        self,
+        llm,
+        max_retries: int = 1,
+        observer: Callable[[AIMessage], None] | None = None,
+    ) -> None:
         self._model = llm.bind_tools(
             [understanding_tool()],
             tool_choice={"type": "function", "function": {"name": UNDERSTANDING_TOOL}},
         )
         self._max_retries = max_retries
+        self._observer = observer
 
     def __call__(self, state: AgentState, context: AgentContext) -> Understanding:
         note = ""
         for attempt in range(self._max_retries + 1):
             message = self._model.invoke(self._messages(state, note))
+            if self._observer is not None:
+                self._observer(message)
             try:
                 args = single_tool_call(message, UNDERSTANDING_TOOL)
                 return Understanding.model_validate(args)

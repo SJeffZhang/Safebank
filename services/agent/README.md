@@ -33,9 +33,13 @@ understand/gather/plan 三个端口实现。生产 HTTP 入口仍是 P0 探针�
   `plan`：复用 `plan_tool`/`from_strict_plan`+`PlanBody`，`request_id/session_id/utterance_ids` 由代码
   填，模型自填身份即失败；两者每次新建 system+human（无历史 assistant）。
 - `gather`：只绑 18 个 read 工具（非 strict，参数本地契约校验），最多 3 轮，经显式 `read_executor`
-  执行；拒绝未知/写工具，`*_wall` 剔除、untrusted 用 `<untrusted_data source=…>` 包裹并转义。
+  执行；拒绝未知/写工具与畸形 tool call、达到上限明确截断，`*_wall` 剔除、untrusted 用
+  `<untrusted_data source=…>` 包裹并转义；输出完整 `ReadRecord`（tool/args/data/source_ref）供 plan 引用。
 - 自动测试全部走 `httpx.MockTransport` 检查最终 HTTP payload；`live.py` 是手动 live 入口（理解2+
-  计划3+gather1，预算8请求），**尚未执行**，需 DEEPSEEK_API_KEY。
+  计划3不同场景+gather1，硬预算8请求，含 usage/token/请求计数与语义断言），任一失败 exit 非 0，
+  **尚未执行**；需 `DEEPSEEK_API_KEY`（由协调者安全注入环境，不要把 key 复制进 worktree）。
+- 本地模型：`needs_write`/`unclear` 用 `StrictBool`（拒字符串/数字宽松转型），`Slot` 非负
+  `intent_index` + 合法 `span`。
 
 ## 运行方式
 

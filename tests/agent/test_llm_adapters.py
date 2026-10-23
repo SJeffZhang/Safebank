@@ -9,13 +9,19 @@ import pytest
 from langchain_openai.chat_models.base import OpenAIConnectionError
 from pydantic import ValidationError
 
-from services.agent.app.graph.state import AgentContext, Understanding, UtteranceRef
+from services.agent.app.graph.state import AgentContext, ReadRecord, Understanding, UtteranceRef
 from services.agent.app.llm._common import LlmToolError
 from services.agent.app.llm.client import BETA_API_BASE, MODEL, make_llm
 from services.agent.app.llm.gather import GatherAdapter, ReadResult
 from services.agent.app.llm.plan import PlanAdapter
 from services.agent.app.llm.understand import UnderstandAdapter
-from tests.agent.llm_mock import ScriptedLLM, text_response, tool_response
+from tests.agent.llm_mock import (
+    ScriptedLLM,
+    malformed_tool_response,
+    mixed_tool_response,
+    text_response,
+    tool_response,
+)
 
 API_KEY = "test-key"
 
@@ -249,9 +255,98 @@ def test_gather_stops_at_round_limit():
     def executor(name, args):
         return ReadResult(data={}, source_ref="src_a")
 
-    result = GatherAdapter(llm, executor, max_rounds=3)(plan_state(), ctx())
-    assert len(result) == 3
+    with pytest.raises(LlmToolError):
+        GatherAdapter(llm, executor, max_rounds=3)(plan_state(), ctx())
     assert len(scripted.requests) == 3
+
+
+def test_gather_rejects_invalid_tool_calls():
+    scripted = ScriptedLLM([malformed_tool_response("get_accounts")])
+    llm = build(scripted)
+
+    def executor(name, args):
+        return ReadResult(data={}, source_ref="src_a")
+
+    with pytest.raises(LlmToolError):
+        GatherAdapter(llm, executor)(plan_state(), ctx())
+
+
+def test_gather_rejects_mixed_valid_and_invalid_tool_calls():
+    scripted = ScriptedLLM([mixed_tool_response("get_accounts", {"history_days": 7})])
+    llm = build(scripted)
+    executed = []
+
+    def executor(name, args):
+        executed.append((name, args))
+        return ReadResult(data={}, source_ref="src_a")
+
+    with pytest.raises(LlmToolError):
+        GatherAdapter(llm, executor)(plan_state(), ctx())
+    assert executed == []
+
+
+def test_gather_max_rounds_bounded():
+    scripted = ScriptedLLM([])
+    llm = build(scripted)
+
+    def executor(name, args):
+        return ReadResult(data={}, source_ref="src_a")
+
+    with pytest.raises(ValueError):
+        GatherAdapter(llm, executor, max_rounds=4)
+    with pytest.raises(ValueError):
+        GatherAdapter(llm, executor, max_rounds=0)
+
+
+def test_gather_stores_read_data_for_plan():
+    scripted = ScriptedLLM(
+        [tool_response("get_accounts", {"history_days": 7}), text_response("done")]
+    )
+    llm = build(scripted)
+
+    def executor(name, args):
+        return ReadResult(
+            data={"accounts": [{"account_id": "acc_a", "balance_cents": 100}]},
+            source_ref="src_a",
+            versions={"accounts": 3},
+        )
+
+    result = GatherAdapter(llm, executor)(plan_state(), ctx())
+    assert len(result) == 1
+    assert result[0].tool == "get_accounts"
+    assert result[0].args == {"history_days": 7}
+    assert result[0].data["accounts"][0]["account_id"] == "acc_a"
+    assert result[0].versions == {"accounts": 3}
+
+
+def test_plan_prompt_includes_reads_utterances_and_derived():
+    state = {
+        "customer_id": "cus_a",
+        "session_id": "ses_a",
+        "utterances": [UtteranceRef(id="utt_typed", kind="typed", text="给王五转800元")],
+        "understanding": Understanding(intents=["transfer"], needs_write=True),
+        "reads": [
+            ReadRecord(
+                source_ref="src_a",
+                tool="get_accounts",
+                data={"accounts": [{"account_id": "acc_a"}]},
+            )
+        ],
+    }
+    scripted = ScriptedLLM([tool_response("submit_action_plan", strict_plan())])
+    llm = build(scripted)
+    PlanAdapter(llm)(state, ctx())
+
+    body = body_of(scripted, 0)
+    system = body["messages"][0]["content"]
+    human = body["messages"][1]["content"]
+    assert "derived" in system
+    assert "utt_typed" in human
+    assert "src_a" in human
+    assert "acc_a" in human
+    serialized = json.dumps(body, ensure_ascii=False)
+    for secret in ("cus_a", "ses_a", "SECRET_TOKEN", API_KEY):
+        assert secret not in serialized
 
 
 def test_network_error_surfaces_without_retry():

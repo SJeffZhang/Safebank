@@ -53,6 +53,71 @@ def text_response(content: str) -> httpx.Response:
     return _response(body)
 
 
+def malformed_tool_response(name: str) -> httpx.Response:
+    """A tool call whose ``arguments`` is not valid JSON (parsed into invalid_tool_calls)."""
+
+    body = {
+        "id": "chatcmpl-test",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "deepseek-v4-pro",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": name, "arguments": "{not json"},
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+    }
+    return _response(body)
+
+
+def mixed_tool_response(valid_name: str, valid_args: dict) -> httpx.Response:
+    """One valid tool call plus one malformed one in the same message."""
+
+    body = {
+        "id": "chatcmpl-test",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "deepseek-v4-pro",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": valid_name, "arguments": json.dumps(valid_args)},
+                        },
+                        {
+                            "id": "call_2",
+                            "type": "function",
+                            "function": {"name": valid_name, "arguments": "{not json"},
+                        },
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+    }
+    return _response(body)
+
+
 def _response(body: dict) -> httpx.Response:
     return httpx.Response(
         200,
