@@ -42,7 +42,7 @@
 | 调研 | 开源项目元数据和 DeepSeek 官方信息已核实；评分/提交已从官网公开 JS 核实（docs/acceptance/official-v1.md）；竞品「明鉴」未核实 |
 | PRD | **`PRD.md` = v2.1 定稿**（1,764 行，§0–§16；三轮多 agent 审核 + 两次修订复核，决议 D1–D47 见 §0.5）。v1.2 与作废的 v2.0 草稿在 `docs/archive/`；审核报告在 `docs/reviews/` |
 | 代码 | **P1 完成并逐组件验收**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116项单元+33项真实PG通过，契约v1已冻结。分支 feat/l3-core，P1代码已提交并推送私有仓库（功能提交7fd7a26）；CI权限修复70dcabe已推送，远端unit与p1-postgres均通过（run 39929405919） |
-| L2 网关 | **W0 基础骨架已合入 main**（PR #2，merge e2e91db，2026-10-23；经 4 轮架构评审 + 1 次 CI 修复）。波次 1（W1–W4）任务书已写好、**未启动**。计划 `docs/plans/L2-plan.md`，任务书 `docs/plans/briefs/` |
+| L2 网关 | **W0 基础骨架已合入 main**（PR #2，merge e2e91db，2026-10-23；经 4 轮架构评审 + 1 次 CI 修复）。波次 1 已启动：W1/W2/W3 在独立 worktree 实现，W4 已建分支、等待并发槽位。计划 `docs/plans/L2-plan.md`，任务书 `docs/plans/briefs/` |
 | 前端 | **暂停**，用户亲自下令才开工（§2 第 13 条） |
 | 下一步 | L2 波次 1：W1 身份与原话、W2 读代理与来源、W3 预演·工作流·决策、W4 审批与执行，四路并行（见 §5「L2 进度」）。2026-10-23 起工作转到 Codex，交接说明见 `docs/handoff/CODEX-HANDOFF.md` |
 
@@ -195,6 +195,32 @@
 | 2026-10-23 | Claude（主会话 89da7fbc） | 经用户同意，`gh api -X PATCH repos/SJeffZhang/Safebank -F allow_auto_merge=true` 打开仓库「Allow auto-merge」；随后为 PR #2 开自动合并仍被拒（PR 处于 unstable：`main` 无分支保护 / 必需检查，检查未跑完时 GitHub 不接受）。复查时 CI 已全绿（4 项通过，CLEAN，head b8836b5），按用户「CI 全绿即合并」规则直接合并 PR #2（merge commit e2e91db，2026-10-23T12:07:45Z），本地切到 main 并 fast-forward。**W0 基础骨架合入 main。** 用户要求做完此 PR 后停止工作：波次 1 未启动；四份任务书草稿（`wave1-common.md`、`W1-identity.md`、`W2-provenance.md`、`W3-decision.md`、`W4-execution.md`）已复制到 `docs/plans/briefs/`，未提交；恢复时随各 W 分支提交。W0 worktree `../Fintech2026-wt/W0-foundation` 与分支 `feat/l2-foundation`、`feat/l2-gateway` 保留未删。 |
 | 2026-10-23 | Claude（主会话 89da7fbc） | 用户决定把后续工作转到 Codex（只有 GitHub 仓库，在 Codex 内自开子 agent）。写交接文档 `docs/handoff/CODEX-HANDOFF.md`；更新本文件 §3（新增 L2 网关、前端两行，下一步改为波次 1）与 §5（新增「L2 进度」表）；与波次 1 公共约定及 W1–W4 四份任务书一起，经分支 `docs/codex-handoff` 开 PR https://github.com/SJeffZhang/Safebank/pull/3 。主会话就此停止工作。本机遗留：W0 worktree、P1/W0 的 Docker 栈仍在运行（用的是 W0 worktree 生成的 `.secrets`）。 |
 
+| 2026-10-23 | Codex（协调者） | **Codex 接手**：按用户指令克隆唯一来源 SJeffZhang/Safebank 到 `/Users/jet/Downloads/WeBank`；GitHub 连接器返回 404，改用本机 gh 实查 PR #3 已 MERGED（merge `8555bf0c82860a11765d73f2a59f8e72d6a5de7a`），unit 与 p1-postgres 全部 SUCCESS，无需再次合并。已按序完整阅读交接文档、AGENTS.md、L2-plan、wave1-common、W1–W4 任务书、gateway README 与 W0 架构评审；继续核对 PRD。初次克隆因 `.git` 写保护失败，权限审核后成功。`make setup` 首次因沙箱 DNS 限制失败，正在联网重试，未宣称基线通过。本机 Docker 链接失效且 Docker.app 缺失；用户已选择安装 Docker Desktop 后仅后台运行。未启动业务 worker、未操作 Docker 数据卷。 |
+
+| 2026-10-23 | Codex（协调者） | 接手准备继续：`make setup` 联网重试成功（78 个锁定包），`make keys` 成功且 .secrets/.venv 已忽略；亲自跑 `make test`=183 passed/48 skipped、`make test-gateway`=64 passed、`make lint` 通过（145 files）。fetch 后 main 仍为 8555bf0。通过原生工具建立并附加四个独立 worktree，创建 feat/l2-identity、feat/l2-provenance、feat/l2-decision、feat/l2-execution。启动计划、退出命令、接口核查和合并顺序写入 docs/plans/briefs/wave1-codex-launch.md。Docker Desktop 正在按用户选择安装；make up / 真实 PG 基线尚未运行，业务 worker 未启动。运行时最多 3 个子 agent 同时执行，四任务分批派发；不使用旧任务书的虚假 DeepSeek/Claude 提交署名。 |
+
+| 2026-10-23 | Codex（协调者） | 环境准备：Homebrew 下载 Docker Desktop 4.96.3 并将 Docker.app 放到 /Applications；系统级 CLI 链接步骤因需要交互式 sudo 失败，`--no-binaries` 重试因应用已存在结束。应用内 CLI 实测可用（Docker 29.9.2、Compose 5.6.1），已以 `-with-frontend=false -unattended` 启动后台引擎，docker info 返回 29.9.2；未打开 Desktop 窗口。四个 worktree 分别从缓存离线安装 78 个锁定包，`make wheels` 校验 44 个 Linux wheel 成功。初始 docker volume ls 为空，未删除/重建数据卷。正在串行运行用户要求的完整 main 基线命令链；当前镜像构建及首次 PostgreSQL 镜像下载中，尚未宣称全栈/PG 通过。 |
+
+| 2026-10-23 | Codex（协调者） | **main 完整基线验收通过**（代码 8555bf0，只有协调文档未提交）：按顺序实际运行 make setup、make keys、make up、make test、make test-gateway、make test-gateway-db，命令链 exit 0。全量 183 passed/48 skipped，gateway 64 passed，真实临时 PostgreSQL 17 passed（4.95s）；lint 此前已通过。六个既有服务 healthy；首次创建 safebank_pg-bank / safebank_pg-agent 于 2026-10-23T12:26:36Z，未删除/重建任何数据卷。准备派发 W1/W2/W3，W4 按槽位分批接入。静态发现 bankcore 尚无 reserve/shortfall 实现，交 W3 核对并登记共享依赖，不允许在 gateway 重写业务算术。 |
+
+| 2026-10-23 | Codex（协调者） | 已派发独立子 agent W1/W2/W3（各用其 feat/l2-* worktree，仅本地提交），W4 排队；共同确认 app.state.db=AsyncEngine、l3=L3Client、wall_now=带时区时钟函数，不在各处理器重复创建连接池。W1/W2 对齐 NormalizedScope.fields 中普通参数、predicates 和 derived_template；no_op 保留在 bankcore 预演结果，不塞入写入参数。W3 获准按原有所有权仅给 PreflightResult/WorkflowResult 新增字段，EvalContext 不变。核实并登记共享缺口：撤销检查未接全局依赖、pending_clarifications 缺状态边、运行资源/私钥/PIN 未接线；bankcore 仅实现 7/14 写工具，reserve/projected_shortfall 与原始账单快照缺失。各 worker 不改冻结区，替身和503不计完整组件验收。正在编写具体补缺提案，尚未扩大实现范围、未提交/推送/开PR。 |
+
+| 2026-10-23 | Codex（协调者） | 已按实际代码与 PRD §7.7 编写 docs/plans/briefs/wave1-shared-gaps.md：列出全局撤销、澄清状态、运行资源/密钥、预留与内部快照、7 个尚未实现的领域写工具及验收门禁。用户明确冻结与完整退出条件存在冲突，准备请求一次范围受控例外；当前仅文档提案，未改冻结区、未放宽验收。W3另发现FIRST_TRANSFER历史与拒绝发生时间语义，优先复用已有数据，缺字段仍进0002待决。 |
+
+| 2026-10-23 | Codex（协调者） | 共享依赖提案已通过异步问题送用户选择，等待明确冻结例外决定，不阻断白名单内工作。W3复核确认L3 transactions加载全历史，撤回新增lifetime字段提议；拒绝窗口复用evaluations与APPROVAL_REJECTED审计时间。append_evaluation全结论构建view并存hash，固定签名不变；挂失/申购的IRREVERSIBLE_STEP升红与工具展示irreversible分开核对。交叉约定已补入启动记录供W4接入。未新增业务变更、未声称组件通过。 |
+
+| 2026-10-23 | Codex（协调者） | 继续静态核验发现 P1 是核心子集：L3仅5/18读，生产load_bank_state未填指令/代扣/产品/持仓/订单（模型字段默认空）；已提醒W1/W2修正自报，不能以FakeL3全样本当生产齐备。reads.py有效风险测评分支引用未导入date，已登记冻结区缺陷。初次rg查询含不存在api.py返回exit2，随后读实际reads.py成功；补充共享缺口提案，未修改业务文件。 |
+
+| 2026-10-23 | Codex（协调者） | 用户明确批准「允许受控补缺，按提案逐组件推进」。按wave1-shared-gaps实行仅共享实现agent可改的受控例外，W1–W4边界不变；安排W3在当前小组件稳定点本地提交并报告阻塞，腾槽优先共享网关运行/撤销/状态/密钥接线，后续预留与L3领域组件逐项独立评审验收。已建立本次计划专属忽略目录.superpowers/sdd/wave1-codex-launch作恢复账本，不替代§4正式日志。 |
+
+| 2026-10-23 | Codex（协调者） | 建立并附加共享补缺worktree safebank-shared-runtime，分支feat/l2-shared-runtime（基线8555bf0），离线安装78包。编写S1-shared-runtime任务书，限定状态/生命周期/撤销接线/Linux私钥读取，不改W1业务或银行领域。按已批准方案应用brainstorming/writing-plans技能整理，无需重复确认。另裁定W2保护性动作任务书与PRD冲突以§7.6为准：越出授权范围仍REPLAN，不能借“保护”放行；memo/alias黄提示缺码单独处理。 |
+
+| 2026-10-23 | Codex（协调者） | W3以PARTIAL/BLOCKED提交检查点3bcbe8e后结束本轮，已派独立S1共享实现agent。协调者亲自复跑W3全部五条退出命令：lint通过151 files；gateway76 passed（0.93s）；既有真实PG17 passed（2.76s）；全量195 passed/48 skipped（1.34s）；test-w3 12 passed（0.35s）。这些只证明现有测试，W3无自身PG测试、G4/repo/replay未独立验收，reserve/hint/shortfall等仍阻塞，禁止当完整W3开PR。W3更正先前“改用拒绝实际时间”仅方案，当前代码仍用plans创建时间，已列未完成。另rg shell通配不存在导致exit1，改用rg --files确认freeze_contracts包含BankState，后续内部契约增量须同步冻结快照。 |
+
+| 2026-10-23 | Codex（协调者） | S1实现agent已报告澄清状态小组件本地提交d2726bb与3项PG自测（协调者尚未复跑，不计验收）；确认S1不重复W1 PIN业务，缺W1模块保持未配置并拒绝客户路径，W1存在时集中加载。编写下一串行组件S2-reserve任务书：仅bankcore纯函数与精确场景测试，生产真实义务数据另组件补齐，不以空默认字段冒充完成。W1新定时缺首次时刻裁定FORM_REQUIRED，不套种子06:00；W2读时钟按PRD现有versions/observed_at和reset撤销上下文约束，不擅加协议字段。 |
+
+| 2026-10-23 | Codex（协调者） | 为保留未提交协调文档、便于后续main同步，准备在docs/codex-wave1-launch仅本地提交启动/共享缺口/S1/S2任务书与日志；diff --check已通过，无业务变更。后续随首个共享组件接受独立评审后推送，不直接推main。G2夹读版本竞争裁定DEPENDENCY_UNAVAILABLE 503，不能伪造无plan的STATE_CHANGED Decision；失败不得存source_ref。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
@@ -229,10 +255,10 @@ P0 准备阶段（决定后续一切）：
 | 状态 | 组件 | 分支 / PR | 任务书 |
 |---|---|---|---|
 | [x] | W0 基础骨架 | `feat/l2-foundation` / PR #2 已合并 | `docs/plans/briefs/W0-*.md`，评审 `docs/reviews/L2-W0-architecture.md` |
-| [ ] | W1 身份、会话与原话 | `feat/l2-identity`（未建） | `docs/plans/briefs/W1-identity.md` |
-| [ ] | W2 读代理、参数来源与污点 | `feat/l2-provenance`（未建） | `docs/plans/briefs/W2-provenance.md` |
-| [ ] | W3 快照、预演、工作流、决策与 G4 | `feat/l2-decision`（未建） | `docs/plans/briefs/W3-decision.md` |
-| [ ] | W4 审批与执行 | `feat/l2-execution`（未建） | `docs/plans/briefs/W4-execution.md` |
+| [ ] | W1 身份、会话与原话 | `feat/l2-identity`（实现中，未验收） | `docs/plans/briefs/W1-identity.md` |
+| [ ] | W2 读代理、参数来源与污点 | `feat/l2-provenance`（实现中，未验收） | `docs/plans/briefs/W2-provenance.md` |
+| [ ] | W3 快照、预演、工作流、决策与 G4 | `feat/l2-decision`（检查点3bcbe8e，共享依赖阻塞） | `docs/plans/briefs/W3-decision.md` |
+| [ ] | W4 审批与执行 | `feat/l2-execution`（worktree 已建，排队） | `docs/plans/briefs/W4-execution.md` |
 | [ ] | 0002_wave1 迁移（波次 1 各任务提出的表 / 字段需求，由协调者串行追加） | — | 汇总各 `docs/progress/W*.md` 的「待决」 |
 | [ ] | W5 定时授权、通知、审计接口、D 接口 | 波次 2，任务书未写 | L2-plan §3 W5 |
 | [ ] | W6 网关层安全验收（A8、A1/A2/A3/A5） | 波次 2，任务书未写 | L2-plan §3 W6 |
