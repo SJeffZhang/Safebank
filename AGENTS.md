@@ -42,10 +42,11 @@
 | 调研 | 开源项目元数据和 DeepSeek 官方信息已核实；评分/提交已从官网公开 JS 核实（docs/acceptance/official-v1.md）；竞品「明鉴」未核实 |
 | PRD | **`PRD.md` = v2.1 定稿**（§0–§16；三轮多 agent 审核 + 两次修订复核，决议 D1–D47 见 §0.5；执行屏障增量约定见ADR-008）。v1.2 与作废的 v2.0 草稿在 `docs/archive/`；审核报告在 `docs/reviews/` |
 | 代码 | **P1 完成并逐组件验收**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116项单元+33项真实PG通过，契约v1已冻结。分支 feat/l3-core，P1代码已提交并推送私有仓库（功能提交7fd7a26）；CI权限修复70dcabe已推送，远端unit与p1-postgres均通过（run 39929405919） |
-| L2 网关 | **W0与共享PR #4–#10均已合入main**，当前main `44ded2f`：S1运行层、S2七天预留、S1b网关0002/CAS、W4a客户锁、S1c PIN Settings、S1e孤儿对账、S1d memo code。W1 `1722995`待协调者最新全退出与独立审；W2 `8063f27`已亲验五退出，memo独审及真实W1/S3接线仍缺。S1f尚未实施，先完成其挂载补缺；S3a提案F1修订待复审。W3/W4仅早期部分检查点。计划 `docs/plans/L2-plan.md`，交接 `docs/handoff/TEAMMATE-HANDOFF-2026-10-23.md` |
+| L2 网关 | main `cca074b`（S1f PR #12已合）；W1 `159d811`本协调者五退出+actionlint全通过，增量独审APPROVE，准备发布；S3a `537664a`待本协调者验收与独审；W2 memo独审APPROVE，真实W1/S3接线待完成；W3/W4仍为早期检查点。 |
+| L1 Agent | **用户2026-10-24确认立即并行**；C1a图骨架已后台派发，逐组件任务见 `docs/plans/briefs/C1-agent.md`；仅services/agent与tests/agent，fake不算联调。 |
 | 前端 | **暂停**，用户亲自下令才开工（§2 第 13 条） |
-| 协调状态 | **2026-10-24 主会话接回**：实现与评审均由本机 Claude Code CLI（DeepSeek V4 Pro）无头 worker 完成，协调者只复跑、推送、开 PR、合并、记日志。接续计划 `docs/plans/L2-resume-2026-10-24.md`。本机 worktree 在 `../Fintech2026-wt/<名>`，`.secrets` 软链到与本机数据卷匹配的 W0 worktree 密钥 |
-| 下一步 | S1f PR 合并 → W1 同步 main、修两条 P2、复跑后开 PR → S3a 按 F1 复审通过的提案实施 → W2 真实接线（含 ¥ P2）→ W3 → W4（见 `docs/plans/L2-resume-2026-10-24.md`） |
+| 协调状态 | **2026-10-24 Codex 同机接手**：实现与评审均由本机 Claude Code CLI（DeepSeek V4 Pro）无头 worker 完成，协调者只复跑、推送、开 PR、合并、记日志。接续计划 `docs/plans/L2-resume-2026-10-24.md`。本机 worktree 在 `../Fintech2026-wt/<名>`，`.secrets` 软链到与本机数据卷匹配的 W0 worktree 密钥 |
+| 下一步 | W1 已独审 APPROVE，复核后带入协调文档发布；S3a 537664a 待亲验/独审；用户已授权 L1 并行，先任务书与小组件门禁；随后 W2 真实接线 → W3 → W4。 |
 
 ### 已确认事实
 
@@ -396,6 +397,18 @@
 | 2026-10-24 | Claude（主会话 89da7fbc） | S1f worker（DeepSeek，84 轮）本地提交 38e382c（5 文件 +185/−5：main.py 每 app 独立装配公共 auth 路由，demo/eval 均关时不注册 G22；matrix.coverage_errors 按开关校验 G22；test_matrix 新增 8 项；README、进度）。协调者在 S1f worktree 亲自复跑六退出全部 exit 0：lint 175 files；test 406/302 skip；test-gateway 171/254 skip；test-gateway-db 17；test-shared-runtime 59 零 skip；contracts-check PASS。应用户要求 `brew install actionlint`（1.7.12），在 S1f worktree 运行 exit 0。已派 DeepSeek 只读评审 R-S1f（报告 `docs/reviews/L2-S1f-review.md`），结论未出前不推送。 |
 | 2026-10-24 | DeepSeek 只读评审 worker ×3 | R-S1f（39 轮）**APPROVE**，P0/P1 无；P2-1 G22 过滤只看 path 不看方法，P2-2 嵌套 router 时过滤 fail-open（coverage 构建期兜底）；亲跑 test_matrix 16 passed；报告 S1f worktree `docs/reviews/L2-S1f-review.md`。R-W1（65 轮）**APPROVE**，撤销追加任务逐条核对、冻结区零越界、与 S1f 合并风险低；P2：correction 双次 `_invalidate_plans`、intent_lexicon 死键；报告 W1 worktree `docs/reviews/L2-W1-final-review.md`。R-W2S3a（63 轮）：W2 memo 增量 **APPROVE**（只升级不放宽；P2：裸 ¥/￥ 无数字也升黄），报告 W2 worktree `docs/reviews/L2-W2-memo-review.md`；S3a F1 定点复审 **APPROVE**（SUCCESS ⇒ instruction_id 非空有应用层 + DB CHECK；备注实施时 PRD §8.3 补三个关系见证列与该 CHECK），报告 W2 worktree `docs/reviews/L2-S3a-fields-f1-recheck.md`。协调裁定：S1f 两条 P2 本轮修（`--resume` 原 worker，修复轮 1）；W1 / W2 的 P2 并入各自同步 main 的下一轮。 |
 | 2026-10-24 | Claude（主会话 89da7fbc） | S1f 修复轮 1（`--resume` 原 DeepSeek worker，32 轮）提交 d169f52：G22 过滤改为 method+path 精确匹配；auth.router 出现非 APIRoute 顶层项时构建期直接拒绝（fail-closed）；新增 2 红测（红 16/2 failed → 绿 18）；评审报告随提交。协调者在 d169f52 亲自复跑六退出全部 exit 0：lint 175 files；test 408/302 skip；test-gateway 173/254 skip；test-gateway-db 17；test-shared-runtime 59 零 skip；contracts-check PASS；actionlint exit 0；diff 密钥扫描无命中。主 checkout 未提交的协调文档（AGENTS 日志、接续计划）复制进 S1f 分支后在主 checkout `git stash`（未丢弃），新增验收记录 `docs/acceptance/L2-S1f-demo-route.md`，推送并开 base main PR。 |
+| 2026-10-24 | Claude（主会话 89da7fbc） | PR #12 当前 head 9cb9a41 的 push/PR 两套 unit + p1-postgres 四检查全部 COMPLETED SUCCESS（CLEAN），`gh pr merge 12 --merge --match-head-commit` 成功，merge cca074b（2026-10-23T18:03:02Z UTC）；本地 main 快进。**S1f 完成。** W1：协调者把 origin/main 合入 `feat/l2-identity`（358bd48，无冲突、无冲突标记），派新 DeepSeek worker（原 W1 为 Codex 会话，本机无法续接）修评审两条 P2、核 S1f 兼容并重跑五退出（日志 `workers/W1s.*`）。S3a：从 cca074b 建 worktree `../Fintech2026-wt/S3a`（`feat/l3-obligations-data`，远端旧 6815547 为 main 祖先），带入 F1 复审报告，派 DeepSeek worker 按 S3a 任务书 + 已复审提案实施（禁 up/down/test-p1*/test-integration/docker volume/push；新增 `make test-obligations` 专项），日志 `workers/S3a.*`。W1 与 S3a 改动文件不重叠（网关 W1 文件 vs contracts/bankcore/bank-backend），并行。 |
+| 2026-10-24 | Claude（主会话 89da7fbc） | W1 worker（DeepSeek，108 轮）提交 4e34c63/0069f2c：correction 路径加守卫避免二次 supersede、删 intent_lexicon 三个无读者键、`test_customer_labels_do_not_fall_back_to_process_environment` 按 S1f 改断言 404；自报 lint/test-gateway 1702/test 1937 通过，**test-gateway-db 与 test-w1 未能运行**——本机 Docker 引擎已停止（`docker.sock` 不存在，长期栈六容器 Exited 255；worker 试启动被权限拦截）。协调者 `docker desktop start --detach` 恢复引擎（29.8.1），两卷 CreatedAt 仍 11:29:55Z。协调者在 0069f2c 亲自复跑：lint 202 files、test-gateway 1702/413 skip、test-gateway-db 17、test 1937/461 skip、actionlint 均 exit 0；**test-w1 1 failed / 1687 passed**——worker 新增且未实际跑过的 `test_correction_runs_one_supersede_pass_but_replacement_still_supersedes` 失败（correction 仍调用一次 service.supersede）。不开 PR；`--resume` 原 worker 系统化排查（修复无效还是判据错误，禁止删测/放宽），日志 `workers/W1s-r1.*`。长期栈容器待协调者后续 `make up` 恢复。 |
+| 2026-10-24 | Claude（主会话 89da7fbc） | W1 修复轮（`--resume`，40 轮）诊断：守卫本身有效，失败源于测试没在首条原话后清零计数；改测试为统计逐计划 `lifecycle._invalidate_plan` 次数（159d811）。期间 Docker 再次停止——用户说明是误操作停掉。协调者改用无界面方式后台启动 `com.docker.backend -with-frontend=false -unattended`（nohup + disown，引擎 29.8.1），两卷 CreatedAt 不变。协调者红绿核验：临时换回修复前 service.py（358bd48 版本）单跑该测试 1 failed，`git checkout` 还原后 1 passed，工作区干净。159d811 亲自复跑：lint 202 files；test-gateway 1702/413 skip；test-gateway-db 17；test 1937/461 skip；**test-w1 1688 passed 零 skip**；actionlint exit 0。已派 DeepSeek 只读 R-W1d 审增量 358bd48..159d811（追加到 `docs/reviews/L2-W1-final-review.md`）。S3a worker 仍在运行（已改 contracts state/base、v1.json 快照、bankcore reserve、bank-backend models/state/db、Makefile，未提交）。 |
+| 2026-10-24 | Claude（主会话 89da7fbc） | 用户因主会话额度不足要求暂停，并把协调交接给**同机** Codex（继续遥控 DeepSeek worker）。写交接文档 `docs/handoff/CODEX-HANDOFF-2026-10-24.md` 与 worker 启动脚本 `scripts/ds-worker.sh`（impl/review 两种白名单，清除 ANTHROPIC_* 走 DeepSeek），均未提交；worker 日志与提示文件复制到 `../Fintech2026-wt/.ds-logs/`。交接时仍在运行、未打断：S3a 实现 worker（会话 cb43a8a8，未提交改动）与 W1 增量评审 R-W1d。另一会话转述用户决定「L1 立即与 L2 并行」，已写入交接文档 §5、待 Codex 向用户确认后开工，主会话未启动。主会话停止工作。 |
+
+| 2026-10-24 | Codex（协调者，同机接手） | **Codex 接手（2026-10-24，同机）**：核对主 checkout main=cca074b，保留 AGENTS.md 未提交日志、CODEX-HANDOFF-2026-10-24.md 与 ds-worker.sh；worktree 全部保留。沙箱内 Docker/ps 读取受限，提升后 docker info=29.8.1，两持久卷 CreatedAt 均2026-10-23T11:29:55Z；未发现仍运行的 claude -p。R-W1d 已结束（55轮，session 0202dd97），APPROVE、无P0/P1/P2，PG未由评审亲跑；W1仍159d811，前协调者完整五退出与红绿亲验为交接证据，本协调者尚未复跑。S3a已结束（242轮，session cb43a8a8），本地提交537664a、工作区干净，自报25专项零skip，尚待本协调者复跑/独审/全栈门禁。用户在本会话明确确认立即启动L1与L2并行，前端/BFF继续暂停；实现与评审均继续用本机DeepSeek CLI worker。 |
+
+| 2026-10-24 | Codex（协调者） | 用户明确确认L1立即并行后，纠正L2-plan把L1列入“不做”的协调者范围收窄，同步接续计划与AGENTS §3/§5；新增C1-agent任务书，将L1拆C1a–e并先只派C1a图骨架/状态隔离，业务与测试限services/agent、tests/agent，进度文件为精确文档例外。开始W1五退出+actionlint本机复跑，尚未全部完成；读取S3a实现进度发现其真实执行链用post_transfer/persist而非任务书要求的prepare/execute，交后续独审明确核对，未当完整验收。 |
+
+| 2026-10-24 | Codex（协调者） | W1精确159d811本机复跑全部exit0：lint202文件、test-gateway1702/413skip、test-gateway-db17、test1937/461skip、test-w1 **1688 passed零skip（51.64s）**、actionlint通过，原始日志/private/tmp/sbg-codex-w1-20261024。R-W1d独立APPROVE无待修，本轮未改业务；准备合入保留双方的协调日志/交接与ds-worker脚本后发布W1。创建C1 worktree（feat/l1-agent，从cca074b）及匹配.secrets软链，make setup安装78锁定包成功；后台派C1a-codex DeepSeek worker只实现图骨架，尚无验收结论。S3a七退出亲验进行中。 |
+
+| 2026-10-23 | Codex（协调者） | W1显式PIN loader a7570e6亲自五退出全0：lint181/all1867+112skip/gateway1638+64skip/PG17/W1 1587零skip；独立review_w1_pin_loader规格与质量APPROVE，实际19 passed。新增验收并推送feat/l2-identity检查点；共享Settings接线、真实客户锁及生命周期联调仍开放，不作完整W1合并交付。 |
 
 ## 5. 下一步待办（按顺序）
 
@@ -426,6 +439,10 @@ P0 准备阶段（决定后续一切）：
 | [x] | P1.7 原子执行恢复 | prepare/execute/query/reconcile；attempt/deadline/证据/锁序/版本/幂等/墓碑；回滚、重试、丢包、迟到竞争 |
 | [x] | P1.8 L3集成验收 | 真实L3替换探针、服务凭证、核心5读/snapshot/执行/outbox；真实HTTP→DB、20并发/双向转账/冻结竞争、预演一致性、P0回归与CI |
 
+### L1 进度（用户2026-10-24授权并行）
+
+- [ ] C1a 图骨架与AgentState → C1b DeepSeek strict → C1c gateway客户端与路由 → C1d持久化/审批/服务 → C1e输出/卡片/回放。任务书 `docs/plans/briefs/C1-agent.md`，每个小组件独立门禁，前端/BFF暂停不变。
+
 ### L2 进度（Security Gateway 后端，计划 `docs/plans/L2-plan.md`）
 
 | 状态 | 组件 | 分支 / PR | 任务书 |
@@ -434,7 +451,7 @@ P0 准备阶段（决定后续一切）：
 | [x] | S1 共享运行层 | PR #4，merge `691cf88`；独立评审与四CI全绿 | `docs/acceptance/L2-S1-runtime.md` |
 | [x] | S2 七天预留纯函数 | PR #5，merge `a9d72cf`；真实生产接入待S3 | `docs/acceptance/L2-S2-reserve.md` |
 | [x] | W4a 客户锁先决组件 | PR #7 merge d5ac9ed（六退出、独立评审及四CI全绿） | `docs/plans/briefs/W4a-customer-locks.md` |
-| [ ] | W1 身份、会话与原话 | `feat/l2-identity`（已push `1722995`；最新五退出为实现者自报，协调者完整复跑/独审与S1f依赖未闭合） | `docs/plans/briefs/W1-identity.md`；`W1-revocation-deferred.md` |
+| [ ] | W1 身份、会话与原话 | `feat/l2-identity`（159d811：本协调者亲跑五退出+actionlint全通过，W1 1688零skip；R-W1d APPROVE，待发布与精确head CI） | `docs/plans/briefs/W1-identity.md`；`W1-revocation-deferred.md` |
 | [ ] | W2 读代理、参数来源与污点 | `feat/l2-provenance`（已push `8063f27`；memo五退出已亲验，最新memo独审与真实W1/S3接线未闭合） | `docs/plans/briefs/W2-provenance.md` |
 | [ ] | W3 快照、预演、工作流、决策与 G4 | `feat/l2-decision`（检查点3bcbe8e，共享依赖阻塞） | `docs/plans/briefs/W3-decision.md` |
 | [ ] | W4 审批与执行 | `feat/l2-execution`（3856a4c部分检查点，G8待共享状态与真实依赖） | `docs/plans/briefs/W4-execution.md` |
@@ -442,8 +459,8 @@ P0 准备阶段（决定后续一切）：
 | [x] | S1c PIN Settings 接线 | PR #8 merge `304adda`；五退出、独立评审与精确head四CI全绿 | `docs/plans/briefs/S1c-pin-settings.md`；证据 `docs/progress/S1c-pin-settings.md` |
 | [x] | S1e 孤儿job受控对账 | PR #9 merge `6815547`；独立APPROVE、亲自六退出/231专项及四CI全绿 | `docs/plans/briefs/S1e-orphan-jobs.md` |
 | [x] | S1d memo敏感内容黄级code | PR #10 merge `44ded2f`；亲自三退出/独立APPROVE/四CI全绿 | `docs/plans/briefs/S1d-memo-code.md` |
-| [ ] | S1f G22条件挂载 | `feat/l2-demo-route-guard` 38e382c+d169f52；协调者六退出+actionlint 亲验、DeepSeek 独立评审 APPROVE、P2 已修；PR 待 CI | `docs/plans/briefs/S1f-demo-route-mount.md`；`docs/acceptance/L2-S1f-demo-route.md` |
-| [ ] | S3a 真实完整义务数据 | `feat/l3-obligations-data`（已push `6815547`；模型提案F1已修、未定点复审/实施，先同步main） | `docs/plans/briefs/S3a-obligations-data.md`；`S3a-model-proposal.md` |
+| [x] | S1f G22条件挂载 | PR #12已四CI成功合并cca074b | `docs/plans/briefs/S1f-demo-route-mount.md`；`docs/acceptance/L2-S1f-demo-route.md` |
+| [ ] | S3a 真实完整义务数据 | `feat/l3-obligations-data`（537664a本地实现完成；F1复审APPROVE，当前实现亲验/独审中） | `docs/plans/briefs/S3a-obligations-data.md`；`S3a-model-proposal.md` |
 | [ ] | W5 定时授权、通知、审计接口、D 接口 | 波次 2，任务书未写 | L2-plan §3 W5 |
 | [ ] | W6 网关层安全验收（A8、A1/A2/A3/A5） | 波次 2，任务书未写 | L2-plan §3 W6 |
 
