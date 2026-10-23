@@ -85,3 +85,11 @@ New regression uses real installed Uvicorn serve/startup/main_loop, ephemeral lo
 `GatewayServer` now owns idempotent shutdown on every `_serve` exit. It stops accepting connections, asks existing connections to close, drains or times out/cancels and awaits requests, awaits closed listeners, then completes ASGI lifespan. The supervisor sets should_exit and joins both tasks through cancellation protection before runtime disposal. Uvicorn startup SystemExit is converted to a task exception so sibling cleanup still runs. Grace period is explicitly 15 seconds.
 
 Actual targeted command: `.venv/bin/pytest tests/gateway/shared_runtime/test_servers.py tests/gateway/shared_runtime/test_runtime.py -q --tb=short`: 16 passed / 1 skipped (real PG opt-in). Added normal-shutdown cancellation case and reran real listener suite: 7 passed. Scenarios cover clean exit, runtime failure, partial startup boundary failure after real listeners start, outer cancellation, repeated cancellation, graceful timeout, and cancellation during shutdown. No fake automatic finally is used to establish cleanup.
+
+### R2 — healthcheck privilege boundary
+
+The exact original Compose healthcheck CMD, executed in an isolated Linux container, failed the privilege observer with uid=0, gid=0, groups=[0], CapEff/CapPrm=195 and NoNewPrivs=1. This confirms PID1's setuid does not alter the user of subsequent healthcheck processes.
+
+Compose now invokes `python -m scripts.gateway_healthcheck`. That fresh process clears supplementary groups and permanently drops GID/UID to 10001 before issuing HTTP; it rejects any other runtime identity. An independent container runs the exact CMD read from Compose. A test-only Python audit hook checks the actual UID/GID/groups/CapEff/CapPrm/NoNewPrivs at urllib's HTTP boundary, followed by a real localhost /health response. No observer or test bypass is added to production.
+
+Actual `GATEWAY_SECRET_TESTS=1 ...pytest tests/gateway/shared_runtime/test_permissions.py -q -s`: 2 passed (all seven original secret scenarios plus actual Compose healthcheck privileges and HTTP). Independent random image tags only, network none, no data volumes or shared-stack operations.

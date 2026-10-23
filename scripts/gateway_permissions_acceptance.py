@@ -156,3 +156,94 @@ def run() -> None:
 
 if __name__ == "__main__":
     run()
+
+
+HEALTH_OBSERVER = r"""
+import json, os, sys
+from pathlib import Path
+def observe(event, args):
+    if event != 'urllib.Request':
+        return
+    status = dict(line.split(':',1) for line in Path('/proc/self/status').read_text().splitlines()
+                  if ':' in line)
+    facts = {'uid':os.getuid(), 'gid':os.getgid(), 'groups':os.getgroups(),
+             'effective_caps':int(status['CapEff'].strip(),16),
+             'permitted_caps':int(status['CapPrm'].strip(),16),
+             'no_new_privs':status['NoNewPrivs'].strip()}
+    assert facts == {'uid':10001,'gid':10001,'groups':[], 'effective_caps':0,
+                     'permitted_caps':0,'no_new_privs':'1'}, facts
+    print(json.dumps(facts),flush=True)
+sys.addaudithook(observe)
+"""
+
+HEALTH_SERVER = r"""
+import json, os, subprocess, sys, threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        assert self.path == '/health'
+        self.send_response(200); self.end_headers(); self.wfile.write(b'{}')
+    def log_message(self,*args):
+        pass
+server = HTTPServer(('127.0.0.1',8200),Handler)
+threading.Thread(target=server.serve_forever,daemon=True).start()
+result = subprocess.run(json.loads(sys.argv[1]),capture_output=True,text=True,timeout=10,
+                        env={**os.environ,'PYTHONPATH':'/opt/health-observer:/app',
+                             'GATEWAY_PUBLIC_BIND':'127.0.0.1'})
+server.shutdown(); server.server_close()
+print(result.stdout,end=''); print(result.stderr,end='',file=sys.stderr)
+sys.exit(result.returncode)
+"""
+
+
+def run_healthcheck() -> None:
+    """Execute the exact Compose CMD; observe actual privileges at HTTP call."""
+    import yaml
+
+    config = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
+    command = config["services"]["gateway"]["healthcheck"]["test"]
+    assert command[0] == "CMD"
+    tag = f"safebank-s1-health:{os.getpid()}-{secrets.token_hex(4)}"
+    with tempfile.TemporaryDirectory(prefix="sbg-s1-health-") as directory:
+        context = Path(directory)
+        (context / "sitecustomize.py").write_text(HEALTH_OBSERVER)
+        dockerfile = (
+            "FROM safebank-p0:local\nCOPY sitecustomize.py /opt/health-observer/sitecustomize.py\n"
+        )
+        script = ROOT / "scripts/gateway_healthcheck.py"
+        if script.exists():
+            (context / script.name).write_bytes(script.read_bytes())
+            dockerfile += "COPY gateway_healthcheck.py /app/scripts/gateway_healthcheck.py\n"
+        (context / "Dockerfile").write_text(dockerfile)
+        subprocess.run(
+            ["docker", "build", "--pull=false", "--network=none", "-t", tag, str(context)],
+            check=True,
+            capture_output=True,
+        )
+        try:
+            args = [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                "none",
+                "--read-only",
+                "--user",
+                "0:0",
+                "--cap-drop",
+                "ALL",
+                "--security-opt",
+                "no-new-privileges:true",
+            ]
+            for cap in ("CHOWN", "DAC_OVERRIDE", "SETUID", "SETGID"):
+                args += ["--cap-add", cap]
+            args += ["--entrypoint", "python", tag, "-c", HEALTH_SERVER, json.dumps(command[1:])]
+            result = subprocess.run(args, capture_output=True, text=True)
+            if result.returncode:
+                raise AssertionError(f"Compose healthcheck failed privileges/HTTP: {result.stderr}")
+            facts = json.loads(result.stdout.strip())
+            assert facts["uid"] == facts["gid"] == 10001
+            assert facts["effective_caps"] == facts["permitted_caps"] == 0
+            print("Linux Compose healthcheck uid/gid/caps/HTTP: passed")
+        finally:
+            subprocess.run(["docker", "image", "rm", tag], check=True, capture_output=True)

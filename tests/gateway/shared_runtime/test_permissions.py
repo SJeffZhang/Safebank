@@ -11,3 +11,11 @@ def test_linux_private_secrets_bootstrap():
     from scripts.gateway_permissions_acceptance import run
 
     run()
+
+
+def test_linux_compose_healthcheck_drops_privileges():
+    if os.getenv("GATEWAY_SECRET_TESTS") != "1":
+        pytest.skip("requires isolated Linux healthcheck acceptance container")
+    from scripts.gateway_permissions_acceptance import run_healthcheck
+
+    run_healthcheck()

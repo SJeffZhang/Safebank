@@ -98,9 +98,8 @@ services:
       test:
       - CMD
       - python
-      - -c
-      - import urllib.request,os; r=urllib.request.Request('http://172.29.10.12:8200/health');
-        urllib.request.urlopen(r,timeout=3)
+      - -m
+      - scripts.gateway_healthcheck
       interval: 5s
       timeout: 4s
       retries: 10
