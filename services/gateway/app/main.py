@@ -130,6 +130,65 @@ def build_internal_app(
     return app
 
 
+class GatewayServer(uvicorn.Server):
+    """Uvicorn's installed _serve has no finally; own shutdown on every exit."""
+
+    async def _serve(self, sockets=None) -> None:
+        try:
+            await super()._serve(sockets)
+        except SystemExit as exc:
+            # Bind/lifespan startup errors must flow through the supervisor;
+            # SystemExit in a child asyncio task would terminate its event loop.
+            raise RuntimeError("gateway listener startup failed") from exc
+        finally:
+            if hasattr(self, "lifespan"):
+                self.servers = getattr(self, "servers", [])
+                await self.shutdown(sockets)
+
+    async def shutdown(self, sockets=None) -> None:
+        task = getattr(self, "_gateway_shutdown", None)
+        if task is None:
+            task = asyncio.create_task(self._shutdown_owned(sockets))
+            self._gateway_shutdown = task
+        await asyncio.shield(task)
+
+    async def _shutdown_owned(self, sockets) -> None:
+        for listener in self.servers:
+            listener.close()
+        for sock in sockets or ():
+            sock.close()
+        for connection in list(self.server_state.connections):
+            connection.shutdown()
+        try:
+            await asyncio.wait_for(
+                self._wait_tasks_to_complete(), timeout=self.config.timeout_graceful_shutdown
+            )
+        except TimeoutError:
+            for task in list(self.server_state.tasks):
+                task.cancel()
+        # Uvicorn cancels timed-out requests without awaiting them. Finish those
+        # cancellations before ASGI lifespan shutdown or DB/L3 disposal.
+        await asyncio.gather(*list(self.server_state.tasks), return_exceptions=True)
+        for listener in self.servers:
+            await listener.wait_closed()
+        event = getattr(self.lifespan, "shutdown_event", None)
+        if event is None or not event.is_set():
+            await self.lifespan.shutdown()
+
+
+async def _drain_servers(tasks: list[asyncio.Task]) -> None:
+    """Join all shutdowns despite repeated cancellation of their supervisor."""
+    joined = asyncio.gather(*tasks, return_exceptions=True)
+    while not joined.done():
+        try:
+            await asyncio.shield(joined)
+        except asyncio.CancelledError:
+            # The original cancellation still propagates after serve's finally.
+            # Additional cancellation must not release resources prematurely.
+            continue
+    joined.result()
+
+
 async def serve(settings: Settings) -> None:
     settings.validate()
     if settings.public_bind == settings.internal_bind:
@@ -148,12 +207,22 @@ async def serve(settings: Settings) -> None:
         public = build_public_app(settings, runtime=runtime)
         internal = build_internal_app(settings, runtime=runtime)
         servers = [
-            uvicorn.Server(
-                uvicorn.Config(public, host=settings.public_bind, port=8200, log_level="warning")
-            ),
-            uvicorn.Server(
+            GatewayServer(
                 uvicorn.Config(
-                    internal, host=settings.internal_bind, port=8201, log_level="warning"
+                    public,
+                    host=settings.public_bind,
+                    port=8200,
+                    log_level="warning",
+                    timeout_graceful_shutdown=15,
+                )
+            ),
+            GatewayServer(
+                uvicorn.Config(
+                    internal,
+                    host=settings.internal_bind,
+                    port=8201,
+                    log_level="warning",
+                    timeout_graceful_shutdown=15,
                 )
             ),
         ]
@@ -165,14 +234,11 @@ async def serve(settings: Settings) -> None:
             await asyncio.gather(*done)
             await asyncio.gather(*pending)
         finally:
-            # A failed server must not leave its peer using resources after
-            # the shared context exits. Await cancellation before disposal.
+            # Do not cancel Uvicorn's serve tasks: let healthy listeners follow
+            # their real shutdown path and failed listeners finish owned cleanup.
             for server in servers:
                 server.should_exit = True
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await _drain_servers(tasks)
 
 
 def run() -> None:

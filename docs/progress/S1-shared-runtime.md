@@ -75,3 +75,13 @@ No make up/down/test-p1, no push/PR/merge, no named volume operations, and no fu
 ## Isolated PG fixture correction
 
 The inherited fixture supplied no explicit -v, but the official PostgreSQL image declares a VOLUME, so earlier runs may have allocated anonymous volumes automatically removed by Docker --rm. This is not evidence of deleting or recreating the existing safebank persistent named volumes, which remain untouched. No existing anonymous volume was manually cleaned. The fixture now explicitly mounts PGDATA as tmpfs so subsequent runs do not allocate a Docker data volume. Coordinator approved the narrowly scoped existing-test adaptation and will distribute it to other workers.
+
+## Review repair round 1 — R1
+
+Read full `docs/reviews/L2-S1-runtime.md` and installed Uvicorn 0.54.0 sources before changing code. Confirmed `_serve` has no finally and its timeout path cancels requests without awaiting their cancellation.
+
+New regression uses real installed Uvicorn serve/startup/main_loop, ephemeral localhost sockets, FastAPI lifespan, and an in-flight httpx request. Before fix: 3 failed / 1 passed; runtime failure, startup boundary failure and outer cancellation disposed resources with live listeners/lifespans/requests. Removed the two fake-Server tests whose automatic cleanup hid this issue.
+
+`GatewayServer` now owns idempotent shutdown on every `_serve` exit. It stops accepting connections, asks existing connections to close, drains or times out/cancels and awaits requests, awaits closed listeners, then completes ASGI lifespan. The supervisor sets should_exit and joins both tasks through cancellation protection before runtime disposal. Uvicorn startup SystemExit is converted to a task exception so sibling cleanup still runs. Grace period is explicitly 15 seconds.
+
+Actual targeted command: `.venv/bin/pytest tests/gateway/shared_runtime/test_servers.py tests/gateway/shared_runtime/test_runtime.py -q --tb=short`: 16 passed / 1 skipped (real PG opt-in). Added normal-shutdown cancellation case and reran real listener suite: 7 passed. Scenarios cover clean exit, runtime failure, partial startup boundary failure after real listeners start, outer cancellation, repeated cancellation, graceful timeout, and cancellation during shutdown. No fake automatic finally is used to establish cleanup.

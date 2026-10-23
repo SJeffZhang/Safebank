@@ -1,5 +1,4 @@
 import asyncio
-from contextlib import asynccontextmanager
 from dataclasses import replace
 
 import pytest
@@ -206,47 +205,6 @@ def test_pin_loader_failure_refuses_start(secret_settings, monkeypatch):
     asyncio.run(run())
 
 
-def test_server_failure_stops_peer_before_resources_close(secret_settings, monkeypatch):
-    import services.gateway.app.main as main
-    from services.gateway.app.runtime import gateway_runtime
-
-    stopped = []
-
-    class CheckedEngine(Engine):
-        async def dispose(self):
-            assert stopped == ["peer"]
-            await super().dispose()
-
-    db = CheckedEngine()
-
-    @asynccontextmanager
-    async def resources(settings):
-        async with gateway_runtime(
-            settings, db_factory=lambda url: db, l3_factory=Client, pin_hashes={}
-        ) as runtime:
-            yield runtime
-
-    class Server:
-        def __init__(self, config):
-            self.port = config.port
-
-        async def serve(self):
-            if self.port == 8200:
-                await asyncio.sleep(0)
-                raise RuntimeError("listener failed")
-            try:
-                await asyncio.Event().wait()
-            finally:
-                stopped.append("peer")
-
-    monkeypatch.setattr(main, "gateway_runtime", resources)
-    monkeypatch.setattr(main.uvicorn, "Server", Server)
-    settings = replace(secret_settings, internal_bind="127.0.0.2")
-    with pytest.raises(RuntimeError, match="listener failed"):
-        asyncio.run(main.serve(settings))
-    assert db.closed == 1
-
-
 def test_shared_real_pool_and_l3_client_are_usable_then_closed(secret_settings, gateway_db):
     import httpx
     from sqlalchemy import text
@@ -290,37 +248,3 @@ def test_shared_real_pool_and_l3_client_are_usable_then_closed(secret_settings, 
             await runtime.l3.read("get_accounts", {})
 
     asyncio.run(run())
-
-
-def test_clean_listener_exit_stops_peer_and_releases_resources(secret_settings, monkeypatch):
-    import services.gateway.app.main as main
-    from services.gateway.app.runtime import gateway_runtime
-
-    db = Engine()
-
-    @asynccontextmanager
-    async def resources(settings):
-        async with gateway_runtime(
-            settings, db_factory=lambda url: db, l3_factory=Client, pin_hashes={}
-        ) as runtime:
-            yield runtime
-
-    class Server:
-        def __init__(self, config):
-            self.port, self.should_exit = config.port, False
-
-        async def serve(self):
-            if self.port == 8200:
-                await asyncio.sleep(0)
-                return
-            while not self.should_exit:
-                await asyncio.sleep(0)
-
-    monkeypatch.setattr(main, "gateway_runtime", resources)
-    monkeypatch.setattr(main.uvicorn, "Server", Server)
-
-    async def run():
-        await asyncio.wait_for(main.serve(replace(secret_settings, internal_bind="127.0.0.2")), 0.2)
-
-    asyncio.run(run())
-    assert db.closed == 1
