@@ -7,6 +7,15 @@ from zoneinfo import ZoneInfo
 
 from safebank_bankcore.ledger import account_deltas
 from safebank_bankcore.scope import scope_for
+from safebank_contracts.obligations import (
+    InstructionRun,
+    InstructionTarget,
+    Merchant,
+    MerchantBilling,
+    MerchantMandate,
+    ObligationSnapshot,
+    ScheduledInstruction,
+)
 from safebank_contracts.state import (
     Account,
     AppendTransaction,
@@ -25,6 +34,7 @@ from safebank_contracts.state import (
     Transaction,
     UpsertCard,
 )
+from safebank_contracts.views import RunView, ScheduledView, SubscriptionView
 from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
@@ -80,6 +90,185 @@ async def resolve_scope(conn, customer_id: str, steps, key: str) -> StateScope:
             ),
         )
     return scope_for(customer_id, steps, directory)
+
+
+async def _load_obligations(conn, ids: tuple[str, ...], customer_id: str):
+    """Load the raw obligation snapshot and the requesting customer's views.
+
+    Reads all four obligation tables in the caller's transaction and never opens
+    another connection or reads the wall clock. Any missing merchant, billing,
+    source account, owner or target reference fails loudly instead of returning a
+    partial empty snapshot.
+    """
+    billings = {
+        r["id"]: MerchantBilling(**r)
+        for r in (
+            await conn.execute(
+                select(m.merchant_billing).where(m.merchant_billing.c.customer_id.in_(ids))
+            )
+        ).mappings()
+    }
+    instructions = [
+        (
+            ScheduledInstruction(**{k: r[k] for k in ScheduledInstruction.model_fields})
+            if r["kind"] == "SCHEDULED_TRANSFER"
+            else MerchantMandate(**{k: r[k] for k in MerchantMandate.model_fields})
+        )
+        for r in (
+            await conn.execute(
+                select(m.standing_instructions).where(
+                    m.standing_instructions.c.customer_id.in_(ids)
+                )
+            )
+        ).mappings()
+    ]
+    runs = [
+        InstructionRun(**r)
+        for r in (
+            await conn.execute(
+                select(m.instruction_runs)
+                .where(m.instruction_runs.c.customer_id.in_(ids))
+                .order_by(m.instruction_runs.c.due_at, m.instruction_runs.c.id)
+            )
+        ).mappings()
+    ]
+    merchant_ids = {b.merchant_id for b in billings.values()} | {
+        i.merchant_id for i in instructions if isinstance(i, MerchantMandate)
+    }
+    merchants = {
+        r["id"]: Merchant(**r)
+        for r in (
+            await conn.execute(select(m.merchants).where(m.merchants.c.id.in_(merchant_ids)))
+        ).mappings()
+        if merchant_ids
+    }
+    by_id = {i.id: i for i in instructions}
+    targets: dict[str, InstructionTarget] = {}
+    for item in instructions:
+        if not isinstance(item, ScheduledInstruction):
+            continue
+        if item.to_account_id is not None:
+            owner = await conn.scalar(
+                select(m.accounts.c.customer_id).where(m.accounts.c.id == item.to_account_id)
+            )
+            if owner != item.customer_id:
+                raise ValueError(f"instruction {item.id} own target belongs to another customer")
+            targets[item.id] = InstructionTarget(
+                instruction_id=item.id,
+                source_customer_id=item.customer_id,
+                ownership="OWN",
+                target_account_id=item.to_account_id,
+                target_customer_id=owner,
+            )
+            continue
+        payee = (
+            (
+                await conn.execute(
+                    select(m.payees.c.target_account_id, m.payees.c.customer_id).where(
+                        m.payees.c.id == item.payee_id, m.payees.c.customer_id == item.customer_id
+                    )
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if payee is None:
+            raise ValueError(f"instruction {item.id} references an unknown payee")
+        if payee["target_account_id"] is None:
+            targets[item.id] = InstructionTarget(
+                instruction_id=item.id,
+                source_customer_id=item.customer_id,
+                ownership="EXTERNAL",
+                target_account_id=None,
+                target_customer_id=None,
+            )
+            continue
+        peer = await conn.scalar(
+            select(m.accounts.c.customer_id).where(m.accounts.c.id == payee["target_account_id"])
+        )
+        if peer is None or peer == item.customer_id:
+            raise ValueError(f"instruction {item.id} payee target ownership is invalid")
+        targets[item.id] = InstructionTarget(
+            instruction_id=item.id,
+            source_customer_id=item.customer_id,
+            ownership="OTHER",
+            target_account_id=payee["target_account_id"],
+            target_customer_id=peer,
+        )
+    snapshot = ObligationSnapshot(
+        covered_customer_ids=ids,
+        merchants=merchants,
+        billings=billings,
+        standing_instructions=by_id,
+        runs=tuple(runs),
+        instruction_targets=targets,
+    )
+    instructions, subscriptions = _derive_views(snapshot, customer_id)
+    return snapshot, instructions, subscriptions
+
+
+def _last_run(snapshot: ObligationSnapshot, instruction_id: str) -> RunView | None:
+    candidates = [r for r in snapshot.runs if r.instruction_id == instruction_id]
+    if not candidates:
+        return None
+    latest = max(candidates, key=lambda r: (r.due_at, r.id))
+    return RunView(status=latest.status, code=latest.code, due_at=latest.due_at)
+
+
+def _derive_views(snapshot: ObligationSnapshot, customer_id: str):
+    instructions = []
+    subscriptions = []
+    for item in snapshot.standing_instructions.values():
+        if item.customer_id != customer_id:
+            continue
+        if isinstance(item, ScheduledInstruction):
+            target = snapshot.instruction_targets.get(item.id)
+            if target is not None and target.ownership == "OWN":
+                display = "本人账户"
+            elif target is not None and target.ownership == "EXTERNAL":
+                display = "他行收款人"
+            else:
+                display = "本行收款人"
+            instructions.append(
+                ScheduledView(
+                    id=item.id,
+                    from_account_id=item.from_account_id,
+                    payee_id=item.payee_id,
+                    to_account_id=item.to_account_id,
+                    target_display=display,
+                    amount_cents=item.amount_cents,
+                    period=item.period,
+                    anchor_day=item.anchor_day,
+                    weekday=item.weekday,
+                    time_of_day=item.time_of_day.isoformat(),
+                    next_run_at=item.next_run_at,
+                    end_at=item.end_at,
+                    status=item.status,
+                    last_run=_last_run(snapshot, item.id),
+                )
+            )
+            continue
+        billing = snapshot.billings[item.billing_id]
+        merchant = snapshot.merchants[item.merchant_id]
+        annual = billing.amount_cents * (12 if billing.period == "MONTHLY" else 52)
+        subscriptions.append(
+            SubscriptionView(
+                instruction_id=item.id,
+                billing_id=item.billing_id,
+                account_id=billing.account_id,
+                merchant_id=item.merchant_id,
+                merchant_name=merchant.name,
+                period=billing.period,
+                amount_cents=billing.amount_cents,
+                max_amount_cents=item.max_amount_cents,
+                next_due_at=billing.next_due_at,
+                status=item.status,
+                annual_cost_cents=annual,
+            )
+        )
+    instructions.sort(key=lambda v: v.id)
+    subscriptions.sort(key=lambda v: v.billing_id)
+    return tuple(instructions), tuple(subscriptions)
 
 
 async def load_bank_state(conn, scope: StateScope, now, *, customer_id: str) -> BankState:
@@ -180,6 +369,7 @@ async def load_bank_state(conn, scope: StateScope, now, *, customer_id: str) -> 
     )
     if customer_id not in versions or not owner_ids:
         raise LookupError("customer not found")
+    obligations, instructions, subscriptions = await _load_obligations(conn, ids, customer_id)
     return BankState(
         sim_now=now,
         clock_version=clock["version"],
@@ -197,6 +387,9 @@ async def load_bank_state(conn, scope: StateScope, now, *, customer_id: str) -> 
         ),
         directory=scope.directory,
         ops_7d=ops,
+        obligations=obligations,
+        instructions=instructions,
+        subscriptions=subscriptions,
         dataset_revision=clock["dataset_revision"],
     )
 

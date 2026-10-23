@@ -96,4 +96,3 @@
 
 - 原「待决」中的实现备注已由 P2-2 修复消除：非 `APIRoute` 顶层项现直接 fail-closed 拒绝构建，不再依赖 coverage 兜底。若 W1 将来确需在 `auth.router` 内嵌套子 router，需由协调者/owner 显式扩展此过滤器并同步本组件测试。
 - push/base main PR、精确 head 四 CI 全绿后 merge 仍由协调者办理。
-

@@ -1,0 +1,47 @@
+# S3a 义务存储与真实快照 — 验收证据
+
+2026-10-24。实现 worker（DeepSeek V4 Pro，无头 Claude Code）。工作树 `feat/l3-obligations-data`。
+含独立评审（`docs/reviews/L2-S3a-implementation-review.md`）REQUEST_CHANGES 的修复轮：2 项 P1 + 7 项 P2。
+
+## 实际运行（评审修复轮后）
+
+| 命令 | 结果 |
+|---|---|
+| make lint | ruff check：All checks passed；ruff format --check：183 files already formatted |
+| make test | 402 passed, 314 skipped，4.29s |
+| make test-obligations | **30 passed, 0 skipped**，4.38s（真实 tmpfs PG16 + 真实 TCP HTTP） |
+| make contracts-check | PASS: contracts v1 match frozen schemas |
+| make test-gateway | 173 passed, 254 skipped，3.79s |
+
+## 关键证据
+
+- 独立临时 Postgres（唯一容器名/随机端口/显式 tmpfs），`upgrade head` 两次成功，容器退出即清理；
+  未操作任何数据卷。
+- 最新 metadata 与迁移后 PG `compare_metadata`（补 accounts_current_card_fk 后）零差异；
+  历史 `0001_core.py`/`0002_identity.py`/`schema_v1.json` SHA256 与提案一致。
+- **P1-2 真实执行链**：真实 TCP `/internal/plans/prepare` + `/execute`（正确 InteractiveEvidence）提交
+  300000 转账 → `/internal/snapshot` JSON → `BankState` → S2：`max_outflow=295500`、`reserve=4500`；
+  双方 state_version 各增一次、intent COMMITTED、plan_execution/operation/outbox 真实落盘。
+- **P1-1 0002 升级保留**：独立 tmpfs PG 先 `upgrade 0002_identity`，用真实 ledger/persist 生成
+  posted/pending（含活 pending），并以**未修改的 `ExecutionService`** 走 `prepare(attempt1)→
+  prepare(attempt2)→execute` 产生 COMMITTED（非空 evidence_history、真实 result.versions/steps/
+  operation/outbox）与 `prepare`/`reconcile` 产生 PREPARED/CANCELLED；0002 造数期间仅把
+  `app.execution.load_bank_state` patch 到冻结的旧版 loader（`tests/obligations_data/legacy_loader.py`，
+  来源 `cca074b:services/bank-backend/app/state.py` blob `e998108e…`）；采集基线 → `upgrade head`
+  两次 → 逐表行/序列/权限逐字段相等；再对原真实任务 query/replay/reconcile 全通过。
+- OWN/OTHER 所有权与第三客户非递归、RR 并发一致性、多 offset 混用、billing inactive 不预留、
+  F1 DELETED/DISABLED 历史保留、instruction_runs 只追加与 bank_ro 只读均已在真实 PG/HTTP 覆盖。
+
+## 未覆盖（留后续组件，不属本组件范围）
+
+R7/R10/R11 读取、1–30 天展示、signed max_outflow 公开契约、scheduler 与三项定时写、
+完整 baseline_v1 数据安装。完整细节见 `docs/progress/S3a-obligations-data.md`。
+
+## 协调者最终复验（2026-10-24）
+
+- 业务/测试提交 `f7223d0`；原 DeepSeek reviewer `b9d4561e-d66d-44ee-bcaa-88ef8f0cc75f` 最终 APPROVE，原 9 项与追加权限测试卫生项全部关闭，报告 `docs/reviews/L2-S3a-implementation-review.md`。
+- 协调者实际七退出全部 exit 0：make lint；make test 1931 passed / 473 skipped；make test-obligations **30 passed、零 skip/xfail**（4.88s）；make contracts-check PASS；make test-gateway 1702 passed / 413 skipped；make test-gateway-db 17 passed；actionlint。日志 `/private/tmp/sbg-codex-s3a-r2-20261024`。
+- 协调者全栈在 `main-baseline` 的 `fd82290` 串行执行：make up 六 healthy；make test-p1 33 真 PG；make test-p1-concurrency 5；make test-p1-consistency 17；make test-integration 网络/HTTP/实际 L3 重启恢复全部 exit 0。追加 make test-w1 **1688 passed、零 skip**。日志 `/private/tmp/sbg-codex-s3a-r1-stack-20261024` 与 `/private/tmp/sbg-codex-s3a-r1-20261024`；`fd82290..f7223d0` 仅测试与文档、services/packages 无差异，故明确复用相同生产代码的全栈证据。
+- `0001_core.py`、`0002_identity.py`、schema_v1 对 main 字节不变，契约增量仅 BankState.obligations 及独立 ObligationSnapshot；read/write/LLM schema 未漂移。
+- 既有 SQLAlchemy FK 环警告保留；无义务写业务、scheduler 或 W2 default reserve 接线。现有长期库未装义务种子，两个持久卷创建时间不变。
+- 后续仅带独立评审与协调日志、同步 main 的启动脚本/文档，不修改已验业务；最终发布 head 的四 CI 另查，不把本地测试写成远端 CI 通过。
