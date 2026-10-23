@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import Depends, FastAPI
+from fastapi import APIRouter, Depends, FastAPI
 from safebank_contracts.codes import Code
 
 from .api import approvals, auth, demo, execution, notify_audit, plans, sessions, tools
@@ -56,6 +56,24 @@ def _routes(app: FastAPI) -> list[tuple[Any, str]]:
     return [(route.methods, route.path) for route in _collect(app.routes)]
 
 
+def _public_auth_router(demo_mounted: bool) -> APIRouter:
+    """Per-app snapshot of ``auth.router``; G22 only mounts in DEMO/EVAL mode.
+
+    ``auth.router`` is a W1-owned module singleton. ``include_router`` wraps the
+    included router in a lazy ``_IncludedRouter`` that reads
+    ``original_router.routes`` at request time, so mutating the singleton or a
+    shared filtered copy would leak G22 between apps built in different modes.
+    Copying the route objects into a fresh ``APIRouter`` keeps every app's route
+    table independent while reusing the same handlers (PRD §9.5 G22).
+    """
+    router = APIRouter()
+    for route in auth.router.routes:
+        if not demo_mounted and getattr(route, "path", "") == "/auth/demo-customers":
+            continue
+        router.routes.append(route)
+    return router
+
+
 def build_public_app(
     settings: Settings,
     *,
@@ -82,8 +100,9 @@ def build_public_app(
     async def health():
         return {"service": "gateway", "status": "ok", "profile": settings.profile}
 
+    demo_mounted = settings.demo_mode or settings.eval_mode
+    app.include_router(_public_auth_router(demo_mounted))
     for router in (
-        auth.router,
         sessions.router,
         tools.router,
         plans.router,
@@ -92,7 +111,6 @@ def build_public_app(
         notify_audit.router,
     ):
         app.include_router(router)
-    demo_mounted = settings.demo_mode or settings.eval_mode
     if demo_mounted:
         app.include_router(demo.router)
 

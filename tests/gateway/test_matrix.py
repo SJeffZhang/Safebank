@@ -1,6 +1,22 @@
+import asyncio
+
+import httpx
+
+from services.gateway.app.api import auth
 from services.gateway.app.auth.matrix import coverage_errors, lookup
 from services.gateway.app.config import from_env
 from services.gateway.app.main import _routes, build_internal_app, build_public_app
+
+G22 = ("GET", "/auth/demo-customers")
+
+
+def _settings(overrides=None):
+    base = {"DEMO_MODE": "false", "EVAL_MODE": "false", "GATEWAY_PROFILE": "B2"}
+    return from_env({**base, **(overrides or {})})
+
+
+def _pairs(app):
+    return {(method, path) for methods, path in _routes(app) for method in methods}
 
 
 def test_open_health():
@@ -47,3 +63,77 @@ def test_internal_app_routes_are_all_in_matrix():
 def test_missing_matrix_entry_is_detected():
     errors = coverage_errors([({"GET"}, "/not-in-matrix")], demo_mounted=False)
     assert any("route not in matrix" in e for e in errors)
+
+
+def test_g22_absent_when_demo_and_eval_off():
+    app = build_public_app(_settings({"DEMO_MODE": "false", "EVAL_MODE": "false"}))
+    assert G22 not in _pairs(app)
+
+
+def test_g22_present_when_demo_or_eval_on():
+    for overrides in (
+        {"DEMO_MODE": "true", "EVAL_MODE": "false"},
+        {"DEMO_MODE": "false", "EVAL_MODE": "true"},
+        {"DEMO_MODE": "true", "EVAL_MODE": "true"},
+    ):
+        app = build_public_app(_settings(overrides))
+        assert G22 in _pairs(app)
+
+
+def test_g22_http_404_when_off():
+    async def run():
+        app = build_public_app(_settings({"DEMO_MODE": "false", "EVAL_MODE": "false"}))
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+            resp = await client.get("/auth/demo-customers")
+            assert resp.status_code == 404
+            assert resp.json()["error"]["code"] == "NOT_FOUND"
+
+    asyncio.run(run())
+
+
+def test_g22_http_requires_f_service_when_on():
+    async def run():
+        settings = _settings({"DEMO_MODE": "true", "EVAL_MODE": "false"})
+        app = build_public_app(settings, env={"FRONTEND_SERVICE_TOKEN": "frontend-token"})
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+            no_token = await client.get("/auth/demo-customers")
+            assert no_token.status_code == 401
+            assert no_token.json()["error"]["code"] == "UNAUTHENTICATED"
+            with_token = await client.get(
+                "/auth/demo-customers", headers={"X-Service-Token": "frontend-token"}
+            )
+            assert with_token.status_code == 503
+            assert with_token.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+
+    asyncio.run(run())
+
+
+def test_g22_build_order_does_not_pollute_global_router():
+    off = build_public_app(_settings({"DEMO_MODE": "false", "EVAL_MODE": "false"}))
+    on = build_public_app(_settings({"DEMO_MODE": "true", "EVAL_MODE": "false"}))
+    off_again = build_public_app(_settings({"DEMO_MODE": "false", "EVAL_MODE": "false"}))
+    on_again = build_public_app(_settings({"DEMO_MODE": "true", "EVAL_MODE": "false"}))
+
+    assert G22 not in _pairs(off)
+    assert G22 in _pairs(on)
+    assert G22 not in _pairs(off_again)
+    assert G22 in _pairs(on_again)
+    # The W1-owned singleton auth.router must stay untouched.
+    assert any(getattr(r, "path", "") == G22[1] for r in auth.router.routes)
+
+
+def test_g22_coverage_rejects_mount_when_off():
+    errors = coverage_errors([({"GET"}, "/auth/demo-customers")], demo_mounted=False)
+    assert any("mounted while DEMO/EVAL off" in e for e in errors)
+
+
+def test_g22_coverage_requires_presence_when_on():
+    errors = coverage_errors([], demo_mounted=True)
+    assert any("matrix entry has no route: GET /auth/demo-customers" in e for e in errors)
+
+
+def test_g22_coverage_ok_when_on_and_present():
+    app = build_public_app(_settings({"DEMO_MODE": "true", "EVAL_MODE": "false"}))
+    assert coverage_errors(_routes(app), demo_mounted=True) == []

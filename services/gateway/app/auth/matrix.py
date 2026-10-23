@@ -101,6 +101,10 @@ MATRIX: dict[tuple[str, str], Entry] = {
     ("GET", "/demo/audit"): (D_CONSOLE,),
 }
 
+# G22 is a demo/eval-only public endpoint (PRD §9.5): absent when both modes are
+# off, present (still F_SERVICE) when either mode is on.
+G22_ROUTE = ("GET", "/auth/demo-customers")
+
 
 def _regex(path_format: str) -> re.Pattern[str]:
     parts = re.split(r"(\{[^}]*\})", path_format)
@@ -130,7 +134,8 @@ def coverage_errors(
     ``routes`` is an iterable of ``(methods, path)`` pairs from a FastAPI app.
     ``internal=True`` asserts the internal app only carries ``/internal/*`` and
     expects only the internal matrix entries; the public app asserts the
-    complement. Demo routes are only expected when ``demo_mounted`` is true.
+    complement. Demo routes and G22 are only expected when ``demo_mounted`` is
+    true; G22 must be absent when it is false.
     """
     errors: list[str] = []
     registered: set[tuple[str, str]] = set()
@@ -146,6 +151,8 @@ def coverage_errors(
             errors.append(f"internal app has a non-internal route: {method} {path}")
         if not internal and path.startswith("/internal/"):
             errors.append(f"public app has an internal route: {method} {path}")
+    if not internal and not demo_mounted and G22_ROUTE in registered:
+        errors.append(f"demo endpoint mounted while DEMO/EVAL off: {G22_ROUTE[0]} {G22_ROUTE[1]}")
     for method, path in MATRIX:
         if path.startswith("/demo/"):
             if demo_mounted and (method, path) not in registered:
@@ -154,5 +161,7 @@ def coverage_errors(
             if internal and (method, path) not in registered:
                 errors.append(f"matrix entry has no route: {method} {path}")
         elif not internal and (method, path) not in registered:
+            if (method, path) == G22_ROUTE and not demo_mounted:
+                continue
             errors.append(f"matrix entry has no route: {method} {path}")
     return errors
