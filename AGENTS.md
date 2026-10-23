@@ -391,7 +391,7 @@ P0 准备阶段（决定后续一切）：
 | [x] | S1c PIN Settings 接线 | PR #8 merge `304adda`；五退出、独立评审与精确head四CI全绿 | `docs/plans/briefs/S1c-pin-settings.md`；证据 `docs/progress/S1c-pin-settings.md` |
 | [ ] | S1e 孤儿job受控对账 | `feat/l2-orphan-reconcile`；S1c后串行实施，修复W1真实PG红测依赖 | `docs/plans/briefs/S1e-orphan-jobs.md` |
 | [ ] | S1d memo敏感内容黄级code | 任务草稿，S1e后串行实施 | `docs/plans/briefs/S1d-memo-code.md` |
-| [ ] | S3a 真实完整义务数据 | ADR-009与任务书已准备，尚未实施 | `docs/plans/briefs/S3a-obligation-data.md` |
+| [ ] | S3a 真实完整义务数据 | ADR-009与任务书已准备，尚未实施 | `docs/plans/briefs/S3a-obligations-data.md` |
 | [ ] | W5 定时授权、通知、审计接口、D 接口 | 波次 2，任务书未写 | L2-plan §3 W5 |
 | [ ] | W6 网关层安全验收（A8、A1/A2/A3/A5） | 波次 2，任务书未写 | L2-plan §3 W6 |
 
