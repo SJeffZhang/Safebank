@@ -1,0 +1,8 @@
+# 转账类阈值（PRD §5.0 / §7.8，按模拟时间，金额一律整数分）。
+# 规则只升不降；DAILY_OUTFLOW_LIMIT 同时是 L3 强制硬限（bankcore 亦检查）。
+amount_above_yellow_cap_cents: 500000       # 对外转账单笔红线 5,000 元（D1）
+cumulative_outflow_24h_cents: 1000000       # 24h 对外转出红线 10,000 元（CUMULATIVE_OUTFLOW）
+daily_outflow_limit_cents: 5000000          # 自然日对外转出硬限 50,000 元（DAILY_OUTFLOW_LIMIT）
+split_transfer_min_count: 3                 # 24h 同目标笔数下限（SPLIT_TRANSFER）
+split_transfer_min_total_cents: 500000      # 24h 同目标总额下限（SPLIT_TRANSFER）
+new_payee_first_transfer_minutes: 30        # 新收款人创建后 30 分钟（NEW_PAYEE_FIRST_TRANSFER）

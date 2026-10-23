@@ -101,3 +101,7 @@ test-wave1-state:
 .PHONY: test-obligations
 test-obligations:
 	OBLIGATIONS_DB_TESTS=1 .venv/bin/pytest tests/obligations_data -q
+
+.PHONY: test-w3a
+test-w3a:
+	GATEWAY_DB_TESTS=1 OBLIGATIONS_DB_TESTS=1 .venv/bin/pytest tests/gateway/w3a -q
