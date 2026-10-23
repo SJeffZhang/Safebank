@@ -9,7 +9,7 @@
 - `scheduled_occurrences(instructions, start, end)` 使用 ScheduledView 的原始锚点，可供后续 30 天承诺计算复用。
 - weekday 经协调者确认采用 `datetime.weekday()`：周一 0 至周日 6；范围外或与 next_run_at 不一致时报错。MONTHLY 保留原 anchor_day，短月截到月末，下一月恢复原锚点。
 - MONTHLY 商户 next_due_at 早于 sim_now 时显式报错，因为现有 SubscriptionView 没有原始锚点；等于 sim_now 按左开窗口排除。WEEKLY 可精确按 7 天推进，保留原执行时刻。
-- 未运行 Docker、真实 PostgreSQL、HTTP、LLM 或外部服务；不得把纯函数结果描述为真实集成验收。
+- 未运行 Docker、真实 PostgreSQL、L3 业务 HTTP、LLM 或外部服务；完整单元回归包含 S1 的本地回环 HTTP 监听测试，不构成银行业务集成验收。
 
 ## 组件门禁
 
@@ -53,7 +53,33 @@
 9. `PYTEST_ADDOPTS='-o cache_dir=/private/tmp/sbg-reserve-pytest-cache' make test`：256 passed / 48 skipped，退出 0。跳过项依赖真实数据库或专用开关，不能算通过。
 10. `make contracts-check`：PASS: contracts v1 match frozen schemas，退出 0。
 
-本地检查点提交、同步 origin/main 与同步后完整退出结果待下节记录。
+### S1 同步与最终退出
+
+- S2 检查点：`e45849467afb38038ab8de6a105a139ec36172cd`。
+- 同步的 main：`691cf880866076a0db9a5a77b752a785364560f6`。
+- 本地 merge：`46c9d216f5b152e793e5442fd4b23d6d4774df4e`。唯一冲突为 Makefile 末尾追加，保留 `test-shared-runtime` 与 `test-reserve`；没有修改 S1 实现。
+- 首次普通沙箱 `git add` / `git commit` 因 worktree index.lock 写权限失败，随后使用获准的提升权限完成本地暂存与提交。没有 push、创建 PR 或合并远端 main。
+
+同步后对同一代码树实际运行：
+
+| 命令 | 结果 | 退出码 |
+|---|---|---|
+| `RUFF_CACHE_DIR=/private/tmp/sbg-reserve-ruff-cache make lint` | All checks passed；158 files already formatted | 0 |
+| `PYTEST_ADDOPTS='-o cache_dir=/private/tmp/sbg-reserve-pytest-cache' make test`（普通沙箱） | 6 failed / 295 passed / 54 skipped；六项均为 S1 本地监听被 `127.0.0.1` bind EPERM 拒绝 | 2 |
+| 同一 `make test` 命令（获准本地回环端口的提升环境） | **301 passed / 54 skipped**，5.39s；未修改测试或业务代码 | 0 |
+| `PYTEST_ADDOPTS='-o cache_dir=/private/tmp/sbg-reserve-pytest-cache' make test-reserve` | **73 passed** | 0 |
+| `make contracts-check` | PASS: contracts v1 match frozen schemas | 0 |
+| `git diff --check` 与 `git diff --cached --check` | 无空白错误 | 0 |
+
+六项普通沙箱失败均来自 `tests/gateway/shared_runtime/test_servers.py::test_real_listeners_and_requests_stop_before_runtime_disposal`，参数为 `clean`、`runtime_failure`、`cancel`、`cancel_twice`、`timeout`、`cancel_during_shutdown`；提升环境的全量复跑已覆盖并通过这六项。
+
+## 最终文件清单（相对 main）
+
+- `packages/bankcore/src/safebank_bankcore/reserve.py`：唯一预留算法及三个不可变返回类型。
+- `packages/bankcore/src/safebank_bankcore/__init__.py`：必要公开导出。
+- `tests/bankcore/test_reserve.py`：73 项独立纯函数/场景验收。
+- `Makefile`：末尾 `test-reserve` 目标，保留 S1 目标。
+- `docs/progress/S2-reserve.md`：本报告与限制。
 
 ## 待协调者同步
 
@@ -61,4 +87,4 @@
 - R11 现有 days 范围为 1–30，而本接口只支持 7；在 S3 补充精确商户周期投影前不得将其他窗口静默降为 7 或猜月度锚点。
 - 现有公开 AccountReserve.max_outflow_cents 使用非负 Cents；本报告保留负整数。上层必须先处理非正上限，不能直接把负数塞进该公开模型，也不能将其变成可执行正金额。
 - 当前无法从 BankState 默认空 instructions/subscriptions 判断是否加载完整；S3 必须保证快照完整后才解除生产接入阻塞。
-- 本任务只新增纯函数，没有触及 L3 写路径；未运行并发、持久化一致性或真实数据库/HTTP 集成测试。
+- 本任务只新增纯函数，没有触及 L3 写路径；未运行金融并发、持久化一致性或真实 L3 数据库/HTTP 集成测试。上述 54 个跳过项不能计为通过。
