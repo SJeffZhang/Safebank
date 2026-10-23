@@ -1,0 +1,12 @@
+FROM safebank-p0:local
+USER root
+COPY requirements-test.txt /app/
+COPY .wheels /wheels
+RUN pip install --no-index --find-links=/wheels -r requirements-test.txt && rm -rf /wheels
+COPY tests /app/tests
+COPY pyproject.toml /app/pyproject.toml
+ENV PYTEST_ADDOPTS="-o cache_dir=/tmp/pytest-cache"
+# Trusted test driver has migration credentials; this image is never a public service.
+USER safebank
+ENTRYPOINT []
+CMD ["python", "-m", "pytest", "tests/integration", "-q"]

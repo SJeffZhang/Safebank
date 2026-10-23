@@ -1,4 +1,4 @@
-# 实际第三方依赖（P0）
+# 实际第三方依赖（P0 / P1）
 
 版本由 pyproject.toml / uv.lock 精确固定；runtime requirements.txt 由锁导出。POC组不进入进程探针镜像。
 许可证下表来自已安装 wheel 的 METADATA/License-Expression 和许可证文件路径（本地可重取）。新增 P1 依赖时重新核实，不把未引入包当已安装。
@@ -75,3 +75,18 @@
 | [zstandard](https://pypi.org/project/zstandard/0.25.0/) | 0.25.0 | BSD-3-Clause | zstandard-0.25.0.dist-info/licenses/LICENSE |
 
 psycopg/psycopg-binary 仅 POC 使用，按其 LGPL 及附带依赖许可证保留授权文本；正式镜像引入时需同步分发 notice。此表不等于对未实现功能作兼容性承诺。
+
+## P1 新增依赖
+
+2026-10-23 从本地 .venv 已安装 wheel 的 METADATA / License-Expression 与 LICENSE 路径核实；版本锁在 pyproject.toml / uv.lock，运行镜像保留 dist-info 授权文件。
+
+| 包 | 精确版本 | 许可证 | wheel 许可证路径 |
+|---|---|---|---|
+| sqlalchemy | 2.1.6 | MIT | sqlalchemy-2.1.6.dist-info/licenses/AUTHORS; sqlalchemy-2.1.6.dist-info/licenses/LICENSE |
+| asyncpg | 0.32.0 | Apache-2.0 | asyncpg-0.32.0.dist-info/licenses/LICENSE |
+| alembic | 1.20.1 | MIT | alembic-1.20.1.dist-info/licenses/LICENSE |
+| greenlet | 3.5.6 | MIT AND PSF-2.0 | greenlet-3.5.6.dist-info/licenses/LICENSE; greenlet-3.5.6.dist-info/licenses/LICENSE.PSF |
+| Mako | 1.4.3 | MIT | mako-1.4.3.dist-info/licenses/LICENSE |
+| MarkupSafe | 3.0.4 | BSD-3-Clause | markupsafe-3.0.4.dist-info/licenses/LICENSE.txt |
+
+P1 银行业务代码自研。TigerBeetle 账本原则、Blnk 预演思想为文档参考，未引入其运行时或复制源码；具体映射与来源见 PRD §4。

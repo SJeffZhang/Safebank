@@ -1,6 +1,6 @@
 # SafeBank Gateway 产品需求与技术设计文档（PRD）
 
-> 版本 v2.1 · 2026-10-23 · 状态：**定稿**（三轮多 agent 审核 + 两次修订复核；仓库中尚无代码）
+> 版本 v2.1 · 2026-10-23 · 状态：**定稿**（三轮多 agent 审核 + 两次修订复核；实现进度见 AGENTS.md）
 > 配套文档：[AGENTS.md](AGENTS.md)（接手指南，任何 agent 先读它）、[01-技术选型综合报告.md](01-技术选型综合报告.md)（调研与核实记录）。上一版存档于 [docs/archive/PRD-v1.2.md](docs/archive/PRD-v1.2.md)；审核报告在 `docs/reviews/`。
 > 本文档既是需求，也是实现规格。实现时如需偏离，先改本文档并在 `docs/decisions/` 写 ADR，再记入 AGENTS.md 进度日志。
 
@@ -1255,14 +1255,14 @@ L3 计划写事务顺序固定：锁预先持久化的 execution_intents 行 →
 |---|---|
 | POST `/internal/read/{tool}` | `{customer_id,args}` → §9.3 的 data；不含来源标签（L2 添加） |
 | POST `/internal/snapshot` | `{customer_id,steps,event_id|null}` → BankState（涉及客户版本、clock_version、历史计数/事件、已知实体） |
-| POST `/internal/plans/prepare` | `{customer_id,plan_id,attempt,plan_hash,steps,deadline_wall,authorization_evidence}` → `{status:PREPARED/COMMITTED/CANCELLED,attempt}`；L3 自行计算 `steps_digest = sha256(canonical(resolved steps))` 并保存。同 `(customer_id,plan_id,attempt)` 幂等；`attempt` 大于已存值且 intent 仍为 PREPARED 时，在 intent 行锁内替换 evidence 并把旧值追加进 `evidence_history`（供复演与重新审批）；plan_hash / steps_digest 不同，或 attempt 小于当前值 → 409 `IDEMPOTENCY_CONFLICT`；COMMITTED / CANCELLED 不可再 prepare、不得复活。deadline：首次 prepare 时写入不可变的 `deadline_cap_wall`（原话与会话有效期中较早者）；同一 attempt 内 deadline 只能缩短；`attempt+1` 时取 `min(新审批有效期, deadline_cap_wall)`。UNKNOWN 恢复的重试沿用**原 attempt**，不加 1（只有复演或重新审批才加 1） |
+| POST `/internal/plans/prepare` | `{customer_id,plan_id,attempt,plan_hash,steps,deadline_wall,deadline_cap_wall,authorization_evidence}` → `{status:PREPARED/COMMITTED/CANCELLED,attempt}`；L3 自行计算 `steps_digest = sha256(canonical(resolved steps))` 并保存（排除 arg_sources）；另存内部 request_digest 绑定原始步骤身份。execute 在版本检查后按同一纯函数重算解析结果，不一致返回 STATE_CHANGED。同 `(customer_id,plan_id,attempt)` 幂等；`attempt` 大于已存值且 intent 仍为 PREPARED 时，在 intent 行锁内替换 evidence 并把旧值追加进 `evidence_history`（供复演与重新审批）；plan_hash / steps_digest 不同，或 attempt 小于当前值 → 409 `IDEMPOTENCY_CONFLICT`；COMMITTED / CANCELLED 不可再 prepare、不得复活。deadline：首次 prepare 时写入不可变的 `deadline_cap_wall`（原话与会话有效期中较早者）；同一 attempt 内 deadline 只能缩短；`attempt+1` 时取 `min(新审批有效期, deadline_cap_wall)`。UNKNOWN 恢复的重试沿用**原 attempt**，不加 1（只有复演或重新审批才加 1） |
 | POST `/internal/plans/execute` | `{customer_id,plan_id,attempt,plan_hash,steps,expected_versions,clock_version,authorization_evidence}` → ExecutionResult；plan_hash、重算的 steps_digest、attempt 与 evidence 必须与**当前 attempt** 的 prepare 记录逐字节相同，否则 409 `IDEMPOTENCY_CONFLICT`；evidence 的判别联合见 §10.2 |
 | POST `/internal/executions/{plan_id}/reconcile` | `{customer_id,plan_hash,cancel_if_uncommitted:true}` → `{status:COMMITTED/CANCELLED,result?}`；同 intent 行锁，锁超时返回 EXECUTION_IN_PROGRESS，不猜终态 |
 | GET `/internal/executions/{plan_id}?customer_id=` | `{status:PREPARED/COMMITTED/CANCELLED,result?}` 或 404；只有 COMMITTED/CANCELLED 为终态，404 不是无在途证明 |
 | GET `/internal/events/{event_id}` | 不可变事件定义、关联指令/订单、归属、due_at、status |
 | POST `/internal/events/{event_id}/execute` | `{expected_versions,clock_version,expected_payload_hash,authorization_evidence}` → 幂等事件结果；只能执行已存在到期 job，不能传新金额；job 已有终态时返回原结果、不执行 |
 | POST `/internal/events/{event_id}/block` | `{status:BLOCKED/SKIPPED_REAPPROVAL/FAILED_INSUFFICIENT,code,expected_versions,clock_version,expected_payload_hash}` → 记录拒绝与周期推进；先校验未执行，不能覆盖 SUCCESS |
-| GET `/internal/outbox?after=&limit=` / POST `/internal/outbox/ack` | 拉取已提交事件 / `{event_ids}` 标记已送达 |
+| GET `/internal/outbox?after=&limit=` / POST `/internal/outbox/ack` | 拉取未 ack 的已提交事件 / `{event_ids}` 标记已送达；after 是本轮分页位置，每轮/重启从 0 扫描，按 event_id 幂等处理再 ack。不同客户事务的序号可能逆序提交，禁止把 after 当永久水位（ADR-007） |
 | POST `/internal/demo/reset` / `/prepare` | 固定 seed/scenario_id → dataset_revision；仅 DEMO/EVAL |
 | POST `/internal/demo/events` | 注册白名单合成入账、刷卡、AA 付款 job → event_id；仅 DEMO/EVAL，仍由 L2 执行 |
 | POST `/internal/clock/advance` | `{target_at,request_id}` → advance_job_id；仅 DEMO/EVAL |

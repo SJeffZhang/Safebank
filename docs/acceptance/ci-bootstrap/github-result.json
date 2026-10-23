@@ -1,0 +1,196 @@
+{
+  "run_url": "https://github.com/SJeffZhang/Safebank/actions/runs/39929405919",
+  "code_commit": "70dcabecb28b7a6a7d0731881d8af42ddf773d57",
+  "jobs": [
+    {
+      "id": 120333657831,
+      "name": "p1-postgres",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 39929405919,
+      "logs_url": null,
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "Run astral-sh/setup-uv@v6",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3
+        },
+        {
+          "name": "Run make setup",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4
+        },
+        {
+          "name": "Run make test-postgres-bootstrap",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5
+        },
+        {
+          "name": "Run make up",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6
+        },
+        {
+          "name": "Run make test-p1",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7
+        },
+        {
+          "name": "Run make test-p1-concurrency",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8
+        },
+        {
+          "name": "Run make test-p1-consistency",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9
+        },
+        {
+          "name": "Run make test-integration",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10
+        },
+        {
+          "name": "Run make contracts-check",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11
+        },
+        {
+          "name": "Run docker compose logs --tail=100",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 12
+        },
+        {
+          "name": "Run docker compose down",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 13
+        },
+        {
+          "name": "Post Run astral-sh/setup-uv@v6",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 25
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 26
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 27
+        }
+      ]
+    },
+    {
+      "id": 120333658222,
+      "name": "unit",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 39929405919,
+      "logs_url": null,
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "Run astral-sh/setup-uv@v6",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3
+        },
+        {
+          "name": "Run uv sync --frozen --group poc --python 3.12",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4
+        },
+        {
+          "name": "Run uv run --group poc pytest -q",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5
+        },
+        {
+          "name": "Run uv run ruff check .",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6
+        },
+        {
+          "name": "Run uv run ruff format --check .",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7
+        },
+        {
+          "name": "Post Run astral-sh/setup-uv@v6",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 13
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 14
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 15
+        }
+      ]
+    }
+  ],
+  "postgres_log_excerpts": [
+    "2026-10-23T09:06:31.7069914Z PASS: bank reproduces original 0600 foreign-owner read failure",
+    "2026-10-23T09:06:31.7070848Z PASS: bank fresh init, role isolation, private permissions and restart persistence",
+    "2026-10-23T09:06:31.7071720Z PASS: agent reproduces original 0600 foreign-owner read failure",
+    "2026-10-23T09:06:31.7072568Z PASS: agent fresh init, role isolation, private permissions and restart persistence",
+    "2026-10-23T09:06:31.7073736Z PASS: disposable Linux bootstrap acceptance; existing application volumes untouched",
+    "2026-10-23T09:07:49.7682052Z 33 passed in 39.30s",
+    "2026-10-23T09:08:19.9485030Z 5 passed, 28 deselected in 28.61s",
+    "2026-10-23T09:08:27.6711326Z 17 passed, 16 deselected in 6.28s",
+    "2026-10-23T09:08:32.5695075Z PASS: real network, credential and database role boundaries",
+    "2026-10-23T09:08:33.4663991Z PASS: actual HTTP -> PostgreSQL, service auth, snapshot, prepare, transfer and outbox",
+    "2026-10-23T09:08:40.9151386Z PASS: actual L3 process restart recovers committed result and idempotent replay",
+    "2026-10-23T09:08:41.8739895Z PASS: contracts v1 match frozen schemas"
+  ]
+}

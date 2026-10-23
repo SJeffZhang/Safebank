@@ -1,0 +1,3570 @@
+{
+  "type": "function",
+  "function": {
+    "name": "submit_action_plan",
+    "strict": true,
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "intents": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "steps": {
+          "items": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "step_id": {
+                    "type": "string"
+                  },
+                  "depends_on": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "arg_sources": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "param": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "utterance"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "span": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "integer"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref",
+                                "span"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "read"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "pointer": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref",
+                                "pointer"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "step"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "derived"
+                                  ]
+                                },
+                                "template": {
+                                  "enum": [
+                                    "cancelled_monthly_fees",
+                                    "available_less_7d_charges"
+                                  ],
+                                  "type": "string"
+                                },
+                                "inputs": {
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "utterance"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          },
+                                          "span": {
+                                            "type": "array",
+                                            "items": {
+                                              "type": "integer"
+                                            }
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref",
+                                          "span"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "read"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          },
+                                          "pointer": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref",
+                                          "pointer"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "step"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref"
+                                        ],
+                                        "type": "object"
+                                      }
+                                    ]
+                                  },
+                                  "type": "array"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "template",
+                                "inputs"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "hint"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "param",
+                        "source"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "tool": {
+                    "type": "string",
+                    "enum": [
+                      "transfer"
+                    ]
+                  },
+                  "args": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "from_account_id": {
+                        "type": "string"
+                      },
+                      "payee_id": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "id"
+                                ]
+                              },
+                              "id": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "id"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "none"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "ref"
+                                ]
+                              },
+                              "ref": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "ref"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "to_account_id": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "id"
+                                ]
+                              },
+                              "id": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "id"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "none"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "amount_cents": {
+                        "ge": 0,
+                        "gt": 0,
+                        "le": 100000000,
+                        "type": "integer"
+                      },
+                      "memo": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "from_account_id",
+                      "payee_id",
+                      "to_account_id",
+                      "amount_cents",
+                      "memo"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "step_id",
+                  "depends_on",
+                  "arg_sources",
+                  "tool",
+                  "args"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "step_id": {
+                    "type": "string"
+                  },
+                  "depends_on": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "arg_sources": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "param": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "utterance"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "span": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "integer"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref",
+                                "span"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "read"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "pointer": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref",
+                                "pointer"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "step"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "derived"
+                                  ]
+                                },
+                                "template": {
+                                  "enum": [
+                                    "cancelled_monthly_fees",
+                                    "available_less_7d_charges"
+                                  ],
+                                  "type": "string"
+                                },
+                                "inputs": {
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "utterance"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          },
+                                          "span": {
+                                            "type": "array",
+                                            "items": {
+                                              "type": "integer"
+                                            }
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref",
+                                          "span"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "read"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          },
+                                          "pointer": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref",
+                                          "pointer"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "step"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref"
+                                        ],
+                                        "type": "object"
+                                      }
+                                    ]
+                                  },
+                                  "type": "array"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "template",
+                                "inputs"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "hint"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "param",
+                        "source"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "tool": {
+                    "type": "string",
+                    "enum": [
+                      "add_payee"
+                    ]
+                  },
+                  "args": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "account_no": {
+                        "pattern": "^\\d{12,32}$",
+                        "type": "string"
+                      },
+                      "bank_name": {
+                        "type": "string"
+                      },
+                      "phone": {
+                        "type": "string"
+                      },
+                      "alias": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "account_no",
+                      "bank_name",
+                      "phone",
+                      "alias"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "step_id",
+                  "depends_on",
+                  "arg_sources",
+                  "tool",
+                  "args"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "step_id": {
+                    "type": "string"
+                  },
+                  "depends_on": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "arg_sources": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "param": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "utterance"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "span": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "integer"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref",
+                                "span"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "read"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "pointer": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref",
+                                "pointer"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "step"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "derived"
+                                  ]
+                                },
+                                "template": {
+                                  "enum": [
+                                    "cancelled_monthly_fees",
+                                    "available_less_7d_charges"
+                                  ],
+                                  "type": "string"
+                                },
+                                "inputs": {
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "utterance"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          },
+                                          "span": {
+                                            "type": "array",
+                                            "items": {
+                                              "type": "integer"
+                                            }
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref",
+                                          "span"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "read"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          },
+                                          "pointer": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref",
+                                          "pointer"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "step"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref"
+                                        ],
+                                        "type": "object"
+                                      }
+                                    ]
+                                  },
+                                  "type": "array"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "template",
+                                "inputs"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "hint"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "param",
+                        "source"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "tool": {
+                    "type": "string",
+                    "enum": [
+                      "schedule_transfer"
+                    ]
+                  },
+                  "args": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "from_account_id": {
+                        "type": "string"
+                      },
+                      "payee_id": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "id"
+                                ]
+                              },
+                              "id": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "id"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "none"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "ref"
+                                ]
+                              },
+                              "ref": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "ref"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "to_account_id": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "id"
+                                ]
+                              },
+                              "id": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "id"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "none"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "amount_cents": {
+                        "ge": 0,
+                        "gt": 0,
+                        "le": 100000000,
+                        "type": "integer"
+                      },
+                      "period": {
+                        "enum": [
+                          "ONCE",
+                          "WEEKLY",
+                          "MONTHLY"
+                        ],
+                        "type": "string"
+                      },
+                      "first_run_at": {
+                        "type": "string"
+                      },
+                      "end_at": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "from_account_id",
+                      "payee_id",
+                      "to_account_id",
+                      "amount_cents",
+                      "period",
+                      "first_run_at",
+                      "end_at"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "step_id",
+                  "depends_on",
+                  "arg_sources",
+                  "tool",
+                  "args"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "step_id": {
+                    "type": "string"
+                  },
+                  "depends_on": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "arg_sources": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "param": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "utterance"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "span": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "integer"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref",
+                                "span"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "read"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "pointer": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref",
+                                "pointer"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "step"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "derived"
+                                  ]
+                                },
+                                "template": {
+                                  "enum": [
+                                    "cancelled_monthly_fees",
+                                    "available_less_7d_charges"
+                                  ],
+                                  "type": "string"
+                                },
+                                "inputs": {
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "utterance"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          },
+                                          "span": {
+                                            "type": "array",
+                                            "items": {
+                                              "type": "integer"
+                                            }
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref",
+                                          "span"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "read"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          },
+                                          "pointer": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref",
+                                          "pointer"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "step"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref"
+                                        ],
+                                        "type": "object"
+                                      }
+                                    ]
+                                  },
+                                  "type": "array"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "template",
+                                "inputs"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "hint"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "param",
+                        "source"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "tool": {
+                    "type": "string",
+                    "enum": [
+                      "cancel_scheduled"
+                    ]
+                  },
+                  "args": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "instruction_id": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "instruction_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "step_id",
+                  "depends_on",
+                  "arg_sources",
+                  "tool",
+                  "args"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "step_id": {
+                    "type": "string"
+                  },
+                  "depends_on": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "arg_sources": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "param": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "utterance"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "span": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "integer"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref",
+                                "span"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "read"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "pointer": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref",
+                                "pointer"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "step"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "derived"
+                                  ]
+                                },
+                                "template": {
+                                  "enum": [
+                                    "cancelled_monthly_fees",
+                                    "available_less_7d_charges"
+                                  ],
+                                  "type": "string"
+                                },
+                                "inputs": {
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "utterance"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          },
+                                          "span": {
+                                            "type": "array",
+                                            "items": {
+                                              "type": "integer"
+                                            }
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref",
+                                          "span"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "read"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          },
+                                          "pointer": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref",
+                                          "pointer"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "step"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref"
+                                        ],
+                                        "type": "object"
+                                      }
+                                    ]
+                                  },
+                                  "type": "array"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "template",
+                                "inputs"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "hint"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "param",
+                        "source"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "tool": {
+                    "type": "string",
+                    "enum": [
+                      "create_split_request"
+                    ]
+                  },
+                  "args": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "account_id": {
+                        "type": "string"
+                      },
+                      "total_cents": {
+                        "ge": 0,
+                        "gt": 0,
+                        "le": 100000000,
+                        "type": "integer"
+                      },
+                      "participant_payee_ids": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "include_self": {
+                        "type": "boolean"
+                      },
+                      "memo": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "account_id",
+                      "total_cents",
+                      "participant_payee_ids",
+                      "include_self",
+                      "memo"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "step_id",
+                  "depends_on",
+                  "arg_sources",
+                  "tool",
+                  "args"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "step_id": {
+                    "type": "string"
+                  },
+                  "depends_on": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "arg_sources": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "param": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "utterance"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "span": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "integer"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref",
+                                "span"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "read"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "pointer": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref",
+                                "pointer"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "step"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "derived"
+                                  ]
+                                },
+                                "template": {
+                                  "enum": [
+                                    "cancelled_monthly_fees",
+                                    "available_less_7d_charges"
+                                  ],
+                                  "type": "string"
+                                },
+                                "inputs": {
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "utterance"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          },
+                                          "span": {
+                                            "type": "array",
+                                            "items": {
+                                              "type": "integer"
+                                            }
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref",
+                                          "span"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "read"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          },
+                                          "pointer": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref",
+                                          "pointer"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "step"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref"
+                                        ],
+                                        "type": "object"
+                                      }
+                                    ]
+                                  },
+                                  "type": "array"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "template",
+                                "inputs"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "hint"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "param",
+                        "source"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "tool": {
+                    "type": "string",
+                    "enum": [
+                      "update_card_limits"
+                    ]
+                  },
+                  "args": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "card_id": {
+                        "type": "string"
+                      },
+                      "single_limit_cents": {
+                        "type": "integer",
+                        "minimum": -1
+                      },
+                      "daily_limit_cents": {
+                        "type": "integer",
+                        "minimum": -1
+                      }
+                    },
+                    "required": [
+                      "card_id",
+                      "single_limit_cents",
+                      "daily_limit_cents"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "step_id",
+                  "depends_on",
+                  "arg_sources",
+                  "tool",
+                  "args"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "step_id": {
+                    "type": "string"
+                  },
+                  "depends_on": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "arg_sources": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "param": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "utterance"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "span": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "integer"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref",
+                                "span"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "read"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "pointer": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref",
+                                "pointer"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "step"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "derived"
+                                  ]
+                                },
+                                "template": {
+                                  "enum": [
+                                    "cancelled_monthly_fees",
+                                    "available_less_7d_charges"
+                                  ],
+                                  "type": "string"
+                                },
+                                "inputs": {
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "utterance"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          },
+                                          "span": {
+                                            "type": "array",
+                                            "items": {
+                                              "type": "integer"
+                                            }
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref",
+                                          "span"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "read"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          },
+                                          "pointer": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref",
+                                          "pointer"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "step"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref"
+                                        ],
+                                        "type": "object"
+                                      }
+                                    ]
+                                  },
+                                  "type": "array"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "template",
+                                "inputs"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "hint"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "param",
+                        "source"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "tool": {
+                    "type": "string",
+                    "enum": [
+                      "update_card_controls"
+                    ]
+                  },
+                  "args": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "card_id": {
+                        "type": "string"
+                      },
+                      "online": {
+                        "type": "string",
+                        "enum": [
+                          "KEEP",
+                          "ON",
+                          "OFF"
+                        ]
+                      },
+                      "overseas": {
+                        "type": "string",
+                        "enum": [
+                          "KEEP",
+                          "ON",
+                          "OFF"
+                        ]
+                      },
+                      "atm": {
+                        "type": "string",
+                        "enum": [
+                          "KEEP",
+                          "ON",
+                          "OFF"
+                        ]
+                      },
+                      "quickpass": {
+                        "type": "string",
+                        "enum": [
+                          "KEEP",
+                          "ON",
+                          "OFF"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "card_id",
+                      "online",
+                      "overseas",
+                      "atm",
+                      "quickpass"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "step_id",
+                  "depends_on",
+                  "arg_sources",
+                  "tool",
+                  "args"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "step_id": {
+                    "type": "string"
+                  },
+                  "depends_on": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "arg_sources": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "param": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "utterance"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "span": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "integer"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref",
+                                "span"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "read"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "pointer": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref",
+                                "pointer"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "step"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "derived"
+                                  ]
+                                },
+                                "template": {
+                                  "enum": [
+                                    "cancelled_monthly_fees",
+                                    "available_less_7d_charges"
+                                  ],
+                                  "type": "string"
+                                },
+                                "inputs": {
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "utterance"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          },
+                                          "span": {
+                                            "type": "array",
+                                            "items": {
+                                              "type": "integer"
+                                            }
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref",
+                                          "span"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "read"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          },
+                                          "pointer": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref",
+                                          "pointer"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "step"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref"
+                                        ],
+                                        "type": "object"
+                                      }
+                                    ]
+                                  },
+                                  "type": "array"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "template",
+                                "inputs"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "hint"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "param",
+                        "source"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "tool": {
+                    "type": "string",
+                    "enum": [
+                      "freeze_card"
+                    ]
+                  },
+                  "args": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "card_id": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "card_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "step_id",
+                  "depends_on",
+                  "arg_sources",
+                  "tool",
+                  "args"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "step_id": {
+                    "type": "string"
+                  },
+                  "depends_on": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "arg_sources": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "param": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "utterance"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "span": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "integer"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref",
+                                "span"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "read"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "pointer": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref",
+                                "pointer"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "step"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "derived"
+                                  ]
+                                },
+                                "template": {
+                                  "enum": [
+                                    "cancelled_monthly_fees",
+                                    "available_less_7d_charges"
+                                  ],
+                                  "type": "string"
+                                },
+                                "inputs": {
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "utterance"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          },
+                                          "span": {
+                                            "type": "array",
+                                            "items": {
+                                              "type": "integer"
+                                            }
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref",
+                                          "span"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "read"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          },
+                                          "pointer": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref",
+                                          "pointer"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "step"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref"
+                                        ],
+                                        "type": "object"
+                                      }
+                                    ]
+                                  },
+                                  "type": "array"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "template",
+                                "inputs"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "hint"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "param",
+                        "source"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "tool": {
+                    "type": "string",
+                    "enum": [
+                      "unfreeze_card"
+                    ]
+                  },
+                  "args": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "card_id": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "card_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "step_id",
+                  "depends_on",
+                  "arg_sources",
+                  "tool",
+                  "args"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "step_id": {
+                    "type": "string"
+                  },
+                  "depends_on": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "arg_sources": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "param": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "utterance"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "span": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "integer"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref",
+                                "span"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "read"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "pointer": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref",
+                                "pointer"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "step"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "derived"
+                                  ]
+                                },
+                                "template": {
+                                  "enum": [
+                                    "cancelled_monthly_fees",
+                                    "available_less_7d_charges"
+                                  ],
+                                  "type": "string"
+                                },
+                                "inputs": {
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "utterance"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          },
+                                          "span": {
+                                            "type": "array",
+                                            "items": {
+                                              "type": "integer"
+                                            }
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref",
+                                          "span"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "read"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          },
+                                          "pointer": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref",
+                                          "pointer"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "step"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref"
+                                        ],
+                                        "type": "object"
+                                      }
+                                    ]
+                                  },
+                                  "type": "array"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "template",
+                                "inputs"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "hint"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "param",
+                        "source"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "tool": {
+                    "type": "string",
+                    "enum": [
+                      "report_card_lost"
+                    ]
+                  },
+                  "args": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "card_id": {
+                        "type": "string"
+                      },
+                      "replace": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "card_id",
+                      "replace"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "step_id",
+                  "depends_on",
+                  "arg_sources",
+                  "tool",
+                  "args"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "step_id": {
+                    "type": "string"
+                  },
+                  "depends_on": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "arg_sources": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "param": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "utterance"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "span": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "integer"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref",
+                                "span"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "read"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "pointer": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref",
+                                "pointer"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "step"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "derived"
+                                  ]
+                                },
+                                "template": {
+                                  "enum": [
+                                    "cancelled_monthly_fees",
+                                    "available_less_7d_charges"
+                                  ],
+                                  "type": "string"
+                                },
+                                "inputs": {
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "utterance"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          },
+                                          "span": {
+                                            "type": "array",
+                                            "items": {
+                                              "type": "integer"
+                                            }
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref",
+                                          "span"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "read"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          },
+                                          "pointer": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref",
+                                          "pointer"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "step"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref"
+                                        ],
+                                        "type": "object"
+                                      }
+                                    ]
+                                  },
+                                  "type": "array"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "template",
+                                "inputs"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "hint"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "param",
+                        "source"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "tool": {
+                    "type": "string",
+                    "enum": [
+                      "cancel_subscription"
+                    ]
+                  },
+                  "args": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "instruction_id": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "instruction_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "step_id",
+                  "depends_on",
+                  "arg_sources",
+                  "tool",
+                  "args"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "step_id": {
+                    "type": "string"
+                  },
+                  "depends_on": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "arg_sources": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "param": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "utterance"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "span": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "integer"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref",
+                                "span"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "read"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "pointer": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref",
+                                "pointer"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "step"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "derived"
+                                  ]
+                                },
+                                "template": {
+                                  "enum": [
+                                    "cancelled_monthly_fees",
+                                    "available_less_7d_charges"
+                                  ],
+                                  "type": "string"
+                                },
+                                "inputs": {
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "utterance"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          },
+                                          "span": {
+                                            "type": "array",
+                                            "items": {
+                                              "type": "integer"
+                                            }
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref",
+                                          "span"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "read"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          },
+                                          "pointer": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref",
+                                          "pointer"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "step"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref"
+                                        ],
+                                        "type": "object"
+                                      }
+                                    ]
+                                  },
+                                  "type": "array"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "template",
+                                "inputs"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "hint"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "param",
+                        "source"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "tool": {
+                    "type": "string",
+                    "enum": [
+                      "subscribe_product"
+                    ]
+                  },
+                  "args": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "account_id": {
+                        "type": "string"
+                      },
+                      "product_id": {
+                        "type": "string"
+                      },
+                      "amount_cents": {
+                        "ge": 0,
+                        "gt": 0,
+                        "le": 100000000,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "account_id",
+                      "product_id",
+                      "amount_cents"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "step_id",
+                  "depends_on",
+                  "arg_sources",
+                  "tool",
+                  "args"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "step_id": {
+                    "type": "string"
+                  },
+                  "depends_on": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "arg_sources": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "param": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "utterance"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "span": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "integer"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref",
+                                "span"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "read"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "pointer": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref",
+                                "pointer"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "step"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "derived"
+                                  ]
+                                },
+                                "template": {
+                                  "enum": [
+                                    "cancelled_monthly_fees",
+                                    "available_less_7d_charges"
+                                  ],
+                                  "type": "string"
+                                },
+                                "inputs": {
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "utterance"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          },
+                                          "span": {
+                                            "type": "array",
+                                            "items": {
+                                              "type": "integer"
+                                            }
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref",
+                                          "span"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "read"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          },
+                                          "pointer": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref",
+                                          "pointer"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                              "step"
+                                            ]
+                                          },
+                                          "ref": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "ref"
+                                        ],
+                                        "type": "object"
+                                      }
+                                    ]
+                                  },
+                                  "type": "array"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "template",
+                                "inputs"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "hint"
+                                  ]
+                                },
+                                "ref": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "ref"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "param",
+                        "source"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "tool": {
+                    "type": "string",
+                    "enum": [
+                      "redeem_product"
+                    ]
+                  },
+                  "args": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "account_id": {
+                        "type": "string"
+                      },
+                      "product_id": {
+                        "type": "string"
+                      },
+                      "units": {
+                        "pattern": "^\\d{1,14}(\\.\\d{1,4})?$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "account_id",
+                      "product_id",
+                      "units"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "step_id",
+                  "depends_on",
+                  "arg_sources",
+                  "tool",
+                  "args"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "rationale": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "intents",
+        "steps",
+        "rationale"
+      ],
+      "type": "object"
+    }
+  }
+}

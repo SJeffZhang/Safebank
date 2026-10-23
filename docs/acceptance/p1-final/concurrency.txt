@@ -1,0 +1,5 @@
+docker compose run --rm p1-tests python -m pytest tests/integration -m concurrency -q
+ Container safebank-p1-tests-run-f8fe7d77a151 Creating
+ Container safebank-p1-tests-run-f8fe7d77a151 Created
+.....                                                                    [100%]
+5 passed, 28 deselected in 6.99s

@@ -1,0 +1,134 @@
+[
+  {
+    "at_wall": "2026-10-23T07:05:08.356587+00:00",
+    "http_status": 200,
+    "response": {
+      "id": "2057a52f-d222-43f3-a411-c7b9d151e2ed",
+      "object": "chat.completion",
+      "created": 1792739103,
+      "model": "deepseek-v4-pro",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "index": 0,
+                "id": "call_00_GlZWDFcTZa0Xw9LO9BPe2182",
+                "type": "function",
+                "function": {
+                  "name": "submit_action_plan",
+                  "arguments": "{\"intents\": [\"转账\"], \"steps\": [{\"step_id\": \"s1\", \"depends_on\": [], \"arg_sources\": [{\"param\": \"from_account_id\", \"source\": {\"kind\": \"read\", \"ref\": \"src_test\", \"pointer\": \"/value\"}}, {\"param\": \"payee_id\", \"source\": {\"kind\": \"read\", \"ref\": \"src_test\", \"pointer\": \"/value\"}}, {\"param\": \"to_account_id\", \"source\": {\"kind\": \"read\", \"ref\": \"src_test\", \"pointer\": \"/value\"}}, {\"param\": \"amount_cents\", \"source\": {\"kind\": \"read\", \"ref\": \"src_test\", \"pointer\": \"/value\"}}, {\"param\": \"memo\", \"source\": {\"kind\": \"read\", \"ref\": \"src_test\", \"pointer\": \"/value\"}}], \"tool\": \"transfer\", \"args\": {\"from_account_id\": \"acc_a\", \"payee_id\": {\"kind\": \"id\", \"id\": \"pye_b\"}, \"to_account_id\": {\"kind\": \"none\"}, \"amount_cents\": 80000, \"memo\": \"\"}}], \"rationale\": \"用户要求给王五转账800元，从账户acc_a转出，收款人为pye_b，备注为空。金额800元换算为80000分。使用一步转账计划，所有参数来源按要求使用kind=read、ref=src_test、pointer=/value。\"}"
+                }
+              }
+            ]
+          },
+          "logprobs": null,
+          "finish_reason": "tool_calls"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 10588,
+        "completion_tokens": 368,
+        "total_tokens": 10956,
+        "prompt_tokens_details": {
+          "cached_tokens": 256
+        },
+        "prompt_cache_hit_tokens": 256,
+        "prompt_cache_miss_tokens": 10332
+      },
+      "system_fingerprint": "a307abda487cd1b463329ccb945ce396"
+    },
+    "valid": true
+  },
+  {
+    "at_wall": "2026-10-23T07:05:11.149037+00:00",
+    "http_status": 200,
+    "response": {
+      "id": "4a176f11-df3c-4af8-97bd-de261ec96e66",
+      "object": "chat.completion",
+      "created": 1792739108,
+      "model": "deepseek-v4-pro",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "index": 0,
+                "id": "call_00_VmmNRqe9GYfvBGymlm8f3840",
+                "type": "function",
+                "function": {
+                  "name": "submit_action_plan",
+                  "arguments": "{\"intents\": [\"冻结卡片\"], \"steps\": [{\"step_id\": \"freeze_card_step\", \"depends_on\": [], \"arg_sources\": [{\"param\": \"card_id\", \"source\": {\"kind\": \"read\", \"ref\": \"src_test\", \"pointer\": \"/value\"}}], \"tool\": \"freeze_card\", \"args\": {\"card_id\": \"crd_a\"}}], \"rationale\": \"用户要求冻结卡片 crd_a，使用一步计划，参数来源统一为 kind=read, ref=src_test, pointer=/value，不使用 utterance 来源。\"}"
+                }
+              }
+            ]
+          },
+          "logprobs": null,
+          "finish_reason": "tool_calls"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 10574,
+        "completion_tokens": 182,
+        "total_tokens": 10756,
+        "prompt_tokens_details": {
+          "cached_tokens": 10496
+        },
+        "prompt_cache_hit_tokens": 10496,
+        "prompt_cache_miss_tokens": 78
+      },
+      "system_fingerprint": "a307abda487cd1b463329ccb945ce396"
+    },
+    "valid": true
+  },
+  {
+    "at_wall": "2026-10-23T07:05:14.759476+00:00",
+    "http_status": 200,
+    "response": {
+      "id": "e6a9ddba-d1fc-4f1f-b770-2648dd88a58d",
+      "object": "chat.completion",
+      "created": 1792739111,
+      "model": "deepseek-v4-pro",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "index": 0,
+                "id": "call_00_RFyngWOeKLiCUQQSfRlq2622",
+                "type": "function",
+                "function": {
+                  "name": "submit_action_plan",
+                  "arguments": "{\"intents\": [\"降低卡片单笔限额\"], \"steps\": [{\"step_id\": \"step_1\", \"depends_on\": [], \"arg_sources\": [{\"param\": \"card_id\", \"source\": {\"kind\": \"read\", \"ref\": \"src_test\", \"pointer\": \"/value\"}}, {\"param\": \"single_limit_cents\", \"source\": {\"kind\": \"read\", \"ref\": \"src_test\", \"pointer\": \"/value\"}}, {\"param\": \"daily_limit_cents\", \"source\": {\"kind\": \"read\", \"ref\": \"src_test\", \"pointer\": \"/value\"}}], \"tool\": \"update_card_limits\", \"args\": {\"card_id\": \"crd_a\", \"single_limit_cents\": 1000, \"daily_limit_cents\": -1}}], \"rationale\": \"用户要求将卡片 crd_a 的单笔限额降低到 1000 分（即 1000 cents），日限额保持不变。使用 update_card_limits 工具，single_limit_cents 设为 1000，daily_limit_cents 设为 -1 表示保持不变。所有参数来源按要求使用 kind=read、ref=src_test、pointer=/value。\"}"
+                }
+              }
+            ]
+          },
+          "logprobs": null,
+          "finish_reason": "tool_calls"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 10585,
+        "completion_tokens": 310,
+        "total_tokens": 10895,
+        "prompt_tokens_details": {
+          "cached_tokens": 10496
+        },
+        "prompt_cache_hit_tokens": 10496,
+        "prompt_cache_miss_tokens": 89
+      },
+      "system_fingerprint": "a307abda487cd1b463329ccb945ce396"
+    },
+    "valid": true
+  }
+]

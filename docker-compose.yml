@@ -96,6 +96,7 @@ services:
       timeout: 4s
       retries: 10
   bank-backend:
+    command: [python, -m, uvicorn, app.main:factory, --factory, --host, 0.0.0.0, --port, "8300"]
     build: .
     image: safebank-p0:local
     environment:
@@ -118,19 +119,24 @@ services:
       - CMD
       - python
       - -c
-      - import urllib.request,os; r=urllib.request.Request('http://127.0.0.1:8300/health');
+      - import urllib.request,os; r=urllib.request.Request('http://127.0.0.1:8300/readyz');
         r.add_header('X-Service-Token',os.environ['GATEWAY_SERVICE_TOKEN']); urllib.request.urlopen(r,timeout=3)
       interval: 5s
       timeout: 4s
       retries: 10
   postgres-bank:
     image: postgres:16.10-alpine@sha256:029660641a0cfc575b14f336ba448fb8a75fd595d42e1fa316b9fb4378742297
+    entrypoint: [/bin/sh, /usr/local/bin/safebank-postgres-entrypoint.sh]
+    command: [postgres]
+    tmpfs:
+    - /docker-entrypoint-initdb.d:rw,noexec,nosuid,nodev,mode=0700,size=1m
     environment:
       POSTGRES_PASSWORD_FILE: /run/secrets/password
     volumes:
     - pg-bank:/var/lib/postgresql/data
     - ./.secrets/postgres-bank-password:/run/secrets/password:ro
-    - ./.secrets/init-bank.sql:/docker-entrypoint-initdb.d/01-roles.sql:ro
+    - ./.secrets/init-bank.sql:/run/bootstrap/roles.sql:ro
+    - ./scripts/postgres-entrypoint.sh:/usr/local/bin/safebank-postgres-entrypoint.sh:ro
     networks:
       bank-net:
         ipv4_address: 172.29.20.20
@@ -143,12 +149,17 @@ services:
       retries: 10
   postgres-agent:
     image: postgres:16.10-alpine@sha256:029660641a0cfc575b14f336ba448fb8a75fd595d42e1fa316b9fb4378742297
+    entrypoint: [/bin/sh, /usr/local/bin/safebank-postgres-entrypoint.sh]
+    command: [postgres]
+    tmpfs:
+    - /docker-entrypoint-initdb.d:rw,noexec,nosuid,nodev,mode=0700,size=1m
     environment:
       POSTGRES_PASSWORD_FILE: /run/secrets/password
     volumes:
     - pg-agent:/var/lib/postgresql/data
     - ./.secrets/postgres-agent-password:/run/secrets/password:ro
-    - ./.secrets/init-agent.sql:/docker-entrypoint-initdb.d/01-roles.sql:ro
+    - ./.secrets/init-agent.sql:/run/bootstrap/roles.sql:ro
+    - ./scripts/postgres-entrypoint.sh:/usr/local/bin/safebank-postgres-entrypoint.sh:ro
     networks:
       agent-net:
         ipv4_address: 172.29.10.20
@@ -159,6 +170,32 @@ services:
       interval: 5s
       timeout: 4s
       retries: 10
+  bank-maintenance:
+    profiles: [maintenance]
+    image: safebank-p0:local
+    command: [python, -m, alembic, -c, services/bank-backend/alembic.ini, upgrade, head]
+    env_file:
+    - .secrets/bank.env
+    - .secrets/bank-migration.env
+    networks: [bank-net]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  p1-tests:
+    profiles:
+    - test
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    image: safebank-p1-test:local
+    env_file:
+    - .secrets/bank.env
+    - .secrets/p1-test.env
+    networks:
+    - bank-net
+    environment:
+      PYTHONPATH: /app:/app/packages/contracts/src:/app/packages/bankcore/src:/app/services/bank-backend
 networks:
   agent-net:
     ipam:

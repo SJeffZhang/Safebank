@@ -1,0 +1,184 @@
+.venv/bin/python -m scripts.keys
+Existing secrets preserved
+.venv/bin/python -m scripts.download_wheels
+Verified 40 locked wheels
+docker compose build bank-backend
+ Image safebank-p0:local Building
+#1 [internal] load local bake definitions
+#1 reading from stdin 566B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 617B done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/python:3.12.15-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704
+#3 DONE 0.0s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 227B done
+#4 DONE 0.0s
+
+#5 [internal] load build context
+#5 transferring context: 6.67kB done
+#5 DONE 0.0s
+
+#6 [1/8] FROM docker.io/library/python:3.12.15-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704
+#6 resolve docker.io/library/python:3.12.15-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704 0.0s done
+#6 DONE 0.0s
+
+#7 [7/8] COPY packages ./packages
+#7 CACHED
+
+#8 [3/8] COPY requirements.txt .
+#8 CACHED
+
+#9 [5/8] RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt && rm -rf /wheels && useradd --uid 10001 --create-home safebank
+#9 CACHED
+
+#10 [6/8] COPY scripts ./scripts
+#10 CACHED
+
+#11 [4/8] COPY .wheels /wheels
+#11 CACHED
+
+#12 [2/8] WORKDIR /app
+#12 CACHED
+
+#13 [8/8] COPY services ./services
+#13 CACHED
+
+#14 exporting to image
+#14 exporting layers done
+#14 exporting manifest sha256:01f2b76bb2290b9e1a0d64afe62037fa638f16583d4f734783447bb271db30d2 done
+#14 exporting config sha256:be8425906dd4806ae6ca634d047676a80821353b944badd51a3f21e1c239fd34 done
+#14 exporting attestation manifest sha256:c1840bfb82f788d8c3e4bbde5bd1b80f84214901767e3574352b08bab97e9cc9 done
+#14 exporting manifest list sha256:675df178415f5949900b5179b98f01ff034d86face54d741d30c42d19fee61ef done
+#14 naming to docker.io/library/safebank-p0:local done
+#14 unpacking to docker.io/library/safebank-p0:local done
+#14 DONE 0.0s
+
+#15 resolving provenance for metadata file
+#15 DONE 0.0s
+ Image safebank-p0:local Built
+docker compose up -d --wait postgres-bank
+ Container safebank-postgres-bank-1 Running
+ Container safebank-postgres-bank-1 Waiting
+ Container safebank-postgres-bank-1 Healthy
+.venv/bin/python -m scripts.p1_database --fresh-test
+DROP DATABASE
+CREATE DATABASE
+REVOKE
+GRANT
+ALTER DATABASE
+GRANT
+docker compose --profile test build p1-tests
+ Image safebank-p1-test:local Building
+#1 [internal] load local bake definitions
+#1 reading from stdin 564B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile.test
+#2 transferring dockerfile: 509B done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/safebank-p0:local
+#3 DONE 0.0s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 227B done
+#4 DONE 0.0s
+
+#5 [internal] load build context
+#5 transferring context: 87.36kB done
+#5 DONE 0.0s
+
+#6 [1/6] FROM docker.io/library/safebank-p0:local@sha256:675df178415f5949900b5179b98f01ff034d86face54d741d30c42d19fee61ef
+#6 resolve docker.io/library/safebank-p0:local@sha256:675df178415f5949900b5179b98f01ff034d86face54d741d30c42d19fee61ef 0.0s done
+#6 DONE 0.0s
+
+#7 [2/6] COPY requirements-test.txt /app/
+#7 DONE 0.0s
+
+#8 [3/6] COPY .wheels /wheels
+#8 DONE 0.2s
+
+#9 [4/6] RUN pip install --no-index --find-links=/wheels -r requirements-test.txt && rm -rf /wheels
+#9 0.773 Looking in links: /wheels
+#9 0.773 Ignoring colorama: markers 'sys_platform == "win32"' don't match your environment
+#9 0.773 Requirement already satisfied: alembic==1.20.1 in /usr/local/lib/python3.12/site-packages (from -r requirements-test.txt (line 3)) (1.20.1)
+#9 0.773 Requirement already satisfied: annotated-doc==0.0.5 in /usr/local/lib/python3.12/site-packages (from -r requirements-test.txt (line 5)) (0.0.5)
+#9 0.773 Requirement already satisfied: annotated-types==0.8.0 in /usr/local/lib/python3.12/site-packages (from -r requirements-test.txt (line 7)) (0.8.0)
+#9 0.774 Requirement already satisfied: anyio==4.15.1 in /usr/local/lib/python3.12/site-packages (from -r requirements-test.txt (line 9)) (4.15.1)
+#9 0.774 Requirement already satisfied: asyncpg==0.32.0 in /usr/local/lib/python3.12/site-packages (from -r requirements-test.txt (line 13)) (0.32.0)
+#9 0.776 Processing /wheels/attrs-26.1.0-py3-none-any.whl (from -r requirements-test.txt (line 15))
+#9 0.779 Requirement already satisfied: certifi==2026.10.19 in /usr/local/lib/python3.12/site-packages (from -r requirements-test.txt (line 19)) (2026.10.19)
+#9 0.779 Requirement already satisfied: cffi==2.1.1 in /usr/local/lib/python3.12/site-packages (from -r requirements-test.txt (line 23)) (2.1.1)
+#9 0.779 Requirement already satisfied: click==8.5.0 in /usr/local/lib/python3.12/site-packages (from -r requirements-test.txt (line 25)) (8.5.0)
+#9 0.779 Requirement already satisfied: cryptography==50.0.2 in /usr/local/lib/python3.12/site-packages (from -r requirements-test.txt (line 29)) (50.0.2)
+#9 0.780 Requirement already satisfied: fastapi==0.161.1 in /usr/local/lib/python3.12/site-packages (from -r requirements-test.txt (line 31)) (0.161.1)
+#9 0.780 Requirement already satisfied: greenlet==3.5.6 in /usr/local/lib/python3.12/site-packages (from -r requirements-test.txt (line 33)) (3.5.6)
+#9 0.780 Requirement already satisfied: h11==0.16.0 in /usr/local/lib/python3.12/site-packages (from -r requirements-test.txt (line 35)) (0.16.0)
+#9 0.780 Requirement already satisfied: httpcore==1.0.9 in /usr/local/lib/python3.12/site-packages (from -r requirements-test.txt (line 39)) (1.0.9)
+#9 0.780 Requirement already satisfied: httpx==0.28.1 in /usr/local/lib/python3.12/site-packages (from -r requirements-test.txt (line 41)) (0.28.1)
+#9 0.780 Requirement already satisfied: idna==3.20 in /usr/local/lib/python3.12/site-packages (from -r requirements-test.txt (line 43)) (3.20)
+#9 0.781 Processing /wheels/iniconfig-2.3.1-py3-none-any.whl (from -r requirements-test.txt (line 47))
+#9 0.782 Processing /wheels/jsonschema-4.25.1-py3-none-any.whl (from -r requirements-test.txt (line 49))
+#9 0.783 Processing /wheels/jsonschema_specifications-2025.9.1-py3-none-any.whl (from -r requirements-test.txt (line 50))
+#9 0.784 Requirement already satisfied: mako==1.4.3 in /usr/local/lib/python3.12/site-packages (from -r requirements-test.txt (line 52)) (1.4.3)
+#9 0.784 Requirement already satisfied: markupsafe==3.0.4 in /usr/local/lib/python3.12/site-packages (from -r requirements-test.txt (line 54)) (3.0.4)
+#9 0.785 Requirement already satisfied: opentelemetry-api==1.45.1 in /usr/local/lib/python3.12/site-packages (from -r requirements-test.txt (line 56)) (1.45.1)
+#9 0.785 Processing /wheels/packaging-26.3-py3-none-any.whl (from -r requirements-test.txt (line 58))
+#9 0.786 Processing /wheels/pluggy-1.7.0-py3-none-any.whl (from -r requirements-test.txt (line 60))
+#9 0.786 Requirement already satisfied: pycparser==3.12 in /usr/local/lib/python3.12/site-packages (from -r requirements-test.txt (line 62)) (3.12)
+#9 0.787 Requirement already satisfied: pydantic==2.14.1 in /usr/local/lib/python3.12/site-packages (from -r requirements-test.txt (line 64)) (2.14.1)
+#9 0.787 Requirement already satisfied: pydantic-core==2.50.1 in /usr/local/lib/python3.12/site-packages (from -r requirements-test.txt (line 68)) (2.50.1)
+#9 0.787 Processing /wheels/pygments-2.21.0-py3-none-any.whl (from -r requirements-test.txt (line 70))
+#9 0.790 Processing /wheels/pytest-9.1.1-py3-none-any.whl (from -r requirements-test.txt (line 72))
+#9 0.792 Processing /wheels/pyyaml-6.0.3-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl (from -r requirements-test.txt (line 73))
+#9 0.793 Processing /wheels/referencing-0.37.0-py3-none-any.whl (from -r requirements-test.txt (line 74))
+#9 0.794 Processing /wheels/rpds_py-2026.9.1-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl (from -r requirements-test.txt (line 78))
+#9 0.795 Processing /wheels/ruff-0.14.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl (from -r requirements-test.txt (line 82))
+#9 0.803 Requirement already satisfied: socksio==1.0.0 in /usr/local/lib/python3.12/site-packages (from -r requirements-test.txt (line 83)) (1.0.0)
+#9 0.804 Requirement already satisfied: sqlalchemy==2.1.6 in /usr/local/lib/python3.12/site-packages (from -r requirements-test.txt (line 85)) (2.1.6)
+#9 0.804 Requirement already satisfied: starlette==1.9.0 in /usr/local/lib/python3.12/site-packages (from -r requirements-test.txt (line 89)) (1.9.0)
+#9 0.804 Requirement already satisfied: typing-extensions==4.16.0 in /usr/local/lib/python3.12/site-packages (from -r requirements-test.txt (line 91)) (4.16.0)
+#9 0.804 Requirement already satisfied: typing-inspection==0.4.4 in /usr/local/lib/python3.12/site-packages (from -r requirements-test.txt (line 103)) (0.4.4)
+#9 0.804 Requirement already satisfied: uvicorn==0.54.0 in /usr/local/lib/python3.12/site-packages (from -r requirements-test.txt (line 107)) (0.54.0)
+#9 0.838 Installing collected packages: ruff, rpds-py, pyyaml, pygments, pluggy, packaging, iniconfig, attrs, referencing, pytest, jsonschema-specifications, jsonschema
+#9 1.575 Successfully installed attrs-26.1.0 iniconfig-2.3.1 jsonschema-4.25.1 jsonschema-specifications-2025.9.1 packaging-26.3 pluggy-1.7.0 pygments-2.21.0 pytest-9.1.1 pyyaml-6.0.3 referencing-0.37.0 rpds-py-2026.9.1 ruff-0.14.0
+#9 1.575 WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
+#9 DONE 1.7s
+
+#10 [5/6] COPY tests /app/tests
+#10 DONE 0.0s
+
+#11 [6/6] COPY pyproject.toml /app/pyproject.toml
+#11 DONE 0.0s
+
+#12 exporting to image
+#12 exporting layers
+#12 exporting layers 1.0s done
+#12 exporting manifest sha256:9ff6c5900743dcbb4f55145f911fdb5aef657aa9ff5b1860c2a9c8949a310794 0.0s done
+#12 exporting config sha256:d2849cec03f5930c40c4937f302c719842fb4e15c29667d65d7f723a128a92ed done
+#12 exporting attestation manifest sha256:c5d74b2b2764b60c47f745647602e47ee5ffd42202efffbae641603aa179b22b done
+#12 exporting manifest list sha256:97774c3b69cfec1303671f8caaa4688a045be93ab5d3be64e1b3443964b96a83 done
+#12 naming to docker.io/library/safebank-p1-test:local done
+#12 unpacking to docker.io/library/safebank-p1-test:local
+#12 unpacking to docker.io/library/safebank-p1-test:local 0.4s done
+#12 DONE 1.4s
+
+#13 resolving provenance for metadata file
+#13 DONE 0.0s
+ Image safebank-p1-test:local Built
+docker compose run --rm p1-tests python -m alembic -c services/bank-backend/alembic.ini upgrade head
+ Container safebank-p1-tests-run-9772c785212f Creating
+ Container safebank-p1-tests-run-9772c785212f Created
+docker compose run --rm p1-tests python -m alembic -c services/bank-backend/alembic.ini upgrade head
+ Container safebank-p1-tests-run-89242ac9ca45 Creating
+ Container safebank-p1-tests-run-89242ac9ca45 Created
+docker compose run --rm p1-tests python -m pytest tests/integration -q
+ Container safebank-p1-tests-run-00ec7e813795 Creating
+ Container safebank-p1-tests-run-00ec7e813795 Created
+.................................                                        [100%]
+33 passed in 12.42s

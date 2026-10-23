@@ -1,0 +1,15 @@
+[
+  {
+    "at_wall": "2026-10-23T07:02:49.570854+00:00",
+    "http_status": 400,
+    "response": {
+      "error": {
+        "message": "Invalid tool parameters schema : field `anyOf`: unknown variant `date-time`, expected one of `email`, `hostname`, `ipv4`, `ipv6`, `uuid` (request_id: 6ecdce19-dc7e-4777-864e-4b18bfa9ed7b)",
+        "type": "invalid_request_error",
+        "param": null,
+        "code": "invalid_request_error"
+      }
+    },
+    "valid": false
+  }
+]
