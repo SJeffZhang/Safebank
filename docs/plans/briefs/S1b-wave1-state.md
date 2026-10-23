@@ -23,6 +23,8 @@
 ## 组件B：受控状态操作
 
 - 普通transition对EXECUTING/UNKNOWN→决策态继续拒绝。新增专用操作，必须在同一锁连接短事务检查job=PAUSED、expected attempt、持久deadline=FENCE_AT、expected latest evaluation revision、plan归属和适用状态，再执行条件迁移。先明确哪些实时授权校验归W4调用者，不能把未校验项写成helper已保证。
+- 专用CAS分职责冻结签名，不把所有操作都套PAUSED前置：进入FENCING由W4提供明确STATE_CHANGED，helper校验EXECUTING/attempt/revision；接受屏障ACK由W4核验对应fence PREPARED成功回包，helper校验FENCING身份并原子保存PAUSED+FENCE_AT；发布复演决策才要求持久PAUSED/FENCE_AT；恢复新提交由W4持有效客户锁核验实时授权，helper原子保存attempt+1/evidence/deadline并核验cap不变；待对账与终态归档原语保留claim至真实L3终态证明。helper不能独立证明HTTP ACK或客户锁真实持有，调用方须履行对应责任。
+- 普通transition不得单独标记屏障成功或升attempt重新开放提交。首次prepare之前复演不需fence；首次成功prepare用attempt=1。不得为未发出的首次提交伪造FENCING/PAUSED。
 - 每attempt序列EXECUTING→FENCING→PAUSED；不确定→UNKNOWN→L3终态；PAUSED重新提交必须attempt+1。旧回调CAS不得覆盖新attempt/evaluation。
 - 明确哪些边由特殊helper完成，不能通过普通transition任意把EXECUTING标为已获屏障；本组件只测试持久条件，不把本地PAUSED造数当真实L3屏障安全证明。
 - 取消/拒绝/过期时，已有未终结job必须进入待对账路径并保留claim。新增共享状态原语应支持该路径；W1/W4具体HTTP和清理由各owner实现。无job普通待批计划可保留现有直接替代。
