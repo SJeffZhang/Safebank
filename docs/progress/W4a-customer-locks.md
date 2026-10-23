@@ -66,3 +66,5 @@ CI仅在 `.github/workflows/checks.yml` 既有p1-postgres job新增 `make test-c
 本组件没有G8、UNKNOWN/reconcile或HTTP提交竞争实现。发送前guard只证明检查时的原连接所有权，不能消灭check-to-send间隙；失锁后同attempt必须由后续W4协议进入UNKNOWN/reconcile，禁止自动重获锁续跑或用elapsed time猜执行失败。调用者必须在同一专用连接按小事务写入，事务外发HTTP，并在新提交前调用guard。连接只按项目固定asyncpg直连PostgreSQL部署验证，未宣称支持其他驱动/事务连接代理。
 
 等待独立只读评审、协调者亲自复跑、真实CI全绿后才可合并。当前仅本地提交，无push/PR/merge、无子agent。实现提交SHA由后续本地记账条目记录。
+
+本地实现SHA：`f52649dcfab95dd37e6bc1469711d68442ceab20`；提交后工作树干净。只读核实原`feat/l2-execution`仍HEAD `3856a4c`，未修改。本条为仅文档记账。
