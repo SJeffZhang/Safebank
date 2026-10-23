@@ -21,9 +21,18 @@ from ..l3.client import L3Error
 from ..policy.registry import action_kind, policy
 from ..schemas.enums import ParseStatus
 from ..schemas.scope import NormalizedScope, ScopeTransfer
-from .lifecycle import cancel_clarifications, cancel_session, supersede
+from .lifecycle import cancel_clarifications, cancel_session, supersede, supersede_session
 from .loader import as_ref
-from .parser import LEXICON, Parsed, contains, echoes_untrusted, normalize, parse
+from .parser import (
+    LEXICON,
+    Parsed,
+    contains,
+    echoes_untrusted,
+    is_correction,
+    normalize,
+    parse,
+    scope_is_complete,
+)
 
 
 def new_id(prefix: str) -> str:
@@ -173,7 +182,21 @@ async def current_clarification(conn, sid: str, now):
     )
 
 
+def require_slots(clarification) -> None:
+    if (
+        clarification["kind"] != "SLOTS"
+        or clarification["status"] != "OPEN"
+        or not clarification["required_fields"]
+        or not clarification["candidate_refs"]
+        or len(set(clarification["required_fields"])) != len(clarification["required_fields"])
+    ):
+        raise GatewayError(Code.INTENT_SCOPE_EXCEEDED, 409)
+
+
 def clarification_fields(clarification, provided: list[dict[str, str]]) -> dict[str, str]:
+    require_slots(clarification)
+    if not provided:
+        raise GatewayError(Code.INTENT_SCOPE_EXCEEDED, 409)
     chosen = {}
     allowed = {(c["field"], c["entity_id"]) for c in clarification["candidate_refs"]}
     for item in provided:
@@ -191,6 +214,7 @@ def clarification_fields(clarification, provided: list[dict[str, str]]) -> dict[
 
 def typed_fields(clarification, text: str) -> dict[str, str]:
     """Whole normalized answer must exactly equal one candidate label/id."""
+    require_slots(clarification)
     text = normalize(text)
     matches = [
         c
@@ -203,6 +227,10 @@ def typed_fields(clarification, text: str) -> dict[str, str]:
 
 
 def merge_scope(clarification, chosen: dict[str, str], bank: BankState) -> NormalizedScope:
+    require_slots(clarification)
+    clarification_fields(
+        clarification, [{"field": name, "entity_id": value} for name, value in chosen.items()]
+    )
     scope = NormalizedScope.model_validate(clarification["partial_scope"])
     fields = dict(scope.fields)
     fields.update(chosen)
@@ -210,6 +238,8 @@ def merge_scope(clarification, chosen: dict[str, str], bank: BankState) -> Norma
     source = chosen.get("from_account_id", scope.from_account_id)
     kinds = list(scope.action_kinds)
     if "payee_id" in chosen:
+        if transfers or "TRANSFER_EXTERNAL" not in kinds or not fields.get("amount_cents"):
+            raise GatewayError(Code.INTENT_SCOPE_EXCEEDED, 409)
         payee = bank.payees.get(chosen["payee_id"])
         if payee is None:
             raise GatewayError(Code.NOT_FOUND, 404)
@@ -234,7 +264,7 @@ def merge_scope(clarification, chosen: dict[str, str], bank: BankState) -> Norma
         )
         args.update({name: fields.get(name) for name in names})
         kinds.append(action_kind(tool, args, bank).value)
-    return scope.model_copy(
+    merged = scope.model_copy(
         update={
             "action_kinds": tuple(kinds),
             "fields": fields,
@@ -242,6 +272,9 @@ def merge_scope(clarification, chosen: dict[str, str], bank: BankState) -> Norma
             "from_account_id": source,
         }
     )
+    if not scope_is_complete(merged):
+        raise GatewayError(Code.INTENT_SCOPE_EXCEEDED, 409)
+    return merged
 
 
 async def untrusted_free_text(conn, sid: str) -> tuple[str, ...]:
@@ -328,7 +361,15 @@ async def register(
             )
         )
     if body.kind == "typed":
-        if body.clarification_id:
+        correction = is_correction(body.text)
+        if correction:
+            await supersede_session(conn, sid, now)
+            parsed = (
+                parse(body.text, bank, session["customer_id"], predicates)
+                if bank is not None
+                else Parsed()
+            )
+        elif body.clarification_id:
             if clarification is None or clarification["id"] != body.clarification_id:
                 raise GatewayError(Code.AUTHORIZATION_CANCELLED, 409)
             parsed = Parsed(
@@ -406,6 +447,8 @@ async def register(
                 from_statuses=["OPEN"],
                 to="RESOLVED",
             )
+    if parsed.status == ParseStatus.SCOPED and not scope_is_complete(parsed.scope):
+        raise GatewayError(Code.INTENT_SCOPE_EXCEEDED, 409)
     if parsed.cancel:
         await cancel_session(conn, sid, now)
         epoch = session["authorization_epoch"] + 1

@@ -68,6 +68,16 @@ async def cancel_session(conn, sid: str, now) -> None:
         await state.transition(
             conn, t.utterances, id_=id_, from_statuses=["ACTIVE"], to="CANCELLED"
         )
+    await _invalidate_pending(conn, sid, now)
+
+
+async def supersede_session(conn, sid: str, now) -> None:
+    """Explicit correction invalidates the previous instruction before parsing."""
+    await supersede(conn, sid)
+    await _invalidate_pending(conn, sid, now)
+
+
+async def _invalidate_pending(conn, sid: str, now) -> None:
     # Executing and UNKNOWN submissions retain their true state and durable claim.
     rows = (await conn.execute(select(t.plans).where(t.plans.c.sid == sid))).mappings().all()
     for row in rows:

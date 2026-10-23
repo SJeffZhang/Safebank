@@ -26,3 +26,12 @@ predicates:
   idle_subscriptions: [没用的, 闲置]
   robust_products: [稳健型]
   suspicious_cards: [可疑交易对应的卡, 可疑卡]
+
+grammar:
+  clause_matching: full
+  bare_money_unit: 元
+  cents_per_unit: {元: 100, 角: 10, 分: 1, 块钱: 100, 块: 100}
+  unknown_clause: FORM_REQUIRED
+  multiple_transfer_ambiguities: FORM_REQUIRED
+  explicit_unknown_source: FORM_REQUIRED
+  shorthand: at_least_two_complete_transfer_clauses

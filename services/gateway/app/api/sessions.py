@@ -16,7 +16,7 @@ from ..idempotency import request_idempotent
 from ..schemas.enums import ServiceKind
 from ..utterance.loader import as_ref
 from ..utterance.models import ActionRequest, Registration, RequestId
-from ..utterance.parser import LEXICON, normalize
+from ..utterance.parser import LEXICON, is_correction, normalize
 from ..utterance.runtime import db, l3, private_key, require_database, session_for, wall_now
 from ..utterance.service import (
     clarification_fields,
@@ -108,15 +108,27 @@ async def register_utterance(sid: str, request: Request, body: Registration):
         cancellation = (
             body.kind == "typed" and normalize(body.text).strip(" 。.!！") in LEXICON["cancel"]
         )
-        bank = None if cancellation else await snapshot(l3(request), caller.customer_id)
+        correction = body.kind == "typed" and is_correction(body.text)
         evidence = []
-        values = (
-            {}
-            if cancellation
-            else await predicate_values(
-                l3(request), bank, caller.customer_id, body.text or "", evidence
+        try:
+            bank = None if cancellation else await snapshot(l3(request), caller.customer_id)
+            values = (
+                {}
+                if cancellation
+                else await predicate_values(
+                    l3(request), bank, caller.customer_id, body.text or "", evidence
+                )
             )
-        )
+        except GatewayError as exc:
+            if not correction or exc.code not in {
+                Code.DEPENDENCY_UNAVAILABLE,
+                Code.STATE_CHANGED,
+                Code.ASSESSMENT_MISSING,
+            }:
+                raise
+            # User withdrew the previous instruction even if new data cannot be read.
+            # Persist the correction as FORM_REQUIRED and grant no replacement scope.
+            bank, values, evidence = None, {}, []
         async with conn.begin():
             now = wall_now(request)
             session = await session_for(conn, sid, caller, now, lock=True)

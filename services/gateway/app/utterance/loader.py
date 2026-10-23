@@ -11,6 +11,7 @@ from .. import tables as t
 from ..errors import GatewayError
 from ..schemas.enums import ServiceKind, UtteranceStatus
 from ..schemas.scope import AuthorizationInputs, UtteranceRef
+from .parser import scope_is_complete
 from .runtime import session_for
 
 
@@ -62,9 +63,10 @@ async def load_for_plan(conn, sid, ids, caller) -> AuthorizationInputs:
             raise GatewayError(Code.AUTHORIZATION_CONSUMED, 409)
         if row["expires_at_wall"] is None or row["expires_at_wall"] <= now:
             raise GatewayError(Code.UTTERANCE_EXPIRED, 409)
-        if row["parse_status"] != "SCOPED" or not row["normalized_scope"].get("action_kinds"):
+        reference = as_ref(row)
+        if row["parse_status"] != "SCOPED" or not scope_is_complete(reference.scope):
             raise GatewayError(Code.INTENT_UNCLEAR, 409)
-        references[row["id"]] = as_ref(row)
+        references[row["id"]] = reference
     return AuthorizationInputs(
         sid=sid,
         customer_id=caller.customer_id,
