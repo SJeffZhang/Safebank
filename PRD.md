@@ -1066,6 +1066,8 @@ app_form 使用 L2 保存的规范化表单代替文本来源，同样执行所�
 
 `BankState` 为不可变结构，含 `versions={customer_id:version}`、`clock_version`、sim_now、账户累计量、当前卡、收款人、指令、账单、持仓、订单、测评、产品净值和 Counters。快照（只读，REPEATABLE READ READ ONLY）读取全体涉及客户，隐藏收款方个人信息，只给 L2 执行所需目标账户和版本。Counters 从已过账交易生成：自然日对外转出、滚动 24h 对外转出、卡（或无卡账户）自然日占用；当前计划每步成功后增量更新。
 
+义务数据使用内部`BankState.obligations: ObligationSnapshot | null`：null表示未加载，非空容器即使集合为空也表示已完整加载，covered_customer_ids必须覆盖全部scope客户。展示用ScheduledView/SubscriptionView不能代替原始账单/授权。最小instruction_targets只携带指令源客户与OWN/OTHER/EXTERNAL目标所有权标识，不把其他客户完整payees/联系方式放入旧state.payees，也不递归加载第三方余额。缺失或覆盖不完整时拒绝预留计算，不能把默认空集合当无义务。具体增量见ADR-009。
+
 所有业务规则形如 `apply_*(state, cmd, now) -> (new_state, effects, violations)`，不访问数据库、不取系统时钟、不产生随机数。违反硬约束时该步返回原状态；整个计划标记不可执行，后续依赖步骤报 DEPENDENCY_UNMET，展示的中间结果标明「预测，未提交」。
 
 #### 7.7.1 状态加载与领域函数接口（预演与执行共用的唯一实现）
@@ -1161,6 +1163,8 @@ Decision 见 §9.5；每个 finding 带 `code, step_id|null, effect, resolver, m
 
 同一attempt严格无循环；PAUSED后的新提交必须先重核原授权、实时撤销、claim、审批和快照，在短事务中CAS到`EXECUTING,n+1`并保存新evidence/deadline，然后才发HTTP；新deadline不得超过最初cap。所有HTTP回调绑定发送时attempt与evaluation revision，旧回调不得覆盖新任务。普通状态迁移仍禁止EXECUTING/UNKNOWN回决策态；专用迁移必须检查持久PAUSED、过期屏障、expected attempt、latest revision与归属。DENY/REPLAN、拒绝、取消、登出或过期不能释放已有job的claim；L3终态后消费，CANCELLED原话保持CANCELLED。改steps须新授权/新计划，不转移已占claim。G4同request_id始终回原Decision；G8已完成的409/202按request_id重放，重新确认后的下一次提交须新request_id，不能让旧请求触发新attempt。
 
+**无评估遗留任务兼容（S1e，状态原语已验收，真实调用方联调待后续）**：若持久live job存在而该plan没有任何evaluation，只允许显式孤儿身份（customer、plan、origin、正整数attempt）的清理路径；不能伪造revision/evaluation，也不能恢复prepare/execute或绕过普通屏障。持有效客户锁，在同连接短事务内核对plan/job/全部CLAIMED及scope，检查零evaluation并在条件UPDATE中再次约束缺失；只可先持久UNKNOWN且保留全部提交字段和claim，再由W4取得真实L3 COMMITTED/CANCELLED终态后原子归档并消费claim。原话已CANCELLED/SUPERSEDED时保持原状态。预期CAS竞争应由调用者用savepoint隔离并重读，不能回滚本应生效的撤销；真实SQL/连接故障不得吞成成功。HTTP期间出现evaluation须重新取得普通身份并重新对账，不把旧孤儿回包套上最新revision。
+
 ### 7.11 定时、商户扣款与基金生命周期
 
 scheduler 只扫描到期事件并创建幂等 job，不自行决定是否授权。**事务外** S 回调 L2 `/internal/scheduled/authorize {event_id}`；L2 向 L3 拉取不可变事件定义、源客户、grant 指纹、到期时间，不能信任回调自报金额。L2 完成检查后主动调用 L3 执行该事件，scheduler 收到的是完成/拒绝结果；不颁发 `run_token`，不保留可脱离检查的执行许可。此为 D14 的具体调用顺序。
@@ -1224,8 +1228,8 @@ scheduler 只扫描到期事件并创建幂等 job，不自行决定是否授权
 | `payees` | id、customer_id、name、alias nullable、phone nullable、bank_name、account_no、target_account_id nullable、target_fingerprint、created_at；UNIQUE(customer_id,target_fingerprint)；外部文本视为 untrusted |
 | `cards` | id、account_id、last4、status ACTIVE/FROZEN/LOST、single_limit_cents、daily_limit_cents、max_single_limit_cents、max_daily_limit_cents、controls{online,overseas,atm,quickpass}、replaces_id nullable、created_at；0 < single ≤ daily ≤ max_daily，single ≤ max_single |
 | `merchants` | id、name、mcc、category、usage_expected；本期不提供用户编辑接口 |
-| `merchant_billing` | id、customer_id、account_id、merchant_id、amount_cents、period、anchor_day、time_of_day（种子 06:00）、next_due_at、active、created_at；与代扣授权生命周期独立 |
-| `standing_instructions` | id、customer_id、kind SCHEDULED_TRANSFER/MERCHANT_MANDATE、amount_type FIXED/DUES、status ACTIVE/DISABLED/DELETED、from_account_id、payee_id/to_account_id 二选一（定时）、merchant_id nullable、billing_id nullable、amount_cents/max_amount_cents、recurrence PERIODIC/AS_PER_DUES、period ONCE/WEEKLY/MONTHLY、anchor_day/weekday、time_of_day、next_run_at、end_at nullable、priority、grant_scope_hash、source_plan_id、created_at；不同 kind 用 CHECK 限定字段组合 |
+| `merchant_billing` | id、customer_id、account_id、merchant_id、amount_cents、period、anchor_day、weekday（周一0..周日6）、time_of_day（种子 06:00）、next_due_at、active、created_at；与代扣授权生命周期独立 |
+| `standing_instructions` | id、customer_id、kind SCHEDULED_TRANSFER/MERCHANT_MANDATE、amount_type FIXED/DUES、status ACTIVE/DISABLED/DELETED、from_account_id、payee_id/to_account_id 二选一（定时）、merchant_id nullable、billing_id nullable、amount_cents/max_amount_cents、recurrence PERIODIC/AS_PER_DUES、period ONCE/WEEKLY/MONTHLY、anchor_day/weekday、time_of_day、next_run_at、end_at nullable、priority、grant_scope_hash、source_plan_id、created_at；不同 kind 用 CHECK 限定字段组合；MERCHANT_MANDATE周期字段可空，由关联billing作为唯一周期事实源 |
 | `instruction_runs` | id、instruction_id nullable、billing_id nullable、due_at、event_id、status SUCCESS/FAILED_INSUFFICIENT/BLOCKED/SKIPPED_REAPPROVAL、code nullable、amount_cents、transfer_id nullable；按 instruction 或 billing + due_at 唯一 |
 | `split_requests` / `split_items` | request：id、customer_id、account_id、total_cents、include_self、self_share_cents、created_at；item：id、request_id、payee_id、amount_cents、status UNPAID/PAID、paid_at nullable、payment_event_id nullable；参与人唯一，分摊之和含本人 = total |
 | `products` | id、name、product_type MMF/BOND/MIXED/EQUITY、risk_level、risk_label、base_nav、base_date、confirm_days、settle_days、min_amount_cents、risk_disclosure、disclosure_version；recent_return_bp 由 NAV 序列计算 |
