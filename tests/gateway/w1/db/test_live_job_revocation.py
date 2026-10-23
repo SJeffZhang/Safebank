@@ -232,40 +232,52 @@ def test_revocation_keeps_live_job_unknown_with_claim_and_captured_submission(
     asyncio.run(run())
 
 
-def test_orphaned_job_revocation_cannot_restore_authorization(gateway_db, monkeypatch):
+@pytest.mark.parametrize("action", ["cancel", "correction", "replacement", "logout"])
+@pytest.mark.parametrize("job_status", ["EXECUTING", "FENCING", "PAUSED", "UNKNOWN"])
+def test_orphaned_job_revocation_cannot_restore_authorization(
+    gateway_db, monkeypatch, action, job_status
+):
     async def run():
         async with harness(gateway_db, monkeypatch) as (_, client, db, _, _, clock, _):
             token = await login(client)
             sid = await create(client, token, new_id("req"))
             old = (await utter(client, token, sid, "给王五800")).json()
-            plan, _, _ = await seed_job(
-                db, sid, old, clock[0], "EXECUTING", "EXECUTING", evaluation=False
+            plan, _, deadline = await seed_job(
+                db, sid, old, clock[0], "EXECUTING", job_status, evaluation=False
             )
             try:
-                response = await revoke(client, token, sid, "cancel", new_id("req"))
+                response = await revoke(client, token, sid, action, new_id("req"))
+                assert response.status_code == (200 if action == "logout" else 201), response.text
                 async with db.connect() as conn:
-                    assert (
-                        await conn.scalar(
-                            select(t.utterances.c.status).where(
-                                t.utterances.c.id == old["utterance"]["id"]
+                    assert await conn.scalar(
+                        select(t.utterances.c.status).where(
+                            t.utterances.c.id == old["utterance"]["id"]
+                        )
+                    ) == ("CANCELLED" if action in {"cancel", "logout"} else "SUPERSEDED"), (
+                        response.text
+                    )
+                    assert await conn.scalar(
+                        select(t.sessions.c.authorization_epoch).where(t.sessions.c.id == sid)
+                    ) == (1 if action in {"cancel", "logout"} else 0)
+                    job = (
+                        (
+                            await conn.execute(
+                                select(t.execution_jobs).where(t.execution_jobs.c.plan_id == plan)
                             )
                         )
-                        == "CANCELLED"
-                    ), response.text
-                    assert (
-                        await conn.scalar(
-                            select(t.sessions.c.authorization_epoch).where(t.sessions.c.id == sid)
-                        )
-                        == 1
+                        .mappings()
+                        .one()
                     )
-                    assert (
-                        await conn.scalar(
-                            select(t.execution_jobs.c.status).where(
-                                t.execution_jobs.c.plan_id == plan
-                            )
+                    assert job["status"] == "UNKNOWN"
+                    assert job["l3_attempt"] == 2 and job["retry_count"] == 7
+                    assert job["authorization_evidence"] is None
+                    assert job["deadline_wall"] == deadline
+                    assert job["deadline_cap_wall"] == clock[0] + timedelta(minutes=5)
+                    assert not (
+                        await conn.execute(
+                            select(t.evaluations).where(t.evaluations.c.plan_id == plan)
                         )
-                        == "UNKNOWN"
-                    )
+                    ).all()
                     assert (
                         await conn.scalar(
                             select(t.authorization_claims.c.status).where(

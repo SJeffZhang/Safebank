@@ -9,11 +9,12 @@ from sqlalchemy import select
 
 from .. import locks
 from .. import tables as t
-from ..audit.chain import append_tx
+from ..audit.chain import append, append_tx
 from ..auth.tokens import check_revocation, issue_assistant
 from ..errors import GatewayError
 from ..idempotency import request_idempotent
 from ..schemas.enums import ServiceKind
+from ..utterance.lifecycle import Revocation, deferred_error, raise_cached_error
 from ..utterance.loader import as_ref
 from ..utterance.models import ActionRequest, Registration, RequestId
 from ..utterance.parser import LEXICON, is_correction, normalize
@@ -104,6 +105,7 @@ async def register_utterance(sid: str, request: Request, body: Registration):
             await session_for(conn, sid, caller, wall_now(request))
             cached = await _already_registered(conn, request, body, route)
         if cached is not None:
+            raise_cached_error(cached[0], cached[1])
             return JSONResponse(cached[1], status_code=cached[0])
         cancellation = (
             body.kind == "typed" and normalize(body.text).strip(" 。.!！") in LEXICON["cancel"]
@@ -134,9 +136,25 @@ async def register_utterance(sid: str, request: Request, body: Registration):
             session = await session_for(conn, sid, caller, now, lock=True)
 
             async def produce():
-                utterance, expiry = await register(
-                    conn, sid, session, body, bank, now, values, evidence
-                )
+                registered = await register(conn, sid, session, body, bank, now, values, evidence)
+                if isinstance(registered, Revocation):
+                    await append(
+                        conn,
+                        customer_id=caller.customer_id,
+                        event_type="AUTHORIZATION_REVOKED",
+                        event_id=new_id("evt"),
+                        trace_id=request.state.trace_id,
+                        now_wall=now,
+                        payload={
+                            "sid": sid,
+                            "utterance_ids": list(registered.utterance_ids),
+                            "pending_plan_ids": list(registered.pending_plan_ids),
+                            "reason": "cancel" if cancellation else "supersede",
+                            "cleanup_pending": True,
+                        },
+                    )
+                    return 409, deferred_error().body(request.state.trace_id)
+                utterance, expiry = registered
                 token, token_expiry = await issue_assistant(
                     conn,
                     private_key(request),
@@ -154,6 +172,7 @@ async def register_utterance(sid: str, request: Request, body: Registration):
                 }
 
             status, result, replayed = await _dedup(conn, request, body, route, produce)
+    raise_cached_error(status, result)
     if not replayed:
         await _audit(
             request,

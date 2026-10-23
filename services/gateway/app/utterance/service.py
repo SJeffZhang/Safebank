@@ -21,7 +21,14 @@ from ..l3.client import L3Error
 from ..policy.registry import action_kind, policy
 from ..schemas.enums import ParseStatus
 from ..schemas.scope import NormalizedScope, ScopeTransfer
-from .lifecycle import cancel_clarifications, cancel_session, supersede, supersede_session
+from .lifecycle import (
+    Revocation,
+    cancel_clarifications,
+    cancel_session,
+    invalidate_ui,
+    supersede,
+    supersede_session,
+)
 from .loader import as_ref
 from .parser import (
     LEXICON,
@@ -322,6 +329,9 @@ async def register(
     source_id = None
     clarification = await current_clarification(conn, sid, now)
     parsed = Parsed()
+    resolve_clarification = False
+    reset_clarifications = False
+    revoked_ids = ()
     echo = False
     source_ref = new_id("src")
     if bank is not None:
@@ -363,7 +373,10 @@ async def register(
     if body.kind == "typed":
         correction = is_correction(body.text)
         if correction:
-            await supersede_session(conn, sid, now)
+            revocation = await supersede_session(conn, sid, now)
+            revoked_ids = revocation.utterance_ids
+            if revocation.pending_plan_ids:
+                return revocation
             parsed = (
                 parse(body.text, bank, session["customer_id"], predicates)
                 if bank is not None
@@ -378,15 +391,9 @@ async def register(
             )
             parent_ids = tuple(clarification["parent_utterance_ids"])
             expiry = min(expiry, clarification["expires_at_wall"])
-            await state.transition(
-                conn,
-                t.pending_clarifications,
-                id_=clarification["id"],
-                from_statuses=["OPEN"],
-                to="RESOLVED",
-            )
+            resolve_clarification = True
         else:
-            await cancel_clarifications(conn, sid)
+            reset_clarifications = True
             parsed = parse(body.text, bank, session["customer_id"], predicates)
         if bank is not None:
             echo = echoes_untrusted(
@@ -417,13 +424,13 @@ async def register(
             parsed = Parsed(
                 scope=NormalizedScope.model_validate(row["scope_json"]), status=ParseStatus.SCOPED
             )
-            await cancel_clarifications(conn, sid)
+            reset_clarifications = True
         elif row["kind"] == "FORM":
             parsed = Parsed(
                 scope=scope_from_form(row["action_kind"], row["normalized_fields"], bank),
                 status=ParseStatus.SCOPED,
             )
-            await cancel_clarifications(conn, sid)
+            reset_clarifications = True
         else:
             if (
                 clarification is None
@@ -440,22 +447,31 @@ async def register(
             )
             parent_ids = tuple(clarification["parent_utterance_ids"])
             expiry = min(expiry, clarification["expires_at_wall"])
-            await state.transition(
-                conn,
-                t.pending_clarifications,
-                id_=clarification["id"],
-                from_statuses=["OPEN"],
-                to="RESOLVED",
-            )
+            resolve_clarification = True
     if parsed.status == ParseStatus.SCOPED and not scope_is_complete(parsed.scope):
         raise GatewayError(Code.INTENT_SCOPE_EXCEEDED, 409)
     if parsed.cancel:
-        await cancel_session(conn, sid, now)
+        revocation = await cancel_session(conn, sid, now)
+        if revocation.pending_plan_ids:
+            return revocation
         epoch = session["authorization_epoch"] + 1
     else:
         epoch = session["authorization_epoch"]
     if parsed.scope.action_kinds or parsed.required_fields:
-        await supersede(conn, sid, keep=parent_ids)
+        revocation = await supersede(conn, sid, keep=parent_ids)
+        if revocation.pending_plan_ids:
+            await invalidate_ui(conn, sid, now)
+            return Revocation(revoked_ids + revocation.utterance_ids, revocation.pending_plan_ids)
+    if resolve_clarification:
+        await state.transition(
+            conn,
+            t.pending_clarifications,
+            id_=clarification["id"],
+            from_statuses=["OPEN"],
+            to="RESOLVED",
+        )
+    elif reset_clarifications:
+        await cancel_clarifications(conn, sid)
     id_ = new_id("utt")
     clr_id = None
     if parsed.status in (ParseStatus.CLARIFYING, ParseStatus.INTENT_UNCLEAR):

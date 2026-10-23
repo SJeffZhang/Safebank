@@ -6,12 +6,17 @@ from sqlalchemy import select, update
 
 from .. import locks
 from .. import tables as t
-from ..audit.chain import append_tx
+from ..audit.chain import append, append_tx
 from ..auth.pin import CUSTOMER_LABELS, authenticate
 from ..auth.tokens import check_revocation, issue_app
 from ..errors import GatewayError
 from ..idempotency import request_idempotent
-from ..utterance.lifecycle import cancel_session
+from ..utterance.lifecycle import (
+    cleanup_session,
+    deferred_error,
+    raise_cached_error,
+    revoke_session,
+)
 from ..utterance.models import Login, RequestId
 from ..utterance.runtime import db, private_key, wall_now
 from ..utterance.service import new_id
@@ -81,8 +86,9 @@ async def logout(request: Request, body: RequestId):
                     .scalars()
                     .all()
                 )
+                revoked = {}
                 for sid in sessions:
-                    await cancel_session(conn, sid, now)
+                    revoked[sid] = await revoke_session(conn, sid)
                 await conn.execute(
                     update(t.sessions)
                     .where(
@@ -99,9 +105,27 @@ async def logout(request: Request, body: RequestId):
                     )
                     .values(revoked_at_wall=now)
                 )
+                pending = []
+                for sid in sessions:
+                    pending.extend(await cleanup_session(conn, sid, now))
+                if pending:
+                    await append(
+                        conn,
+                        customer_id=caller.customer_id,
+                        event_type="AUTH_LOGOUT",
+                        event_id=new_id("evt"),
+                        trace_id=request.state.trace_id,
+                        now_wall=now,
+                        payload={
+                            "sessions": {sid: list(ids) for sid, ids in revoked.items()},
+                            "pending_plan_ids": pending,
+                            "cleanup_pending": True,
+                        },
+                    )
+                    return 409, deferred_error().body(request.state.trace_id)
                 return 200, {"revoked": True}
 
-            _, result, replayed = await request_idempotent(
+            status, result, replayed = await request_idempotent(
                 conn,
                 customer_id=caller.customer_id,
                 route="/auth/logout",
@@ -109,6 +133,7 @@ async def logout(request: Request, body: RequestId):
                 body=body.model_dump(mode="json"),
                 produce=produce,
             )
+    raise_cached_error(status, result)
     if not replayed:
         await append_tx(
             db(request),
