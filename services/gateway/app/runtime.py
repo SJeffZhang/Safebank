@@ -21,6 +21,7 @@ from fastapi import FastAPI
 from safebank_contracts.codes import Code
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from . import locks
 from .config import Settings
 from .db import engine
 from .errors import GatewayError
@@ -103,7 +104,7 @@ class GatewayRuntime:
 async def gateway_runtime(
     settings: Settings,
     *,
-    db_factory: Callable = engine,
+    db_factory: Callable | None = None,
     l3_factory: Callable = L3Client,
     wall_now: Callable[[], datetime] = lambda: datetime.now(UTC),
     pin_hashes: dict[str, str] | None = None,
@@ -118,8 +119,18 @@ async def gateway_runtime(
     private, public = _key_pair(settings)
     hashes = _configured_pin_hashes() if pin_hashes is None else pin_hashes
     async with AsyncExitStack() as stack:
-        db = db_factory(settings.database_url)
+        # One lock connection and one short-transaction slot per concurrent
+        # executor, plus two slots for other traffic; PRD floor is eighteen.
+        capacity = max(18, 2 * settings.max_executions + 2)
+        db = (
+            engine(settings.database_url, pool_size=capacity, max_overflow=0)
+            if db_factory is None
+            else db_factory(settings.database_url)
+        )
         stack.push_async_callback(db.dispose)
+        configure_locks = getattr(locks, "configure", None)
+        if callable(configure_locks):
+            configure_locks(db, max_executions=settings.max_executions)
         l3 = l3_factory(settings.l3_base_url, settings.gateway_service_token)
         stack.push_async_callback(l3.close)
         yield GatewayRuntime(settings, db, l3, wall_now, private, public, hashes)

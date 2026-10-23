@@ -248,3 +248,59 @@ def test_shared_real_pool_and_l3_client_are_usable_then_closed(secret_settings, 
             await runtime.l3.read("get_accounts", {})
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("executions,want", [(1, 18), (8, 18), (20, 42)])
+def test_production_pool_capacity_supports_locks_and_short_transactions(
+    secret_settings, executions, want
+):
+    from services.gateway.app.runtime import gateway_runtime
+
+    async def run():
+        async with gateway_runtime(
+            replace(secret_settings, max_executions=executions), l3_factory=Client, pin_hashes={}
+        ) as runtime:
+            assert runtime.db.pool.size() == want
+            assert runtime.db.pool._max_overflow == 0
+
+    asyncio.run(run())
+
+
+def test_available_lock_hook_uses_existing_pool_and_execution_limit(secret_settings, monkeypatch):
+    from services.gateway.app import locks
+    from services.gateway.app.runtime import gateway_runtime
+
+    configured = []
+
+    def configure(db, max_executions):
+        configured.append((db, max_executions))
+
+    monkeypatch.setattr(locks, "configure", configure, raising=False)
+
+    async def run():
+        async with gateway_runtime(secret_settings, l3_factory=Client, pin_hashes={}) as runtime:
+            assert configured == [(runtime.db, 8)]
+
+    asyncio.run(run())
+
+
+def test_lock_configuration_failure_releases_pool(secret_settings, monkeypatch):
+    from services.gateway.app import locks
+    from services.gateway.app.runtime import gateway_runtime
+
+    db = Engine()
+
+    def configure(db, max_executions):
+        raise RuntimeError("lock configuration failed")
+
+    monkeypatch.setattr(locks, "configure", configure, raising=False)
+
+    async def run():
+        with pytest.raises(RuntimeError, match="lock configuration failed"):
+            async with gateway_runtime(
+                secret_settings, db_factory=lambda url: db, l3_factory=Client, pin_hashes={}
+            ):
+                pytest.fail("startup must fail")
+        assert db.closed == 1
+
+    asyncio.run(run())

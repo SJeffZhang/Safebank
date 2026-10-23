@@ -93,3 +93,9 @@ The exact original Compose healthcheck CMD, executed in an isolated Linux contai
 Compose now invokes `python -m scripts.gateway_healthcheck`. That fresh process clears supplementary groups and permanently drops GID/UID to 10001 before issuing HTTP; it rejects any other runtime identity. An independent container runs the exact CMD read from Compose. A test-only Python audit hook checks the actual UID/GID/groups/CapEff/CapPrm/NoNewPrivs at urllib's HTTP boundary, followed by a real localhost /health response. No observer or test bypass is added to production.
 
 Actual `GATEWAY_SECRET_TESTS=1 ...pytest tests/gateway/shared_runtime/test_permissions.py -q -s`: 2 passed (all seven original secret scenarios plus actual Compose healthcheck privileges and HTTP). Independent random image tags only, network none, no data volumes or shared-stack operations.
+
+### R3 — pool capacity and confirmed W4 initialization
+
+Actual production-factory tests first failed: pool_size was 5 (not required 18/42), missing lock initialization, and lock-hook failure did not fail startup (5 failed / 10 passed / 1 skipped). The centralized production factory now sets pool_size=max(18,2*max_executions+2), max_overflow=0: one dedicated lock slot plus one short-transaction slot per executor and two additional slots, with PRD's minimum eighteen. Existing explicitly injected single-argument test factories remain compatible.
+
+When W4 `locks.configure(db,max_executions=...)` exists, runtime calls it with the very same engine and configured execution limit before L3 construction. Hook failure disposes the pool and refuses startup. If absent, the existing NotImplemented lock remains unchanged; no lock implementation or success substitute was introduced. Actual SQLAlchemy pool objects (not mock parameter assertions) verify capacities 18,18,42 for limits 1,8,20. Runtime suite after fix: 15 passed / 1 skipped (real PG opt-in).
