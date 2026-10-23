@@ -34,6 +34,8 @@ def text_step(tool, value):
         "报销100rmb",
         "报销¥100",
         "报销￥100.50",
+        "报销1¥",
+        "报销￥1",
         "报销１２０元",
     ],
 )
@@ -59,8 +61,18 @@ def test_ordinary_text_and_seven_digits_do_not_add_sensitive_warning(tool, value
 
 
 @pytest.mark.parametrize("tool", ["transfer", "create_split_request", "add_payee"])
+@pytest.mark.parametrize("value", ["汇率参考￥", "价格符号¥", "¥", "￥", "分摊¥", "参考￥。"])
+def test_bare_currency_symbol_without_adjacent_digit_does_not_add_warning(tool, value):
+    s, param = text_step(tool, value)
+    s["arg_sources"] = [source(param, ref="utt_1", span=[0, len(value)])]
+    ctx = run([s], text=value)
+    assert ctx.provenance.arg_sources["s1"][param]["trust"] == "user"
+    assert not any(f.code is Code.MEMO_SENSITIVE_CONTENT for f in ctx.findings)
+
+
+@pytest.mark.parametrize("tool", ["transfer", "create_split_request", "add_payee"])
 @pytest.mark.parametrize("untrusted", [True, False])
-def test_sensitive_read_text_keeps_source_deny_alongside_yellow(monkeypatch, tool, untrusted):
+def test_sensitive_read_text_keeps_source_deny_without_yellow(monkeypatch, tool, untrusted):
     s, param = text_step(tool, "报销100元")
     s["arg_sources"] = [source(param, "read", ref="src_1", pointer="/text")]
     ctx = verify(
@@ -74,15 +86,14 @@ def test_sensitive_read_text_keeps_source_deny_alongside_yellow(monkeypatch, too
         f.code is Code.TAINTED_SENSITIVE_ARG and f.effect is FindingEffect.DENY
         for f in ctx.findings
     )
-    assert any(
-        f.code is Code.MEMO_SENSITIVE_CONTENT and f.effect is FindingEffect.RISK_YELLOW
-        for f in ctx.findings
-    )
+    assert not any(f.code is Code.MEMO_SENSITIVE_CONTENT for f in ctx.findings)
 
 
 @pytest.mark.parametrize("tool", ["transfer", "create_split_request", "add_payee"])
 @pytest.mark.parametrize("declaration", [False, True])
-def test_sensitive_text_without_valid_user_source_keeps_replan(monkeypatch, tool, declaration):
+def test_sensitive_text_without_valid_user_source_keeps_replan_without_yellow(
+    monkeypatch, tool, declaration
+):
     s, param = text_step(tool, "6222020000000099")
     if declaration:
         s["arg_sources"] = [source(param, ref="utt_missing", span=[0, 16])]
@@ -94,10 +105,7 @@ def test_sensitive_text_without_valid_user_source_keeps_replan(monkeypatch, tool
         and f.resolver == "user"
         for f in ctx.findings
     )
-    assert any(
-        f.code is Code.MEMO_SENSITIVE_CONTENT and f.effect is FindingEffect.RISK_YELLOW
-        for f in ctx.findings
-    )
+    assert not any(f.code is Code.MEMO_SENSITIVE_CONTENT for f in ctx.findings)
 
 
 @pytest.mark.parametrize("tool", ["transfer", "create_split_request", "add_payee"])

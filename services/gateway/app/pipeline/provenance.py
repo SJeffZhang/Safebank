@@ -27,7 +27,8 @@ _PATTERNS = tuple(
 )
 _MONEY_PATTERN = re.compile(
     r"[0-9]+(?:\.[0-9]{1,2})?(?:元|人民币|CNY|RMB)"
-    r"|(?:人民币|CNY|RMB)[0-9]+(?:\.[0-9]{1,2})?|[¥￥]",
+    r"|(?:人民币|CNY|RMB)[0-9]+(?:\.[0-9]{1,2})?"
+    r"|[¥￥](?=[0-9])|[0-9][¥￥]",
     re.I,
 )
 _MISSING = object()
@@ -214,6 +215,7 @@ class ProvenanceStage(Stage):
                 if (
                     param in ("memo", "alias")
                     and isinstance(value, str)
+                    and trust == "user"
                     and (numbers(value) or _MONEY_PATTERN.search(normalize(value)))
                 ):
                     ctx.add(

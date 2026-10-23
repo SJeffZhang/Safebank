@@ -144,3 +144,34 @@ W3 适配输入需求已报协调者：复用 W1 `utterance/service.py:scope_fro
 保留真实缺口：本基线尚无真实 W1 G3 / load_for_plan / revocation hook 联调，G2 的既有 fixture substitute 仍不能证明生产鉴权；原48项真实PG造数只证明持久来源校验。S2纯函数已存在，但 S3 完整义务数据与谓词/派生场景生产投影仍未交付，默认 `reserve=None` 继续显式阻塞，未用 FakeL3 代替生产能力。W3整决策保留YELLOW和W4非空原文展示/view_hash绑定仍需各owner真实联测。本轮未运行真实L3完整业务、完整演示、浏览器/BFF、银行并发或 replay。
 
 未运行 make up/down/test-p1，未删除或重建任何Docker数据卷，未派生agent，未push/PR/merge；仅本地提交冻结，交协调者亲自复跑与独立审后处理检查点及完整W2交付。
+
+
+## W2a：真实 W1 身份/原话接入与 memo P2（2026-10-24）
+
+基线 `24a6fdb`（已合并 W1 PR #13 / main `79dc943`，保留 memo 与 S3a F1 报告）。只做 W2a，未动 W2b / default reserve（S3a 仍在修复未合入）。修改仅限 W2 所有权文件与 `tests/gateway/w2`，未改 W1/冻结区/迁移/契约/L3/依赖/AGENTS/PRD。
+
+### memo P2（先红后绿）
+
+- 红：先改 `tests/gateway/w2/test_memo_sensitive.py`，`make` 下单跑该文件实际 **30 failed / 69 passed**（裸符号 6×3、DENY 2×3、UNKNOWN 2×3 均如预期多出 `MEMO_SENSITIVE_CONTENT`）。
+- 修复 `services/gateway/app/pipeline/provenance.py`：`_MONEY_PATTERN` 第三分支由 `[¥￥]` 改为 `[¥￥](?=[0-9])|[0-9][¥￥]`（裸符号不升黄，符号邻近数字仍升黄）；memo/alias 黄级仅在 `trust == "user"` 时追加，DENY/UNKNOWN 来源不再被黄 finding 覆盖。
+- 绿：`test_memo_sensitive.py + test_provenance.py` 100 passed；补 `报销1¥`/`报销￥1` 后 99 passed。
+
+### 真实 W1 联测
+
+- 删除 `tests/gateway/w2/db/test_read_ledger.py` 的 `fixture_revocation` monkeypatch，改用真实 W1 runtime（`tests/gateway.w1.db.support.harness`：真实 PIN 登录、app+assistant JWT、真实 `check_revocation`、数据库会话）。断言：G2 真实 HTTP 读 200 + read_records 持久化；助手令牌跨 sid 404；跨客户 args 422；logout 后同请求 401 `UNAUTHENTICATED`（真实 check_revocation，不再抹平）。
+- 新增 `tests/gateway/w2/db/test_real_w1_integration.py`（8 项真实 PG，走真实 G15/G3/G19/G20 → `load_for_plan` → ②③④，L3 用契约 FakeL3 并显式登记）：typed 正常金额/目标 trust=user 且 intent matched；同名澄清 G19 action + G3 合槽（payee/amount 双来源 user、root 唯一 claim、action id 与 parent 仅证据）；hint 实际采纳 used_by 可证明、未采纳/错误 used_by 拒绝；typed parent span 追溯；跨 sid/customer 404；改口后旧 utts `AUTHORIZATION_CONSUMED` 且状态 SUPERSEDED；logout 后 `load_for_plan` 401；失效 parent 使整个来源证明失败并阻断 intent。
+
+### 实际退出命令（连续、exit 0）
+
+- `make lint`：ruff check 通过，**224 files already formatted**。
+- `make test-gateway`：**1880 passed / 469 skipped**（8.19s）。
+- `make test-gateway-db`：**17 passed**（2.38s，真实临时 PG）。
+- `make test`：**2115 passed / 517 skipped**（8.83s）。
+- `make test-w2`：**234 passed**（8.82s），**零 skip / xfail**；含原 48 项真实 PG + 本组 8 项真实 W1 联测。
+
+`git diff --check` 通过；未运行 make up/down/test-p1/test-integration，未删除或重建任何 Docker 数据卷，未 push/PR/merge。actionlint 由协调者另跑。
+
+### 待决 / 未完成
+
+- W2b（default reserve 真实生产接线）是后续组件，须 S3a 合并后同步 main 再启动；当前 `reserve=None` 显式阻塞不变。
+- 完整 W2 尚未全交付：W3 聚合 Decision、W4 原文展示/view_hash、真实 L3 业务/演示/replay 仍未联调；不得自称 W2 全验收。
