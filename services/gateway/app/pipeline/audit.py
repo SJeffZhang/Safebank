@@ -5,10 +5,12 @@ from .context import EvalContext, Stage
 
 class AuditStage(Stage):
     name = "audit"
+    always_run = True
 
     async def run(self, ctx: EvalContext) -> None:
-        # W5 wires the audit interfaces; the append primitive lives in
-        # services.gateway.app.audit.chain and is exercised by W0 tests.
+        # W3 implements this stage (records the evaluation). SHADOW_B1 mode must
+        # not write the database or the audit chain. The append primitive lives
+        # in services.gateway.app.audit.chain.
         return None
 
 

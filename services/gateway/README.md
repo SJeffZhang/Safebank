@@ -1,43 +1,47 @@
 # gateway（L2 Security Gateway）
 
-三明治架构的中间层：L1（agent）的所有读工具、评估与执行都经这里进入 L3。L2 是唯一持有 `GATEWAY_SERVICE_TOKEN` 的一方，也是唯一能写 L3 的一方。本目录是 W0 打下的基础骨架，W1–W4 在此之上并行填业务。
+三明治架构的中间层：L1（agent）的所有读工具、评估与执行都经这里进入 L3。L2 是唯一持有 `GATEWAY_SERVICE_TOKEN` 的一方，也是唯一能写 L3 的一方。W0 打下的基础骨架已通过架构评审修订，W1–W4 在此之上并行填业务。
 
-> 注意 import 路径：本服务包名是 `services.gateway.app`（目录 `services/gateway/app/`），不是顶层 `app`。仓库共享 PYTHONPATH 里已有 bank-backend 的 `app` 包，为避免同名冲突，gateway 一律用 `services.gateway.app.*` 导入；包内用相对导入（`from .config import ...`）。
+> import 路径：本服务包名是 `services.gateway.app`（目录 `services/gateway/app/`），不是顶层 `app`。仓库共享 PYTHONPATH 里已有 bank-backend 的 `app` 包，为避免同名冲突，gateway 一律用 `services.gateway.app.*` 导入；包内用相对导入（`from .config import ...`）。
 
 ## 启动
 
 ```bash
-make keys && make up          # 编排由根目录 Makefile 负责
-# 或单独跑进程（需要两个绑定地址不同）：
+make keys && make up          # 根目录编排：build → postgres → bank 迁移/seed → gateway 迁移 → 全部服务
+# 或单独跑进程（两个绑定地址必须不同）：
 GATEWAY_PUBLIC_BIND=127.0.0.1 GATEWAY_INTERNAL_BIND=127.0.0.2 \
   .venv/bin/python -m services.gateway.app.main
 ```
 
 一个 asyncio 进程跑两个 `uvicorn.Server`：
 
-- `public_app`：`:8200`，只有公共路由（`GET /health`），**绝不注册 `/internal/*`**。
-- `internal_app`：`:8201`，**只有 `/internal/*`**（S 服务令牌），供 scheduler 回调。
+- `public_app`：`:8200`，只有公共路由（G1–G22a + `/health`），**绝不注册 `/internal/*`**。
+- `internal_app`：`:8201`，**只有 `/internal/*`**（S 服务令牌），供 scheduler 回调（S1）。
+
+启动时校验授权矩阵覆盖（`auth/matrix.coverage_errors`）：已挂载路由 ⊆ 矩阵、矩阵里每条记录都有对应路由（D 路由按模式），public 不能有 `/internal/*`、internal 不能有非 `/internal/*`。
 
 ## 测试
 
 ```bash
-make test-gateway        # 单元测试（双端口隔离、启动护栏、错误/幂等、JWT、矩阵、fake L3、流水线）
+make test-gateway        # 单元测试（双端口隔离、护栏、错误、JWT、矩阵、fake L3、流水线、DDL 防漂移）
 make test-gateway-db     # 起唯一命名/随机端口的临时 Postgres 16，跑迁移与 DB 测试，测完销毁
+make test                # 全量（含 P1 116 单测）
+make up && make test-p1  # 全栈健康 + P1 真实 PG 验收（指挥在集成分支跑）
 ```
 
-`make test-gateway-db` 内部设置 `GATEWAY_DB_TESTS=1`；其余 pytest 调用会跳过 DB 测试（见 `tests/gateway/db/conftest.py`）。多个 worker 可并发跑 `test-gateway-db`，互不冲突（无固定子网、无固定容器名、随机宿主端口）。
+`make test-gateway-db` 内部设置 `GATEWAY_DB_TESTS=1`；其余 pytest 调用会跳过 DB 测试。多个 worker 可并发跑 `test-gateway-db`，互不冲突。
 
 ## 环境变量（gateway.env）
 
 | 变量 | 说明 |
 |---|---|
 | `GATEWAY_DATABASE_URL` | 运行角色 `gateway_app` 连 `gateway` 库 |
-| `GATEWAY_PUBLIC_BIND` / `GATEWAY_INTERNAL_BIND` | 两个端口的绑定地址（必须不同、不能 `0.0.0.0`） |
-| `GATEWAY_SERVICE_TOKEN` | L2 → L3 的令牌（L3 校验） |
-| `FRONTEND_SERVICE_TOKEN` / `AGENT_SERVICE_TOKEN` / `SCHEDULER_SERVICE_TOKEN` / `DEMO_CONSOLE_TOKEN` | F / A / S / D 四类服务令牌（常量时间比较） |
-| `APPROVAL_HMAC_KEY` / `OTP_HMAC_KEY` / `FINGERPRINT_KEY` | W4 / W5 用 |
-| `DEMO_MODE` / `EVAL_MODE` | 互斥；非 B2 `GATEWAY_PROFILE` 只在 EVAL_MODE 下生效 |
-| `GATEWAY_PROFILE` | `B0`/`B1`/`B2`/`B2_NO_PREFLIGHT`/`B2_NO_WORKFLOW`/`B2_NO_TAINT`，默认 `B2` |
+| `GATEWAY_PUBLIC_BIND` / `GATEWAY_INTERNAL_BIND` | 两端口绑定地址（必须不同、不能 `0.0.0.0`） |
+| `GATEWAY_SERVICE_TOKEN` | L2 → L3 |
+| `FRONTEND_SERVICE_TOKEN` / `AGENT_SERVICE_TOKEN` / `SCHEDULER_SERVICE_TOKEN` / `DEMO_CONSOLE_TOKEN` | F/A/S/D 服务令牌，常量时间比较，启动时校验互不相同 |
+| `APPROVAL_HMAC_KEY` / `OTP_HMAC_KEY` / `FINGERPRINT_KEY` | W4/W5 用 |
+| `DEMO_MODE` / `EVAL_MODE` | 互斥；非 B2 `GATEWAY_PROFILE` 只在 EVAL_MODE |
+| `GATEWAY_PROFILE` | `B0/B1/B2/B2_NO_PREFLIGHT/B2_NO_WORKFLOW/B2_NO_TAINT`，默认 B2 |
 | `GATEWAY_MAX_EXECUTIONS` | 并发执行上限，默认 8 |
 | `BANK_BACKEND_URL` | L3 base URL，默认 `http://bank-backend:8300` |
 
@@ -46,42 +50,58 @@ make test-gateway-db     # 起唯一命名/随机端口的临时 Postgres 16，�
 ```text
 services/gateway/
 ├── alembic.ini
-├── migrations/                 # 独立于 bank-backend 的 Alembic 迁移
-│   ├── env.py                  # 读 GATEWAY_MIGRATION_DATABASE_URL，import services.gateway.app.*
-│   ├── schema_v1.json          # 从 app/models.py 固化的 DDL（历史迁移只读它）
+├── migrations/                 # 独立 Alembic；波次 1 期间 worker 不写迁移
+│   ├── env.py                  # 读 GATEWAY_MIGRATION_DATABASE_URL
+│   ├── schema_v1.json          # 从 app/tables.py 固化的 DDL（表拓扑序 + 索引排序）
 │   └── versions/0001_gateway.py
 └── app/
-    ├── main.py                 # 双应用单进程入口
-    ├── config.py               # Settings + 启动护栏（PRD §7.3/§10.1/§11.1）
+    ├── main.py                 # 双应用单进程入口 + 路由 include + 矩阵覆盖断言（仅 W0 改）
+    ├── config.py               # Settings + 启动护栏
     ├── errors.py               # GatewayError + 统一错误体
-    ├── middleware.py           # trace-id、异常处理、request_id 幂等工具
+    ├── middleware.py           # trace-id、404/405/500 统一错误、契约 details
     ├── db.py                   # engine / ready
-    ├── models.py               # gateway 库全部表（PRD §7.2）
+    ├── tables.py               # gateway 库全部表（CHECK 由 schemas.enums 生成）
+    ├── state.py                # 状态迁移唯一入口（legal 迁移表 + transition）—— 只此一处改状态
+    ├── idempotency.py          # request_dedup 持久幂等辅助（request_idempotent）
+    ├── schemas/                # 对外的 Pydantic 模型 + 枚举（仅 W0 改，改即接口变更）
     ├── auth/
-    │   ├── tokens.py           # F/A/S/D 服务令牌 + EdDSA JWT 校验接口/测试签发
-    │   ├── matrix.py           # 静态授权矩阵数据格式 + lookup
-    │   └── deps.py             # FastAPI 依赖（服务令牌 / JWT / 矩阵守卫）
+    │   ├── tokens.py           # F/A/S/D 令牌 + 严格 EdDSA JWT 校验/测试签发（W1 扩展签发）
+    │   ├── matrix.py           # 静态授权矩阵全表 + lookup + 覆盖断言（仅 W0/指挥改）
+    │   └── deps.py             # resolve_caller / caller_dependency（解析 Caller、推导 origin）
+    ├── api/                    # 公共路由模块，各任务只改自己的
+    │   ├── auth.py sessions.py          # W1（G1/G14/G22；G3/G15/G18–G22a）
+    │   ├── tools.py                      # W2（G2）
+    │   ├── plans.py                      # W3（G4）
+    │   ├── execution.py approvals.py     # W4（G5/G8；G6/G7/G9/G10/G17）
+    │   ├── notify_audit.py               # W5（G11/G12/G13/G16）
+    │   └── demo.py                       # W5（D0–D12，仅 DEMO/EVAL 挂载）
+    ├── internal/scheduled.py   # W5（S1）
     ├── l3/
-    │   ├── client.py           # httpx 客户端（prepare 3s / execute 10s / 其余 5s）
-    │   └── fake.py             # fake L3：按 docs/contracts/v1.json 校验，可编程 ok/state_changed/timeout/drop
-    ├── audit/
-    │   └── chain.py            # 每客户审计哈希链追加/校验（审计 advisory lock）
-    └── pipeline/               # 评估流水线插件接口（W2/W3 只改各自文件）
-        ├── __init__.py         # 编排 + 短路（仅 W0 改）
-        ├── context.py          # EvalContext / Finding / Effect / Resolver / Stage
+    │   ├── client.py           # httpx 客户端（prepare 3s/execute 10s/其余 5s，可注入；L3NotDelivered/L3OutcomeUnknown/L3BusinessError）
+    │   └── fake.py             # 有状态 fake L3：真实超时/丢包/commit_then_drop、令牌校验、可编程快照与结果
+    ├── audit/chain.py          # 审计哈希链 append / append_tx / verify（hash 覆盖 created_at_wall）
+    └── pipeline/               # 评估流水线（仅 W0 改 __init__.py / context.py）
+        ├── __init__.py         # 编排 + DENY 只短路 ⑤⑥⑦ + profile 开关
+        ├── context.py          # EvalContext（每阶段一个结果槽 + 惰性 L3 状态访问器）/ Finding / Stage
         └── {contract,entity,provenance,intent,snapshot,preflight,workflow,decision,audit}.py
 ```
 
-## 流水线插件接口（W2 / W3 / W5 阅读）
+## 分工与共享规则（W1–W4 阅读）
 
-- 九个阶段按 PRD §7.2 ①–⑨ 顺序编排：`contract → entity → provenance → intent → snapshot → preflight → workflow → decision → audit`。
-- 每个阶段一个文件，各暴露一个 `stage`（`Stage` 实例，实现 `async def run(self, ctx: EvalContext) -> None`）。W2 只改 `entity.py` / `provenance.py` / `intent.py`；W3 只改 `snapshot.py` / `preflight.py` / `workflow.py` / `decision.py`；`contract.py` 归 G4 组装（W3），`audit.py` 归 W5。**不要改 `pipeline/__init__.py` 与 `context.py` 的既有签名**，除非在 `docs/progress` 登记并和指挥确认。
-- `EvalContext` 字段：`request`、`caller`（F/A/S/D）、`origin`、`customer_id`、`session_id`、`plan_draft`、`plan_id`、`snapshot`（占位，由 ⑤ 填）、`findings`、`audit`（审计句柄）、`short_circuit`。
-- `Finding`：`code`（`safebank_contracts.codes.Code`）、`effect`（`Effect`）、`step_id`、`resolver`（仅 REPLAN）、`message`、`evidence_refs`。
-- 短路规则：任一阶段出现 `Effect.DENY` finding 后，其余阶段跳过，`audit` 恒运行；REPLAN/升黄红/INFO 不短路。阶段通过 `ctx.add_finding(...)` 累积结论。
+- **阶段归属**：① contract、② entity、③ provenance、④ intent → **W2**；⑤ snapshot、⑥ preflight、⑦ workflow、⑧ decision、⑨ audit 阶段 + G4 组装 → **W3**；W1 生产原话/scope，W4 审批与执行。
+- **不改的文件**：`pipeline/__init__.py`、`pipeline/context.py`、`schemas/**`、`auth/matrix.py`、`state.py`、`tables.py`、`migrations/**`、`main.py`、`pyproject.toml`、`uv.lock`、compose。需要改就写「待决」由指挥统一改。
+- **状态变更**只能调 `state.transition`；**request_id 接口**只能用 `app.idempotency.request_idempotent`；错误只能 `raise GatewayError(Code.X)`；调 L3 只能用 `L3Client`（测试用 fake L3 的 `transport()`）；审计只能用 `audit.append_tx`（不要在含 HTTP 调用的事务里 append）。
+- **波次 1 不写迁移**：需要改表写进「待决」，由指挥在集成分支串行加 `0002_wave1`。
+- **② 实体阶段**用 `ctx.bank_state()`（惰性、带缓存的 L3 快照）核对所有权；⑤ 只钉住 versions/clock_version，不重复拉取。
+
+## 流水线插件接口
+
+- 阶段按 §7.2 ①–⑨ 顺序编排；DENY 后只短路 ⑤ snapshot/⑥ preflight/⑦ workflow，⑧ decision 与 ⑨ audit 恒运行（`always_run=True`）。E 类错误（如契约 E422）`raise GatewayError`，不写成 finding。
+- `EvalContext` 每阶段一个结果槽：`identity`/`authorization`（W1）、`provenance`/`intent`（W2）、`snapshot`/`preflight`/`workflow`/`decision`（W3），加上 `mode`、`profile`、`wall_now`、`conn`、`l3`、`stage_status`。`Finding` 即 `schemas.FindingView`（effect 枚举为 `FindingEffect`）。
+- `GATEWAY_PROFILE` 消融通过 `Stage.enabled(profile)` 关闭阶段；`evaluate(ctx, mode=...)` 支持 EVALUATE / EXECUTE_REPLAY / SHADOW_B1（SHADOW_B1 不写库、不审计）。
 
 ## 待决（给指挥）
 
-- `gateway` 库的迁移/引导接线：`scripts/keys.py` 目前把 `gateway` 库 owner 设为 `gateway_app`，而 0001 迁移按 bank-backend 的模式以 postgres（owner）运行、再授予 `gateway_app`。需要一次与 `scripts/p1_database.py` 类似的 gateway 引导（`ALTER DATABASE gateway OWNER TO postgres` + `gateway-migration.env`），属于 `scripts/**`，不在 W0 允许范围。
-- `requirements.txt` / `.wheels/` 未重新生成：新增 PyJWT/argon2-cffi/pypinyin 已进 `pyproject.toml` + `uv.lock`，本地 `.venv` 可用；Docker 运行镜像需要 `uv export` 重新导出 requirements 并 `make wheels`，由指挥在集成分支做。
-- 状态枚举只按 PRD §7.2 明确列出的写 CHECK；`execution_jobs.status`、`workflow_events.status` 等 PRD 未列枚举的字段保持无 CHECK 字符串。
+- `BANK_BACKEND_URL` 与 `ExecutionJobStatus`/`WorkflowEventStatus` 的取值请补记 PRD §11.1 / §7.2。
+- `requirements.txt`/`requirements-test.txt` 已按锁重新导出，`.wheels` 已生成，镜像可起。
+- `make up` 会在本 worktree 生成新 `.secrets` 并重建 `safebank_pg-bank`/`safebank_pg-agent` 卷（旧 P1 卷已按任务书删除重建）；主 checkout 的旧 `.secrets` 与新卷不匹配，指挥在集成分支重新 `make keys && make up` 即可。

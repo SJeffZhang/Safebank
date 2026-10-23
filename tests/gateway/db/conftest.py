@@ -69,12 +69,15 @@ def _provision() -> GatewayDb:
             "  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'gateway_app') THEN\n"
             f"    CREATE ROLE gateway_app LOGIN PASSWORD '{app_pw}';\n"
             "  END IF;\n"
+            "  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'gateway_admin') THEN\n"
+            "    CREATE ROLE gateway_admin;\n"
+            "  END IF;\n"
             "END\n"
             "$$;\n"
             "SELECT 'CREATE DATABASE gateway_test' WHERE NOT EXISTS\n"
             "  (SELECT FROM pg_database WHERE datname='gateway_test')\\gexec\n"
             "REVOKE ALL ON DATABASE gateway_test FROM PUBLIC;\n"
-            "GRANT CONNECT ON DATABASE gateway_test TO gateway_app;\n"
+            "GRANT CONNECT ON DATABASE gateway_test TO gateway_app, gateway_admin;\n"
         )
         # The official entrypoint runs a temporary server during first init and
         # briefly restarts it afterwards; retry the idempotent provisioning SQL
@@ -94,7 +97,15 @@ def _provision() -> GatewayDb:
 
         admin_url = f"postgresql://postgres:{admin_pw}@127.0.0.1:{port}/gateway_test"
         runtime_url = f"postgresql://gateway_app:{app_pw}@127.0.0.1:{port}/gateway_test"
-        env = {**os.environ, "GATEWAY_MIGRATION_DATABASE_URL": admin_url}
+        pythonpath = os.pathsep.join(
+            str(ROOT / p)
+            for p in ("packages/contracts/src", "packages/bankcore/src", "services/gateway")
+        )
+        env = {
+            **os.environ,
+            "GATEWAY_MIGRATION_DATABASE_URL": admin_url,
+            "PYTHONPATH": pythonpath + os.pathsep + str(ROOT),
+        }
         cmd = [
             sys.executable,
             "-m",

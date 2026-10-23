@@ -42,3 +42,19 @@ def test_truthy_parsing():
     assert from_env({"DEMO_MODE": "true"}).demo_mode
     assert not from_env({"DEMO_MODE": "0"}).demo_mode
     assert not from_env({}).demo_mode
+
+
+def test_duplicate_service_tokens_rejected():
+    with pytest.raises(GatewayError):
+        from_env({"FRONTEND_SERVICE_TOKEN": "same", "AGENT_SERVICE_TOKEN": "same"}).validate()
+
+
+def test_distinct_service_tokens_accepted():
+    from_env(
+        {
+            "FRONTEND_SERVICE_TOKEN": "f" * 32,
+            "AGENT_SERVICE_TOKEN": "a" * 32,
+            "SCHEDULER_SERVICE_TOKEN": "s" * 32,
+            "DEMO_CONSOLE_TOKEN": "d" * 32,
+        }
+    ).validate()

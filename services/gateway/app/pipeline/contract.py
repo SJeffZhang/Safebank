@@ -7,7 +7,7 @@ class ContractStage(Stage):
     name = "contract"
 
     async def run(self, ctx: EvalContext) -> None:
-        # W3 (G4 assembly) implements this stage; W0 provides the no-op slot.
+        # W2 implements this stage; contract failures raise GatewayError (E422).
         return None
 
 

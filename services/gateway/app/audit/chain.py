@@ -1,25 +1,32 @@
 """Per-customer audit hash chain (PRD §7.12).
 
-Every append runs in its own small transaction: take
-``pg_advisory_xact_lock(hashtext('audit'), hashtext(customer_id))``, read the
-latest ``prev_hash`` for the customer, then insert the new event with
-``hash = sha256(prev_hash || canonical(event_without_hash))``. The
-``UNIQUE(customer_id, prev_hash)`` constraint is a second guard against forks.
+Append takes ``pg_advisory_xact_lock(hashtext('audit'), hashtext(customer_id))``,
+reads the latest ``prev_hash`` for the customer, then inserts with
+``hash = sha256(prev_hash || canonical(event_without_hash))``. The hash covers
+the whole event except ``hash``/``seq`` — including ``created_at_wall`` (an
+RFC3339 string from the injected clock), so a tampered timestamp is detected.
+``UNIQUE(customer_id, prev_hash)`` is a second guard against forks.
 
-The chain detects tampering; it does not claim resistance to an administrator
-who can rewrite the whole database.
+Use :func:`append_tx` for ordinary appends: it opens and commits its own small
+transaction. Never call :func:`append` inside a transaction that also makes an
+L3 HTTP call — the advisory lock would be held for the whole HTTP round trip.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncConnection
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from .. import models as m
+from .. import tables as m
+
+
+def utcnow() -> datetime:
+    return datetime.now(UTC)
 
 
 def canonical(event_without_hash: dict[str, Any]) -> bytes:
@@ -34,6 +41,30 @@ def digest(payload: dict[str, Any]) -> str:
 
 def chain_hash(prev_hash: str, event_without_hash: dict[str, Any]) -> str:
     return hashlib.sha256(prev_hash.encode() + canonical(event_without_hash)).hexdigest()
+
+
+def _event(
+    *,
+    event_id: str,
+    customer_id: str,
+    trace_id: str | None,
+    event_type: str,
+    payload: dict[str, Any],
+    prev_hash: str,
+    plan_id: str | None,
+    created_at_wall: datetime,
+) -> dict[str, Any]:
+    return {
+        "id": event_id,
+        "customer_id": customer_id,
+        "trace_id": trace_id,
+        "event_type": event_type,
+        "payload_digest": digest(payload),
+        "payload": payload,
+        "prev_hash": prev_hash,
+        "plan_id": plan_id,
+        "created_at_wall": created_at_wall.isoformat(),
+    }
 
 
 async def _lock(conn: AsyncConnection, customer_id: str) -> None:
@@ -51,9 +82,10 @@ async def append(
     payload: dict[str, Any],
     event_id: str,
     trace_id: str | None = None,
-    created_at_wall: Any = None,
+    plan_id: str | None = None,
+    now_wall: datetime | None = None,
 ) -> dict[str, str]:
-    """Append one audit event and return its id and hash."""
+    """Append one audit event inside the caller's transaction."""
     await _lock(conn, customer_id)
     prev_hash = await conn.scalar(
         select(m.audit_events.c.hash)
@@ -63,18 +95,17 @@ async def append(
     )
     if prev_hash is None:
         prev_hash = "0" * 64
-    if created_at_wall is None:
-        created_at_wall = text("now()")
-    event = {
-        "id": event_id,
-        "customer_id": customer_id,
-        "trace_id": trace_id,
-        "event_type": event_type,
-        "payload_digest": digest(payload),
-        "payload": payload,
-        "prev_hash": prev_hash,
-        "created_at_wall": None,
-    }
+    now_wall = now_wall or utcnow()
+    event = _event(
+        event_id=event_id,
+        customer_id=customer_id,
+        trace_id=trace_id,
+        event_type=event_type,
+        payload=payload,
+        prev_hash=prev_hash,
+        plan_id=plan_id,
+        created_at_wall=now_wall,
+    )
     hash_value = chain_hash(prev_hash, event)
     await conn.execute(
         m.audit_events.insert().values(
@@ -86,10 +117,36 @@ async def append(
             payload=payload,
             prev_hash=prev_hash,
             hash=hash_value,
-            created_at_wall=created_at_wall,
+            plan_id=plan_id,
+            created_at_wall=now_wall,
         )
     )
     return {"id": event_id, "hash": hash_value}
+
+
+async def append_tx(
+    engine: AsyncEngine,
+    *,
+    customer_id: str,
+    event_type: str,
+    payload: dict[str, Any],
+    event_id: str,
+    trace_id: str | None = None,
+    plan_id: str | None = None,
+    now_wall: datetime | None = None,
+) -> dict[str, str]:
+    """Append in its own small transaction (the default call path)."""
+    async with engine.begin() as conn:
+        return await append(
+            conn,
+            customer_id=customer_id,
+            event_type=event_type,
+            payload=payload,
+            event_id=event_id,
+            trace_id=trace_id,
+            plan_id=plan_id,
+            now_wall=now_wall,
+        )
 
 
 async def verify_chain(conn: AsyncConnection, customer_id: str) -> tuple[bool, str]:
@@ -109,16 +166,16 @@ async def verify_chain(conn: AsyncConnection, customer_id: str) -> tuple[bool, s
         return True, "empty"
     prev_hash = "0" * 64
     for row in rows:
-        event = {
-            "id": row["id"],
-            "customer_id": row["customer_id"],
-            "trace_id": row["trace_id"],
-            "event_type": row["event_type"],
-            "payload_digest": row["payload_digest"],
-            "payload": row["payload"],
-            "prev_hash": row["prev_hash"],
-            "created_at_wall": None,
-        }
+        event = _event(
+            event_id=row["id"],
+            customer_id=row["customer_id"],
+            trace_id=row["trace_id"],
+            event_type=row["event_type"],
+            payload=row["payload"],
+            prev_hash=row["prev_hash"],
+            plan_id=row["plan_id"],
+            created_at_wall=row["created_at_wall"],
+        )
         if row["prev_hash"] != prev_hash:
             return (
                 False,

@@ -1,11 +1,14 @@
-"""Trace-id plumbing, error handlers and the request-id idempotency helper."""
+"""Trace-id plumbing and unified error handlers (PRD §9.1, §9.8).
+
+Every HTTP failure — 4xx/5xx from handlers, framework 404/405, and unhandled
+exceptions — returns ``{error:{code,message,details,trace_id}}``. Codes come
+only from ``safebank_contracts.codes.Code``.
+"""
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
-from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import uuid4
 
@@ -13,6 +16,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from safebank_contracts.codes import Code
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .errors import GatewayError
 
@@ -70,51 +74,30 @@ def install_middleware(app: FastAPI) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(request: Request, exc: RequestValidationError):
-        # Contract failures never expose field internals or foreign data.
+        # Field errors without echoing the rejected values (PRD §9.1).
+        details = [
+            {"loc": list(err.get("loc", ())), "type": err.get("type"), "msg": err.get("msg")}
+            for err in exc.errors()
+        ]
         return error_response(
-            getattr(request.state, "trace_id", ""),
-            Code.CONTRACT_INVALID,
-            422,
-            "CONTRACT_INVALID",
+            getattr(request.state, "trace_id", ""), Code.CONTRACT_INVALID, 422, details=details
         )
 
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_error(request: Request, exc: StarletteHTTPException):
+        # 404 and 405 collapse to NOT_FOUND so an unregistered route is not
+        # distinguishable from an existing route with the wrong method.
+        return error_response(
+            getattr(request.state, "trace_id", ""),
+            Code.NOT_FOUND,
+            404,
+        )
 
-_PENDING = object()
-
-
-class IdempotencyStore:
-    """In-memory request-id idempotency (route + body scope).
-
-    Same ``(scope, request_id)`` with an identical body returns the stored
-    result; a different body raises 409 ``IDEMPOTENCY_CONFLICT``. W3 replaces
-    the in-memory store with the database-backed ``plans``/``evaluations``
-    tables; this utility pins the semantics and is safe for W0 tests.
-    """
-
-    def __init__(self) -> None:
-        self._entries: dict[tuple[str, str], tuple[str, Any]] = {}
-        self._lock = asyncio.Lock()
-
-    async def resolve(
-        self, scope: str, request_id: str, body: Any, produce: Callable[[], Awaitable[Any]]
-    ) -> Any:
-        key = (scope, request_id)
-        digest = digest_hex(body)
-        async with self._lock:
-            if key in self._entries:
-                stored_digest, result = self._entries[key]
-                if stored_digest != digest:
-                    raise GatewayError(Code.IDEMPOTENCY_CONFLICT, 409)
-                if result is _PENDING:
-                    raise GatewayError(Code.RUN_IN_PROGRESS, 409)
-                return result
-            self._entries[key] = (digest, _PENDING)
-        try:
-            result = await produce()
-        except BaseException:
-            async with self._lock:
-                self._entries.pop(key, None)
-            raise
-        async with self._lock:
-            self._entries[key] = (digest, result)
-        return result
+    @app.exception_handler(Exception)
+    async def _unhandled(request: Request, exc: Exception):
+        # Never leak internals; depend on the trace id for correlation.
+        return error_response(
+            getattr(request.state, "trace_id", ""),
+            Code.DEPENDENCY_UNAVAILABLE,
+            503,
+        )

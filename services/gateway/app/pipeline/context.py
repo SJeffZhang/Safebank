@@ -1,24 +1,53 @@
-"""Evaluation pipeline shared types: EvalContext, Finding, Stage protocol (PRD §7.2, §7.9)."""
+"""Evaluation pipeline shared types (PRD §7.2, §7.9, §10.1).
+
+This file is owned by W0 (the conductor). W2/W3 fill the stage-specific result
+objects; they must not change the shape of ``EvalContext`` or ``Stage``. Each
+result slot has exactly one owning stage and is read by later stages only.
+
+Stage → slot ownership:
+  ② entity      writes ``provenance``/``intent`` prerequisites, reads lazy state
+  ③ provenance  writes ``ctx.provenance``
+  ④ intent      writes ``ctx.intent``
+  ⑤ snapshot    writes ``ctx.snapshot`` (pins versions/clock_version)
+  ⑥ preflight   writes ``ctx.preflight``
+  ⑦ workflow    writes ``ctx.workflow``
+  ⑧ decision    writes ``ctx.decision``
+"""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
 from safebank_contracts.codes import Code
 from safebank_contracts.plan import PlanDraft
 from safebank_contracts.state import BankState
+from sqlalchemy.ext.asyncio import AsyncConnection
+
+from ..l3.client import L3Client
+from ..schemas.decision import Decision, FindingView
+from ..schemas.enums import FindingEffect, ServiceKind
+from ..schemas.identity import Caller
+from ..schemas.scope import AuthorizationInputs
+
+Finding = FindingView
 
 
-class Effect(StrEnum):
-    DENY = "DENY"
-    REPLAN = "REPLAN"
-    RISK_YELLOW = "RISK_YELLOW"
-    RISK_RED = "RISK_RED"
-    INFO = "INFO"
+class EvalMode(StrEnum):
+    EVALUATE = "EVALUATE"
+    EXECUTE_REPLAY = "EXECUTE_REPLAY"
+    SHADOW_B1 = "SHADOW_B1"
+
+
+class StageStatus(StrEnum):
+    PENDING = "PENDING"
+    PASSED = "PASSED"
+    BLOCKED = "BLOCKED"
+    SKIPPED = "SKIPPED"
     ERROR = "ERROR"
 
 
@@ -27,45 +56,97 @@ class Resolver(StrEnum):
     USER = "user"
 
 
-@dataclass(frozen=True)
-class Finding:
-    code: Code
-    effect: Effect
-    step_id: str | None = None
-    resolver: Resolver | None = None
-    message: str = ""
-    evidence_refs: tuple[str, ...] = ()
-
-    def __post_init__(self) -> None:
-        if self.effect is Effect.REPLAN and self.resolver is None:
-            raise ValueError("REPLAN findings must name a resolver (agent|user)")
-        if self.effect is not Effect.REPLAN and self.resolver is not None:
-            raise ValueError("only REPLAN findings carry a resolver")
+DISABLED_BY_PROFILE: dict[str, frozenset[str]] = {
+    "B0": frozenset({"provenance", "intent", "preflight", "workflow"}),
+    "B1": frozenset({"workflow"}),
+    "B2": frozenset(),
+    "B2_NO_PREFLIGHT": frozenset({"preflight"}),
+    "B2_NO_WORKFLOW": frozenset({"workflow"}),
+    "B2_NO_TAINT": frozenset({"provenance"}),
+}
 
 
-AuditHandle = Callable[[str, dict[str, Any]], Awaitable[None]]
+@dataclass
+class ProvenanceResult:
+    """③ writes. Source/taint labels per (step, param) and referenced reads."""
+
+    arg_sources: dict[str, Any] = field(default_factory=dict)
+    read_refs: tuple[str, ...] = ()
+
+
+@dataclass
+class IntentResult:
+    """④ writes. Matched scope vs plan steps."""
+
+    matched: bool = True
+    notes: tuple[str, ...] = ()
+
+
+@dataclass
+class PreflightResult:
+    """⑥ writes. bankcore Simulation over the snapshot."""
+
+    executable: bool = True
+    violations: tuple[dict[str, Any], ...] = ()
+
+
+@dataclass
+class WorkflowResult:
+    """⑦ writes. Cross-session sequence matches and shadow events."""
+
+    findings: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass
 class EvalContext:
-    """Mutable evaluation state threaded through the nine stages.
-
-    W2 fills entity/provenance/intent; W3 fills snapshot/preflight/workflow/
-    decision. ``snapshot`` is a placeholder the snapshot stage populates only
-    after the pre-snapshot stages have passed.
-    """
-
-    request: dict[str, Any] | None = None
-    caller: str | None = None
+    request: Any = None
+    identity: Caller | None = None
+    authorization: AuthorizationInputs | None = None
+    plan_draft: PlanDraft | None = None
+    plan_id: str | None = None
     origin: str | None = None
     customer_id: str | None = None
     session_id: str | None = None
-    plan_draft: PlanDraft | None = None
-    plan_id: str | None = None
+
+    mode: EvalMode = EvalMode.EVALUATE
+    profile: str = "B2"
+    wall_now: Callable[[], datetime] = field(default_factory=lambda: lambda: datetime.now(UTC))
+    conn: AsyncConnection | None = None
+    l3: L3Client | None = None
+
+    provenance: ProvenanceResult | None = None
+    intent: IntentResult | None = None
     snapshot: BankState | None = None
+    preflight: PreflightResult | None = None
+    workflow: WorkflowResult | None = None
+    decision: Decision | None = None
+
     findings: list[Finding] = field(default_factory=list)
-    audit: AuditHandle | None = None
+    stage_status: dict[str, StageStatus] = field(default_factory=dict)
     short_circuit: bool = False
+    audit: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None
+
+    _lazy_state: BankState | None = field(default=None, repr=False, init=False)
+
+    @property
+    def kind(self) -> ServiceKind | None:
+        return self.identity.kind if self.identity else None
+
+    async def bank_state(self) -> BankState:
+        """Lazily fetch and cache the L3 state (conductor decision #4).
+
+        ② entity uses this for ownership checks; ⑤ snapshot reuses the cached
+        state and pins versions/clock_version, so the snapshot is not fetched
+        twice.
+        """
+        if self._lazy_state is None:
+            if self.l3 is None:
+                raise RuntimeError("EvalContext.l3 is required to load bank state")
+            response = await self.l3.snapshot(
+                {"customer_id": self.customer_id, "steps": [], "event_id": None}
+            )
+            self._lazy_state = BankState.model_validate(response.json())
+        return self._lazy_state
 
     def add_finding(self, finding: Finding) -> None:
         self.findings.append(finding)
@@ -73,22 +154,35 @@ class EvalContext:
     def add(
         self,
         code: Code,
-        effect: Effect,
+        effect: FindingEffect,
         *,
         step_id: str | None = None,
         resolver: Resolver | None = None,
         message: str = "",
         evidence_refs: tuple[str, ...] = (),
     ) -> None:
-        self.add_finding(Finding(code, effect, step_id, resolver, message, evidence_refs))
+        self.findings.append(
+            Finding(
+                code=code,
+                effect=effect,
+                step_id=step_id,
+                resolver=resolver.value if resolver else None,
+                message=message,
+                evidence_refs=evidence_refs,
+            )
+        )
 
     def has_hard_deny(self) -> bool:
-        return any(f.effect is Effect.DENY for f in self.findings)
+        return any(f.effect is FindingEffect.DENY for f in self.findings)
 
 
 class Stage(ABC):
     name: str
+    always_run: bool = False
 
     @abstractmethod
     async def run(self, ctx: EvalContext) -> None:
         """Execute this stage; append findings to ``ctx.findings``."""
+
+    def enabled(self, profile: str) -> bool:
+        return self.name not in DISABLED_BY_PROFILE.get(profile, frozenset())

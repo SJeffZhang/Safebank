@@ -3,7 +3,7 @@ import asyncio
 from sqlalchemy import text
 from sqlalchemy.pool import NullPool
 
-from services.gateway.app.audit.chain import append, verify_chain
+from services.gateway.app.audit.chain import append, append_tx, verify_chain
 from services.gateway.app.db import engine
 
 
@@ -38,7 +38,26 @@ def test_concurrent_append_does_not_fork_chain(gateway_db):
     asyncio.run(run())
 
 
-def test_verify_detects_tampered_content(gateway_db):
+def test_append_tx_commits_own_transaction(gateway_db):
+    async def run():
+        db = _runtime(gateway_db)
+        for i in range(3):
+            await append_tx(
+                db,
+                customer_id="cus_3",
+                event_id=f"a_evt_{i}",
+                event_type="test",
+                payload={"i": i},
+            )
+        async with db.connect() as conn:
+            ok, detail = await verify_chain(conn, "cus_3")
+            assert ok, detail
+        await db.dispose()
+
+    asyncio.run(run())
+
+
+def test_verify_detects_tampered_payload(gateway_db):
     async def run():
         db = _runtime(gateway_db)
         for i in range(3):
@@ -53,8 +72,6 @@ def test_verify_detects_tampered_content(gateway_db):
         async with db.connect() as conn:
             ok, _ = await verify_chain(conn, "cus_2")
             assert ok
-        # A privileged administrator (or anyone with rewrite access) tampering
-        # must be detectable by the chain; the runtime role itself cannot UPDATE.
         admin = engine(gateway_db.admin_url, poolclass=NullPool)
         async with admin.begin() as conn:
             await conn.execute(
@@ -64,6 +81,31 @@ def test_verify_detects_tampered_content(gateway_db):
         await admin.dispose()
         async with db.connect() as conn:
             ok, detail = await verify_chain(conn, "cus_2")
+            assert not ok
+            assert "tampered" in detail
+        await db.dispose()
+
+    asyncio.run(run())
+
+
+def test_verify_detects_tampered_timestamp(gateway_db):
+    async def run():
+        db = _runtime(gateway_db)
+        async with db.begin() as conn:
+            await append(
+                conn, customer_id="cus_4", event_id="w_evt_0", event_type="t", payload={"i": 0}
+            )
+        async with db.connect() as conn:
+            ok, _ = await verify_chain(conn, "cus_4")
+            assert ok
+        admin = engine(gateway_db.admin_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await conn.execute(
+                text("UPDATE audit_events SET created_at_wall = now() + interval '1 day'")
+            )
+        await admin.dispose()
+        async with db.connect() as conn:
+            ok, detail = await verify_chain(conn, "cus_4")
             assert not ok
             assert "tampered" in detail
         await db.dispose()

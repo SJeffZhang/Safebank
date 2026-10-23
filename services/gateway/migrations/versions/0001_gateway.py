@@ -32,6 +32,23 @@ def upgrade():
     bind.execute(text("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO gateway_app"))
     # audit_events is append-only for the runtime role (PRD §7.12).
     bind.execute(text("REVOKE UPDATE, DELETE ON audit_events FROM gateway_app"))
+    # Future wave migrations run as the same migration role; keep gateway_app
+    # able to DML new tables without an explicit grant in every revision.
+    bind.execute(
+        text(
+            "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO gateway_app"
+        )
+    )
+    # gateway_admin (created by scripts/gateway_database.py) may only reset:
+    # TRUNCATE for fixtures, SELECT to inspect, never UPDATE/DELETE rows.
+    bind.execute(text("GRANT SELECT, TRUNCATE ON ALL TABLES IN SCHEMA public TO gateway_admin"))
+    bind.execute(
+        text(
+            "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
+            "GRANT SELECT, TRUNCATE ON TABLES TO gateway_admin"
+        )
+    )
 
 
 def downgrade():

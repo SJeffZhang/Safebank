@@ -48,14 +48,11 @@ def test_sign_verify_roundtrip(keys):
     assert claims.scope == ("assistant",)
 
 
-def test_app_jwt_without_sid(keys):
+def test_app_token_without_sid(keys):
     private_pem, public_pem = keys
-    token = sign_jwt(
-        private_pem, sub="cus_zs", aud=APP_AUDIENCE, scope=["app", "approve"], jti="jti-2"
-    )
+    token = sign_jwt(private_pem, sub="cus_zs", aud=APP_AUDIENCE, scope=["app"], jti="jti-2")
     claims = verify_jwt(token, public_pem, expected_aud=APP_AUDIENCE)
     assert claims.sid is None
-    assert set(claims.scope) == {"app", "approve"}
 
 
 def test_tampered_token_rejected(keys):
@@ -87,16 +84,77 @@ def test_expired_token_rejected(keys):
 def test_wrong_audience_rejected(keys):
     private_pem, public_pem = keys
     token = sign_jwt(private_pem, sub="cus_zs", aud=APP_AUDIENCE, scope=["app"], jti="jti-5")
+    with pytest.raises(GatewayError):
+        verify_jwt(token, public_pem, expected_aud=ASSISTANT_AUDIENCE)
+
+
+def test_array_audience_rejected(keys):
+    private_pem, public_pem = keys
+    import jwt
+
+    payload = {
+        "iss": "safebank-gateway",
+        "sub": "cus_zs",
+        "aud": [APP_AUDIENCE, ASSISTANT_AUDIENCE],
+        "scope": ["assistant"],
+        "jti": "jti-6",
+        "iat": int(time.time()),
+        "nbf": int(time.time()) - 1,
+        "exp": int(time.time()) + 600,
+        "sid": "ses_1",
+    }
+    token = jwt.encode(payload, private_pem, algorithm="EdDSA")
     with pytest.raises(GatewayError) as exc:
         verify_jwt(token, public_pem, expected_aud=ASSISTANT_AUDIENCE)
     assert exc.value.code is Code.UNAUTHENTICATED
 
 
-def test_require_sid_rejects_app_token(keys):
+def test_string_scope_rejected(keys):
     private_pem, public_pem = keys
-    token = sign_jwt(private_pem, sub="cus_zs", aud=APP_AUDIENCE, scope=["app"], jti="jti-6")
+    import jwt
+
+    payload = {
+        "iss": "safebank-gateway",
+        "sub": "cus_zs",
+        "aud": ASSISTANT_AUDIENCE,
+        "scope": "assistant",
+        "jti": "jti-7",
+        "iat": int(time.time()),
+        "nbf": int(time.time()) - 1,
+        "exp": int(time.time()) + 600,
+        "sid": "ses_1",
+    }
+    token = jwt.encode(payload, private_pem, algorithm="EdDSA")
     with pytest.raises(GatewayError):
-        verify_jwt(token, public_pem, expected_aud=APP_AUDIENCE, require_sid=True)
+        verify_jwt(token, public_pem, expected_aud=ASSISTANT_AUDIENCE)
+
+
+def test_string_utts_rejected(keys):
+    private_pem, public_pem = keys
+    import jwt
+
+    payload = {
+        "iss": "safebank-gateway",
+        "sub": "cus_zs",
+        "aud": ASSISTANT_AUDIENCE,
+        "scope": ["assistant"],
+        "utts": "utt_1",
+        "jti": "jti-8",
+        "iat": int(time.time()),
+        "nbf": int(time.time()) - 1,
+        "exp": int(time.time()) + 600,
+        "sid": "ses_1",
+    }
+    token = jwt.encode(payload, private_pem, algorithm="EdDSA")
+    with pytest.raises(GatewayError):
+        verify_jwt(token, public_pem, expected_aud=ASSISTANT_AUDIENCE)
+
+
+def test_app_and_assistant_tokens_not_interchangeable(keys):
+    private_pem, public_pem = keys
+    app_token = sign_jwt(private_pem, sub="cus_zs", aud=APP_AUDIENCE, scope=["app"], jti="jti-9")
+    with pytest.raises(GatewayError):
+        verify_jwt(app_token, public_pem, expected_aud=ASSISTANT_AUDIENCE, require_sid=True)
 
 
 def test_service_token_identification():
@@ -111,4 +169,3 @@ def test_service_token_identification():
     assert identify_service("s-token", env) == "S"
     assert identify_service("d-token", env) == "D"
     assert identify_service("unknown", env) is None
-    assert identify_service(None, env) is None

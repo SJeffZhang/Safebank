@@ -1,15 +1,17 @@
 """Evaluation pipeline orchestration (PRD §7.2).
 
-The nine stages run in order. A hard DENY finding short-circuits the remaining
-stages except audit, which always records the reason. ``evaluate`` accepts an
-explicit ``stages`` sequence so tests can inject a failing stage without
-monkeypatching the registry.
+The nine stages run in order. A hard DENY finding skips the snapshot-dependent
+stages (⑤ snapshot, ⑥ preflight, ⑦ workflow) but decision (⑧) and audit (⑨)
+always run so a DENY still yields a complete ``Decision``. Contract/HTTP-level
+failures raise :class:`GatewayError` (they are E4xx, not findings). Profile
+ablation (PRD §10.1) disables stages via :meth:`Stage.enabled`.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 
+from ..errors import GatewayError
 from . import (
     audit,
     contract,
@@ -21,7 +23,7 @@ from . import (
     snapshot,
     workflow,
 )
-from .context import Effect, EvalContext, Stage
+from .context import EvalContext, EvalMode, Stage, StageStatus
 
 STAGES: tuple[Stage, ...] = (
     contract.stage,
@@ -35,18 +37,28 @@ STAGES: tuple[Stage, ...] = (
     audit.stage,
 )
 
-AUDIT_STAGE_NAME = "audit"
+SKIP_AFTER_DENY = frozenset({"snapshot", "preflight", "workflow"})
 
 
-async def evaluate(ctx: EvalContext, *, stages: Sequence[Stage] | None = None) -> EvalContext:
+async def evaluate(
+    ctx: EvalContext, *, stages: Sequence[Stage] | None = None, mode: EvalMode | None = None
+) -> EvalContext:
+    if mode is not None:
+        ctx.mode = mode
     for stage in stages if stages is not None else STAGES:
-        if ctx.short_circuit and stage.name != AUDIT_STAGE_NAME:
+        if not stage.enabled(ctx.profile):
+            ctx.stage_status[stage.name] = StageStatus.SKIPPED
             continue
-        await stage.run(ctx)
+        if ctx.short_circuit and stage.name in SKIP_AFTER_DENY and not stage.always_run:
+            ctx.stage_status[stage.name] = StageStatus.SKIPPED
+            continue
+        ctx.stage_status[stage.name] = StageStatus.PENDING
+        try:
+            await stage.run(ctx)
+        except GatewayError:
+            ctx.stage_status[stage.name] = StageStatus.ERROR
+            raise
+        ctx.stage_status[stage.name] = StageStatus.PASSED
         if ctx.has_hard_deny():
             ctx.short_circuit = True
     return ctx
-
-
-def hard_deny(ctx: EvalContext) -> bool:
-    return any(f.effect is Effect.DENY for f in ctx.findings)

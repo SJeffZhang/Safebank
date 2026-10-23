@@ -1,8 +1,9 @@
 """Service-token recognition and EdDSA JWT verification interface (PRD §7.3).
 
 W1 owns JWT issuance and login. W0 provides the verification interface plus a
-signing helper for tests so that token semantics can be pinned before any
-issuer exists.
+signing helper for tests. Verification is strict: ``aud`` must be a single
+string equal to the expected audience (a list aud never passes), and
+``scope`` / ``utts`` must be lists of strings.
 """
 
 from __future__ import annotations
@@ -10,24 +11,22 @@ from __future__ import annotations
 import secrets
 import time
 from dataclasses import dataclass
-from typing import Literal
 
 import jwt
 from safebank_contracts.codes import Code
 
 from ..errors import GatewayError
-
-ServiceKind = Literal["F", "A", "S", "D"]
+from ..schemas.enums import ServiceKind
 
 ISSUER = "safebank-gateway"
 APP_AUDIENCE = "gateway-app"
 ASSISTANT_AUDIENCE = "safebank-assistant"
 
 SERVICE_TOKEN_ENV = {
-    "F": "FRONTEND_SERVICE_TOKEN",
-    "A": "AGENT_SERVICE_TOKEN",
-    "S": "SCHEDULER_SERVICE_TOKEN",
-    "D": "DEMO_CONSOLE_TOKEN",
+    ServiceKind.F: "FRONTEND_SERVICE_TOKEN",
+    ServiceKind.A: "AGENT_SERVICE_TOKEN",
+    ServiceKind.S: "SCHEDULER_SERVICE_TOKEN",
+    ServiceKind.D: "DEMO_CONSOLE_TOKEN",
 }
 
 
@@ -57,6 +56,12 @@ class Claims:
     utts: tuple[str, ...]
 
 
+def _str_list(value: object, name: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise GatewayError(Code.UNAUTHENTICATED, 401, message=f"{name} must be a list of strings")
+    return tuple(value)
+
+
 def verify_jwt(
     token: str,
     public_key_pem: bytes,
@@ -68,6 +73,9 @@ def verify_jwt(
     if not token:
         raise GatewayError(Code.UNAUTHENTICATED, 401)
     try:
+        # `audience` lets PyJWT validate presence/membership; the manual check
+        # below rejects a list aud containing the expected value, which PyJWT
+        # would otherwise accept and which would break app/assistant isolation.
         payload = jwt.decode(
             token,
             public_key_pem,
@@ -81,18 +89,24 @@ def verify_jwt(
     except jwt.InvalidTokenError as exc:
         raise GatewayError(Code.UNAUTHENTICATED, 401) from exc
 
+    aud = payload.get("aud")
+    if not isinstance(aud, str) or aud != expected_aud:
+        raise GatewayError(Code.UNAUTHENTICATED, 401, message="aud must match exactly")
     sub = payload.get("sub")
     jti = payload.get("jti")
-    if not sub or not jti:
+    if not isinstance(sub, str) or not sub or not isinstance(jti, str) or not jti:
         raise GatewayError(Code.UNAUTHENTICATED, 401)
-    sid = payload.get("sid") or None
+    sid = payload.get("sid")
+    if sid is not None and not isinstance(sid, str):
+        raise GatewayError(Code.UNAUTHENTICATED, 401)
     if require_sid and not sid:
         raise GatewayError(Code.UNAUTHENTICATED, 401)
-    scope = tuple(payload.get("scope") or ())
-    utts = tuple(payload.get("utts") or ())
+    scope = _str_list(payload.get("scope"), "scope")
+    utts_value = payload.get("utts")
+    utts = () if utts_value is None else _str_list(utts_value, "utts")
     return Claims(
         sub=sub,
-        aud=payload["aud"],
+        aud=aud,
         scope=scope,
         jti=jti,
         exp=int(payload["exp"]),

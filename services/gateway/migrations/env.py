@@ -4,7 +4,7 @@ import os
 from alembic import context
 
 from services.gateway.app.db import engine
-from services.gateway.app.models import metadata
+from services.gateway.app.tables import metadata
 
 
 def run(connection):

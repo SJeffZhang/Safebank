@@ -30,6 +30,7 @@ class Settings:
     max_executions: int
     database_url: str | None
     l3_base_url: str
+    service_tokens: dict[str, str]
 
     def validate(self) -> None:
         """Refuse to start on configuration combinations that weaken isolation."""
@@ -61,6 +62,11 @@ class Settings:
             )
         if self.max_executions < 1:
             raise GatewayError(Code.FORBIDDEN, 500, message="GATEWAY_MAX_EXECUTIONS must be >= 1")
+        present = [value for value in self.service_tokens.values() if value]
+        if len(set(present)) != len(present):
+            raise GatewayError(
+                Code.FORBIDDEN, 500, message="F/A/S/D service tokens must be pairwise distinct"
+            )
 
 
 def from_env(env: dict[str, str] | None = None) -> Settings:
@@ -76,4 +82,10 @@ def from_env(env: dict[str, str] | None = None) -> Settings:
         max_executions=int(env.get("GATEWAY_MAX_EXECUTIONS") or "8"),
         database_url=env.get("GATEWAY_DATABASE_URL"),
         l3_base_url=env.get("BANK_BACKEND_URL") or "http://bank-backend:8300",
+        service_tokens={
+            "F": env.get("FRONTEND_SERVICE_TOKEN") or "",
+            "A": env.get("AGENT_SERVICE_TOKEN") or "",
+            "S": env.get("SCHEDULER_SERVICE_TOKEN") or "",
+            "D": env.get("DEMO_CONSOLE_TOKEN") or "",
+        },
     )

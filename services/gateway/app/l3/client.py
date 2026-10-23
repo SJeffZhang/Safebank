@@ -1,9 +1,14 @@
 """Async L3 client (PRD §7.8): GATEWAY_SERVICE_TOKEN on every request.
 
-Timeouts are per endpoint: prepare 3s, execute 10s, everything else 5s. A
-timeout or dropped connection surfaces as :class:`L3Timeout` /
-:class:`L3Unavailable` so callers can enter the UNKNOWN recovery path instead
-of guessing a failure.
+Transport failures are split so callers can decide recovery:
+- :class:`L3NotDelivered` — the request certainly did not reach L3 (connect /
+  pool timeout, connect error): safe to retry.
+- :class:`L3OutcomeUnknown` — the request may have been delivered (read/write
+  timeout, protocol error): must enter the UNKNOWN recovery path.
+- :class:`L3BusinessError` — L3 answered with a non-2xx error body.
+
+Timeouts default to prepare 3s, execute 10s, everything else 5s and can be
+injected for tests.
 """
 
 from __future__ import annotations
@@ -12,21 +17,31 @@ from typing import Any
 
 import httpx
 
-TIMEOUT_PREPARE = 3.0
-TIMEOUT_EXECUTE = 10.0
-TIMEOUT_DEFAULT = 5.0
+DEFAULT_TIMEOUTS = {"prepare": 3.0, "execute": 10.0, "default": 5.0}
 
 
 class L3Error(Exception):
     """Base for L3 transport failures."""
 
 
-class L3Timeout(L3Error):
-    pass
+class L3NotDelivered(L3Error):
+    """The request certainly did not reach L3."""
+
+
+class L3OutcomeUnknown(L3Error):
+    """The request may have been delivered; the outcome is unknown."""
 
 
 class L3Unavailable(L3Error):
-    pass
+    """Any other transport failure."""
+
+
+class L3BusinessError(L3Error):
+    def __init__(self, code: str, status: int, details: Any = None) -> None:
+        self.code = code
+        self.status = status
+        self.details = details or {}
+        super().__init__(f"L3 returned {status} {code}")
 
 
 class L3Client:
@@ -36,78 +51,100 @@ class L3Client:
         token: str,
         *,
         transport: httpx.AsyncBaseTransport | None = None,
+        timeouts: dict[str, float] | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.token = token
+        self.timeouts = dict(DEFAULT_TIMEOUTS if timeouts is None else timeouts)
         self._client = httpx.AsyncClient(
-            base_url=self.base_url,
-            transport=transport,
-            headers={"X-Service-Token": token},
+            base_url=self.base_url, transport=transport, headers={"X-Service-Token": token}
         )
-
-    @property
-    def timeouts(self) -> dict[str, float]:
-        return {
-            "prepare": TIMEOUT_PREPARE,
-            "execute": TIMEOUT_EXECUTE,
-            "default": TIMEOUT_DEFAULT,
-        }
 
     async def close(self) -> None:
         await self._client.aclose()
 
     async def _request(
-        self, method: str, path: str, *, json: Any = None, timeout: float, params: Any = None
-    ) -> httpx.Response:
+        self,
+        method: str,
+        path: str,
+        *,
+        json: Any = None,
+        timeout: float,
+        params: Any = None,
+    ) -> dict[str, Any]:
         try:
-            return await self._client.request(
+            response = await self._client.request(
                 method, path, json=json, params=params, timeout=timeout
             )
-        except httpx.TimeoutException as exc:
-            raise L3Timeout(f"{method} {path} timed out after {timeout}s") from exc
+        except (httpx.ConnectTimeout, httpx.PoolTimeout, httpx.ConnectError) as exc:
+            raise L3NotDelivered(f"{method} {path} not delivered: {exc}") from exc
+        except (httpx.ReadTimeout, httpx.WriteTimeout, httpx.RemoteProtocolError) as exc:
+            raise L3OutcomeUnknown(f"{method} {path} outcome unknown: {exc}") from exc
         except httpx.HTTPError as exc:
             raise L3Unavailable(f"{method} {path} failed: {exc}") from exc
 
-    async def snapshot(self, body: dict[str, Any]) -> httpx.Response:
-        return await self._request("POST", "/internal/snapshot", json=body, timeout=TIMEOUT_DEFAULT)
+        if response.status_code >= 400:
+            raise self._business_error(response)
+        return response.json()
 
-    async def read(self, tool: str, body: dict[str, Any]) -> httpx.Response:
+    @staticmethod
+    def _business_error(response: httpx.Response) -> L3BusinessError:
+        try:
+            body = response.json()
+            error = body.get("error", {})
+            return L3BusinessError(
+                error.get("code", "DEPENDENCY_UNAVAILABLE"),
+                response.status_code,
+                error.get("details"),
+            )
+        except ValueError:
+            return L3BusinessError("DEPENDENCY_UNAVAILABLE", response.status_code)
+
+    async def snapshot(self, body: dict[str, Any]) -> dict[str, Any]:
         return await self._request(
-            "POST", f"/internal/read/{tool}", json=body, timeout=TIMEOUT_DEFAULT
+            "POST", "/internal/snapshot", json=body, timeout=self.timeouts["default"]
         )
 
-    async def prepare(self, body: dict[str, Any]) -> httpx.Response:
+    async def read(self, tool: str, body: dict[str, Any]) -> dict[str, Any]:
         return await self._request(
-            "POST", "/internal/plans/prepare", json=body, timeout=TIMEOUT_PREPARE
+            "POST", f"/internal/read/{tool}", json=body, timeout=self.timeouts["default"]
         )
 
-    async def execute(self, body: dict[str, Any]) -> httpx.Response:
+    async def prepare(self, body: dict[str, Any]) -> dict[str, Any]:
         return await self._request(
-            "POST", "/internal/plans/execute", json=body, timeout=TIMEOUT_EXECUTE
+            "POST", "/internal/plans/prepare", json=body, timeout=self.timeouts["prepare"]
         )
 
-    async def execution(self, customer_id: str, plan_id: str) -> httpx.Response:
+    async def execute(self, body: dict[str, Any]) -> dict[str, Any]:
+        return await self._request(
+            "POST", "/internal/plans/execute", json=body, timeout=self.timeouts["execute"]
+        )
+
+    async def execution(self, customer_id: str, plan_id: str) -> dict[str, Any]:
         return await self._request(
             "GET",
             f"/internal/executions/{plan_id}",
             params={"customer_id": customer_id},
-            timeout=TIMEOUT_DEFAULT,
+            timeout=self.timeouts["default"],
         )
 
-    async def reconcile(self, plan_id: str, body: dict[str, Any]) -> httpx.Response:
+    async def reconcile(self, plan_id: str, body: dict[str, Any]) -> dict[str, Any]:
         return await self._request(
-            "POST", f"/internal/executions/{plan_id}/reconcile", json=body, timeout=TIMEOUT_DEFAULT
+            "POST",
+            f"/internal/executions/{plan_id}/reconcile",
+            json=body,
+            timeout=self.timeouts["default"],
         )
 
-    async def outbox(self, after: int = 0, limit: int = 50) -> httpx.Response:
+    async def outbox(self, after: int = 0, limit: int = 50) -> dict[str, Any]:
         return await self._request(
             "GET",
             "/internal/outbox",
             params={"after": after, "limit": limit},
-            timeout=TIMEOUT_DEFAULT,
+            timeout=self.timeouts["default"],
         )
 
-    async def outbox_ack(self, body: dict[str, Any]) -> httpx.Response:
+    async def outbox_ack(self, body: dict[str, Any]) -> dict[str, Any]:
         return await self._request(
-            "POST", "/internal/outbox/ack", json=body, timeout=TIMEOUT_DEFAULT
+            "POST", "/internal/outbox/ack", json=body, timeout=self.timeouts["default"]
         )

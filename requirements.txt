@@ -10,14 +10,20 @@ anyio==4.15.1
     # via
     #   httpx
     #   starlette
+argon2-cffi==25.1.0
+    # via safebank-gateway
+argon2-cffi-bindings==26.1.0
+    # via argon2-cffi
 asyncpg==0.32.0
     # via safebank-gateway
 certifi==2026.10.19
     # via
     #   httpcore
     #   httpx
-cffi==2.1.1 ; platform_python_implementation != 'PyPy'
-    # via cryptography
+cffi==2.1.1
+    # via
+    #   argon2-cffi-bindings
+    #   cryptography
 click==8.5.0
     # via uvicorn
 cryptography==50.0.2
@@ -44,7 +50,7 @@ markupsafe==3.0.4
     # via mako
 opentelemetry-api==1.45.1
     # via fastapi
-pycparser==3.12 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy'
+pycparser==3.12 ; implementation_name != 'PyPy'
     # via cffi
 pydantic==2.14.1
     # via
@@ -52,6 +58,10 @@ pydantic==2.14.1
     #   safebank-gateway
 pydantic-core==2.50.1
     # via pydantic
+pyjwt==2.15.1
+    # via safebank-gateway
+pypinyin==0.55.0
+    # via safebank-gateway
 socksio==1.0.0
     # via httpx
 sqlalchemy==2.1.6

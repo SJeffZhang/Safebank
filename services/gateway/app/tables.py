@@ -1,13 +1,14 @@
 """Gateway schema (PRD §7.2). Migrations own DDL; runtime only DML.
 
-All IDs are strings (ULID / prefixed IDs per PRD §9.1), so the gateway database
-needs no sequences. Status columns carry CHECK constraints matching the value
-sets enumerated in PRD §7.2; fields PRD does not enumerate (for example
-``execution_jobs.status``) are left unconstrained and noted in the W0 progress
-document.
+All IDs are strings (ULID / prefixed IDs per PRD §9.1). Status CHECK constraints
+are generated from ``app.schemas.enums`` so the wire values and the database
+cannot drift. ``schema_v1.json`` is the frozen rendering of this metadata; the
+drift test in ``tests/gateway/db`` fails if the two diverge.
 """
 
 from __future__ import annotations
+
+from enum import StrEnum
 
 from sqlalchemy import (
     BigInteger,
@@ -28,6 +29,17 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 
+from .schemas.enums import (
+    ApprovalStatus,
+    ClarificationKind,
+    ClarificationStatus,
+    ExecutionJobStatus,
+    ParseStatus,
+    PlanStatus,
+    UtteranceStatus,
+    WorkflowEventStatus,
+)
+
 metadata = MetaData()
 
 
@@ -39,29 +51,8 @@ def timestamp(name: str, **kw) -> Column:
     return Column(name, DateTime(timezone=True), **kw)
 
 
-PLAN_STATUS = (
-    "EVALUATED",
-    "REPLAN",
-    "DENIED",
-    "PENDING_APPROVAL",
-    "CONFIRMED",
-    "EXECUTING",
-    "UNKNOWN",
-    "EXECUTED",
-    "FAILED",
-    "REJECTED",
-    "EXPIRED",
-    "SUPERSEDED",
-)
-APPROVAL_STATUS = (
-    "PENDING",
-    "CONFIRMED",
-    "REJECTED",
-    "EXPIRED",
-    "SUPERSEDED",
-    "USED",
-    "LOCKED",
-)
+def _in(enum: type[StrEnum]) -> str:
+    return "','".join(e.value for e in enum)
 
 
 sessions = Table(
@@ -69,6 +60,7 @@ sessions = Table(
     metadata,
     idcol(primary_key=True),
     Column("customer_id", String(256), nullable=False),
+    Column("authorization_epoch", BigInteger, nullable=False, server_default="0"),
     timestamp("created_at_wall", nullable=False),
     timestamp("revoked_at_wall"),
 )
@@ -85,12 +77,15 @@ utterances = Table(
     Column("source_id", String(256)),
     Column("parent_ids", JSONB, nullable=False, server_default="[]"),
     Column("status", String(32), nullable=False),
+    Column("parse_status", String(32), nullable=False, server_default="SCOPED"),
+    Column("clarification_id", String(256)),
     timestamp("created_at_wall", nullable=False),
     timestamp("expires_at_wall"),
     Column("consumed_by", String(256)),
     Column("authorization_epoch", BigInteger, nullable=False),
     CheckConstraint("kind IN ('typed','hint','action','context')"),
-    CheckConstraint("status IN ('ACTIVE','SUPERSEDED','CONSUMED','CANCELLED')"),
+    CheckConstraint(f"status IN ('{_in(UtteranceStatus)}')"),
+    CheckConstraint(f"parse_status IN ('{_in(ParseStatus)}')"),
 )
 
 read_records = Table(
@@ -122,8 +117,8 @@ pending_clarifications = Table(
     Column("partial_scope", JSONB, nullable=False, server_default="{}"),
     Column("status", String(32), nullable=False),
     timestamp("expires_at_wall"),
-    CheckConstraint("kind IN ('SLOTS','FORM_REQUIRED')"),
-    CheckConstraint("status IN ('OPEN','RESOLVED','CANCELLED')"),
+    CheckConstraint(f"kind IN ('{_in(ClarificationKind)}')"),
+    CheckConstraint(f"status IN ('{_in(ClarificationStatus)}')"),
 )
 
 form_actions = Table(
@@ -131,11 +126,16 @@ form_actions = Table(
     metadata,
     idcol(primary_key=True),
     Column("sid", ForeignKey("sessions.id"), nullable=False),
-    Column("scope_json", JSONB, nullable=False),
+    Column("kind", String(32), nullable=False),
+    Column("action_kind", String(64)),
+    Column("normalized_fields", JSONB, nullable=False),
+    Column("parent_utterance_id", String(256)),
     Column("parent_plan_id", String(256)),
     Column("view_hash", String),
+    timestamp("created_at_wall", nullable=False),
     timestamp("expires_at_wall"),
     Column("used_by", String(256)),
+    CheckConstraint("kind IN ('FORM','CLARIFICATION')"),
 )
 
 hints = Table(
@@ -144,8 +144,10 @@ hints = Table(
     idcol(primary_key=True),
     Column("sid", ForeignKey("sessions.id"), nullable=False),
     Column("scope_json", JSONB, nullable=False),
+    Column("label", String(256), nullable=False),
     Column("parent_plan_id", String(256)),
     Column("view_hash", String),
+    timestamp("created_at_wall", nullable=False),
     timestamp("expires_at_wall"),
     Column("used_by", String(256)),
 )
@@ -155,7 +157,7 @@ plans = Table(
     metadata,
     idcol(primary_key=True),
     Column("customer_id", String(256), nullable=False),
-    Column("sid", String(256), nullable=False),
+    Column("sid", ForeignKey("sessions.id"), nullable=False),
     Column("origin", String(32), nullable=False),
     Column("request_id", String(256), nullable=False),
     Column("request_hash", String(64), nullable=False),
@@ -166,9 +168,7 @@ plans = Table(
     Column("scope_ids", JSONB, nullable=False, server_default="[]"),
     Column("status", String(32), nullable=False),
     timestamp("created_at_wall", nullable=False),
-    CheckConstraint(
-        "status IN ('" + "','".join(PLAN_STATUS) + "') AND origin IN ('agent','app_form')"
-    ),
+    CheckConstraint(f"status IN ('{_in(PlanStatus)}') AND origin IN ('agent','app_form')"),
     UniqueConstraint("customer_id", "origin", "request_id"),
 )
 
@@ -185,8 +185,11 @@ evaluations = Table(
     Column("versions", JSONB, nullable=False, server_default="{}"),
     Column("policy_version", String(64), nullable=False),
     Column("view_hash", String(64)),
+    Column("equivalent_to", String(256)),
+    Column("clock_version", BigInteger, nullable=False, server_default="0"),
     timestamp("created_at_wall", nullable=False),
     CheckConstraint("risk IN ('GREEN','YELLOW','RED') AND revision >= 1"),
+    UniqueConstraint("plan_id", "revision"),
 )
 
 approvals = Table(
@@ -196,7 +199,7 @@ approvals = Table(
     Column("plan_id", ForeignKey("plans.id"), nullable=False),
     Column("evaluation_id", ForeignKey("evaluations.id"), nullable=False),
     Column("customer_id", String(256), nullable=False),
-    Column("sid", String(256), nullable=False),
+    Column("sid", ForeignKey("sessions.id"), nullable=False),
     Column("plan_hash", String(64), nullable=False),
     Column("view_hash", String(64), nullable=False),
     Column("binding_mac", String(128), nullable=False),
@@ -204,7 +207,7 @@ approvals = Table(
     Column("status", String(32), nullable=False),
     Column("risk_ack", Boolean, nullable=False, server_default="false"),
     timestamp("confirmed_at_wall"),
-    CheckConstraint("status IN ('" + "','".join(APPROVAL_STATUS) + "')"),
+    CheckConstraint(f"status IN ('{_in(ApprovalStatus)}')"),
 )
 
 otp_challenges = Table(
@@ -212,9 +215,11 @@ otp_challenges = Table(
     metadata,
     idcol("approval_id", primary_key=True),
     Column("code_digest", String(128), nullable=False),
+    Column("view_hash", String(64), nullable=False),
     timestamp("expires_at_wall", nullable=False),
     Column("attempt_count", Integer, nullable=False, server_default="0"),
     Column("sent_count", Integer, nullable=False, server_default="0"),
+    timestamp("last_sent_at_wall"),
     timestamp("locked_at_wall"),
     ForeignKeyConstraint(["approval_id"], ["approvals.id"]),
 )
@@ -237,7 +242,11 @@ execution_jobs = Table(
     Column("retry_count", Integer, nullable=False, server_default="0"),
     Column("last_error", JSONB),
     Column("result", JSONB),
+    timestamp("created_at_wall", nullable=False),
+    timestamp("updated_at_wall", nullable=False),
+    timestamp("deadline_wall"),
     ForeignKeyConstraint(["plan_id"], ["plans.id"]),
+    CheckConstraint(f"status IN ('{_in(ExecutionJobStatus)}')"),
 )
 
 scheduled_grants = Table(
@@ -277,6 +286,7 @@ workflow_events = Table(
     Column("amount_cents", BigInteger, nullable=False),
     Column("status", String(32), nullable=False),
     timestamp("occurred_at", nullable=False),
+    CheckConstraint(f"status IN ('{_in(WorkflowEventStatus)}')"),
 )
 
 cooldowns = Table(
@@ -318,11 +328,58 @@ audit_events = Table(
     Column("payload", JSONB, nullable=False),
     Column("prev_hash", String(64), nullable=False),
     Column("hash", String(64), nullable=False),
+    Column("plan_id", String(256)),
     timestamp("created_at_wall", nullable=False),
     UniqueConstraint("customer_id", "prev_hash"),
 )
 
-Index("audit_customer_seq", audit_events.c.customer_id, audit_events.c.seq)
+# Persistent route-scoped request idempotency (PRD §9.1), used by every
+# request_id-bearing gateway endpoint (G3, G6, G7, G8, G10, G13, G14, G15, ...).
+request_dedup = Table(
+    "request_dedup",
+    metadata,
+    Column("customer_id", String(256), primary_key=True),
+    Column("route", String(256), primary_key=True),
+    Column("request_id", String(256), primary_key=True),
+    Column("request_hash", String(64), nullable=False),
+    Column("status_code", Integer, nullable=False),
+    Column("response", JSONB, nullable=False),
+    timestamp("created_at_wall", nullable=False),
+)
+
+pin_failures = Table(
+    "pin_failures",
+    metadata,
+    Column("customer_id", String(256), primary_key=True),
+    Column("failed_count", Integer, nullable=False, server_default="0"),
+    timestamp("locked_until_wall"),
+    timestamp("last_failed_at_wall"),
+)
+
+ip_ratelimit = Table(
+    "ip_ratelimit",
+    metadata,
+    Column("ip", String(64), primary_key=True),
+    timestamp("window_started_at_wall", nullable=False),
+    Column("count", Integer, nullable=False, server_default="0"),
+)
+
+auth_sessions = Table(
+    "auth_sessions",
+    metadata,
+    Column("jti", String(256), primary_key=True),
+    Column("customer_id", String(256), nullable=False),
+    timestamp("created_at_wall", nullable=False),
+    timestamp("expires_at_wall", nullable=False),
+    timestamp("revoked_at_wall"),
+)
+
+
+def _index(name: str, table: Table, *cols: Column, **kw) -> Index:
+    idx = Index(name, *cols, **kw)
+    idx.table = table
+    return idx
+
 
 Index(
     "one_open_clarification_per_session",
@@ -343,3 +400,12 @@ Index(
     postgresql_where=approvals.c.status.in_(["PENDING", "CONFIRMED"]),
 )
 Index("evaluations_plan_time", evaluations.c.plan_id, evaluations.c.created_at_wall)
+Index("audit_customer_seq", audit_events.c.customer_id, audit_events.c.seq)
+Index("audit_plan", audit_events.c.plan_id)
+Index("utterances_sid_status", utterances.c.sid, utterances.c.status)
+Index("plans_sid", plans.c.sid)
+Index("approvals_customer_status", approvals.c.customer_id, approvals.c.status)
+Index("read_records_sid", read_records.c.sid)
+Index("workflow_customer_time", workflow_events.c.customer_id, workflow_events.c.occurred_at)
+Index("notifications_customer_read", notifications.c.customer_id, notifications.c.read_at_wall)
+Index("auth_sessions_customer", auth_sessions.c.customer_id, auth_sessions.c.revoked_at_wall)

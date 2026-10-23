@@ -1,79 +1,44 @@
-"""FastAPI dependencies translating the auth matrix into enforceable checks."""
+"""FastAPI dependency resolving the caller identity (PRD §7.1).
+
+``resolve_caller`` looks up the auth matrix, checks the presented service token
+and (when the matrix entry requires it) the bearer JWT, and returns a
+:class:`Caller` — including ``sid`` and ``utts`` so G4 can enforce
+``utterance_ids ⊆ token.utts``. Open matrix entries return ``None``.
+"""
 
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
+from typing import Any
 
-from fastapi import Header, Request
+from fastapi import Request
 from safebank_contracts.codes import Code
 
 from ..errors import GatewayError
-from .matrix import CredentialSpec, ServiceKind, lookup
+from ..schemas.enums import ServiceKind
+from ..schemas.identity import Caller
+from .matrix import CallerSpec, lookup
 from .tokens import identify_service, verify_jwt
 
 
-def service_token_dependency(kind: ServiceKind, env: dict[str, str] | None = None) -> Callable:
-    env = env if env is not None else os.environ
-
-    def _require(x_service_token: str | None = Header(default=None)) -> str:
-        if x_service_token is None or not identify_service(x_service_token, env) == kind:
-            raise GatewayError(Code.UNAUTHENTICATED, 401)
-        return kind
-
-    return _require
-
-
-def jwt_dependency(
-    expected_aud: str,
-    scopes: frozenset[str] | None = None,
+def _match_spec(
+    spec: CallerSpec,
     *,
-    require_sid: bool = False,
-    public_key: bytes | None = None,
-) -> Callable:
-    scopes = scopes or frozenset()
-
-    def _require(authorization: str | None = Header(default=None)) -> dict:
-        if public_key is None:
+    token: str | None,
+    authorization: str | None,
+    env: dict[str, str],
+    public_key: bytes | None,
+) -> Caller:
+    if spec.service is not None:
+        if token is None or identify_service(token, env) is not spec.service:
             raise GatewayError(Code.UNAUTHENTICATED, 401)
-        if not authorization or not authorization.startswith("Bearer "):
-            raise GatewayError(Code.UNAUTHENTICATED, 401)
-        claims = verify_jwt(
-            authorization.removeprefix("Bearer ").strip(),
-            public_key,
-            expected_aud=expected_aud,
-            require_sid=require_sid,
-        )
-        missing = scopes - set(claims.scope)
-        if missing:
-            raise GatewayError(Code.FORBIDDEN, 403)
-        return {"sub": claims.sub, "sid": claims.sid, "scope": claims.scope, "jti": claims.jti}
+        kind = spec.service
+    else:
+        kind = identify_service(token, env)
 
-    return _require
-
-
-def matrix_guard(request: Request, public_key: bytes | None = None) -> CredentialSpec | None:
-    """Resolve and enforce the matrix entry for the current request.
-
-    Open entries (no service, no JWT) return ``None``. Service-only entries
-    check ``X-Service-Token``. Service+JWT entries additionally verify the
-    bearer token scope. W1 fills in JWT issuance; W0 keeps the dependency
-    honest for the entries it registers.
-    """
-    spec = lookup(request.method, request.url.path)
-    if spec is None:
-        # Unregistered routes are refused at the routing layer, not here.
-        raise GatewayError(Code.FORBIDDEN, 403)
-    if spec.service is None and spec.jwt_aud is None:
-        return None
-    token = request.headers.get("X-Service-Token")
-    if spec.service is not None and not (
-        token and identify_service(token, os.environ) == spec.service
-    ):
-        raise GatewayError(Code.UNAUTHENTICATED, 401)
+    claims = None
     if spec.jwt_aud is not None:
-        authorization = request.headers.get("Authorization", "")
-        if not authorization.startswith("Bearer ") or public_key is None:
+        if public_key is None or not authorization or not authorization.startswith("Bearer "):
             raise GatewayError(Code.UNAUTHENTICATED, 401)
         claims = verify_jwt(
             authorization.removeprefix("Bearer ").strip(),
@@ -84,4 +49,46 @@ def matrix_guard(request: Request, public_key: bytes | None = None) -> Credentia
         missing = spec.scopes - set(claims.scope)
         if missing:
             raise GatewayError(Code.FORBIDDEN, 403)
-    return spec
+
+    return Caller(
+        kind=kind or spec.service or ServiceKind.F,
+        customer_id=claims.sub if claims else None,
+        sid=claims.sid if claims else None,
+        utts=claims.utts if claims else (),
+        jti=claims.jti if claims else None,
+        scopes=frozenset(claims.scope) if claims else frozenset(),
+    )
+
+
+def resolve_caller(
+    request: Request,
+    *,
+    env: dict[str, str] | None = None,
+    public_key: bytes | None = None,
+) -> Caller | None:
+    env = dict(os.environ if env is None else env)
+    entry = lookup(request.method, request.url.path)
+    if entry is None:
+        raise GatewayError(Code.FORBIDDEN, 403)
+    if entry == ():
+        return None
+    token = request.headers.get("X-Service-Token")
+    authorization = request.headers.get("Authorization")
+    last: GatewayError | None = None
+    for spec in entry:
+        try:
+            return _match_spec(
+                spec, token=token, authorization=authorization, env=env, public_key=public_key
+            )
+        except GatewayError as exc:
+            last = exc
+    raise last if last is not None else GatewayError(Code.UNAUTHENTICATED, 401)
+
+
+def caller_dependency(env: dict[str, str] | None = None, public_key: bytes | None = None) -> Any:
+    """FastAPI dependency wrapping :func:`resolve_caller` with injected config."""
+
+    async def _dependency(request: Request) -> Caller | None:
+        return resolve_caller(request, env=env, public_key=public_key)
+
+    return _dependency
