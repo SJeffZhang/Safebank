@@ -323,6 +323,9 @@
 | 2026-10-23 | Codex（协调者） | 已在root同步main94e40fe后实际make up exit0（镜像元数据获取耗时55秒，非产品失败；既有secret preserved、44锁定wheels校验），真实Gateway持久库SELECT版本0002_wave1。两卷CreatedAt仍12:26:36Z未删重建。make test-integration exit0：网络/凭证/DB角色、HTTP→PG→prepare/transfer/outbox、L3进程重启与幂等回放全通过；这不是尚未实现G8的验收。 |
 
 | 2026-10-23 | Codex（协调者） | PR7精确head37db47d的push/PR两套unit+p1-postgres四检查全部COMPLETED SUCCESS后执行gh pr merge 7 --merge --match-head-commit，merge d5ac9edecc0d7c35e72567aab5eba5c8328c9b60，15:12:10Z，已fetch。S1c 64fd9aa亲自五退出全0：lint166/all366+139skip（4.65s）/gateway137+91skip（3.67s）/PG17（3.07s）/shared59零skip（8.76s），独立10测试与spec/quality APPROVE；现同步新main，复测后立即组件PR。W1开始真实锁与共享状态接线。 |
+| 2026-10-23 | Codex（协调者） | W4a同步main94e40fe后05af2ec亲自actionlint及六退出全exit0：lint169、all376/184skip（4.27s）、gateway147/136skip（3.46s）、PG17（2.77s）、locks63零skip（8.26s）、shared51零skip（8.71s）。相对独立APPROVE的e4023ed业务/专属测试diff为空；同步仅解决CI/Makefile目标追加冲突并保留两边。新增验收与复审记录，准备立即push base main组件PR，远端CI全绿后merge commit。 |
+
+| 2026-10-23 | Codex（协调者） | root同步PR7最新main时仅AGENTS追加日志冲突，保留双方全部记录并解决，无业务冲突；当前S1b/PR6与W4a/PR7均已四CI全绿合并。S1c同步版363b54d已冻结，协调者最终五退出复跑中；W1接口简报获准以真实锁和共享CAS持久待对账，不伪造L3终态，缺evaluation孤儿先failclosed并报告。 |
 
 ## 5. 下一步待办（按顺序）
 
@@ -360,7 +363,7 @@ P0 准备阶段（决定后续一切）：
 | [x] | W0 基础骨架 | `feat/l2-foundation` / PR #2 已合并 | `docs/plans/briefs/W0-*.md`，评审 `docs/reviews/L2-W0-architecture.md` |
 | [x] | S1 共享运行层 | PR #4，merge `691cf88`；独立评审与四CI全绿 | `docs/acceptance/L2-S1-runtime.md` |
 | [x] | S2 七天预留纯函数 | PR #5，merge `a9d72cf`；真实生产接入待S3 | `docs/acceptance/L2-S2-reserve.md` |
-| [ ] | W4a 客户锁先决组件 | `feat/l2-customer-locks`（d582752，协调者复跑及独立评审中） | `docs/plans/briefs/W4a-customer-locks.md` |
+| [x] | W4a 客户锁先决组件 | PR #7 merge d5ac9ed（六退出、独立评审及四CI全绿） | `docs/plans/briefs/W4a-customer-locks.md` |
 | [ ] | W1 身份、会话与原话 | `feat/l2-identity`（42c86f5，7缺陷与S1接线评审通过；真实锁/PIN路径/后续状态待联调） | `docs/plans/briefs/W1-identity.md` |
 | [ ] | W2 读代理、参数来源与污点 | `feat/l2-provenance`（27a067a三项修复已评审通过，来源链集成中） | `docs/plans/briefs/W2-provenance.md` |
 | [ ] | W3 快照、预演、工作流、决策与 G4 | `feat/l2-decision`（检查点3bcbe8e，共享依赖阻塞） | `docs/plans/briefs/W3-decision.md` |
