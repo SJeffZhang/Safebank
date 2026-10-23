@@ -69,3 +69,7 @@ test-gateway:
 
 test-gateway-db:
 	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/db -q
+
+.PHONY: test-reserve
+test-reserve:
+	.venv/bin/pytest tests/bankcore/test_reserve.py -q
