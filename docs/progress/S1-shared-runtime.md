@@ -146,3 +146,21 @@ Actual commands in this round:
 This round did not rerun unrelated PG/Linux/full-stack checks; the coordinator independently ran all five previous exit commands and make up/test-integration on the prior code. No deployment, stack, volume, push/PR/merge operations were performed by this repair. Existing untracked .secrets in the worktree belongs to coordinator deployment setup and was neither read, modified nor staged. Awaiting original reviewer's N1-only recheck after local commit.
 
 N1 implementation/test/evidence commit: `e99406d055823268b63bc3d6b7d66d946f8bd1b6`. The subsequent documentation-only commit records this stable implementation SHA; branch remains unchanged after handoff for review.
+
+## PR #4 CI workflow-context repair
+
+Baseline retained: `6c59ac16c0b8a937e7115fbd887478f1ee37a05e`, including coordinator documentation commits. Independently read run 39964404373 metadata with gh API: completed/failure at that SHA; jobs total_count=0. No job logs or passing CI are claimed.
+
+Verified root cause: the added job-level `env.UV_CACHE_DIR: ${{ runner.temp }}/sbg-uv-cache` references an unavailable context. GitHub's official [context availability table](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#context-availability) permits github/needs/strategy/matrix/vars/secrets/inputs for jobs.<job_id>.env, but not runner. Earlier YAML parsing and Make→uv tests did not validate Actions expression context availability; their passing results did not prove the workflow was accepted.
+
+Trusted validator: downloaded actionlint v1.7.12 darwin_arm64 from the maintainer's [official release](https://github.com/rhysd/actionlint/releases/tag/v1.7.12) into `/private/tmp/sbg-actionlint-iysg7h9r/`, without installing a project dependency. Verified the archive against the release's checksums file: SHA256 `aba9ced2dee8d27fecca3dc7feb1a7f9a52caefa1eb46f3271ea66b6e0e6953f`.
+
+Actual targeted validation:
+
+- Before change, actionlint .github/workflows/checks.yml exited 1: line 18:25, context runner is not allowed here; validator listed the same allowed contexts as GitHub docs.
+- Minimal fix: replace only that value with the literal `/tmp/sbg-uv-cache` in the ubuntu-latest p1-postgres job. No step ordering, PG/Linux gates, workflow triggers, or existing coordinator documentation were reverted.
+- After change, the same actionlint command exited 0 with no diagnostics.
+- Read the corrected value from YAML, verified it is writable locally, and ran a temporary stdin Makefile including the actual Makefile: Make preserved/exported the exact literal UV_CACHE_DIR to uv cache dir (exit 0).
+- git diff --check passed. Product tests, Docker stacks/volumes and deployments were not rerun for this one-line workflow-only fix.
+
+Scope is exactly checks.yml cache value and this report. No push, CI dispatch, PR change or merge occurred. Awaiting original reviewer's targeted workflow recheck and coordinator push to obtain fresh real CI results; prior local green tests are not a claim that CI passed. Local repair SHA recorded below after commit.

@@ -15,7 +15,7 @@ jobs:
   p1-postgres:
     runs-on: ubuntu-latest
     env:
-      UV_CACHE_DIR: ${{ runner.temp }}/sbg-uv-cache
+      UV_CACHE_DIR: /tmp/sbg-uv-cache
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
