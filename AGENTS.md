@@ -42,7 +42,9 @@
 | 调研 | 开源项目元数据和 DeepSeek 官方信息已核实；评分/提交已从官网公开 JS 核实（docs/acceptance/official-v1.md）；竞品「明鉴」未核实 |
 | PRD | **`PRD.md` = v2.1 定稿**（1,764 行，§0–§16；三轮多 agent 审核 + 两次修订复核，决议 D1–D47 见 §0.5）。v1.2 与作废的 v2.0 草稿在 `docs/archive/`；审核报告在 `docs/reviews/` |
 | 代码 | **P1 完成并逐组件验收**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116项单元+33项真实PG通过，契约v1已冻结。分支 feat/l3-core，P1代码已提交并推送私有仓库（功能提交7fd7a26）；CI权限修复70dcabe已推送，远端unit与p1-postgres均通过（run 39929405919） |
-| 下一步 | P1已结束，等待用户指定下一步；按PRD后续P2实现L2/L1的单笔需确认转账闭环，仍须逐组件验收。本轮不启动P2 |
+| L2 网关 | **W0 基础骨架已合入 main**（PR #2，merge e2e91db，2026-10-23；经 4 轮架构评审 + 1 次 CI 修复）。波次 1（W1–W4）任务书已写好、**未启动**。计划 `docs/plans/L2-plan.md`，任务书 `docs/plans/briefs/` |
+| 前端 | **暂停**，用户亲自下令才开工（§2 第 13 条） |
+| 下一步 | L2 波次 1：W1 身份与原话、W2 读代理与来源、W3 预演·工作流·决策、W4 审批与执行，四路并行（见 §5「L2 进度」）。2026-10-23 起工作转到 Codex，交接说明见 `docs/handoff/CODEX-HANDOFF.md` |
 
 ### 已确认事实
 
@@ -185,6 +187,13 @@
 | 2026-10-23 | Claude（主会话 89da7fbc） | 裁定 R4（依 PRD §5.0）：只有 `TRANSFER_EXTERNAL` 与目标为他人的 `schedule_transfer` 计为对外转出，本人互转、申购、赎回不计入。写 W0 第四轮任务书（R1–R4），`--resume` 启动（日志 `workers/W0r4.*`），删卷命令继续屏蔽。R5、R6 写入波次 1 任务书。 |
 | 2026-10-23 | W0 worker（第四轮） | 提交 7271e27（15 文件 +323/−29）：Settings 增加 `jwt_public_key_path`，缺公钥拒绝启动；pyyaml 6.0.3 移入主依赖并重导 requirements 与 wheels；`action_kind` 找不到卡抛 `LookupError`；新增 `registry.outflow()`，只有 TRANSFER_EXTERNAL 与目标为他人的 schedule_transfer 计对外转出。未删卷。 |
 | 2026-10-23 | Claude（主会话 89da7fbc） | 复跑第四轮：lint 通过；test-gateway 64、test-gateway-db 17、全量 182 passed / 48 skipped；6 服务 healthy；卷未重建。W0 判定可开 PR。在 W0 分支提交 7a3b39a：PRD §7.2 补 `execution_jobs.status`（EXECUTING/UNKNOWN/EXECUTED/FAILED/CANCELLED）与 `workflow_events.status`（PENDING/COMMITTED/BLOCKED），§11.1 补 `JWT_PUBLIC_KEY_PATH`、`BANK_BACKEND_URL`；把 `feat/l2-gateway` 合入 W0 分支（bf0c1dc）。 |
+| 2026-10-23 | Claude（主会话 89da7fbc） | 扫描改动无 `.env` / 私钥 / 硬编码密钥后推送 `feat/l2-foundation`，开 PR https://github.com/SJeffZhang/Safebank/pull/2 并绑定本会话。CI（run 39949731463）：unit 通过，**p1-postgres 在 `make up` 失败**——gateway 容器退出：`cannot read JWT public key at /run/secrets/jwt-public.pem: Permission denied`。原因同 P1 CI 故障：`scripts/keys.py` 以 0600 写全部密钥，Linux 容器非 root 用户读不到只读挂载；macOS Docker Desktop 权限宽松故本地未复现。由 W0 第四轮新增的「启动加载公钥」引出。按流程不合并；`--resume` 让 W0 worker 定点修复（公钥改 0644、私钥保持 0600、加权限断言），日志 `workers/W0ci.*`。同时在会话 scratchpad `briefs/` 起草了波次 1 公共约定与 W1–W4 四份任务书，待 W0 合并后放入各 worktree。 |
+| 2026-10-23 | W0 worker（CI 修复） | 提交 b8836b5（2 文件 +30/−3）：`scripts/keys.py` 公钥以 0644 写入，已存在的公钥在 `make keys` 时修正为 0644，其余密钥保持 0600；`tests/test_keys.py` 断言权限。确认 agent 与 gateway 挂载同一公钥，无需改 compose。 |
+| 2026-10-23 | Claude（主会话 89da7fbc） | 复跑 lint、test-gateway 64、全量 183 passed / 48 skipped；推送 b8836b5 触发 PR #2 的 CI 重跑。本机 `.secrets/jwt-public.pem` 仍为 0600（未重跑 `make keys`），CI 每次新生成密钥不受影响。 |
+| 2026-10-23 | Claude（主会话 89da7fbc） | 应用户要求为 PR #2 开启 Auto-fix（CI 失败、合并冲突、评审意见会唤醒本会话；CI 通过不会唤醒）。重跑中：unit 2 项通过，p1-postgres 2 项进行中，暂无失败。 |
+| 2026-10-23 | Claude（主会话 89da7fbc） | 应用户要求为 PR #2 开 GitHub 自动合并（merge commit），失败：仓库未启用「Allow auto-merge」。改仓库设置需用户同意，已询问。 |
+| 2026-10-23 | Claude（主会话 89da7fbc） | 经用户同意，`gh api -X PATCH repos/SJeffZhang/Safebank -F allow_auto_merge=true` 打开仓库「Allow auto-merge」；随后为 PR #2 开自动合并仍被拒（PR 处于 unstable：`main` 无分支保护 / 必需检查，检查未跑完时 GitHub 不接受）。复查时 CI 已全绿（4 项通过，CLEAN，head b8836b5），按用户「CI 全绿即合并」规则直接合并 PR #2（merge commit e2e91db，2026-10-23T12:07:45Z），本地切到 main 并 fast-forward。**W0 基础骨架合入 main。** 用户要求做完此 PR 后停止工作：波次 1 未启动；四份任务书草稿（`wave1-common.md`、`W1-identity.md`、`W2-provenance.md`、`W3-decision.md`、`W4-execution.md`）已复制到 `docs/plans/briefs/`，未提交；恢复时随各 W 分支提交。W0 worktree `../Fintech2026-wt/W0-foundation` 与分支 `feat/l2-foundation`、`feat/l2-gateway` 保留未删。 |
+| 2026-10-23 | Claude（主会话 89da7fbc） | 用户决定把后续工作转到 Codex（只有 GitHub 仓库，在 Codex 内自开子 agent）。写交接文档 `docs/handoff/CODEX-HANDOFF.md`；更新本文件 §3（新增 L2 网关、前端两行，下一步改为波次 1）与 §5（新增「L2 进度」表）；与波次 1 公共约定及 W1–W4 四份任务书一起，经分支 `docs/codex-handoff` 开 PR https://github.com/SJeffZhang/Safebank/pull/3 。主会话就此停止工作。本机遗留：W0 worktree、P1/W0 的 Docker 栈仍在运行（用的是 W0 worktree 生成的 `.secrets`）。 |
 
 ## 5. 下一步待办（按顺序）
 
@@ -214,6 +223,21 @@ P0 准备阶段（决定后续一切）：
 | [x] | P1.6 转账与卡 | 本人/本行/他行、新收款人、限额/渠道/冻结/解冻/挂失补卡；全边界、复用引用、归属、补卡不清累计 |
 | [x] | P1.7 原子执行恢复 | prepare/execute/query/reconcile；attempt/deadline/证据/锁序/版本/幂等/墓碑；回滚、重试、丢包、迟到竞争 |
 | [x] | P1.8 L3集成验收 | 真实L3替换探针、服务凭证、核心5读/snapshot/执行/outbox；真实HTTP→DB、20并发/双向转账/冻结竞争、预演一致性、P0回归与CI |
+
+### L2 进度（Security Gateway 后端，计划 `docs/plans/L2-plan.md`）
+
+| 状态 | 组件 | 分支 / PR | 任务书 |
+|---|---|---|---|
+| [x] | W0 基础骨架 | `feat/l2-foundation` / PR #2 已合并 | `docs/plans/briefs/W0-*.md`，评审 `docs/reviews/L2-W0-architecture.md` |
+| [ ] | W1 身份、会话与原话 | `feat/l2-identity`（未建） | `docs/plans/briefs/W1-identity.md` |
+| [ ] | W2 读代理、参数来源与污点 | `feat/l2-provenance`（未建） | `docs/plans/briefs/W2-provenance.md` |
+| [ ] | W3 快照、预演、工作流、决策与 G4 | `feat/l2-decision`（未建） | `docs/plans/briefs/W3-decision.md` |
+| [ ] | W4 审批与执行 | `feat/l2-execution`（未建） | `docs/plans/briefs/W4-execution.md` |
+| [ ] | 0002_wave1 迁移（波次 1 各任务提出的表 / 字段需求，由协调者串行追加） | — | 汇总各 `docs/progress/W*.md` 的「待决」 |
+| [ ] | W5 定时授权、通知、审计接口、D 接口 | 波次 2，任务书未写 | L2-plan §3 W5 |
+| [ ] | W6 网关层安全验收（A8、A1/A2/A3/A5） | 波次 2，任务书未写 | L2-plan §3 W6 |
+
+波次 1 公共约定：`docs/plans/briefs/wave1-common.md`（四个任务都必须遵守）。
 
 门禁：每组件证据写 docs/acceptance/P1.N.md，并追加 §4。任何失败先修复；没有实际运行不得标通过。P1.8全部通过后冻结契约v1，再进入P2；不实现L2审批/OTP/业务Agent/UI/调度器。保留指定DeepSeek V4 Pro、beta、strict、关闭思考。数据库测试不使用SQLite；容器只走后台CLI，不启动Desktop窗口。保留 make test/lint/test-integration，新增P1并发和一致性目标。
 
