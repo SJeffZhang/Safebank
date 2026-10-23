@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 import yaml
+from safebank_bankcore import projected_shortfall
 from safebank_contracts.codes import Code
 from safebank_contracts.tools import READ_ARGS
 
@@ -87,9 +88,10 @@ class ProvenanceStage(Stage):
     name = "provenance"
 
     def __init__(self, *, reserve: Callable | None = None) -> None:
-        # Coordination seam only: production stays unavailable until bankcore
-        # provides the shared reserve algorithm. No duplicate arithmetic here.
-        self.reserve = reserve
+        # Production uses the sole bankcore pure function. ``None`` means "no
+        # test override", never an unavailable dependency: incomplete obligation
+        # data fails closed inside the projection itself.
+        self.reserve = projected_shortfall if reserve is None else reserve
 
     async def run(self, ctx: EvalContext) -> None:
         if ctx.plan_draft is None:
@@ -250,13 +252,7 @@ class ProvenanceStage(Stage):
                     resolver=Resolver.USER,
                 )
                 return "unknown"
-            if self.reserve is None:
-                raise GatewayError(
-                    Code.DEPENDENCY_UNAVAILABLE,
-                    503,
-                    message="shared bankcore reserve algorithm is unavailable",
-                )
-            expected = self.reserve(state, days=7).accounts[step.args.account_id].max_outflow_cents
+            expected = self._reserve_max_outflow(state, step.args.account_id)
             return "derived" if type(expected) is int and expected == value else "unknown"
         cancellations = {sid: s for sid, s in previous.items() if s.tool == "cancel_subscription"}
         selected = {s.args.instruction_id for s in cancellations.values()}
@@ -268,7 +264,9 @@ class ProvenanceStage(Stage):
             or leaf_steps != set(cancellations)
             or not leaf_steps
             or not leaf_reads
+            or len(cancellations) != len(selected)
             or len(subscriptions) != len(selected)
+            or not self._is_own_savings(state, step.args.to_account_id, ctx.customer_id)
             or any(
                 s.period != "MONTHLY"
                 or s.status != "ACTIVE"
@@ -285,6 +283,32 @@ class ProvenanceStage(Stage):
             return "unknown"
         expected = sum(s.amount_cents for s in subscriptions)
         return "derived" if type(value) is int and value == expected else "unknown"
+
+    def _reserve_max_outflow(self, state, account_id):
+        """Project with the sole bankcore function; incomplete data fails closed."""
+        try:
+            report = self.reserve(state, days=7)
+        except ValueError as exc:
+            raise GatewayError(
+                Code.DEPENDENCY_UNAVAILABLE,
+                503,
+                message="obligation reserve is unavailable or incomplete",
+            ) from exc
+        projection = report.accounts.get(account_id)
+        if projection is None:
+            raise GatewayError(
+                Code.DEPENDENCY_UNAVAILABLE,
+                503,
+                message="reserve target account is not present in the projection",
+            )
+        return projection.max_outflow_cents
+
+    @staticmethod
+    def _is_own_savings(state, account_id, customer_id):
+        account = state.accounts.get(account_id)
+        return (
+            account is not None and account.customer_id == customer_id and account.type == "SAVINGS"
+        )
 
     @staticmethod
     def _injection(ctx, records, state):
