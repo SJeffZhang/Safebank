@@ -75,11 +75,17 @@ env -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_API_KEY \
 - worker 只跑：单元测试、契约测试，以及 **W0 提供的 `make test-gateway-db`**（启动唯一命名、随机端口、无固定子网的临时 Postgres，测完销毁）。
 - 全栈 `make up` / `make test-integration` 只由指挥在集成分支上串行跑。
 
-### 2.5 合并与验收
+### 2.5 合并与验收（用户 2026-10-23 决定：逐组件 PR）
 
-1. worker 完成 → 指挥在其 worktree 里复跑退出条件命令，看 diff 规模与关键文件，必要时让同一 worker 续改（`claude -p --resume <session>`）。
-2. 通过 → 合入集成分支 `feat/l2-gateway`（`--no-ff`），跑全量门禁。
-3. 一个波次全部合入后，指挥推送集成分支、开 PR、等 CI；**合入 main 前请用户确认**。
+**每完成一个完整组件（一个 W 任务），测试通过就开 PR，逐步审核，CI 通过就合并入 `main`。** 不再攒到集成分支最后合。
+
+1. worker 完成 → 指挥在其 worktree 里复跑退出条件命令，看 diff 规模与关键文件；不合格让同一 worker 续改（`claude -p --resume <session>`）。
+2. 审核：指挥审查 + 只读评审 subagent 对照 PRD 审查（W0 另加架构评审关卡）；问题修完才进入下一步。
+3. 推送该组件分支，开 PR（base `main`）；PR 描述写明范围、退出命令结果、审核结论与遗留项。
+4. CI 全绿 → 指挥合并（merge commit），本地 `main` 同步；这是用户给出的长期授权，满足「审核通过 + CI 全绿」即合并，不再逐个询问。CI 失败则交回 worker 修复后重新走 1–4。
+5. 后续组件的 worktree 从最新 `main` 拉出；已开工的分支在合并前先同步 `main` 并复跑测试。
+
+原计划的集成分支 `feat/l2-gateway` 只承载计划文档，随 W0 的 PR 一并合入后不再使用。
 
 ## 3. 任务拆分与依赖
 
