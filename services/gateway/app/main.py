@@ -14,6 +14,7 @@ from typing import Any
 
 import uvicorn
 from fastapi import APIRouter, Depends, FastAPI
+from fastapi.routing import APIRoute
 from safebank_contracts.codes import Code
 
 from .api import approvals, auth, demo, execution, notify_audit, plans, sessions, tools
@@ -65,10 +66,24 @@ def _public_auth_router(demo_mounted: bool) -> APIRouter:
     shared filtered copy would leak G22 between apps built in different modes.
     Copying the route objects into a fresh ``APIRouter`` keeps every app's route
     table independent while reusing the same handlers (PRD §9.5 G22).
+
+    The G22 filter matches both method and path: only a GET-only route at
+    ``/auth/demo-customers`` is dropped. A non-``APIRoute`` entry (e.g. a nested
+    router) cannot be filtered safely and fails closed instead of leaning on the
+    coverage check.
     """
     router = APIRouter()
     for route in auth.router.routes:
-        if not demo_mounted and getattr(route, "path", "") == "/auth/demo-customers":
+        if not isinstance(route, APIRoute):
+            raise GatewayError(
+                Code.FORBIDDEN,
+                500,
+                message=(
+                    "auth.router contains a non-APIRoute entry "
+                    f"({type(route).__name__}); conditional G22 mount requires flat routes"
+                ),
+            )
+        if not demo_mounted and route.methods == {"GET"} and route.path == "/auth/demo-customers":
             continue
         router.routes.append(route)
     return router

@@ -61,3 +61,39 @@
 
 - 无阻塞待决。一个实现备注：`_public_auth_router` 只按顶层路由对象的 `path` 过滤；当前 `auth.router` 是平铺 `APIRoute`，若 W1 将来在 `auth.router` 内嵌套子 router，过滤需同步扩展。已按现状最保守实现并留此备注。
 - 独立只读评审、协调者亲自六退出与 actionlint、push/base main PR、精确 head 四 CI 全绿后 merge，均由协调者办理。
+
+## 修复轮 1（2026-10-24，独立评审 APPROVE 后修 2 条 P2）
+
+独立评审 `docs/reviews/L2-S1f-review.md` 结论 APPROVE，P0 0 / P1 0 / P2 2。按协调者要求修掉两条 P2，保持其余行为与范围不变。
+
+- **P2-1**：G22 过滤改为**同时匹配方法与路径**，只跳过 GET-only 且 path 为 `/auth/demo-customers` 的顶层路由（`route.methods == {"GET"}`），不再误删同路径其他方法。
+- **P2-2**：`_public_auth_router` 遇到非 `APIRoute` 顶层项（如嵌套 router）改为 **fail-closed**，直接 `raise GatewayError(Code.FORBIDDEN, 500, ...)` 拒绝构建，不再依赖 coverage 兜底。
+
+### 红 → 绿证据
+
+1. 先加两条红测（`tests/gateway/test_matrix.py`：`test_g22_filter_matches_method_and_path`、`test_g22_filter_fails_closed_on_non_api_route`），未改生产代码时：`.venv/bin/pytest tests/gateway/test_matrix.py -q` → **16 passed / 2 failed**，exit 1，0.78s。两条失败分别为「POST 同 path 被误删（out 为空）」与「非 APIRoute 未抛 GatewayError（DID NOT RAISE）」。
+2. 修 `main._public_auth_router` 后同命令 → **18 passed**，exit 0，0.65s。首次实现误从 `fastapi` 顶层导入 `APIRoute`（0.161.1 不导出，ImportError 收集失败），改从 `fastapi.routing` 导入后通过；该 ImportError 属实现笔误，非业务红。
+
+### 改动文件（本轮）
+
+- `services/gateway/app/main.py`：导入 `fastapi.routing.APIRoute`；`_public_auth_router` 增加非 `APIRoute` fail-closed 与 method+path 精确过滤。
+- `tests/gateway/test_matrix.py`：新增上述两条测试与 `pytest`/`APIRouter`/`Route`/`GatewayError`/`_public_auth_router` 导入。
+
+### 退出命令实际结果（全部实际运行）
+
+| 命令 | 结果 | 用时 |
+|---|---|---|
+| `make lint` | 首次 `ruff format --check` 报 main.py / test_matrix.py 需重排，`ruff format` 修正后重跑：`All checks passed!` + `175 files already formatted`，exit 0 | — |
+| `make test` | **408 passed / 302 skipped**，exit 0 | 5.51s |
+| `make test-gateway` | **173 passed / 254 skipped**，exit 0 | 4.58s |
+| `make test-gateway-db` | **17 passed**（真实临时 PG，零 skip），exit 0 | 4.80s |
+| `make test-shared-runtime` | **59 passed**（真实临时 PG + Linux 权限，零 skip），exit 0；CancelledError 为既有取消场景预期打印 | 11.17s |
+| `make contracts-check` | `PASS: contracts v1 match frozen schemas`，exit 0 | — |
+
+未运行 `make up`/`down`/`test-p1`/`test-integration`，未操作 Docker 数据卷，未读取 `.env`/`.secrets` 内容。
+
+### 待决（修复轮 1 后）
+
+- 原「待决」中的实现备注已由 P2-2 修复消除：非 `APIRoute` 顶层项现直接 fail-closed 拒绝构建，不再依赖 coverage 兜底。若 W1 将来确需在 `auth.router` 内嵌套子 router，需由协调者/owner 显式扩展此过滤器并同步本组件测试。
+- push/base main PR、精确 head 四 CI 全绿后 merge 仍由协调者办理。
+

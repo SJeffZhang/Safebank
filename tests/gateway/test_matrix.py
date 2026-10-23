@@ -1,11 +1,20 @@
 import asyncio
 
 import httpx
+import pytest
+from fastapi import APIRouter
+from starlette.routing import Route
 
 from services.gateway.app.api import auth
 from services.gateway.app.auth.matrix import coverage_errors, lookup
 from services.gateway.app.config import from_env
-from services.gateway.app.main import _routes, build_internal_app, build_public_app
+from services.gateway.app.errors import GatewayError
+from services.gateway.app.main import (
+    _public_auth_router,
+    _routes,
+    build_internal_app,
+    build_public_app,
+)
 
 G22 = ("GET", "/auth/demo-customers")
 
@@ -137,3 +146,20 @@ def test_g22_coverage_requires_presence_when_on():
 def test_g22_coverage_ok_when_on_and_present():
     app = build_public_app(_settings({"DEMO_MODE": "true", "EVAL_MODE": "false"}))
     assert coverage_errors(_routes(app), demo_mounted=True) == []
+
+
+def test_g22_filter_matches_method_and_path(monkeypatch):
+    router = APIRouter()
+    router.post("/auth/demo-customers")(lambda: None)
+    monkeypatch.setattr(auth, "router", router)
+    out = _public_auth_router(demo_mounted=False)
+    pairs = {(frozenset(r.methods), r.path) for r in out.routes}
+    assert (frozenset({"POST"}), "/auth/demo-customers") in pairs
+
+
+def test_g22_filter_fails_closed_on_non_api_route(monkeypatch):
+    router = APIRouter()
+    router.routes.append(Route("/auth/demo-customers", endpoint=lambda: None, methods=["GET"]))
+    monkeypatch.setattr(auth, "router", router)
+    with pytest.raises(GatewayError):
+        _public_auth_router(demo_mounted=False)
