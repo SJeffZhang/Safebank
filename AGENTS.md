@@ -44,7 +44,7 @@
 | 代码 | **P1 完成并逐组件验收**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116项单元+33项真实PG通过，契约v1已冻结。分支 feat/l3-core，P1代码已提交并推送私有仓库（功能提交7fd7a26）；CI权限修复70dcabe已推送，远端unit与p1-postgres均通过（run 39929405919） |
 | L2 网关 | **W0 基础骨架已合入 main**（PR #2，merge e2e91db，2026-10-23；经 4 轮架构评审 + 1 次 CI 修复）。波次1进行中：S1共享运行PR #4与S2预留PR #5已全绿合并；W1七缺陷与S1接线评审通过，W2来源链集成中；S1b迁移/状态PR #6已合并（94e40fe）；W4a客户锁PR #7已合并（d5ac9ed）；S1c PIN Settings接线已独立APPROVE并同步W4a、本地五退出通过，待协调最终复跑发布；W3/W4完整接线仍待依赖。计划 `docs/plans/L2-plan.md`，任务书 `docs/plans/briefs/` |
 | 前端 | **暂停**，用户亲自下令才开工（§2 第 13 条） |
-| 协调状态 | **用户于2026-10-23暂停开发，等待新agent接手**；现场见docs/handoff/CODEX-RESUME-2026-10-23.md；旧实现agent已停 |
+| 协调状态 | **用户于2026-10-23暂停开发，等待队友接手**；现场见docs/handoff/CODEX-RESUME-2026-10-23.md；旧实现agent已停 |
 | 下一步 | L2 波次 1：W1 身份与原话、W2 读代理与来源、W3 预演·工作流·决策、W4 审批与执行，按接口依赖与可用槽位分批并行，共享补缺逐组件串行（见 §5「L2 进度」）。2026-10-23 起工作转到 Codex，交接说明见 `docs/handoff/CODEX-HANDOFF.md` |
 
 ### 已确认事实
@@ -384,6 +384,8 @@
 | 2026-10-23 | Codex（协调者） | W1确认原有G22待决仍开放：main无条件挂auth.router，handler404不等于PRD要求的不注册，coverage_errors又总要求G22。安排S1f精确共享运行接线，任务S1f-demo-route-mount.md：仅每app条件装配与coverage条件校验，不改MATRIX权限条目/lookup/signature，不碰W1 active auth.py；优先在S3a实现前串行闭合W1此依赖。S3a具体字段提案已收，已派独立review_s3a_fields只读核对，未实施。 |
 
 | 2026-10-23 | Codex（协调者） | 用户明确暂停开发并要求接续prompt（非PRO）。已interrupt唯一仍运行的S1f，核HEAD58c4592/clean；其余子任务已结束。W1冻结1722995/clean，五退出1687为实现者自报，未亲自最终复跑/独立审；W2冻结8063f27/clean，协调者已亲跑五退出全0：lint196/gateway317+302skip（6.22s）/PG17（2.37s）/all552+350skip（6.47s）/W2 202零skip/xfail（7.15s），新memo尚未独立审。S3a提案F1 SUCCESS须instruction非空已仅改文档、未复审/实现/测试。仅保存临时提案/评审到repo、编写CODEX-RESUME-2026-10-23交接与更新总日志，不继续业务开发、测试、push/PR/merge。 |
+
+| 2026-10-23 | Codex（协调者） | 用户校正为交给队友，并明确要求先推送GitHub再给接续prompt。仅执行交接保存：核六工作树clean后原子push W1 1722995、W2 8063f27、W3 3bcbe8e、W4 3856a4c、S1f 58c4592、S3a 6815547，随后ls-remote逐项核对，未强推/未改main/未合并未验收功能。新增面向队友/异机的TEAMMATE-HANDOFF文档，保留旧暂停技术快照并标历史身份/发布状态。推送触发的CI未作为已通过宣称；开发仍暂停。 |
 
 ## 5. 下一步待办（按顺序）
 
