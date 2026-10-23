@@ -318,6 +318,10 @@
 
 | 2026-10-23 | Codex（协调者） | PR6精确head f5c5bc4的push/PR两套unit/p1-postgres四检查全部COMPLETED SUCCESS，执行gh pr merge 6 --merge --match-head-commit成功，merge94e40fec12dd4496b978ad11e094ab321737a2fc，15:00:34Z，已fetch。W4a e4023ed亲自六退出全0：lint161/all356+99skip/gateway127+51skip/PG17/locks63零skip（9.12s）/shared51零skip（9.56s）；新评审R1/R2/None-checkin全ADDRESSED且APPROVE，实际26PG通过，已要求同步94e40fe再复测后组件PR。W1 PIN helper a7570e6冻结，正在亲自五退出验证。 |
 
+| 2026-10-23 | Codex（协调者） | W4a最终05af2ec同步版已亲自六退出全绿，文档确认37db47d后push并创建PR #7（base main），已附加任务，CI尚待完成。W1 helper经19项独立评审后，以5cf394c验收/日志提交push feat/l2-identity检查点。共享S1c从main94e40fe在复用的共享worktree建立feat/l2-pin-settings，64fd9aa已冻结，协调者复跑与独立评审中；S3a另派只读架构准备，无并行共享实施。 |
+
+| 2026-10-23 | Codex（协调者） | 已在root同步main94e40fe后实际make up exit0（镜像元数据获取耗时55秒，非产品失败；既有secret preserved、44锁定wheels校验），真实Gateway持久库SELECT版本0002_wave1。两卷CreatedAt仍12:26:36Z未删重建。make test-integration exit0：网络/凭证/DB角色、HTTP→PG→prepare/transfer/outbox、L3进程重启与幂等回放全通过；这不是尚未实现G8的验收。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
@@ -359,7 +363,7 @@ P0 准备阶段（决定后续一切）：
 | [ ] | W2 读代理、参数来源与污点 | `feat/l2-provenance`（27a067a三项修复已评审通过，来源链集成中） | `docs/plans/briefs/W2-provenance.md` |
 | [ ] | W3 快照、预演、工作流、决策与 G4 | `feat/l2-decision`（检查点3bcbe8e，共享依赖阻塞） | `docs/plans/briefs/W3-decision.md` |
 | [ ] | W4 审批与执行 | `feat/l2-execution`（3856a4c部分检查点，G8待共享状态与真实依赖） | `docs/plans/briefs/W4-execution.md` |
-| [ ] | S1b / 0002_wave1 迁移与受控状态 | `feat/l2-wave1-state`（8b151bc六退出和独立评审通过，准备组件PR/CI） | `docs/plans/briefs/S1b-wave1-state.md` |
+| [x] | S1b / 0002_wave1 迁移与受控状态 | PR #6已合并94e40fe（四CI成功，真实现有库升级与集成通过） | `docs/plans/briefs/S1b-wave1-state.md` |
 | [ ] | W5 定时授权、通知、审计接口、D 接口 | 波次 2，任务书未写 | L2-plan §3 W5 |
 | [ ] | W6 网关层安全验收（A8、A1/A2/A3/A5） | 波次 2，任务书未写 | L2-plan §3 W6 |
 
