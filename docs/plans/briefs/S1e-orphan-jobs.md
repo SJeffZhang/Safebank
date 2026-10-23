@@ -9,7 +9,7 @@
 - mark_orphan_execution_unknown(conn,*,expected:OrphanExecutionIdentity,from_status:ExecutionJobStatus,reason:dict)->None。
 - archive_orphan_execution_terminal(conn,*,expected:OrphanExecutionIdentity,l3_status:COMMITTED|CANCELLED,result:ExecutionResult|None)->None，固定plan/job都已UNKNOWN。
 
-两接口均要求有效客户锁下同连接的调用者短事务，不内部commit/换连接/HTTP。按plan→job→claims锁，核customer/plan/origin/attempt/预期status；明确零evaluation，最终条件UPDATE仍带NOT EXISTS。claims完整CLAIMED且与去重scope_ids一致，旧空evidence/cap可保留，但绝不能作为重新提交许可。先全校验后写，条件失败409 STATE_CHANGED，程序非法输入/无事务ValueError。
+两接口均要求有效客户锁下同连接的调用者短事务，不内部commit/换连接/HTTP。按plan→job→claims锁，核customer/plan/origin/attempt/预期status；明确零evaluation，最终条件UPDATE仍带NOT EXISTS。claims完整CLAIMED且与scope_ids完整集合一致；scope_ids必须非空且不得重复，畸形旧行不自动修复，旧空evidence/cap可保留，但绝不能作为重新提交许可。先全校验后写，条件失败409 STATE_CHANGED，程序非法输入/无事务ValueError。
 
 mark仅接受EXECUTING/FENCING/PAUSED/UNKNOWN的live job，plan不得EXECUTED/FAILED；只持久UNKNOWN/reason/更新时间，提交字段原样保留，不消费claim，完整校验后UNKNOWN可幂等。archive仅UNKNOWN：COMMITTED必须匹配plan、真实EXECUTED提交结果/时间/成功步骤；CANCELLED允许None，否则只能FAILED且无成功步骤。原子plan/job终态后才消费claim，CANCELLED/SUPERSEDED原话保持原状态。HTTP真实性、响应身份和客户锁由W4调用者证明。
 

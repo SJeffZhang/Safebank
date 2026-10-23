@@ -1163,6 +1163,8 @@ Decision 见 §9.5；每个 finding 带 `code, step_id|null, effect, resolver, m
 
 同一attempt严格无循环；PAUSED后的新提交必须先重核原授权、实时撤销、claim、审批和快照，在短事务中CAS到`EXECUTING,n+1`并保存新evidence/deadline，然后才发HTTP；新deadline不得超过最初cap。所有HTTP回调绑定发送时attempt与evaluation revision，旧回调不得覆盖新任务。普通状态迁移仍禁止EXECUTING/UNKNOWN回决策态；专用迁移必须检查持久PAUSED、过期屏障、expected attempt、latest revision与归属。DENY/REPLAN、拒绝、取消、登出或过期不能释放已有job的claim；L3终态后消费，CANCELLED原话保持CANCELLED。改steps须新授权/新计划，不转移已占claim。G4同request_id始终回原Decision；G8已完成的409/202按request_id重放，重新确认后的下一次提交须新request_id，不能让旧请求触发新attempt。
 
+**无评估遗留任务兼容（S1e，待实现验收）**：若持久live job存在而该plan没有任何evaluation，只允许显式孤儿身份（customer、plan、origin、正整数attempt）的清理路径；不能伪造revision/evaluation，也不能恢复prepare/execute或绕过普通屏障。持有效客户锁，在同连接短事务内核对plan/job/全部CLAIMED及scope，检查零evaluation并在条件UPDATE中再次约束缺失；只可先持久UNKNOWN且保留全部提交字段和claim，再由W4取得真实L3 COMMITTED/CANCELLED终态后原子归档并消费claim。原话已CANCELLED/SUPERSEDED时保持原状态。预期CAS竞争应由调用者用savepoint隔离并重读，不能回滚本应生效的撤销；真实SQL/连接故障不得吞成成功。HTTP期间出现evaluation须重新取得普通身份并重新对账，不把旧孤儿回包套上最新revision。
+
 ### 7.11 定时、商户扣款与基金生命周期
 
 scheduler 只扫描到期事件并创建幂等 job，不自行决定是否授权。**事务外** S 回调 L2 `/internal/scheduled/authorize {event_id}`；L2 向 L3 拉取不可变事件定义、源客户、grant 指纹、到期时间，不能信任回调自报金额。L2 完成检查后主动调用 L3 执行该事件，scheduler 收到的是完成/拒绝结果；不颁发 `run_token`，不保留可脱离检查的执行许可。此为 D14 的具体调用顺序。

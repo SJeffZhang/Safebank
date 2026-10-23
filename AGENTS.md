@@ -346,6 +346,22 @@
 
 | 2026-10-23 | Codex（协调者） | PR #8精确head207f246的push/PR两套unit+p1-postgres四检查全部COMPLETED SUCCESS，按长期授权执行gh pr merge 8 --merge --match-head-commit成功；merge304adda5bde72437ccc6afb147cd4e96ee36a3be，15:25:28Z。fetch后同步main，仅AGENTS追加日志冲突，保留双方全部记录。W1非孤儿真实PG26通过但孤儿1条仍失败，未提交为完成；准备从新main启动S1e共享兼容，旧接口/revision不降级。首次普通沙箱gh联网失败，提升后成功，非CI失败或自动审批拒绝。 |
 
+| 2026-10-23 | Codex（协调者） | S1e独立worktree已同步main304adda及协调文档，基线c381a42，派原共享owner开始实施；W1保留孤儿失败检查点，先安全同步S1c并验两显式PIN文件/相反env的真实runtime+PG登录。已派独立只读review_s3a_design审完整任务书/ADR-009与PRD一致性。协调者补PRD7.10和ADR-008的孤儿兼容边界（待实现，不算验收）；一次ADR猜测路径不存在，改以rg确认真实文件后读取，未改业务。 |
+
+| 2026-10-23 | Codex（协调者） | 在已合并S1c/W4a的root代码实际串行make up、make test-integration全exit0（日志/private/tmp/sbg-main-s1c-up.log与integration.log）：真实网络/凭证/DB角色、HTTP→PG/snapshot/prepare/transfer/outbox及L3进程重启幂等回放通过。六服务healthy，safebank_pg-bank/pg-agent创建时间仍2026-10-23T12:26:36Z，未删重建卷。S1c验收补远端merge及部署证据；当前栈仍不含W1，不宣称其登录/执行完成。S1e scope重复按既有严格约束拒绝，不放宽畸形历史行。 |
+
+| 2026-10-23 | Codex（协调者） | S3a独立只读设计审核规范PASS/可实施性APPROVE，无阻塞，报告L2-S3a-obligations-design.md；据其具体建议补最新head/drift断言定点适配许可，历史迁移/数据升级/权限门禁保留；消除旧seed提案与后置裁定的重复表述，未实施或跑测试。复核W1原任务明确允许未实现谓词L3使用契约fake并登记，故不额外等待S3才交付W1 owner组件；真实锁/PIN/S1e与原五退出仍必过，完整生产谓词留集成待决。S1e任务补scope非空/不可重复的既有严格约束。 |
+
+| 2026-10-23 | Codex（协调者） | W1按授权以本地WIP4f88c63保留真实孤儿红测，再同步main304adda为e2e5095；自报两Settings/相反env的8项runtime PG通过，五退出尚有孤儿1失败及旧pytest同名模块冲突，非协调者验收。允许仅重命名W1旧test_identity避免与共享state测试同名，并精确追加checks.yml p1-postgres的make test-w1一行，使正式PR的W1 PG不被默认skip漏掉；其余CI结构不变，之后个人actionlint/五退出与独立审。 |
+
+| 2026-10-23 | Codex（协调者） | W1冻结65fc97d；协调者亲自actionlint exit0，并对该精确代码运行两个PIN/runtime真实PG测试文件：8 passed（3.22s，零skip）。证明Settings两文件/相反env/重启材料，不冒称完整W1通过；其自报完整五退出仍1617通过+孤儿1失败。另派只读map_backend_components核对剩余13读/7写的实际底层缺口与最小组件依赖，供后续任务书使用，不实施/不扩大当前共享串行范围。 |
+
+| 2026-10-23 | Codex（协调者） | 只读后端地图完成，已逐项实际核对底层models/load/apply/persist而非仅SUPPORTED，整理为docs/plans/L3-backend-components.md：剩余13读/7写，六职责组、schema owner与真实PG/HTTP/竞争门禁；当前未实施/未跑测试。R9典型金额/5%基准和recent_return_bp窗口/舍入在相应组件实施前需明确定义并同步PRD，未凭空当成现有规则。复用已完成且干净的共享runtime worktree预备feat/contracts-memo-code（main304adda），只建分支未派实现；S1e合并后再快进main并串行启动。 |
+
+| 2026-10-23 | Codex（协调者） | S1e冻结5842d44后，协调者亲自六退出全部exit0：lint174；all392 passed/300 skipped（4.32s）；gateway163/252skip（3.51s）；真实PG17（2.69s）；wave1-state229零skip（12.16s）；contracts v1 PASS。已生成完整BASEc381a42..5842d44 review package并派独立review_s1e_orphans对照任务/PRD审规格与质量，尚待结论，未push/开PR。新增scope畸形JSON曾真实红测TypeError，已受控409；不降级普通revision接口，W1真实撤销和W4 HTTP仍待联调。 |
+
+| 2026-10-23 | Codex（协调者） | S1e独立审规格FAIL/质量REQUEST_CHANGES，唯一P2：scope_ids=[]与零claims时空集合校验穿过mark/archive，真实tmpfs PG复现UNKNOWN→FAILED且ACTIVE原话被消费。协调者核state shape guard/_claims后确认任务非空约束遗漏，已派原owner修复轮1，只补孤儿非空guard与两入口409/完整snapshot不变回归，六退出和原reviewer定点复审后再发布。未push/开PR；当前5842d44测试绿不代表规格门禁已过。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
