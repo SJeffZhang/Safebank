@@ -8,7 +8,7 @@
 - main `services/gateway/app/state.py`：EXECUTING仅到UNKNOWN/EXECUTED/FAILED，注释认为重评仅发生在进入执行之前；execution_jobs无等待新审批状态。
 - main `services/bank-backend/app/execution.py`：prepare/execute/reconcile共用intent行锁；execute版本/clock/解析digest不一致抛STATE_CHANGED并回滚，intent仍PREPARED。query PREPARED不证明不存在迟到execute。
 - prepare允许PREPARED时attempt恰好+1并保存旧evidence；COMMITTED/CANCELLED不可复活；same attempt绑定旧evidence和deadline，deadline_cap不变。reconcile会写不可逆CANCELLED，无法继续同plan重批。
-- W4进度及实现：`/Users/jet/.codex/worktrees/safebank-w4-execution/WeBank/docs/progress/W4.md`；W3 repo：`/Users/jet/.codex/worktrees/safebank-w3-decision/WeBank/services/gateway/app/plans/repo.py`。
+- W4进度及实现：`/Users/jet/.codex/worktrees/safebank-w4-execution/WeBank/docs/progress/W4-execution.md`；W3 repo：`/Users/jet/.codex/worktrees/safebank-w3-decision/WeBank/services/gateway/app/evaluation/repo.py`。
 - 字段清单：`docs/plans/briefs/wave1-migration-requirements.md`。
 
 ## 请给出的结论

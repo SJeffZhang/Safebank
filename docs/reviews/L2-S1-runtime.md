@@ -43,4 +43,16 @@ compose gateway user:0:0，healthcheck直接python urllib；PID1 setuid不改变
 
 ## 修复轮1
 
-待原S1实现agent处理R1–R4及锁初始化接线，覆盖测试后由原评审定点复审；新增修改也纳入该轮。尚未通过。
+范围060e0f4..db8a00c；原review_s1逐项判定R1/R2/R3/R4与新增CI接线均ADDRESSED。真实Uvicorn、18并存PG连接、Linux精确healthcheck边界均有针对覆盖；协调者亲自五条退出全部通过（shared50零skip），另真实make up/test-integration通过。远端CI尚未启动。
+
+本轮新增N1导致最终仍FAIL/REQUEST_CHANGES，不能开PR。
+
+## N1 P2 与修复轮2
+
+main.py:162–171：关闭期间再次SIGINT使force_exit=True，安装版_wait_tasks_to_complete直接跳过请求等待，wait_for正常返回，未进入TimeoutError取消分支；随后无超时gather剩余tasks可无限等待，15秒grace无效。lifespan/共享资源也无法关闭。
+
+只读评审无网络探针：构造真实GatewayServer(uvicorn.Config(FastAPI(), timeout_graceful_shutdown=0.01))，servers=[]，lifespan有可观察shutdown_event，server_state.tasks加入asyncio.Event().wait()任务，force_exit=True；启动server.shutdown，等待0.1秒，实际输出`{'shutdown_done': False, 'request_cancelled': False, 'lifespan_closed': False}`。随后仅取消探针自己任务并等待shutdown清理，无DB/Docker/socket操作。
+
+协调者读真实main.py确认。原实现agent修复轮2：force_exit也取消并等待剩余请求，保持请求结束→lifespan→DB/L3顺序，补真实Uvicorn第二次中断回归与定向复跑；只修该问题及本次改动带来的破坏。
+
+第二轮定点复审db8a00c..0a95872：N1 ADDRESSED；规格PASS，质量APPROVE，无新增问题。main.py:169显式取消force_exit剩余请求后仍等待清理；测试用真实handle_exit(SIGINT)两次及FastAPI lifespan断言正确释放顺序。评审亲自定向回归1 passed（0.21s），diff --check通过。R1–R4、CI接线及N1全部关闭，可进入PR/远端CI门禁。

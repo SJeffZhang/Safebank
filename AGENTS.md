@@ -239,6 +239,16 @@
 
 | 2026-10-23 | Codex（协调者） | W4检查点3856a4c（实现8abc82b）亲自复跑五条命令：lint151文件通过；真实PG17 passed（4.76s）；W4 26 passed零skip（8.47s）；gateway 1 failed/81 passed/8 skipped（0.89s）；全量1 failed/200 passed/56 skipped（1.67s）。两失败均test_create_for_evaluation_is_not_implemented旧占位断言，当前缺依赖正确抛503而非NotImplementedError；需共享接线组件更新测试。G8/G5/UNKNOWN未实现，未开PR。已派独立review_execution_state审查迟到请求与重新审批协议，W4暂停实施。 |
 
+| 2026-10-23 | Codex（协调者） | 协调文档本地提交3d8d6c4。S1修复轮1亲自复跑HEAD db8a00c（代码80fc3bf）：lint156；gateway108 passed/6 skipped（3.54s）；PG17 passed（2.59s）；全量227 passed/54 skipped（4.25s）；shared50 passed零skip（9.01s），含真实socket、18个同时PG连接、Linux权限/healthcheck；超时案例预期打印CancelledError但测试通过。已派原review_s1定点复审060e0f4..db8a00c。S1全栈准备复用.secrets symlink，起初.wheels也symlink导致Docker COPY上下文缺文件、make up exit2（未变更运行栈）；只移除该临时链接并复制44个既有wheel后重试。两个持久卷创建时间均2026-10-23T12:26:36Z，未删重建。架构任务参考路径经评审纠正为W4-execution.md、evaluation/repo.py。 |
+
+| 2026-10-23 | Codex（协调者） | S1在db8a00c完成实际make up（exit0，既有dataset preserved，六服务healthy）；make test-integration exit0，真实网络/凭证/DB角色隔离、HTTP→PG→prepare/transfer/outbox、L3进程重启与幂等回放通过；两持久卷创建时间仍2026-10-23T12:26:36Z。S1定点复审初报新P2：force_exit使Uvicorn等待提前返回，随后无cancel的gather可能无限等待；协调者读main.py确认，待完整报告后原agent修复轮2，未开PR。 |
+
+| 2026-10-23 | Codex（协调者） | fetch核实远端main仍8555bf0。按已批准S2任务书预建并附加safebank-reserve worktree、feat/l3-reserve分支，离线安装环境；尚未派实现或改代码，启动前再同步最新main，共享实施仍逐组件串行。阅读现有ScheduledView有anchor_day/weekday/time_of_day、SubscriptionView只有next_due_at，S2不得猜测缺失月度锚点或把未加载生产义务当空。 |
+
+| 2026-10-23 | Codex（协调者） | 补附加已核查的PR #3到当前任务。S1发现.secrets/目录忽略不覆盖本地symlink，补.git/info/exclude的/.secrets（不读取/提交秘密）；check-ignore确认秘密与wheels均忽略。修复轮2 HEAD0a95872（业务e99406d）亲自五退出全部exit0：lint156；gateway109/6skip（3.49s）；PG17（2.01s）；all228/54skip（3.92s）；shared51零skip（7.87s）。记录docs/acceptance/L2-S1-runtime.md，原review_s1定点复审中；finishing-a-development-branch流程按用户已有push/PR/merge授权执行，不重复询问。 |
+
+| 2026-10-23 | Codex（协调者） | S1修复轮2独立定点复审PASS/APPROVE：N1 ADDRESSED，无新增问题；原评审亲自定向回归1 passed（0.21s），R1–R4/CI/N1全部关闭。准备将纯协调文档提交28a0c21、3d8d6c4及后续记录按顺序纳入S1分支（fixture已存在不重复cherry-pick），然后推送base main的组件PR；远端CI尚未运行，不预称合并。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
