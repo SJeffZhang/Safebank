@@ -66,7 +66,7 @@ def _key_pair(settings: Settings) -> tuple[bytes, bytes]:
     return private, public
 
 
-def _configured_pin_hashes() -> dict[str, str] | None:
+def _configured_pin_hashes(settings: Settings) -> dict[str, str] | None:
     # W1 owns PIN parsing/hashing. Before that component is integrated the
     # resource remains absent; no successful substitute or public default PIN.
     name = "services.gateway.app.auth.pin"
@@ -76,7 +76,10 @@ def _configured_pin_hashes() -> dict[str, str] | None:
         if exc.name == name:
             return None
         raise
-    return module.configured_hashes()
+    loader = getattr(module, "configured_hashes_from_file", None)
+    if not callable(loader):
+        raise _unavailable("PIN file loader unavailable")
+    return loader(settings.demo_pins_file)
 
 
 @dataclass(frozen=True)
@@ -117,7 +120,7 @@ async def gateway_runtime(
     if now.tzinfo is None or now.utcoffset() is None:
         raise _unavailable("gateway wall clock must be timezone-aware")
     private, public = _key_pair(settings)
-    hashes = _configured_pin_hashes() if pin_hashes is None else pin_hashes
+    hashes = _configured_pin_hashes(settings) if pin_hashes is None else pin_hashes
     async with AsyncExitStack() as stack:
         # One lock connection and one short-transaction slot per concurrent
         # executor, plus two slots for other traffic; PRD floor is eighteen.
