@@ -380,6 +380,8 @@
 
 | 2026-10-23 | Codex（协调者） | W2独立分支c945cd8同步最新main44ded2f为50c1bdb，仅AGENTS追加日志冲突，核全为日志行后保留双方，Makefile自动合并；未改W2业务。派w2_memo_integration接续已评审检查点，先落实已合S1d的memo/alias黄级TODO、移除严格xfail并补来源不放宽边界；保留W1/S3真实接线待决，不作为完整W2交付。W1继续自己的deferred撤销实现，S3a仅只读字段设计，各自所有权不冲突。 |
 
+| 2026-10-23 | Codex（协调者） | W1确认原有G22待决仍开放：main无条件挂auth.router，handler404不等于PRD要求的不注册，coverage_errors又总要求G22。安排S1f精确共享运行接线，任务S1f-demo-route-mount.md：仅每app条件装配与coverage条件校验，不改MATRIX权限条目/lookup/signature，不碰W1 active auth.py；优先在S3a实现前串行闭合W1此依赖。S3a具体字段提案已收，已派独立review_s3a_fields只读核对，未实施。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
