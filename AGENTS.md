@@ -42,11 +42,11 @@
 | 调研 | 开源项目元数据和 DeepSeek 官方信息已核实；评分/提交已从官网公开 JS 核实（docs/acceptance/official-v1.md）；竞品「明鉴」未核实 |
 | PRD | **`PRD.md` = v2.1 定稿**（§0–§16；三轮多 agent 审核 + 两次修订复核，决议 D1–D47 见 §0.5；执行屏障增量约定见ADR-008）。v1.2 与作废的 v2.0 草稿在 `docs/archive/`；审核报告在 `docs/reviews/` |
 | 代码 | **P1 完成并逐组件验收**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116项单元+33项真实PG通过，契约v1已冻结。分支 feat/l3-core，P1代码已提交并推送私有仓库（功能提交7fd7a26）；CI权限修复70dcabe已推送，远端unit与p1-postgres均通过（run 39929405919） |
-| L2 网关 | main `eea02a6`；S3a PR #15（3508bd1）、W2a PR #16（53b7573）均亲验/独审/精确head四CI成功后已合。真实完整义务快照可用；W2b default reserve生产接线待实施；W3/W4仍为早期检查点。 |
-| L1 Agent | C1a PR #17已精确head四CI成功合并（eea02a6），图骨架/状态/身份绑定22项通过。仅内存saver与fake端口；下一组件C1b DeepSeek strict适配，C1c–e未实施。 |
+| L2 网关 | main `eea02a6`；S3a PR #15（3508bd1）、W2a PR #16（53b7573）均亲验/独审/精确head四CI成功后已合。真实完整义务快照可用；W2b 4c84019亲验246真PG/HTTP且原独审APPROVE，准备组件PR；W3/W4仍为早期检查点。 |
+| L1 Agent | C1a PR #17已精确head四CI成功合并（eea02a6），图骨架/状态/身份绑定22项通过。仅内存saver与fake端口；C1b eb88414离线49项/独审通过但真实live transfer来源错误，原worker修复r2中，C1c–e未实施。 |
 | 前端 | **暂停**，用户亲自下令才开工（§2 第 13 条） |
-| 协调状态 | **2026-10-24 Codex 同机接手**：实现与评审均由本机 Claude Code CLI（DeepSeek V4 Pro）无头 worker 完成，协调者只复跑、推送、开 PR、合并、记日志。接续计划 `docs/plans/L2-resume-2026-10-24.md`。本机 worktree 在 `../Fintech2026-wt/<名>`，`.secrets` 软链到与本机数据卷匹配的 W0 worktree 密钥 |
-| 下一步 | 合并main跨组件回归 → W2b真实S3预留接线，与C1b DeepSeek strict适配并行；W2后按W3a→W4b→W3b→W4c；前端/BFF继续暂停。 |
+| 协调状态 | **2026-10-24 Codex 同机接手**：实现与评审均由本机 Claude Code CLI（DeepSeek V4 Pro）无头 worker 完成，协调者只复跑、推送、开 PR、合并、记日志。接续计划 `docs/plans/L2-resume-2026-10-24.md`。本机 worktree 在 `../Fintech2026-wt/<名>`，`.secrets` 软链到与本机数据卷匹配的 W0 worktree 密钥；本会话已启用每5分钟worker定时跟进（safebank-worker），用户2026-10-24睡前新授权全自动推进P2→P3；跟进每次可有界核对待发PR的CI。 |
+| 下一步 | W2b/C1b均原worker修复独审发现中 → 亲验/原独审复核/PR/四CI；W2b合后按W3a→W4b→W3b→W4c，C1b合后C1c/d/e；按P2-P3自主门禁清单真闭合才进入P3。 |
 
 ### 已确认事实
 
@@ -473,6 +473,37 @@
 | 2026-10-24 | Codex（协调者） | 已细化C1b-deepseek与W2b-reserve-integration任务书（尚未派发），固定最小组件/红绿/真实与fake边界。核查现有CI p1-postgres尚未跑test-w2；W2b明确授权只追加该一步及test-w2的OBLIGATIONS_DB_TESTS=1，确保后续真PG专项在CI运行，不改job名或放松门禁。读取不存在的tests/test_deepseek.py、contracts/llm.py与tests/conftest.py已确认非实际路径，后续沿用现有schema.py/probe与根conftest，不新造替代模块。合并main回归运行中。 |
 
 | 2026-10-24 | Codex（协调者） | 合并main eea02a6在干净main-baseline首次跨组件九退出全部exit0：setup78依赖、lint243、test2131/529skip（10.35s）、contracts PASS、W2 234零skip（9.01s）、obligations30零skip（4.85s，既有FK环warning）、gateway-db17（2.09s）、agent22零skip（0.22s）、actionlint。日志/private/tmp/sbg-main-15-17-regression-20261024；这是组合后真实PG专项，不称未跑的完整demo或新全栈通过。准备从此main派W2b与C1b独立组件，沿用现有W2/C1 worktree和原impl会话，无业务共享文件冲突。 |
+
+| 2026-10-24 | Codex（协调者） | 后续纯协调文档提交ff244bb与新分支：W2 worktree codex/w2b-reserve-integration、C1 worktree codex/c1b-deepseek均从main eea02a6加同一文档提交开始，make setup各78包通过。已后台续接原impl：W2b df4eab3b、C1b d51bd430；使用清Anthropic变量的ds-worker.sh，日志.ds-logs/W2b-reserve与C1b-deepseek。未采信未结束worker的实现/测试；W2b与C1b仅派发，待本地冻结后亲验/独审。 |
+
+| 2026-10-24 | Codex（协调者） | 已核两新worker实际续接日志：W2在03:44:02、C1在03:44:00（北京时间）产生deepseek-v4-pro assistant消息，非仅launcher空启动。两者尚未交付，不记实现通过；本轮无CI定时轮询。 |
+
+| 2026-10-24 | Codex（协调者） | 用户明确要求“设置定时跟进”；先查本机automations未有同项目/本会话重复项，再用Codex app创建本会话heartbeat safebank-worker，ACTIVE、每5分钟检查当前DeepSeek实现/评审结果。有新完整冻结成果则按长期授权亲验→DeepSeek独审→原worker修复→复验→PR；无可处理变化保持安静。CI仍不定时查询/轮询，待用户告知再核当前head四检查；前端/BFF暂停、业务卷/唯一协调/文件所有权等约束保留。目标完成或用户暂停/取消时停用。未把定时跟进设置成功写成worker组件已验收。 |
+
+| 2026-10-24 | Codex（协调者） | 用户睡前明确要求自主全自动推进，P2真正闭合后进入P3。已更新heartbeat safebank-worker为“SafeBank P2→P3 自主推进”，保留5分钟与原thread，替代旧“等待用户告知CI”限制：每次跟进一次有界核CI，当前head push/PR四项SUCCESS才merge，不密集watch。前端/BFF暂停与其他硬约束不变；P2不是L2子组件做完，必须按PRD13真实三层黄级转账与DB状态/安全边界独立验收。读取superpowers使用/接收评审/请求评审/完成前验证技能，用户指定DS实现评审优先于技能默认自有subagent流程。 |
+| 2026-10-24 | Codex（协调者） | W2b 252455c、C1b 07382a0原impl返回且工作区干净，尚未采信自报通过。已续接原独立reviewer：R-W2b-reserve(08b9fe3a)、R-C1b-deepseek(89c4f3b6)，仅写各自报告；协调者开始亲验退出与C1b小样本live。 |
+
+| 2026-10-24 | Codex（协调者） | C1b 07382a0亲验离线五退出全exit0：lint256、agent36零skip、test2145/529skip（10.77s）、contracts PASS、actionlint。独立live入口先因缺PYTHONPATH退出，补路径后因worktree无.env退出，两次均未发API；现由协调者仅把主项目已配置key传入子进程（不打印/落盘key）重跑8请求预算live。独审仍进行，不能记live通过或发布。W2b退出亲跑进行中。 |
+
+| 2026-10-24 | Codex（协调者） | W2b精确252455c本机八退出全部exit0：lint246、gateway1888/470skip（9.02s）、gateway-db17（3.52s）、test2139/530skip（8.96s）、W2真实PG/HTTP243零skip/xfail（13.69s）、obligations30零skip（4.76s，既有FK环warning）、contracts PASS、actionlint；日志/private/tmp/sbg-codex-w2b-20261024，独审仍进行，未发布。 |
+| 2026-10-24 | Codex（协调者） | C1b真实live证据已落docs/acceptance/c1b-deepseek-live/results.jsonl：理解2成功、计划3次均ValidationError（每次含一次重试）、gather因总8请求预算耗尽RuntimeError。live入口捕获异常仍exit0，这是验收缺口；不把进程成功当live通过。尚无计划成功样本，不发布；原独审仍进行。后续修复需明确失败exit、合成实体/原话ref及read数据充分上下文、失败校验摘要、保留硬请求预算和真实usage。 |
+
+| 2026-10-24 | Codex（协调者） | 将PRD既有P2/P3要求映射到docs/plans/P2-P3-autonomous-2026-10-24.md：P2须真L1/L2/L3黄级转账、确认前无写/确认后一次记账、凭证/双网/PG恢复/失败路由/输出/ADR004及暂停ADR005证据与独审，不能把W2结束称P2完成。后续按已有W3a→W4b→W3b→W4c与C1b→c→d→e逐组件，满足后才启动P3 A1/A2/A3状态验收。用户自主授权覆盖计划继续执行，不因技能默认计划确认再打断用户。 |
+
+| 2026-10-24 | Codex（协调者） | C1b独审30轮REQUEST_CHANGES：P1 live失败仍exit0；P2 strict bool宽松、usage缺失、invalid_tool_calls静默、plan无read payload/实体、gather上限无信号、live最坏11请求超预算8。协调者以实际失败证据核实，续接原impl C1b-fix-r1逐项修；批准最小ReadRecord本地数据扩展及StrictBool，保留图guard/共享接口冻结，不允许把真实生成所需read/原话ref信息缺失推到C1c。旧失败证据保留，worker不擅跑API；修完协调者再亲验live/原独审复审。 |
+
+| 2026-10-24 | Codex（协调者） | W2b独审22轮REQUEST_CHANGES：P1参数循环中新增DENY仍可被后续derived缺义务503遮盖，入口guard不足；P2取消月费派生只用合成SubscriptionView，缺真实S3来源贯通。已核代码路径并续接原impl W2b-fix-r1：先多步混合红测再最小guard，保留无DENY时503；追加实际bank PG+L3 HTTP snapshot→派生取消月费证明来源范围，不声称取消写已实现。原reviewer非DB186passed不替代协调者真实专项；修后再亲验/独审。 |
+
+| 2026-10-24 | Codex（协调者） | 为后续自动接续准备W3a-stages任务书，明确从最新main只实现阶段、旧3bcbe8e仅参考，不整体覆盖main；完整G4/evaluation/replay仍归W3b、build_view/approval归W4b，不用占位替身声称真G4。W3a需W2b合入才派，现未开工。当前两原impl修复任务已启动，独审报告保留，不并行写同一worktree。 |
+
+| 2026-10-24 | Codex（协调者） | heartbeat接收W2b修复4c84019、C1b修复eb88414：两原impl进程已结束，仅留独审报告/旧live证据未跟踪，业务提交冻结。已续接原reviewer R-W2b-fix-r1、R-C1b-fix-r1定点复审；协调者重新亲验全部退出及C1b预算内live，不采信worker自报通过，不提前开PR。 |
+
+| 2026-10-24 | Codex（协调者） | C1b eb88414复验离线五退出全exit0：lint258、agent49零skip/xfail、test2158/529skip（8.96s）、contracts PASS、actionlint。live真实7请求exit1，证据追加保留：理解2成功，freeze/limits生成及gather成功，但transfer校验失败（steps[0].arg_sources[2].source.kind=none非Source合法标签）；因此仍未通过。limits结果含hint来源但该live没有真实hint，语义检查目前只核工具/值，后续需核source ref是否真实可见，不能把结构可校验冒称来源正确。R-C1b-fix-r1仍复核中，等原独审结束后续原impl修复，禁止并行写同一worktree。日志/private/tmp/sbg-codex-c1b-r1-20261024；未发布。 |
+
+| 2026-10-24 | Codex（协调者） | W2b修复4c84019亲验八退出全exit0：lint246、gateway1890/471skip（7.95s）、gateway-db17（2.07s）、test2141/531skip（8.24s）、W2真实PG/HTTP246零skip/xfail（10.84s）、义务30零skip（4.64s，既有FK环warning）、contracts PASS、actionlint。日志/private/tmp/sbg-codex-w2b-r1-20261024；原独审仍在复核，未发布。下一次跟进先取R-W2b-fix-r1/R-C1b-fix-r1完整结果；C1b当前live仍失败，必须在reviewer结束后续原impl修，不把离线绿或部分live成功作为组件完成。 |
+
+| 2026-10-24 | Codex（协调者） | W2b原reviewer R-W2b-fix-r1最终APPROVE，10定点/188非DB通过，P1循环DENY与P2真取消费用来源链已核关闭。临时库TRUNCATE裁定：仅S3a fixture新建独立tmpfs测试库、session复用内重置，符合“不碰长期业务数据”与任务书明确允许的临时测试schema重置，不要求无意义另造生产库。结合协调者八退出246真PG/HTTP，准备逐组件发布。 |
+| 2026-10-24 | Codex（协调者） | C1b原复审49项APPROVE、P0/P1关闭，但协调者实际live eb88414 transfer仍Source.kind=none错误且limits引用无真实hint，验收优先于离线独审。续接原impl C1b-fix-r2：有效来源引用/重试字段摘要、live来源语义核验、预算8保持；顺手关闭plan untrusted说明/strip_wall兜底/RFC6901 pointer三个P2。旧失败evidence保留，未发布、不交C1c掩盖。 |
 
 ## 5. 下一步待办（按顺序）
 
