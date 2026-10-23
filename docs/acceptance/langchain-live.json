@@ -1,0 +1,90 @@
+{
+  "adapter": "langchain-deepseek==1.1.1",
+  "tool_calls": [
+    {
+      "name": "submit_action_plan",
+      "args": {
+        "intents": [
+          "transfer"
+        ],
+        "steps": [
+          {
+            "step_id": "s1",
+            "tool": "transfer",
+            "args": {
+              "from_account_id": "acc_zs_chk",
+              "payee_id": {
+                "kind": "id",
+                "id": "pye_zs_ww"
+              },
+              "to_account_id": {
+                "kind": "none"
+              },
+              "amount_cents": 80000,
+              "memo": "__NULL__"
+            },
+            "depends_on": [],
+            "arg_sources": [
+              {
+                "param": "from_account_id",
+                "source": {
+                  "kind": "read",
+                  "ref": "src_test",
+                  "pointer": "/from_account_id"
+                }
+              },
+              {
+                "param": "payee_id",
+                "source": {
+                  "kind": "read",
+                  "ref": "src_test",
+                  "pointer": "/payee_id"
+                }
+              },
+              {
+                "param": "to_account_id",
+                "source": {
+                  "kind": "read",
+                  "ref": "src_test",
+                  "pointer": "/to_account_id"
+                }
+              },
+              {
+                "param": "amount_cents",
+                "source": {
+                  "kind": "utterance",
+                  "ref": "utt_test",
+                  "span": [
+                    6,
+                    9
+                  ]
+                }
+              },
+              {
+                "param": "memo",
+                "source": {
+                  "kind": "read",
+                  "ref": "src_test",
+                  "pointer": "/memo"
+                }
+              }
+            ]
+          }
+        ],
+        "rationale": "用户要求给王五转800元，使用可信账户acc_zs_chk作为付款账户，收款人pye_zs_ww，金额800元即80000分，一步transfer完成，不新增收款人。"
+      },
+      "id": "call_00_HFvt0whoKG82b02kFtRQ9072",
+      "type": "tool_call"
+    }
+  ],
+  "usage": {
+    "input_tokens": 10609,
+    "output_tokens": 377,
+    "total_tokens": 10986,
+    "input_token_details": {
+      "cache_read": 0
+    },
+    "output_token_details": {}
+  },
+  "elapsed_ms": 5702
+}

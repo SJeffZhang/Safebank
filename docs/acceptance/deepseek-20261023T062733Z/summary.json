@@ -1,0 +1,21 @@
+{
+  "E1-understand": {
+    "count": 1,
+    "valid": 1,
+    "http_400": 0,
+    "p50_ms": 2067,
+    "p95_ms": 2067,
+    "usage": [
+      {
+        "prompt_tokens": 476,
+        "completion_tokens": 175,
+        "total_tokens": 651,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 476
+      }
+    ]
+  }
+}

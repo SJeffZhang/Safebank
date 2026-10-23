@@ -1,0 +1,174 @@
+name: safebank
+services:
+  frontend:
+    build: .
+    image: safebank-p0:local
+    environment:
+      SERVICE_NAME: frontend
+      PORT: '3000'
+    env_file:
+    - .secrets/frontend.env
+    networks:
+      agent-net:
+        ipv4_address: 172.29.10.10
+    read_only: true
+    tmpfs:
+    - /tmp
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    ports:
+    - 127.0.0.1:3000:3000
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request,os; r=urllib.request.Request('http://127.0.0.1:3000/health');
+        urllib.request.urlopen(r,timeout=3)
+      interval: 5s
+      timeout: 4s
+      retries: 10
+  agent:
+    build: .
+    image: safebank-p0:local
+    environment:
+      SERVICE_NAME: agent
+      PORT: '8100'
+    env_file:
+    - .secrets/agent.env
+    networks:
+      agent-net:
+        ipv4_address: 172.29.10.11
+    read_only: true
+    tmpfs:
+    - /tmp
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    volumes:
+    - ./.secrets/jwt-public.pem:/run/secrets/jwt-public.pem:ro
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request,os; r=urllib.request.Request('http://127.0.0.1:8100/health');
+        urllib.request.urlopen(r,timeout=3)
+      interval: 5s
+      timeout: 4s
+      retries: 10
+  gateway:
+    build: .
+    image: safebank-p0:local
+    environment:
+      SERVICE_NAME: gateway
+      PORT: '8200'
+      GATEWAY_PUBLIC_BIND: 172.29.10.12
+      GATEWAY_INTERNAL_BIND: 172.29.20.12
+    env_file:
+    - .secrets/gateway.env
+    networks:
+      agent-net:
+        ipv4_address: 172.29.10.12
+      bank-net:
+        ipv4_address: 172.29.20.12
+    read_only: true
+    tmpfs:
+    - /tmp
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    volumes:
+    - ./.secrets/jwt-private.pem:/run/secrets/jwt-private.pem:ro
+    - ./.secrets/jwt-public.pem:/run/secrets/jwt-public.pem:ro
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request,os; r=urllib.request.Request('http://172.29.10.12:8200/health');
+        urllib.request.urlopen(r,timeout=3)
+      interval: 5s
+      timeout: 4s
+      retries: 10
+  bank-backend:
+    build: .
+    image: safebank-p0:local
+    environment:
+      SERVICE_NAME: bank-backend
+      PORT: '8300'
+    env_file:
+    - .secrets/bank.env
+    networks:
+      bank-net:
+        ipv4_address: 172.29.20.11
+    read_only: true
+    tmpfs:
+    - /tmp
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request,os; r=urllib.request.Request('http://127.0.0.1:8300/health');
+        r.add_header('X-Service-Token',os.environ['GATEWAY_SERVICE_TOKEN']); urllib.request.urlopen(r,timeout=3)
+      interval: 5s
+      timeout: 4s
+      retries: 10
+  postgres-bank:
+    image: postgres:16.10-alpine@sha256:029660641a0cfc575b14f336ba448fb8a75fd595d42e1fa316b9fb4378742297
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/password
+    volumes:
+    - pg-bank:/var/lib/postgresql/data
+    - ./.secrets/postgres-bank-password:/run/secrets/password:ro
+    - ./.secrets/init-bank.sql:/docker-entrypoint-initdb.d/01-roles.sql:ro
+    networks:
+      bank-net:
+        ipv4_address: 172.29.20.20
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U postgres
+      interval: 5s
+      timeout: 4s
+      retries: 10
+  postgres-agent:
+    image: postgres:16.10-alpine@sha256:029660641a0cfc575b14f336ba448fb8a75fd595d42e1fa316b9fb4378742297
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/password
+    volumes:
+    - pg-agent:/var/lib/postgresql/data
+    - ./.secrets/postgres-agent-password:/run/secrets/password:ro
+    - ./.secrets/init-agent.sql:/docker-entrypoint-initdb.d/01-roles.sql:ro
+    networks:
+      agent-net:
+        ipv4_address: 172.29.10.20
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U postgres
+      interval: 5s
+      timeout: 4s
+      retries: 10
+networks:
+  agent-net:
+    ipam:
+      config:
+      - subnet: 172.29.10.0/24
+  bank-net:
+    internal: true
+    ipam:
+      config:
+      - subnet: 172.29.20.0/24
+volumes:
+  pg-bank: {}
+  pg-agent: {}

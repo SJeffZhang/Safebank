@@ -1,0 +1,28 @@
+[project]
+name = "safebank-gateway"
+version = "0.1.0"
+description = "SafeBank Gateway: isolated banking agent sandbox"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "fastapi==0.161.1",
+  "pydantic==2.14.1",
+  "uvicorn==0.54.0",
+  "httpx[socks]==0.28.1",
+  "cryptography==50.0.2",
+]
+[dependency-groups]
+dev = ["pytest==9.1.1", "ruff==0.14.0", "pyyaml==6.0.3", "jsonschema==4.25.1"]
+poc = [
+    "langchain-deepseek==1.1.1",
+    "langgraph==1.2.16",
+    "langgraph-checkpoint-postgres==3.2.0",
+    "psycopg[binary,pool]==3.3.3",
+]
+[tool.pytest.ini_options]
+pythonpath = [".", "packages/contracts/src", "packages/bankcore/src"]
+testpaths = ["tests"]
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
