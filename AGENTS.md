@@ -360,6 +360,8 @@
 
 | 2026-10-23 | Codex（协调者） | S1e冻结5842d44后，协调者亲自六退出全部exit0：lint174；all392 passed/300 skipped（4.32s）；gateway163/252skip（3.51s）；真实PG17（2.69s）；wave1-state229零skip（12.16s）；contracts v1 PASS。已生成完整BASEc381a42..5842d44 review package并派独立review_s1e_orphans对照任务/PRD审规格与质量，尚待结论，未push/开PR。新增scope畸形JSON曾真实红测TypeError，已受控409；不降级普通revision接口，W1真实撤销和W4 HTTP仍待联调。 |
 
+| 2026-10-23 | Codex（协调者） | S1e独立审规格FAIL/质量REQUEST_CHANGES，唯一P2：scope_ids=[]与零claims时空集合校验穿过mark/archive，真实tmpfs PG复现UNKNOWN→FAILED且ACTIVE原话被消费。协调者核state shape guard/_claims后确认任务非空约束遗漏，已派原owner修复轮1，只补孤儿非空guard与两入口409/完整snapshot不变回归，六退出和原reviewer定点复审后再发布。未push/开PR；当前5842d44测试绿不代表规格门禁已过。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
