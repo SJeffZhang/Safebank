@@ -128,3 +128,19 @@ No shared-stack commands, Docker data-volume operations, push/PR/merge, schemas/
 Repair commits so far: `02062b7` R1; `2822027` R2; `ade0cee` R3/hook; `23c4070` R4 and real eighteen-connection proof. CI wiring/final record committed separately; branch head is supplied in final handoff.
 
 Cache-probe execution detail: the first local probe used GNU Make --eval, unsupported by the installed macOS Make, and exited 2; this was a probe-command portability error. Replaced that invocation with a temporary makefile supplied via `make -s -f - s1-cache-probe` including the real Makefile. The corrected actual Make→uv cache-dir probe exited 0 and matched the writable temporary UV_CACHE_DIR. The stated successful cache verification refers to this corrected command. `80fc3bf` records the CI wiring; this final documentation update records the probe failure and correction explicitly.
+
+## Review repair round 2 — N1 only
+
+Read the appended N1 review and confirmed that the installed Uvicorn _wait_tasks_to_complete skips waiting when force_exit=True. The existing code then joined uncancelled requests indefinitely.
+
+Added one regression to test_servers.py using the real GatewayServer and installed Uvicorn handle_exit(SIGINT) twice, a real FastAPI/ASGI lifespan, and a pending request task. It invokes shutdown directly so the synthetic signals are never replayed into pytest. The probe first failed: with 0.01-second grace and a 0.1-second observation window, shutdown did not finish without test cleanup. The failing probe cleans up only its own task after capturing that failure.
+
+Minimal production fix: force_exit explicitly cancels remaining request tasks before the existing awaited gather. The request → lifespan → resource order remains unchanged and is asserted by the regression. No other production behavior or frozen file was changed.
+
+Actual commands in this round:
+
+- `.venv/bin/pytest tests/gateway/shared_runtime/test_servers.py::test_second_sigint_cancels_remaining_requests_before_lifespan_and_resources -q --tb=short`: expected red, 1 failed (finished_without_help=False).
+- `.venv/bin/pytest tests/gateway/shared_runtime/test_servers.py -q --tb=short`: 8 passed, including seven existing real localhost lifecycle cases and the new no-socket real-Uvicorn second-SIGINT regression.
+- `make lint && make test-gateway`: exit 0; lint passed (156 formatted files), gateway 109 passed / 6 skipped (unchanged explicit PG/Linux opt-ins).
+
+This round did not rerun unrelated PG/Linux/full-stack checks; the coordinator independently ran all five previous exit commands and make up/test-integration on the prior code. No deployment, stack, volume, push/PR/merge operations were performed by this repair. Existing untracked .secrets in the worktree belongs to coordinator deployment setup and was neither read, modified nor staged. Awaiting original reviewer's N1-only recheck after local commit.

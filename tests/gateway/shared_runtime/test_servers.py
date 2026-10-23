@@ -155,3 +155,67 @@ def test_real_listeners_and_requests_stop_before_runtime_disposal(monkeypatch, s
         assert disposals[0] == expected
 
     asyncio.run(run())
+
+
+def test_second_sigint_cancels_remaining_requests_before_lifespan_and_resources():
+    import signal
+
+    from services.gateway.app.main import GatewayServer
+
+    async def run():
+        events = []
+
+        @asynccontextmanager
+        async def lifespan(app):
+            yield
+            events.append("lifespan_closed")
+
+        @asynccontextmanager
+        async def resources():
+            try:
+                yield
+            finally:
+                events.append("resources_disposed")
+
+        server = GatewayServer(
+            uvicorn.Config(
+                FastAPI(lifespan=lifespan), timeout_graceful_shutdown=0.01, log_level="warning"
+            )
+        )
+        server.config.load()
+        server.lifespan = server.config.lifespan_class(server.config)
+        server.servers = []
+        await server.lifespan.startup()
+
+        async def pending_request():
+            try:
+                await asyncio.Event().wait()
+            finally:
+                events.append("request_finished")
+
+        request = asyncio.create_task(pending_request())
+        server.server_state.tasks.add(request)
+        request.add_done_callback(server.server_state.tasks.discard)
+        await asyncio.sleep(0)
+        # Exercise the installed Uvicorn's exact second-SIGINT flag transition.
+        # This probe calls shutdown directly, so capture_signals cannot replay
+        # these synthetic signals into the surrounding pytest process.
+        server.handle_exit(signal.SIGINT, None)
+        server.handle_exit(signal.SIGINT, None)
+        assert server.should_exit and server.force_exit
+        async with resources():
+            shutdown = asyncio.create_task(server.shutdown())
+            try:
+                done, _ = await asyncio.wait({shutdown}, timeout=0.1)
+                finished_without_help = shutdown in done
+                before_cleanup = list(events)
+            finally:
+                # Failed regression probes must not strand their own tasks.
+                request.cancel()
+                await asyncio.gather(request, return_exceptions=True)
+                await shutdown
+        assert finished_without_help
+        assert before_cleanup == ["request_finished", "lifespan_closed"]
+        assert events == ["request_finished", "lifespan_closed", "resources_disposed"]
+
+    asyncio.run(run())

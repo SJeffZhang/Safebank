@@ -166,6 +166,11 @@ class GatewayServer(uvicorn.Server):
         except TimeoutError:
             for task in list(self.server_state.tasks):
                 task.cancel()
+        if self.force_exit:
+            # Uvicorn skips its wait on the second SIGINT; cancellation is still
+            # required before joining requests and closing lifespan/resources.
+            for task in list(self.server_state.tasks):
+                task.cancel()
         # Uvicorn cancels timed-out requests without awaiting them. Finish those
         # cancellations before ASGI lifespan shutdown or DB/L3 disposal.
         await asyncio.gather(*list(self.server_state.tasks), return_exceptions=True)
