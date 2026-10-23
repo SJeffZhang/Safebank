@@ -37,3 +37,7 @@ W4 locks integration remains pending: its fixed `customer_lock(customer_ids)` si
 ## Component 3 — Linux secret permissions
 
 Not yet implemented or verified.
+
+## Isolated PG fixture correction
+
+The inherited fixture supplied no explicit -v, but the official PostgreSQL image declares a VOLUME, so earlier runs may have allocated anonymous volumes automatically removed by Docker --rm. This is not evidence of deleting or recreating the existing safebank persistent named volumes, which remain untouched. No existing anonymous volume was manually cleaned. The fixture now explicitly mounts PGDATA as tmpfs so subsequent runs do not allocate a Docker data volume. Coordinator approved the narrowly scoped existing-test adaptation and will distribute it to other workers.
