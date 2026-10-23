@@ -278,6 +278,8 @@
 
 | 2026-10-23 | Codex（协调者） | S2独立评审发现P1同瞬间UTC表示被local time/weekday/月末校验误拒绝，REQUEST_CHANGES；已读源码确认并派原owner修复轮1，报告L2-S2-reserve.md，尚不开PR。W1已merge main d71784c并接入S1小组件；W4a新增assert_lock_owner(conn)发送前guard获协调固定签名，明确不消灭检查至HTTP发送间隙，失锁只UNKNOWN/reconcile。调研时错误docs/PRD通配、bank_backend与db/state路径造成只读exit1，改用rg --files确认PRD.md与app/state.py后继续。 |
 
+| 2026-10-23 | Codex（协调者） | 协调文档已提交059af8a（首次普通沙箱git index.lock权限拒绝，按已有授权提升后成功；不是自动审批拒绝）。依据既有独立架构结论补ADR-008和PRD7.2/7.4/7.10：同attempt持久屏障、内部FENCING/PAUSED、claim终态消费、UNKNOWN只对账、旧G8 request_id不触发新attempt；同步四列和A/F来源身份语义。仅文档，实施/真实竞争验收尚未通过，待独立复核。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：

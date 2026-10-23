@@ -967,11 +967,11 @@ L2 根据 F / A 确定 `origin`；PlanDraft 不接受 `origin`、`customer_id`�
 | `pending_clarifications` | id、sid、kind SLOTS/FORM_REQUIRED、prompt_template_id、parent_utterance_ids、authorization_epoch、required_fields、candidate_refs、partial_scope、status OPEN/RESOLVED/CANCELLED、expires_at_wall；每 sid 最多一个 OPEN |
 | `form_actions` / `hints` | id、sid、规范化作用域/字段、parent_plan_id、view_hash、expires_at_wall、used_by；ID 一次使用，重试同请求除外 |
 | `plans` | id、customer_id、sid、origin、request_id、request_hash、plan_hash、steps_hash、resolved_steps、utterance_ids、scope_ids、status、created_at_wall；内容不可改（status 除外） |
-| `evaluations` | id、plan_id、revision、decision、risk、findings、preflight、versions、policy_version、view_hash、created_at_wall；每次复演追加 |
+| `evaluations` | id、plan_id、revision、decision、risk、findings、preflight、versions、policy_version、view_hash、view_json（对应不可变PlanView）、created_at_wall；每次复演追加 |
 | `approvals` | id、plan_id、evaluation_id、customer_id、sid、plan_hash、view_hash、binding_mac、expires_at_wall、status、risk_ack、confirmed_at_wall；每 sid 最多一个 PENDING；同计划最多一个可用审批 |
-| `otp_challenges` | approval_id、code_digest（带密钥 HMAC）、expires_at_wall、attempt_count、sent_count、locked_at_wall；不存日志明文 |
-| `authorization_claims` | scope_id 主键、plan_id、status CLAIMED/CONSUMED；执行与 UNKNOWN 期间持久占用；同 plan 重试幂等 |
-| `execution_jobs` | plan_id 主键、status EXECUTING/UNKNOWN/EXECUTED/FAILED/CANCELLED、l3_attempt（发给 L3 prepare / execute 的 attempt，§8.5）、retry_count（同一 l3_attempt 下的网络重试次数）、last_error、result；L3 执行前先持久化，恢复机制见 §7.10 |
+| `otp_challenges` | approval_id、code_digest（带密钥 HMAC）、code_ciphertext（仅D模拟短信使用的AEAD密文，绑定approval_id与view_hash）、expires_at_wall、attempt_count、sent_count、locked_at_wall；不存日志明文 |
+| `authorization_claims` | scope_id 主键、plan_id、status CLAIMED/CONSUMED；执行、FENCING、PAUSED与 UNKNOWN 期间持久占用；同 plan 重试幂等 |
+| `execution_jobs` | plan_id 主键、status EXECUTING/FENCING/PAUSED/UNKNOWN/EXECUTED/FAILED/CANCELLED、authorization_evidence、deadline_wall、deadline_cap_wall（不可变原授权上限）、l3_attempt（发给 L3 prepare / execute 的 attempt，§8.5）、retry_count（同一 l3_attempt 下的网络重试次数）、last_error、result；L3 执行前先持久化，恢复机制见 §7.10 |
 | `scheduled_grants` | instruction_id、customer_id、source_plan_id（种子为 `seed`）、scope_json、scope_hash、approved_risk、status ACTIVE/REVOKED、created_at、revoked_at；内容不可扩大，变更需新计划 |
 | `event_decisions` | event_id 主键、status SUCCESS/BLOCKED/FAILED_INSUFFICIENT/SKIPPED_REAPPROVAL、code、decided_at_wall；到期事件的终态，回调重放直接返回它（§7.11） |
 | `workflow_events` | event_id、customer_id、plan_id、step_id、action_kind、target_id、amount_cents、status PENDING/COMMITTED/BLOCKED、occurred_at；event_id 唯一；与 L3 operation_events 对账 |
@@ -982,7 +982,7 @@ L2 根据 F / A 确定 `origin`；PlanDraft 不接受 `origin`、`customer_id`�
 状态枚举（`contracts.status`，§9.5 同名）：
 - `plans.status` ∈ {EVALUATED, REPLAN, DENIED, PENDING_APPROVAL, CONFIRMED, EXECUTING, UNKNOWN, EXECUTED, FAILED, REJECTED, EXPIRED, SUPERSEDED}。
 - `approvals.status` ∈ {PENDING, CONFIRMED, REJECTED, EXPIRED, SUPERSEDED, USED, LOCKED}。
-- `scope_id` = 授权来源 ID：typed 或合槽后的 utterance_id、hint_id、form_action_id。一份计划的 `scope_ids` 由 L2 从其 `utterance_ids` / form_action 推出。
+- `scope_id` = 一次授权的占用身份：A路径为当前ACTIVE utterance_id（含typed、合槽以及已采纳hint/action产生的原话）；hint_id/form_action_id通过utterance.source_id与used_by追溯，used_by必须等于该采纳原话。F直接FORM路径为受信form_action_id。未采纳source不能直接给A写授权，也不能混用source与原话ID规避claim。
 
 `target_fingerprint`（收款人、冷静期、SPLIT_TRANSFER 共用）：他行目标为 `HMAC(FINGERPRINT_KEY, "ext:" + 去掉所有非数字字符的 NFKC(account_no))`；本行目标为 `"int:" + target_account_id`。**不含户名和银行名**，所以改写银行名或加空格不能拆分「同一目标」。
 
@@ -1006,7 +1006,7 @@ L2 根据 F / A 确定 `origin`；PlanDraft 不接受 `origin`、`customer_id`�
 | action | BFF 传 L2 发放的 action_id / form_action_id 和允许填写字段 | 绑定页面动作与目标；选择收款人只能填补待澄清槽位，不能凭「选择」产生转账许可 |
 | context | 页面位置、工具结果、助手建议等 | 永远不能作为写授权依据 |
 
-有效期是创建后 10 分钟（真实时间），且必须同 customer、同 sid、同 authorization_epoch。取消词（取消、算了、停止本次、不要了）使本轮授权 epoch 递增，旧原话、hint 和待审批计划全部失效（原话 → CANCELLED，未执行计划 → SUPERSEDED，PENDING / CONFIRMED 审批 → SUPERSEDED，OPEN clarification → CANCELLED）；已进入执行的任务按 §7.10 返回真实状态。不能把「取消这笔转账」解析为新转账。
+有效期是创建后 10 分钟（真实时间），且必须同 customer、同 sid、同 authorization_epoch。取消词（取消、算了、停止本次、不要了）使本轮授权 epoch 递增，旧原话、hint 和待审批计划全部失效（原话 → CANCELLED，未执行计划 → SUPERSEDED，PENDING / CONFIRMED 审批 → SUPERSEDED，OPEN clarification → CANCELLED）；已有未终结execution_job（含PAUSED）的计划先登记待对账并保留claim，事务外reconcile至L3终态后归档；不能只SUPERSEDED后遗忘在途intent。无job的普通待批计划可直接替代。已进入执行的任务按 §7.10 返回真实状态。不能把「取消这笔转账」解析为新转账。
 
 **typed 解析的排除规则**：引号（“”「」『』""''）与书名号内的片段、疑问句（含「吗 / 是不是 / 什么意思 / 真的假的」且没有祈使动词）一律**不产生写作用域**，返回 `INTENT_UNCLEAR`。这样用户把可疑备注贴进来问「这是诈骗吗」不会变成授权。
 
@@ -1152,8 +1152,12 @@ Decision 见 §9.5；每个 finding 带 `code, step_id|null, effect, resolver, m
 4. **执行**：仅 ALLOW 且评估有效，或 REQUIRE_APPROVAL 且 CONFIRMED 才能执行。L2 先持客户锁，再核验原话未被其他计划消费、审批和哈希、实时会话撤销。重新取快照与规则版本，**总是**在新快照上重跑 ①–⑧（模拟时钟推进也会改变结论）。L3 返回 STATE_CHANGED 时 L2 内部自动复演，最多 2 次；超过后返回 409 STATE_CHANGED 并附最新 Decision。每次内部复演或重新审批后，L2 以 `attempt+1` 重新 prepare 再 execute（§8.5）。
 5. **变化处理**：等价的**唯一判据**是新 evaluation 的 `view_hash` 与用户确认时的 `view_hash` 逐字节相同（view_hash 已覆盖逐步余额、风险与揭示）。相同：新建 evaluation（revision+1，记录 `equivalent_to=原 evaluation_id`），审批行不改；执行复核校验 `approval.binding_mac` 对应原 evaluation 且两者 view_hash 相同；`authorization_evidence` 的 `evaluation_id` 填新 evaluation，另带 `approved_evaluation_id`。不同：原审批失效，返回 409 STATE_CHANGED，`details.decision` 为最新 Decision（plan_id 不变）；若仍需批准，生成新审批（新 approval_id 在 Decision 中），用户重新确认；DENY / REPLAN 不生成审批。无审批绿级若升黄 / 红也必须转审批。
 6. **事务与幂等**：L2 保存 execution_job 和 EXECUTING，先调 L3 `/internal/plans/prepare` 持久化 intent（deadline 为原话、审批和会话有效期的最小值；绿级用原话/会话），再调用 L3 `/internal/plans/execute`（§8.4），带不可变 plan_hash 和全部 expected_versions。L3 要么所有业务 Effects 提交，要么全部回滚。L3 `(customer_id,plan_id)` 唯一；重试先查已提交结果，同哈希返回原结果，不同哈希拒绝。失败步返回真实 code，其余步骤 LINKED_STEP_FAILED；不能向用户声称部分成功。业务失败回滚后 intent 仍 PREPARED 时，先 reconcile 写 CANCELLED，再把 L2 标 FAILED；如果此间另一同 plan 请求已提交则以 COMMITTED 为准。取得 intent 锁后再校验 deadline，锁等待不能延长有效期。
-7. **故障恢复**：L3 原子保存结果、intent=COMMITTED、operation_events、outbox 后才回包。L2 超时置 UNKNOWN，不新建计划；GET 查到成功则归档。404/PREPARED 不能证明无在途：恢复工作器调用 reconcile，以同一 intent 行锁串行于 execute；若已 COMMITTED 返回原结果，否则写不可逆 CANCELLED 墓碑，阻断旧迟到请求后才可判 FAILED 并消费原授权。锁超时仍 UNKNOWN、继续查询；不按 elapsed timeout 猜失败。若 prepare 本身丢包，reconcile 在同唯一键下创建 CANCELLED 墓碑，迟到 prepare 也不得复活。取消终态后该 plan 永不重试，新操作须新授权/计划；仍 UNKNOWN 且授权有效时，可用同 plan 幂等重试，不能改变 deadline。outbox 按 event_id 重放，不能重复通知或 grant。
+7. **故障恢复**：L3 原子保存结果、intent=COMMITTED、operation_events、outbox 后才回包。L2 超时置 UNKNOWN，不新建计划；GET 查到成功则归档。404/PREPARED 不能证明无在途：恢复工作器调用 reconcile，以同一 intent 行锁串行于 execute；若已 COMMITTED 返回原结果，否则写不可逆 CANCELLED 墓碑，阻断旧迟到请求后才可判 FAILED 并消费原授权。锁超时仍 UNKNOWN、继续查询；不按 elapsed timeout 猜失败。若 prepare 本身丢包，reconcile 在同唯一键下创建 CANCELLED 墓碑，迟到 prepare 也不得复活。取消终态后该 plan 永不重试，新操作须新授权/计划；UNKNOWN只查询/reconcile，不重新prepare/execute、不升attempt或重批；已在途的同plan请求由L3幂等串行处理。outbox 按 event_id 重放，不能重复通知或 grant。
 8. **绿级路径**：执行接口相同、approval_id=null，执行前重跑政策和授权检查；自动执行冻结、取消定时或 AA 创建仍必须有有效用户动作。绿不表示任何调用方均可写。
+
+**STATE_CHANGED后的持久屏障（ADR-008）**：上述第4–5项的重新审批仅可发生在旧attempt已不能迟到提交之后。当前attempt已成功prepare且execute明确返回STATE_CHANGED时，先持久CAS job `EXECUTING,n → FENCING,n`，事务外以原steps/hash/evidence/cap重调同attempt prepare，仅把deadline缩短至固定`FENCE_AT=1970-01-01T00:00:00Z`。返回COMMITTED则归档真实结果；返回PREPARED且成功持久CAS `FENCING,n → PAUSED,n`及过期deadline后才能复演。旧prepare的min规则不能恢复期限；query的PREPARED/404、时间等待或本地状态均不能替代该屏障。prepare/fence回包不明、PAUSED落盘前崩溃或锁丢失均进入UNKNOWN，仅对账。
+
+同一attempt严格无循环；PAUSED后的新提交必须先重核原授权、实时撤销、claim、审批和快照，在短事务中CAS到`EXECUTING,n+1`并保存新evidence/deadline，然后才发HTTP；新deadline不得超过最初cap。所有HTTP回调绑定发送时attempt与evaluation revision，旧回调不得覆盖新任务。普通状态迁移仍禁止EXECUTING/UNKNOWN回决策态；专用迁移必须检查持久PAUSED、过期屏障、expected attempt、latest revision与归属。DENY/REPLAN、拒绝、取消、登出或过期不能释放已有job的claim；L3终态后消费，CANCELLED原话保持CANCELLED。改steps须新授权/新计划，不转移已占claim。G4同request_id始终回原Decision；G8已完成的409/202按request_id重放，重新确认后的下一次提交须新request_id，不能让旧请求触发新attempt。
 
 ### 7.11 定时、商户扣款与基金生命周期
 
