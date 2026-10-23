@@ -356,6 +356,8 @@
 
 | 2026-10-23 | Codex（协调者） | W1冻结65fc97d；协调者亲自actionlint exit0，并对该精确代码运行两个PIN/runtime真实PG测试文件：8 passed（3.22s，零skip）。证明Settings两文件/相反env/重启材料，不冒称完整W1通过；其自报完整五退出仍1617通过+孤儿1失败。另派只读map_backend_components核对剩余13读/7写的实际底层缺口与最小组件依赖，供后续任务书使用，不实施/不扩大当前共享串行范围。 |
 
+| 2026-10-23 | Codex（协调者） | 只读后端地图完成，已逐项实际核对底层models/load/apply/persist而非仅SUPPORTED，整理为docs/plans/L3-backend-components.md：剩余13读/7写，六职责组、schema owner与真实PG/HTTP/竞争门禁；当前未实施/未跑测试。R9典型金额/5%基准和recent_return_bp窗口/舍入在相应组件实施前需明确定义并同步PRD，未凭空当成现有规则。复用已完成且干净的共享runtime worktree预备feat/contracts-memo-code（main304adda），只建分支未派实现；S1e合并后再快进main并串行启动。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
