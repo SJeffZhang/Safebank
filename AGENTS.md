@@ -348,6 +348,8 @@
 
 | 2026-10-23 | Codex（协调者） | S1e独立worktree已同步main304adda及协调文档，基线c381a42，派原共享owner开始实施；W1保留孤儿失败检查点，先安全同步S1c并验两显式PIN文件/相反env的真实runtime+PG登录。已派独立只读review_s3a_design审完整任务书/ADR-009与PRD一致性。协调者补PRD7.10和ADR-008的孤儿兼容边界（待实现，不算验收）；一次ADR猜测路径不存在，改以rg确认真实文件后读取，未改业务。 |
 
+| 2026-10-23 | Codex（协调者） | 在已合并S1c/W4a的root代码实际串行make up、make test-integration全exit0（日志/private/tmp/sbg-main-s1c-up.log与integration.log）：真实网络/凭证/DB角色、HTTP→PG/snapshot/prepare/transfer/outbox及L3进程重启幂等回放通过。六服务healthy，safebank_pg-bank/pg-agent创建时间仍2026-10-23T12:26:36Z，未删重建卷。S1c验收补远端merge及部署证据；当前栈仍不含W1，不宣称其登录/执行完成。S1e scope重复按既有严格约束拒绝，不放宽畸形历史行。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
