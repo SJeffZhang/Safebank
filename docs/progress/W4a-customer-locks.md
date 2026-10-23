@@ -120,3 +120,5 @@ CI仅在 `.github/workflows/checks.yml` 既有p1-postgres job新增 `make test-c
 后三项沿用后台Docker CLI、显式tmpfs和随机临时PG。普通test/gateway的skip较上轮各增加22，原因是新加PG项未在普通命令启用；在专项61项全部实际启用零skip，没有把skip作通过。本轮静态检查曾发现重缩进长行和取消异常未显式chain，已仅按ruff修正字符串换行与raise ... from cleanup_error，再执行上述最终六门禁。
 
 范围保持仅R1/R2和对应回归；原W4分支继续不动。等待原独立review定点复审与协调者亲自复跑，不开PR、不push、不合并远端。修复SHA由后续本地记账记录。
+
+修复轮1实现SHA：`b8dd8edf06196fded205bbe665a7d9ff4d127053`（本地，未push）。提交后工作树干净，本条只记账并冻结等待复审。
