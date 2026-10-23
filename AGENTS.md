@@ -312,6 +312,12 @@
 
 | 2026-10-23 | Codex（协调者） | S1b独立review_s1b_state规范PASS/质量APPROVE，无可复现P0/P1/P2；实际定向17 passed零skip（10.13s），核查迁移保留/权限/漂移/并发CAS/claims。协调者六退出已全绿，准备合入最新协调文档后立即push并开base main组件PR。W2来源独立review_w2_lineage规格PASS/质量APPROVE，真实PG46 passed及关联回归25 passed；完整W2的memo xfail/S3/跨W1联调继续开放，不按完整W2合并。 |
 
+| 2026-10-23 | Codex（协调者） | S1b已合入最新协调文档，f5c5bc4仅文档确认后push feat/l2-wave1-state并创建PR #6（base main），已附加任务；unit两套SUCCESS，p1-postgres尚在跑，未提前merge。W2来源子组件已完成独立评审后新增验收/总日志commit c945cd8并push feat/l2-provenance检查点，完整缺口仍开放。原W1按S1c只实现自己owner的新显式PIN文件loader，共享runtime仍下一共享组件负责。 |
+
+| 2026-10-23 | Codex（协调者） | W4a轮2原owner以真实诊断定位SQLAlchemy2.1.6 pool销毁/ID复用导致event.contains注册索引假阳性；协调者核对本地_stored_in_collection源码后同意检查实际dispatcher成员，保持每pool稳定回调。e4023ed已冻结，正在亲自六门禁复跑，并改派可用独立review_w4a_fixes审d582752..e4023ed的原2P2及None-checkin新回归，尚未APPROVE。S1b PR6的CI已通过真实升级、17PG、105专项、shared-runtime，当前运行P1余下集成门禁。 |
+
+| 2026-10-23 | Codex（协调者） | PR6精确head f5c5bc4的push/PR两套unit/p1-postgres四检查全部COMPLETED SUCCESS，执行gh pr merge 6 --merge --match-head-commit成功，merge94e40fec12dd4496b978ad11e094ab321737a2fc，15:00:34Z，已fetch。W4a e4023ed亲自六退出全0：lint161/all356+99skip/gateway127+51skip/PG17/locks63零skip（9.12s）/shared51零skip（9.56s）；新评审R1/R2/None-checkin全ADDRESSED且APPROVE，实际26PG通过，已要求同步94e40fe再复测后组件PR。W1 PIN helper a7570e6冻结，正在亲自五退出验证。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
