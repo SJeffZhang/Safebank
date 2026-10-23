@@ -1,4 +1,4 @@
-"""Stage ⑤ consistent snapshot (PRD §7.2): REPEATABLE READ READ ONLY via L3."""
+"""Stage ⑤ pins the exact read-only snapshot already loaded by entity resolution."""
 
 from .context import EvalContext, Stage
 
@@ -7,8 +7,8 @@ class SnapshotStage(Stage):
     name = "snapshot"
 
     async def run(self, ctx: EvalContext) -> None:
-        # W3 implements this stage (calls L3 /internal/snapshot, fills ctx.snapshot).
-        return None
+        if ctx.plan_id is not None:
+            ctx.snapshot = await ctx.bank_state()
 
 
 stage = SnapshotStage()

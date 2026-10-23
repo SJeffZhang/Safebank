@@ -1,0 +1,9 @@
+# PRD §5.0, §7.8. Integer cents; business windows use simulated time.
+yellow_cap_cents: 500000
+split_count: 3
+split_total_cents: 500000
+cumulative_outflow_cents: 1000000
+new_payee_minutes: 30
+rolling_hours: 24
+retry_minutes: 10
+cooldown_hours: 24

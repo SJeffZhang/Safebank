@@ -69,3 +69,7 @@ test-gateway:
 
 test-gateway-db:
 	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/db -q
+
+# W3 tests (DB cases, when added, use the isolated gateway fixture).
+test-w3:
+	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w3 -q

@@ -32,7 +32,7 @@ from safebank_contracts.state import BankState
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from ..l3.client import L3Client
-from ..schemas.decision import Decision, FindingView
+from ..schemas.decision import Decision, FindingView, PreflightView
 from ..schemas.enums import FindingEffect, ServiceKind
 from ..schemas.identity import Caller
 from ..schemas.scope import AuthorizationInputs
@@ -106,6 +106,8 @@ class PreflightResult:
 
     executable: bool = True
     violations: tuple[dict[str, Any], ...] = ()
+    view: PreflightView | None = None
+    shadow_state: BankState | None = None
 
 
 @dataclass
@@ -113,6 +115,7 @@ class WorkflowResult:
     """⑦ writes (owned by W3). W3 may add fields; existing fields stay."""
 
     findings: tuple[dict[str, Any], ...] = ()
+    cooldowns: tuple[tuple[str, datetime], ...] = ()
 
 
 @dataclass

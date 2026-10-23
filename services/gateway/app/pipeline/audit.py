@@ -1,6 +1,11 @@
-"""Stage ⑨ evaluation audit (PRD §7.12): append to the customer hash chain."""
+"""Stage ⑨ delivers an audit event to the orchestrator's append_tx callback.
 
-from .context import EvalContext, Stage
+G4 queues this event until its HTTP-free persistence transaction commits, then
+calls audit.append_tx. Replays are audited by the execution orchestrator after
+append_evaluation assigns the revision. SHADOW_B1 never invokes a callback.
+"""
+
+from .context import EvalContext, EvalMode, Stage
 
 
 class AuditStage(Stage):
@@ -8,10 +13,9 @@ class AuditStage(Stage):
     always_run = True
 
     async def run(self, ctx: EvalContext) -> None:
-        # W3 implements this stage (records the evaluation). SHADOW_B1 mode must
-        # not write the database or the audit chain. The append primitive lives
-        # in services.gateway.app.audit.chain.
-        return None
+        if ctx.mode == EvalMode.SHADOW_B1 or ctx.audit is None or ctx.decision is None:
+            return
+        await ctx.audit("EVALUATION", ctx.decision.model_dump(mode="json", exclude={"shadow_b1"}))
 
 
 stage = AuditStage()

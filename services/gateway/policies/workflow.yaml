@@ -1,0 +1,5 @@
+# Prior actions may occur in either order; no source-account restriction.
+risky_sequence:
+  prerequisite: PAYEE_ADD
+  loosen_actions: [CARD_LIMIT_LOOSEN, CARD_CONTROL_LOOSEN, CARD_UNFREEZE]
+  terminal_actions: [TRANSFER_EXTERNAL, SCHEDULE_CREATE]
