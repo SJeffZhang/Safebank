@@ -10,13 +10,15 @@
 4. `docs/reviews/L2-W0-architecture.md` 的「给 W1–W4 任务书的接口约定要点」和「第三轮定点复核」两节。
 5. `PRD.md` 中你的任务书列出的章节。
 
-## 2. 冻结的文件（任何人都不改，需要改写进「待决」）
+## 2. W1–W4 冻结的文件（需要改写进「待决」）
 
 `services/gateway/app/pipeline/__init__.py`、`pipeline/context.py`（`EvalContext` 结构冻结；各阶段结果类只能由拥有者**新增字段**）、`schemas/**`、`auth/matrix.py`（矩阵已登记全表，冻结）、`state.py`、`tables.py`、`migrations/**`、`main.py`、`config.py`、`policy/registry.py`（结构冻结；`policies/tools.yaml` 只能修正值，且只有 W2 能改）、`pyproject.toml`、`uv.lock`、`requirements*.txt`、`docker-compose.yml`、`packages/contracts/**`、`packages/bankcore/**`、`services/bank-backend/**`、`AGENTS.md`、`PRD.md`。
 
+受控共享补缺仅由协调者另派的owner按已批准提案逐组件串行修改冻结区；此例外不授权W1–W4自行越界。
+
 ## 3. 必须使用的接口
 
-- 状态变更只能调用 `state.transition`。非法边抛 `ValueError`，那是代码错误，不要转成 409。`EXECUTING` 只在复演通过后才写入。
+- 普通状态变更只能调用 `state.transition`。执行屏障、待对账和终态归档仅用已合并S1b/S1e专用CAS；不直接DML绕guard，不伪造revision。普通非法边的 `ValueError` 是代码错误，不要转成409；预期专用CAS的 `GatewayError(STATE_CHANGED,409)`按调用者事务约定处理。`EXECUTING`只在复演通过后才写入。
 - 带 `request_id` 的接口只能用 `idempotency.request_idempotent`（同一事务内完成，事务内不发 HTTP；G8 执行不走它）。
 - 错误只能 `raise GatewayError(Code.X)`，code 只来自 `safebank_contracts.codes`；缺码写进「待决」。
 - 调用方身份从 `request.state.caller` 取，不要重复声明鉴权依赖；`origin`、`customer_id` 绝不从请求体读取。
@@ -30,7 +32,7 @@
 
 ## 4. 数据库迁移
 
-波次 1 期间**不写迁移**。需要新表或新字段，写进进度文件「待决」，由指挥在 `main` 上串行追加 `0002_wave1`。在那之前，用现有表能做的先做，做不了的停在可交付点。
+W1–W4**不写迁移**。`0002_wave1`已由共享S1b组件PR #6合并；后续新表/字段仍写进进度「待决」，由协调者指定唯一共享owner追加独立增量迁移，不修改任何历史迁移。做不了的停在明确检查点，不用替身宣称生产完成。
 
 ## 5. 测试与环境
 
@@ -41,7 +43,7 @@
 
 ## 6. 交付
 
-- 只在你的分支上本地提交，不 push；提交信息末尾 `Co-Authored-By: DeepSeek V4 Pro via Claude Code <noreply@anthropic.com>`。
+- 只在你的分支上本地提交，不push；署名必须对应实际执行者，不添加虚假的DeepSeek/Claude或其他模型co-author。由协调者亲自复验/独立审后统一push、PR与合并。
 - 进度写 `docs/progress/<任务名>.md`：做了什么、文件清单、每条退出命令的实际结果、待决（含需要的迁移、缺的错误码、对冻结文件的修改请求）。
 - 遇到 PRD 不闭合或与骨架冲突：不自行发明设计，写进「待决」，选最保守的可交付方案继续。
 - 最终回复简短：完成项、退出命令结果、未完成项、待决。

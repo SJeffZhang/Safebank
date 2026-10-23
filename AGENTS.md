@@ -368,6 +368,10 @@
 
 | 2026-10-23 | Codex（协调者） | PR #9精确head a156c53的push/PR两套unit+p1-postgres四检查全部COMPLETED SUCCESS，执行gh pr merge 9 --merge --match-head-commit成功；merge681554752215dcf82b6e768f4a3f788c19469834，15:54:05Z。已fetch并同步main无冲突，派原W1 owner同步真实S1e完成孤儿撤销/CAS联调；下一共享S1d在复用独立worktree快进新main后串行启动，不与其他共享实现并行。 |
 
+| 2026-10-23 | Codex（协调者） | S1d从新main6815547及纯协调文档a176293启动，独立s1d_memo_code已冻结2b5d6a6；亲自三退出全exit0：lint175、all398/302skip（4.42s）、contracts PASS，独立review_s1d_memo审查中。W1发现稳定畸形claim使专用CAS持续409的边界，已要求保留红测/不放宽，并另派只读design_revocation_errors核撤销提交与错误幂等缓存的最小路径。修正common旧虚假co-author指令、共享例外/专用CAS和0002已合并的过时描述；不改业务。一次猜测utterance/api.py不存在，实际处理器在api/sessions.py，已读真实路由与冻结幂等helper核对。 |
+
+| 2026-10-23 | Codex（协调者） | S1d独立review_s1d_memo规范PASS/质量APPROVE，无待修；核Code仅两处freeze枚举精确增量、工具Schema/既有枚举顺序/签名不变、SHA256正确。协调者三退出已全绿，准备合最新纯协调文档并立即push/base main组件PR；只交付新code契约，W2检测/W3黄级汇总/W4原文展示与view_hash仍待owner实际验收。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
@@ -412,7 +416,7 @@ P0 准备阶段（决定后续一切）：
 | [x] | S1b / 0002_wave1 迁移与受控状态 | PR #6已合并94e40fe（四CI成功，真实现有库升级与集成通过） | `docs/plans/briefs/S1b-wave1-state.md` |
 | [x] | S1c PIN Settings 接线 | PR #8 merge `304adda`；五退出、独立评审与精确head四CI全绿 | `docs/plans/briefs/S1c-pin-settings.md`；证据 `docs/progress/S1c-pin-settings.md` |
 | [x] | S1e 孤儿job受控对账 | PR #9 merge `6815547`；独立APPROVE、亲自六退出/231专项及四CI全绿 | `docs/plans/briefs/S1e-orphan-jobs.md` |
-| [ ] | S1d memo敏感内容黄级code | 任务草稿，S1e后串行实施 | `docs/plans/briefs/S1d-memo-code.md` |
+| [ ] | S1d memo敏感内容黄级code | `feat/contracts-memo-code`；2b5d6a6亲自三退出/独立APPROVE，准备组件PR | `docs/plans/briefs/S1d-memo-code.md` |
 | [ ] | S3a 真实完整义务数据 | ADR-009与任务书已准备，尚未实施 | `docs/plans/briefs/S3a-obligations-data.md` |
 | [ ] | W5 定时授权、通知、审计接口、D 接口 | 波次 2，任务书未写 | L2-plan §3 W5 |
 | [ ] | W6 网关层安全验收（A8、A1/A2/A3/A5） | 波次 2，任务书未写 | L2-plan §3 W6 |
