@@ -1,0 +1,28 @@
+version: 1
+actions:
+  transfer: [转账, 转给, 转到, 转入, 转, 给, 应急]
+  add_payee: [新增收款人, 添加收款人, 加为收款人, 新增, 添加]
+  freeze_card: [冻结, 冻卡]
+  unfreeze_card: [解冻]
+  report_card_lost: [挂失]
+  update_card_limits: [限额]
+  update_card_controls: [关闭, 开启, 关掉, 打开]
+  cancel_subscription: [取消订阅, 取消闲置订阅, 取消没用的订阅, 订阅取消掉]
+  cancel_scheduled: [取消定时, 取消自动转账]
+  subscribe_product: [买, 申购, 购买]
+  redeem_product: [赎回]
+  create_split_request: [AA, 分摊]
+cancel: [取消, 算了, 停止本次, 不要了, 取消这笔转账]
+correction: [不对, 改成, 改为, 换成]
+question: [吗, 是不是, 什么意思, 真的假的, 能不能, 可不可以, 是否]
+periods:
+  MONTHLY: [每月, 每个月]
+  WEEKLY: [每周, 每星期]
+  ONCE: [一次, 仅本次]
+phonetic:
+  pinyin: true
+  confusables: {巳: 已, 己: 已, 零: 〇}
+predicates:
+  idle_subscriptions: [没用的, 闲置]
+  robust_products: [稳健型]
+  suspicious_cards: [可疑交易对应的卡, 可疑卡]
