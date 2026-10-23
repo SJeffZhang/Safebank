@@ -1,11 +1,17 @@
 """0002-with-real-data upgrade preservation gate (proposal §5 / task §A).
 
 The historical 0002 migration refuses non-empty execution tables, so this test
-seeds a fresh 0002 database through the real P1 ledger/persist path plus the
-exact execution-row shapes P1's ``ExecutionService`` writes (raw SQL, source:
-``services/bank-backend/app/execution.py``), captures a baseline of every old
-table / sequence / privilege, upgrades to 0003 twice, and verifies the data is
-byte-for-byte preserved before re-running prepare/query/reconcile/replay.
+seeds a fresh 0002 database through the *real* P1 execution path: posted/pending
+ledger via the shared pure ledger + persist, then the unmodified
+``ExecutionService`` (``prepare(attempt1)`` → ``prepare(attempt2)`` → ``execute``
+for a committed plan, plus ``prepare``/``reconcile`` for prepared/cancelled
+plans). Because S3a's production loader reads the 0003 obligation tables, the test
+patches ``app.execution.load_bank_state`` to the frozen pre-S3a loader
+(``tests/obligations_data/legacy_loader.py``, sourced from
+``cca074b:services/bank-backend/app/state.py``) only while seeding 0002 state.
+It then captures a baseline of every old table / sequence / privilege, upgrades to
+0003 twice, verifies byte-for-byte preservation, and re-runs
+query/replay/reconcile against the original real tasks.
 """
 
 import asyncio
@@ -13,19 +19,13 @@ import json
 from datetime import date, datetime, time
 from decimal import Decimal
 
+import app.execution as execution
 from app.db import engine
 from app.execution import ExecutionService
 from app.state import persist
 from safebank_bankcore.ledger import post_transfer
-from safebank_bankcore.references import request_digest
 from safebank_contracts.enums import Risk
-from safebank_contracts.plan import (
-    Execute,
-    InteractiveEvidence,
-    PlanBody,
-    Prepare,
-    Reconcile,
-)
+from safebank_contracts.plan import Execute, InteractiveEvidence, PlanBody, Prepare, Reconcile
 from safebank_contracts.state import LedgerTransfer
 from sqlalchemy import text
 from sqlalchemy.pool import NullPool
@@ -33,6 +33,7 @@ from sqlalchemy.pool import NullPool
 from tests.contracts.samples import step
 from tests.obligations_data.conftest import _migrate
 from tests.obligations_data.fixtures import KEY, NOW, install_core
+from tests.obligations_data.legacy_loader import load_bank_state as legacy_load_bank_state
 
 OLD_TABLES = [
     "customers",
@@ -109,18 +110,7 @@ async def _capture(conn):
     return result
 
 
-async def _seed_0002(admin) -> None:
-    steps = _steps()
-    req = request_digest(steps)
-    committed_evidence = json.dumps(_evidence("hash_committed").model_dump(mode="json"))
-    empty = "{}"
-    history = "[]"
-    deadline = datetime.fromisoformat("2099-01-01T00:00:00Z")
-    created = NOW
-    result_json = (
-        '{"plan_id":"pln_committed","status":"EXECUTED","steps":[],"versions":{},'
-        '"committed_at":null,"error_code":null,"replayed":false}'
-    )
+async def _seed_0002(admin, runtime) -> None:
     async with admin.begin() as conn:
         state = await install_core(conn)
 
@@ -158,104 +148,93 @@ async def _seed_0002(admin) -> None:
         assert errors == ()
         await persist(conn, effects)
 
-        # Execution rows shaped exactly like P1 ExecutionService writes them.
-        await conn.execute(
-            text(
-                "INSERT INTO execution_intents (customer_id, plan_id, attempt, plan_hash, "
-                "steps_digest, request_digest, authorization_evidence, evidence_history, "
-                "status, deadline_wall, deadline_cap_wall, created_at_wall) VALUES "
-                "('cus_zs','pln_prepared',1,'hash_prepared','digest_prepared',:req,"
-                "CAST(:evidence AS jsonb),CAST(:history AS jsonb),'PREPARED',"
-                ":deadline,:deadline,:created)"
-            ),
-            {
-                "req": req,
-                "evidence": empty,
-                "history": history,
-                "deadline": deadline,
-                "created": created,
-            },
-        )
-        await conn.execute(
-            text(
-                "INSERT INTO execution_intents (customer_id, plan_id, attempt, plan_hash, "
-                "steps_digest, request_digest, authorization_evidence, evidence_history, "
-                "status, deadline_wall, deadline_cap_wall, created_at_wall) VALUES "
-                "('cus_zs','pln_committed',1,'hash_committed','digest_committed',:req,"
-                "CAST(:evidence AS jsonb),CAST(:history AS jsonb),'COMMITTED',"
-                ":deadline,:deadline,:created)"
-            ),
-            {
-                "req": req,
-                "evidence": committed_evidence,
-                "history": history,
-                "deadline": deadline,
-                "created": created,
-            },
-        )
-        await conn.execute(
-            text(
-                "INSERT INTO plan_executions (customer_id, plan_id, plan_hash, steps_digest, "
-                "request_digest, authorization_evidence, result_json, committed_at) VALUES "
-                "('cus_zs','pln_committed','hash_committed','digest_committed',:req,"
-                "CAST(:evidence AS jsonb),CAST(:result AS jsonb),:created)"
-            ),
-            {
-                "req": req,
-                "evidence": committed_evidence,
-                "result": result_json,
-                "created": created,
-            },
-        )
-        await conn.execute(
-            text(
-                "INSERT INTO execution_intents (customer_id, plan_id, attempt, plan_hash, "
-                "steps_digest, request_digest, authorization_evidence, evidence_history, "
-                "status, deadline_wall, deadline_cap_wall, created_at_wall) VALUES "
-                "('cus_zs','pln_cancelled',1,'hash_cancelled','digest_cancelled',:req,"
-                "CAST(:evidence AS jsonb),CAST(:history AS jsonb),'CANCELLED',"
-                ":deadline,:deadline,:created)"
-            ),
-            {
-                "req": req,
-                "evidence": empty,
-                "history": history,
-                "deadline": deadline,
-                "created": created,
-            },
-        )
-        await conn.execute(
-            text(
-                "INSERT INTO operation_events (event_id, customer_id, plan_id, step_id, "
-                "action_kind, target_fingerprint, amount_cents, occurred_at, payload) VALUES "
-                "('evt_committed','cus_zs','pln_committed','s1','transfer',NULL,100,:created,"
-                "CAST(:payload AS jsonb))"
-            ),
-            {"created": created, "payload": empty},
-        )
-        await conn.execute(
-            text(
-                "INSERT INTO outbox (event_id, payload) VALUES "
-                "('evt_committed', CAST(:payload AS jsonb))"
-            ),
-            {"payload": empty},
-        )
+    svc = ExecutionService(runtime, KEY)
+    steps = _steps()
+    deadline = "2099-01-01T00:00:00Z"
 
-        # The committed execution bumped scoped customer versions and the clock once.
-        await conn.execute(
-            text(
-                "UPDATE state_versions SET version = version + 1 "
-                "WHERE customer_id IN ('cus_zs','cus_ww')"
+    # Only the loader is a test-history stand-in; prepare/execute/query/reconcile
+    # and resolve_scope/persist are the unmodified production code.
+    original = execution.load_bank_state
+    execution.load_bank_state = legacy_load_bank_state
+    try:
+        committed_evidence = _evidence("hash_committed")
+        await svc.prepare(
+            Prepare(
+                customer_id="cus_zs",
+                plan_id="pln_committed",
+                attempt=1,
+                plan_hash="hash_committed",
+                steps=steps,
+                deadline_wall=deadline,
+                deadline_cap_wall=deadline,
+                authorization_evidence=committed_evidence,
             )
         )
-        await conn.execute(text("UPDATE clock SET version = version + 1"))
+        await svc.prepare(
+            Prepare(
+                customer_id="cus_zs",
+                plan_id="pln_committed",
+                attempt=2,
+                plan_hash="hash_committed",
+                steps=steps,
+                deadline_wall=deadline,
+                deadline_cap_wall=deadline,
+                authorization_evidence=committed_evidence,
+            )
+        )
+        committed = await svc.execute(
+            Execute(
+                customer_id="cus_zs",
+                plan_id="pln_committed",
+                attempt=2,
+                plan_hash="hash_committed",
+                steps=steps,
+                expected_versions={"cus_zs": 0, "cus_ww": 0},
+                clock_version=1,
+                authorization_evidence=committed_evidence,
+            )
+        )
+        assert committed.status == "EXECUTED"
+        assert committed.versions == {"cus_zs": 1, "cus_ww": 1}
+
+        await svc.prepare(
+            Prepare(
+                customer_id="cus_zs",
+                plan_id="pln_prepared",
+                attempt=1,
+                plan_hash="hash_prepared",
+                steps=steps,
+                deadline_wall=deadline,
+                deadline_cap_wall=deadline,
+                authorization_evidence=_evidence("hash_prepared"),
+            )
+        )
+
+        await svc.prepare(
+            Prepare(
+                customer_id="cus_zs",
+                plan_id="pln_cancelled",
+                attempt=1,
+                plan_hash="hash_cancelled",
+                steps=steps,
+                deadline_wall=deadline,
+                deadline_cap_wall=deadline,
+                authorization_evidence=_evidence("hash_cancelled"),
+            )
+        )
+        await svc.reconcile(
+            "pln_cancelled",
+            Reconcile(customer_id="cus_zs", plan_hash="hash_cancelled", cancel_if_uncommitted=True),
+        )
+    finally:
+        execution.load_bank_state = original
 
 
 def test_0002_data_survives_0003_upgrade_and_execution_replays(obligations_0002_db):
     async def check():
         admin = engine(obligations_0002_db.admin_url, poolclass=NullPool)
         runtime = engine(obligations_0002_db.runtime_url, poolclass=NullPool)
-        await _seed_0002(admin)
+        await _seed_0002(admin, runtime)
 
         async with admin.connect() as conn:
             baseline = await _capture(conn)
@@ -271,38 +250,36 @@ def test_0002_data_survives_0003_upgrade_and_execution_replays(obligations_0002_
             )
         assert after == baseline
 
+        async with admin.connect() as conn:
+            history = await conn.scalar(
+                text(
+                    "SELECT evidence_history FROM execution_intents "
+                    "WHERE customer_id='cus_zs' AND plan_id='pln_committed'"
+                )
+            )
+            result_json = await conn.scalar(
+                text(
+                    "SELECT result_json FROM plan_executions "
+                    "WHERE customer_id='cus_zs' AND plan_id='pln_committed'"
+                )
+            )
+        # Real re-approval (attempt+1) must archive a non-empty evidence_history, and the
+        # committed result must carry the real bumped versions (not hand-written placeholders).
+        assert history
+        assert result_json["versions"] == {"cus_zs": 1, "cus_ww": 1}
+
         svc = ExecutionService(runtime, KEY)
         steps = _steps()
-        deadline = "2099-01-01T00:00:00Z"
-        prepared = await svc.prepare(
-            Prepare(
-                customer_id="cus_zs",
-                plan_id="pln_new",
-                attempt=1,
-                plan_hash="hash_new",
-                steps=steps,
-                deadline_wall=deadline,
-                deadline_cap_wall=deadline,
-                authorization_evidence=_evidence("hash_new"),
-            )
-        )
-        assert prepared["status"] == "PREPARED"
 
         queried = await svc.query("cus_zs", "pln_committed")
         assert queried["status"] == "COMMITTED"
         assert queried["result"] is not None
 
-        reconciled = await svc.reconcile(
-            "pln_prepared",
-            Reconcile(customer_id="cus_zs", plan_hash="hash_prepared", cancel_if_uncommitted=True),
-        )
-        assert reconciled["status"] == "CANCELLED"
-
         replayed = await svc.execute(
             Execute(
                 customer_id="cus_zs",
                 plan_id="pln_committed",
-                attempt=1,
+                attempt=2,
                 plan_hash="hash_committed",
                 steps=steps,
                 expected_versions={"cus_zs": 1, "cus_ww": 1},
@@ -311,6 +288,12 @@ def test_0002_data_survives_0003_upgrade_and_execution_replays(obligations_0002_
             )
         )
         assert replayed.replayed is True
+
+        reconciled = await svc.reconcile(
+            "pln_prepared",
+            Reconcile(customer_id="cus_zs", plan_hash="hash_prepared", cancel_if_uncommitted=True),
+        )
+        assert reconciled["status"] == "CANCELLED"
 
         await admin.dispose()
         await runtime.dispose()

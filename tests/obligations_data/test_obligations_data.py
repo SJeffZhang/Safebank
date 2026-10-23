@@ -476,14 +476,42 @@ def test_runs_append_only_and_bank_ro_read_only(obligations_db):
                 transfer_id=None,
             )
             await conn.execute(m.instruction_runs.insert().values(**blocked))
-            # Append-only trigger rejects UPDATE even for the table owner.
-            with pytest.raises(DBAPIError):
-                await conn.execute(text("UPDATE instruction_runs SET code='x' WHERE id='run_x'"))
+            # Append-only trigger rejects UPDATE even for the table owner; isolate it in a
+            # savepoint so the outer transaction still commits the run_x INSERT.
+            with pytest.raises(DBAPIError) as update_err:
+                async with conn.begin_nested():
+                    await conn.execute(
+                        text("UPDATE instruction_runs SET code='x' WHERE id='run_x'")
+                    )
+            assert getattr(update_err.value.orig, "sqlstate", None) == "23514"
+
+        # The run_x row survived and was not mutated by the rejected owner UPDATE.
+        async with admin.connect() as conn:
+            assert (
+                await conn.scalar(text("SELECT count(*) FROM instruction_runs WHERE id='run_x'"))
+                == 1
+            )
+            assert (
+                await conn.scalar(text("SELECT code FROM instruction_runs WHERE id='run_x'"))
+                == "MANDATE_NOT_ACTIVE"
+            )
+
         async with ro.connect() as conn:
-            with pytest.raises(DBAPIError):
-                await conn.execute(text("INSERT INTO instruction_runs (id) VALUES ('run_ro')"))
-            with pytest.raises(DBAPIError):
-                await conn.execute(text("UPDATE instruction_runs SET code='x' WHERE id='run_x'"))
+            with pytest.raises(DBAPIError) as insert_err:
+                async with conn.begin_nested():
+                    await conn.execute(text("INSERT INTO instruction_runs (id) VALUES ('run_ro')"))
+            assert getattr(insert_err.value.orig, "sqlstate", None) == "42501"
+            with pytest.raises(DBAPIError) as ro_update_err:
+                async with conn.begin_nested():
+                    await conn.execute(
+                        text("UPDATE instruction_runs SET code='x' WHERE id='run_x'")
+                    )
+            assert getattr(ro_update_err.value.orig, "sqlstate", None) == "42501"
+            # bank_ro keeps read-only access.
+            assert (
+                await conn.scalar(text("SELECT count(*) FROM instruction_runs WHERE id='run_x'"))
+                == 1
+            )
         await admin.dispose()
         await ro.dispose()
 

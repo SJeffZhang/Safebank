@@ -23,9 +23,12 @@
   300000 转账 → `/internal/snapshot` JSON → `BankState` → S2：`max_outflow=295500`、`reserve=4500`；
   双方 state_version 各增一次、intent COMMITTED、plan_execution/operation/outbox 真实落盘。
 - **P1-1 0002 升级保留**：独立 tmpfs PG 先 `upgrade 0002_identity`，用真实 ledger/persist 生成
-  posted/pending/transactions，并以 P1 ExecutionService 行形（raw SQL）落 PREPARED/COMMITTED/CANCELLED
-  intents、evidence_history、plan_execution、operation/outbox、客户/clock 版本；采集基线 →
-  `upgrade head` 两次 → 逐表行/序列/权限逐字段相等；再真实 prepare/query/reconcile/replay 全通过。
+  posted/pending（含活 pending），并以**未修改的 `ExecutionService`** 走 `prepare(attempt1)→
+  prepare(attempt2)→execute` 产生 COMMITTED（非空 evidence_history、真实 result.versions/steps/
+  operation/outbox）与 `prepare`/`reconcile` 产生 PREPARED/CANCELLED；0002 造数期间仅把
+  `app.execution.load_bank_state` patch 到冻结的旧版 loader（`tests/obligations_data/legacy_loader.py`，
+  来源 `cca074b:services/bank-backend/app/state.py` blob `e998108e…`）；采集基线 → `upgrade head`
+  两次 → 逐表行/序列/权限逐字段相等；再对原真实任务 query/replay/reconcile 全通过。
 - OWN/OTHER 所有权与第三客户非递归、RR 并发一致性、多 offset 混用、billing inactive 不预留、
   F1 DELETED/DISABLED 历史保留、instruction_runs 只追加与 bank_ro 只读均已在真实 PG/HTTP 覆盖。
 

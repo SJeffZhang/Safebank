@@ -107,6 +107,23 @@ ADR-009 与已 APPROVE 的 `docs/plans/briefs/S3a-model-proposal.md` 实施，�
 - **P2-7**：instruction_runs 的 UPDATE 被只追加触发器拒绝（owner 级），bank_ro 的 INSERT/UPDATE
   被权限拒绝。
 
+## 复核二轮（reviewer 条件 APPROVE 的两条 P2 残余）
+
+- **(a) 0002 真实执行代表性**：移除原 `hash_committed/digest_committed/versions={}` 手造执行行。
+  新增冻结旧版 `load_bank_state` 测试 helper `tests/obligations_data/legacy_loader.py`（逐字取自
+  `cca074b:services/bank-backend/app/state.py`，git blob `e998108e0026dc113b57b334c87a3bea97845e36`，
+  只查 P1 旧表）；`_seed_0002` 仅在 0002 造旧状态期间 patch `app.execution.load_bank_state` 指向它，
+  `resolve_scope/persist/prepare/execute/query/reconcile` 全部走未修改生产代码。真实
+  `prepare(attempt1)→prepare(attempt2)→execute` 产生 COMMITTED（**非空 evidence_history** + 真实
+  `result.versions/steps` + 真实 operation/outbox），`prepare`+`reconcile` 产生 PREPARED/CANCELLED；
+  posted/pending 仍真实 ledger/persist 且保留活 pending。基线→`upgrade head` 两次→逐字段/行/序列/
+  权限不变，再对原真实任务 query/replay/reconcile。
+- **(b) N1 权限测试卫生**：`test_runs_append_only_and_bank_ro_read_only` 把 owner UPDATE 拒绝放进
+  `begin_nested()`，断言 `run_x` INSERT 仍提交且行内容不变；bank_ro INSERT/UPDATE 各自独立 savepoint；
+  均断言真实 SQLSTATE（触发器 `23514`、权限 `42501`），保留触发器拒绝、行不变与 bank_ro 只读证据。
+- 红→绿：先加 `assert history`/`assert result_json["versions"]` 红测，复现 `evidence_history=[]`
+  手造空历史失败；改真实执行路径后转绿（`history` 非空、`versions == {"cus_zs":1,"cus_ww":1}`）。
+
 ## 需协调者串行跑的全栈门禁
 
 `make up`、`make test-p1`、`make test-p1-concurrency`、`make test-p1-consistency`、
