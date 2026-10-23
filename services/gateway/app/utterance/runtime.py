@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import os
-from datetime import UTC, datetime
-from pathlib import Path
+from datetime import datetime
 
 from fastapi import Request
 from safebank_contracts.codes import Code
@@ -31,22 +29,20 @@ def l3(request: Request):
 
 
 def wall_now(request: Request) -> datetime:
-    value = getattr(request.app.state, "wall_now", lambda: datetime.now(UTC))()
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise ValueError("wall_now must be timezone-aware")
+    clock = getattr(request.app.state, "wall_now", None)
+    if not callable(clock):
+        raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503)
+    value = clock()
+    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+        raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503)
     return value
 
 
 def private_key(request: Request) -> bytes:
     value = getattr(request.app.state, "jwt_private_key", None)
-    if value is not None:
-        return value
-    try:
-        return Path(os.getenv("JWT_PRIVATE_KEY_PATH", "/run/secrets/jwt-private.pem")).read_bytes()
-    except OSError as exc:
-        raise GatewayError(
-            Code.DEPENDENCY_UNAVAILABLE, 503, message="signing key unavailable"
-        ) from exc
+    if not isinstance(value, bytes) or not value:
+        raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503, message="signing key unavailable")
+    return value
 
 
 async def session_for(conn, sid: str, caller, now: datetime, *, lock: bool = False):

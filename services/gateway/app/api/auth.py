@@ -7,9 +7,8 @@ from sqlalchemy import select, update
 from .. import locks
 from .. import tables as t
 from ..audit.chain import append_tx
-from ..auth.pin import CUSTOMER_LABELS, authenticate, configured_hashes
+from ..auth.pin import CUSTOMER_LABELS, authenticate
 from ..auth.tokens import check_revocation, issue_app
-from ..config import from_env
 from ..errors import GatewayError
 from ..idempotency import request_idempotent
 from ..utterance.lifecycle import cancel_session
@@ -26,7 +25,9 @@ async def login(request: Request, body: Login):
     now = wall_now(request)
     hashes = getattr(request.app.state, "pin_hashes", None)
     if hashes is None:
-        hashes = configured_hashes()
+        raise GatewayError(
+            Code.DEPENDENCY_UNAVAILABLE, 503, message="PIN configuration unavailable"
+        )
     # Throttle errors commit before raising; wrong PINs must not roll back counters.
     async with database.begin() as conn:
         code = await authenticate(
@@ -122,7 +123,9 @@ async def logout(request: Request, body: RequestId):
 
 @router.get("/auth/demo-customers")
 async def demo_customers(request: Request):
-    settings = getattr(request.app.state, "settings", None) or from_env()
+    settings = getattr(request.app.state, "settings", None)
+    if settings is None:
+        raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503)
     if not (settings.demo_mode or settings.eval_mode):
         raise GatewayError(Code.NOT_FOUND, 404)
     return {

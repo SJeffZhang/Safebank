@@ -1,4 +1,4 @@
-"""Explicit W4-lock / pending-clarification-state substitutes for W1 integration."""
+"""Explicit W4-lock substitute; S1 runtime, auth and state paths are real."""
 
 import secrets
 from contextlib import asynccontextmanager
@@ -9,7 +9,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from sqlalchemy import text
 
-from services.gateway.app import locks, state
+from services.gateway.app import locks
 from services.gateway.app.auth.pin import HASHER
 from services.gateway.app.auth.tokens import sign_jwt
 from services.gateway.app.config import from_env
@@ -17,6 +17,7 @@ from services.gateway.app.db import engine
 from services.gateway.app.l3.client import L3Client
 from services.gateway.app.l3.fake import FakeL3
 from services.gateway.app.main import build_public_app
+from services.gateway.app.runtime import GatewayRuntime
 from tests.gateway.w1.fixtures import bank_state
 
 ENV = {
@@ -38,17 +39,21 @@ async def harness(gateway_db, monkeypatch):
     public = key.public_key().public_bytes(
         serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
     )
-    app = build_public_app(from_env(ENV), env=ENV, public_key=public)
-    app.state.settings = from_env(ENV)
-    app.state.db = database
-    app.state.jwt_private_key = private
-    app.state.pin_hashes = {"cus_zs": HASHER.hash("123456"), "cus_ls": HASHER.hash("234567")}
     clock = [datetime.now(UTC)]
-    app.state.wall_now = lambda: clock[0]
     fake = FakeL3()
     fake.set_snapshot(bank_state())
     client_l3 = L3Client("http://bank", fake.token, transport=fake.transport())
-    app.state.l3 = client_l3
+    settings = from_env(ENV)
+    runtime = GatewayRuntime(
+        settings,
+        database,
+        client_l3,
+        lambda: clock[0],
+        private,
+        public,
+        {"cus_zs": HASHER.hash("123456"), "cus_ls": HASHER.hash("234567")},
+    )
+    app = build_public_app(settings, env=ENV, runtime=runtime)
 
     # W4 owns the real implementation; this local substitute uses real PG locks.
     @asynccontextmanager
@@ -72,20 +77,6 @@ async def harness(gateway_db, monkeypatch):
                 await conn.commit()
 
     monkeypatch.setattr(locks, "customer_lock", customer_lock)
-    original = state.transition
-
-    async def transition(conn, table, *, id_, from_statuses, to, **kwargs):
-        if table.name != "pending_clarifications":
-            return await original(
-                conn, table, id_=id_, from_statuses=from_statuses, to=to, **kwargs
-            )
-        assert list(from_statuses) == ["OPEN"] and to in ("RESOLVED", "CANCELLED")
-        result = await conn.execute(
-            table.update().where(table.c.id == id_, table.c.status == "OPEN").values(status=to)
-        )
-        assert result.rowcount == 1
-
-    monkeypatch.setattr(state, "transition", transition)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app, client=("test-" + secrets.token_hex(8), 1234)),
         base_url="http://gateway",

@@ -85,3 +85,37 @@
 6. hint范围收缩由W3生成端保证，W1仅从L2持久hint还原，不接受按钮文字；合入W3后验证完整生产链。
 
 下一步按协调者要求停在本地可续接提交，等待亲自复跑和独立评审，不自行扩大范围。
+
+
+## S1真实接线组件检查点（7250105之后）
+
+协调者已亲自复跑7250105五退出且原review_w1定点APPROVE，七项问题全关闭。本阶段按新授权同步`origin/main`的S1 merge 691cf880，本地合并提交`d71784c`；只有Makefile尾部测试目标冲突，保留test-w1和test-shared-runtime两方配方。已完整读协调树wave1-common来源addendum：A路径scope_ids仍为ACTIVE utterance IDs，source.used_by仍为采纳utterance ID；本阶段不改来源协议。
+
+### 改动与小组件验收
+
+- `tests/gateway/w1/db/support.py`删除pending_clarifications状态替身，使用真实S1 `state.transition`；通过真实`GatewayRuntime`给build_public_app集中安装资源。仅保留W4 customer_lock的明确PG advisory-lock替身。删除后`PATH=... GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w1/db/test_utterances.py tests/gateway/w1/db/test_identity.py -q --tb=short`：11 passed in 5.99s，真实澄清RESOLVED/CANCELLED及原身份API通过。
+- `services/gateway/app/utterance/runtime.py`不再请求期读取私钥文件或自建wall clock；缺已安装密钥/非callable或无时区时钟统一503。`api/auth.py`不再请求期从环境加载PIN或demo settings；集中资源缺失503。无新连接池，无共享runtime/config变更。
+- 新`test_w1_runtime_resources.py`：私钥环境fallback、缺clock/空clock/naive clock、demo环境fallback等5例，修前5 failed，修后5 passed in 0.42s。
+- 新`db/test_s1_runtime.py`：缺集中PIN/私钥即使环境中有有效配置也不能签JWT，真实PG修前2例均错误返回200，修后503且auth_sessions行数不增加；真实登出后F `/audit`和A `/plans/evaluate`在非W1 handler前401。仅此登出场景沿用已披露W4锁替身，auth.check_revocation与global caller_dependency均真实。
+- `test_real_s1_runtime_loads_secrets_once_and_enforces_persistent_jti`完全不装锁/auth/state替身：真实gateway_runtime从0600文件加载Ed25519和PIN、建立真实PG资源、双app共享资源；活跃期实际调用契约FakeL3 snapshot；删除secret文件并改变请求期环境后仍用启动时材料登录；签名合法但未登记jti、DB已过期jti、已撤销sid均在shared dependency拒绝；退出后L3 client已关闭。该路径不调用需要W4的会话创建/登出，session与assistant持久种子由测试明确写入。
+- `.venv/bin/pytest tests/gateway/w1/test_runtime.py -q --tb=short`为新文件重命名前的红绿命令。`PATH=... GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w1/db/test_s1_runtime.py -q --tb=short`最终4 passed in 3.59s；初次全局撤销测试错误假定共享stub为501，实际应为503+固定stub消息，按已读源码修正测试；追加snapshot断言曾错误假定state包装，按冻结BankState顶层accounts修正（1 failed/3 passed后4 passed）。不将这两次测试假设错误算生产缺陷。
+
+### 最终五退出与失败记录
+
+| 实际命令 | 输出（最终exit0） |
+|---|---|
+| `make lint` | All checks passed；178 files already formatted |
+| `make test-gateway` | 1620 passed, 64 skipped in 4.51s |
+| `PATH=/Applications/Docker.app/Contents/Resources/bin:$PATH make test-gateway-db` | 17 passed in 3.33s |
+| `make test` | 1739 passed, 112 skipped in 5.29s |
+| `PATH=/Applications/Docker.app/Contents/Resources/bin:$PATH make test-w1` | 1569 passed in 22.06s；0 skipped（58真实PG） |
+
+首次lint因新增注释超长失败，已修；首次gateway/all因新test_runtime.py与S1同名pytest模块冲突收集失败，改为W1唯一文件名test_w1_runtime_resources.py后两目标完整复跑通过。W1普通目标中的PG默认skip不作验收证据，test-w1明确启用并实际运行58条。未运行make up/down/test-p1，未清理/重建卷。
+
+### 剩余替身、依赖与待决
+
+1. **W4a真实客户锁**：当前production locks.customer_lock仍NotImplementedError且无configure。W1会话/原话/登出写路径所需真实锁未合入；现有58条W1 PG大部分仍使用唯一剩余的锁替身，不能称生产全链路通过。不cherry-pick未合入W4a，按协调者要求独立检查点冻结等W4a。上面明确无锁替身的runtime登录/读取/持久撤销路径已实际测。
+2. **共享PIN配置来源差异**：S1 `_configured_pin_hashes()`调用零参W1 configured_hashes，未传Settings.demo_pins_file；serve(from_env())同源环境可用，但显式Settings路径与进程环境不一致会读错/拒启。合成探针：Settings指向存在的有效PIN文件，环境DEMO_PINS_FILE指向不存在路径，真实gateway_runtime启动503 DEPENDENCY_UNAVAILABLE（未分配DB）；首次探针漏PYTHONPATH报ModuleNotFoundError，补`PYTHONPATH=packages/contracts/src:packages/bankcore/src .venv/bin/python -`后复现成功，exit0仅表示复现脚本断言成功，不代表该配置已支持。已报协调者；协调者裁定保持configured_hashes()现有签名，后续新增configured_hashes_from_file(pins_file: str) -> dict[str, str]，由共享接线组件按Settings显式调用；本检查点不混入该新功能、不修改冻结区，完整W1验收前须关闭该错配。
+3. S1b PAUSED/claims状态原语未到，不越界修改state/tables/迁移。L3业务snapshot/谓词真实装载缺口、W2/W3来源链和W4执行仍待联合真实集成。FakeL3仍为契约替身；本组件不证明真实资金写入。
+
+文件：api/auth.py、utterance/runtime.py、W1 db/support.py、新两个W1测试文件、W1进度文档。`git diff --check`通过。只本地提交不推送，最终SHA见交付消息。
