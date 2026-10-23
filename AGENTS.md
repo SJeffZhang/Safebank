@@ -366,6 +366,8 @@
 
 | 2026-10-23 | Codex（协调者） | S1e发布head a156c53已push feat/l2-orphan-reconcile并创建base main PR #9，已附加任务；当前四检查unit/p1-postgres均IN_PROGRESS，未合并。自最终605d309复验后仅追加协调文档/验收，已核services/packages/tests/Makefile/workflow无diff。S1d任务更新为PR9全绿合并后启动，仍仅准备分支、无并行共享实现。 |
 
+| 2026-10-23 | Codex（协调者） | PR #9精确head a156c53的push/PR两套unit+p1-postgres四检查全部COMPLETED SUCCESS，执行gh pr merge 9 --merge --match-head-commit成功；merge681554752215dcf82b6e768f4a3f788c19469834，15:54:05Z。已fetch并同步main无冲突，派原W1 owner同步真实S1e完成孤儿撤销/CAS联调；下一共享S1d在复用独立worktree快进新main后串行启动，不与其他共享实现并行。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
@@ -403,13 +405,13 @@ P0 准备阶段（决定后续一切）：
 | [x] | S1 共享运行层 | PR #4，merge `691cf88`；独立评审与四CI全绿 | `docs/acceptance/L2-S1-runtime.md` |
 | [x] | S2 七天预留纯函数 | PR #5，merge `a9d72cf`；真实生产接入待S3 | `docs/acceptance/L2-S2-reserve.md` |
 | [x] | W4a 客户锁先决组件 | PR #7 merge d5ac9ed（六退出、独立评审及四CI全绿） | `docs/plans/briefs/W4a-customer-locks.md` |
-| [ ] | W1 身份、会话与原话 | `feat/l2-identity`（42c86f5，7缺陷与S1接线评审通过；真实锁/PIN路径/后续状态待联调） | `docs/plans/briefs/W1-identity.md` |
-| [ ] | W2 读代理、参数来源与污点 | `feat/l2-provenance`（27a067a三项修复已评审通过，来源链集成中） | `docs/plans/briefs/W2-provenance.md` |
+| [ ] | W1 身份、会话与原话 | `feat/l2-identity`（65fc97d真实锁/PIN检查点，8PG亲验；同步S1e消除孤儿红测中） | `docs/plans/briefs/W1-identity.md` |
+| [ ] | W2 读代理、参数来源与污点 | `feat/l2-provenance`（c945cd8来源链检查点已push/独立APPROVE；memo/S3/真实W1仍待接入） | `docs/plans/briefs/W2-provenance.md` |
 | [ ] | W3 快照、预演、工作流、决策与 G4 | `feat/l2-decision`（检查点3bcbe8e，共享依赖阻塞） | `docs/plans/briefs/W3-decision.md` |
 | [ ] | W4 审批与执行 | `feat/l2-execution`（3856a4c部分检查点，G8待共享状态与真实依赖） | `docs/plans/briefs/W4-execution.md` |
 | [x] | S1b / 0002_wave1 迁移与受控状态 | PR #6已合并94e40fe（四CI成功，真实现有库升级与集成通过） | `docs/plans/briefs/S1b-wave1-state.md` |
 | [x] | S1c PIN Settings 接线 | PR #8 merge `304adda`；五退出、独立评审与精确head四CI全绿 | `docs/plans/briefs/S1c-pin-settings.md`；证据 `docs/progress/S1c-pin-settings.md` |
-| [ ] | S1e 孤儿job受控对账 | `feat/l2-orphan-reconcile`；99e01e2已修复/独立APPROVE，亲自六退出含state231通过，准备PR | `docs/plans/briefs/S1e-orphan-jobs.md` |
+| [x] | S1e 孤儿job受控对账 | PR #9 merge `6815547`；独立APPROVE、亲自六退出/231专项及四CI全绿 | `docs/plans/briefs/S1e-orphan-jobs.md` |
 | [ ] | S1d memo敏感内容黄级code | 任务草稿，S1e后串行实施 | `docs/plans/briefs/S1d-memo-code.md` |
 | [ ] | S3a 真实完整义务数据 | ADR-009与任务书已准备，尚未实施 | `docs/plans/briefs/S3a-obligations-data.md` |
 | [ ] | W5 定时授权、通知、审计接口、D 接口 | 波次 2，任务书未写 | L2-plan §3 W5 |
