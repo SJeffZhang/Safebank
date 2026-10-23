@@ -18,7 +18,7 @@ from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
-from pydantic import StrictInt
+from pydantic import Field, StrictBool, StrictInt, model_validator
 from safebank_contracts.base import Contract
 from safebank_contracts.plan import ExecutionResult, PlanDraft
 from safebank_contracts.tools import Id
@@ -40,24 +40,42 @@ class UtteranceRef(Contract):
 
 
 class Slot(Contract):
-    intent_index: StrictInt
+    intent_index: Annotated[StrictInt, Field(ge=0)]
     name: str
     value: str
     span: tuple[StrictInt, StrictInt]
+
+    @model_validator(mode="after")
+    def ordered_span(self):
+        if not 0 <= self.span[0] < self.span[1]:
+            raise ValueError("invalid character span")
+        return self
 
 
 class Understanding(Contract):
     """LLM proposal only (PRD §6.1 understand node); never an authorization source."""
 
     intents: tuple[str, ...]
-    needs_write: bool
-    unclear: bool = False
+    needs_write: StrictBool
+    unclear: StrictBool = False
     slots: tuple[Slot, ...] = ()
 
 
 class ReadRecord(Contract):
+    """A locally validated read result plus the metadata needed to cite it in a plan.
+
+    ``data`` is the wall-stripped, untrusted-wrapped payload (already safe to feed back into
+    the plan prompt); it never carries JWT/service tokens, ``*_wall`` fields, or any untrusted
+    content promoted to a trusted source.
+    """
+
     source_ref: Id
+    tool: str = ""
+    args: dict[str, Any] = {}
+    data: dict[str, Any] = {}
     untrusted_paths: tuple[str, ...] = ()
+    versions: dict[str, int] = {}
+    observed_at: str = ""
 
 
 class DecisionValue(StrEnum):

@@ -1,8 +1,9 @@
-# agent（L1 Banking Agent，C1a 图骨架）
+# agent（L1 Banking Agent，C1a 图骨架 + C1b DeepSeek 适配）
 
-L1 使用 LangGraph；本组件只交付**图骨架**（`services/agent/app/graph/`）：`AgentState`、
-`AgentContext`（运行时上下文）、类型化端口 `Ports` 与 `build_graph`。生产 HTTP 入口仍是
-P0 探针（`scripts/health_app.py`），本组件**未**开放业务入口、未接 LLM、未接 L2/L3。
+L1 使用 LangGraph；已交付**图骨架**（`services/agent/app/graph/`）与 **C1b DeepSeek 适配**
+（`services/agent/app/llm/`）：`AgentState`、`AgentContext`、`Ports`、`build_graph`，以及
+understand/gather/plan 三个端口实现。生产 HTTP 入口仍是 P0 探针（`scripts/health_app.py`），
+本组件**未**开放业务入口、未接 L2/L3，未跑真实 live。
 
 ## 骨架可用范围（C1a）
 
@@ -23,11 +24,25 @@ P0 探针（`scripts/health_app.py`），本组件**未**开放业务入口、�
   清楚，避免裸 `graph.invoke({})` 复用旧 checkpoint 的原话/计划。
 - 助手令牌只放在 `AgentContext`（LangGraph 运行时 context），不进入 `AgentState` /
   `config["configurable"]`，因此不进 checkpoint。
-- `Decision` / `Understanding` / `ReadRecord` / `UtteranceRef` 是 C1a 本地最小模型，**不代表 L2
-  授权**；C1b/C1c 换成真实 contracts / L2 线上类型。
+
+## C1b DeepSeek 适配（`services/agent/app/llm/`）
+
+- `make_llm` 固定 `deepseek-v4-pro`、显式 `https://api.deepseek.com/beta`、`thinking.type=disabled`、
+  `temperature=0`；密钥只在客户端对象，不进 state/prompt/checkpoint/日志。
+- `understand`：单个 `report_understanding` strict 工具（强制 tool_choice），仅验证失败重试一次；
+  `plan`：复用 `plan_tool`/`from_strict_plan`+`PlanBody`，`request_id/session_id/utterance_ids` 由代码
+  填，模型自填身份即失败；两者每次新建 system+human（无历史 assistant）。
+- `gather`：只绑 18 个 read 工具（非 strict，参数本地契约校验），最多 3 轮，经显式 `read_executor`
+  执行；拒绝未知/写工具与畸形 tool call、达到上限明确截断，`*_wall` 剔除、untrusted 用
+  `<untrusted_data source=…>` 包裹并转义；输出完整 `ReadRecord`（tool/args/data/source_ref）供 plan 引用。
+- 自动测试全部走 `httpx.MockTransport` 检查最终 HTTP payload；`live.py` 是手动 live 入口（理解2+
+  计划3不同场景+gather1，硬预算8请求，含 usage/token/请求计数与语义断言），任一失败 exit 非 0，
+  **尚未执行**；需 `DEEPSEEK_API_KEY`（由协调者安全注入环境，不要把 key 复制进 worktree）。
+- 本地模型：`needs_write`/`unclear` 用 `StrictBool`（拒字符串/数字宽松转型），`Slot` 非负
+  `intent_index` + 合法 `span`。
 
 ## 运行方式
 
-- 单元测试：`make test`（`tests/agent/test_graph.py`，内存 saver，零 skip）。
+- 单元测试：`make test`（`tests/agent/`，内存 saver，零 skip；live 用 `python -m services.agent.app.llm.live` 手动跑）。
 - 本组件无 PostgreSQL；**不声称** Postgres saver 已验收（留 C1d）。
 - 启动：根目录 `make setup && make keys && make up`；端口 8100 只在容器网络内（仍为探针）。
