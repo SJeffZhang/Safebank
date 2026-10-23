@@ -116,7 +116,7 @@
 
 | 2026-10-23 | Codex | P0 最终复验 make test/lint 通过（8 passed），make up + make test-integration 重跑通过。提交前65个暂存文件检查通过：未含实际API key、私钥、.env/.secrets/.wheels/.venv。已按用户授权创建 https://github.com/SJeffZhang/SafeBank-Gateway ，创建参数明确 --private；准备首次提交推送。P0证据见 docs/acceptance/P0.md，业务实现仍未开始。 |
 
-| 2026-10-23 | Codex | 首次提交 ffcfe23 已推送 origin/main；GitHub 查询 visibility=PRIVATE。用户要求仓库名简化且首字母大写，已将 SafeBank-Gateway 改名 Safebank，本地 origin 同步 https://github.com/SJeffZhang/Safebank.git 。首次 CI 已触发；本地组件与集成验收已通过，远端结果待单独核实。 |
+| 2026-10-23 | Codex | 首次提交 ffcfe23 已推送 origin/main；GitHub 查询 visibility=PRIVATE。用户要求仓库名简化且首字母大写，已将 SafeBank-Gateway 改名 Safebank，本地 origin 同步 https://github.com/SJeffZhang/Safebank.git 。首次 CI 已完成且 conclusion=success（run 39912891423）；本地组件与集成验收也已通过。 |
 
 ## 5. 下一步待办（按顺序）
 
