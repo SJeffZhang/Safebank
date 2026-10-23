@@ -35,7 +35,7 @@
 
 ## 3. 当前状态（每次工作后更新）
 
-**最后更新**：2026-10-23
+**最后更新**：2026-10-24
 
 | 模块 | 状态 |
 |---|---|
@@ -44,8 +44,8 @@
 | 代码 | **P1 完成并逐组件验收**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116项单元+33项真实PG通过，契约v1已冻结。分支 feat/l3-core，P1代码已提交并推送私有仓库（功能提交7fd7a26）；CI权限修复70dcabe已推送，远端unit与p1-postgres均通过（run 39929405919） |
 | L2 网关 | **W0与共享PR #4–#10均已合入main**，当前main `44ded2f`：S1运行层、S2七天预留、S1b网关0002/CAS、W4a客户锁、S1c PIN Settings、S1e孤儿对账、S1d memo code。W1 `1722995`待协调者最新全退出与独立审；W2 `8063f27`已亲验五退出，memo独审及真实W1/S3接线仍缺。S1f尚未实施，先完成其挂载补缺；S3a提案F1修订待复审。W3/W4仅早期部分检查点。计划 `docs/plans/L2-plan.md`，交接 `docs/handoff/TEAMMATE-HANDOFF-2026-10-23.md` |
 | 前端 | **暂停**，用户亲自下令才开工（§2 第 13 条） |
-| 协调状态 | **用户于2026-10-23暂停开发，等待队友接手**；六个检查点与交接分支已推送。当前入口 `docs/handoff/TEAMMATE-HANDOFF-2026-10-23.md`；CODEX-RESUME是暂停时历史快照；旧实现agent已停 |
-| 下一步 | 队友先确认远端及文档PR、在最新main复跑基线；S1f→W1最终审验/发布，W2先独审memo后补真实接线，S3a先定点复审F1、待S1f合并后串行实施；再按依赖推进W3→W4。共享补缺逐组件串行，原四路任务无需从头重做（见 §5「L2 进度」） |
+| 协调状态 | **2026-10-24 主会话接回**：实现与评审均由本机 Claude Code CLI（DeepSeek V4 Pro）无头 worker 完成，协调者只复跑、推送、开 PR、合并、记日志。接续计划 `docs/plans/L2-resume-2026-10-24.md`。本机 worktree 在 `../Fintech2026-wt/<名>`，`.secrets` 软链到与本机数据卷匹配的 W0 worktree 密钥 |
+| 下一步 | S1f PR 合并 → W1 同步 main、修两条 P2、复跑后开 PR → S3a 按 F1 复审通过的提案实施 → W2 真实接线（含 ¥ P2）→ W3 → W4（见 `docs/plans/L2-resume-2026-10-24.md`） |
 
 ### 已确认事实
 
@@ -391,6 +391,12 @@
 
 | 2026-10-23 | Codex（协调者） | AGENTS状态修订91cd64f已push；GitHub插件对私有仓库创建PR返回404，改用已登录gh成功创建仅文档草稿PR #11并附加到当前任务。交接入口补PR链接与ready/精确head CI门禁，交由队友审阅接续；本轮不等待CI、不恢复业务开发、不执行merge，也未把新CI或未审功能宣称为通过。 |
 
+| 2026-10-24 | Claude（主会话 89da7fbc，接回） | 用户把工作交回主会话，继续用本机 Claude Code CLI（DeepSeek V4 Pro）作实现 worker、Claude 只读 subagent 作评审。核实：PR #11 已于 2026-10-23T16:32Z 合入 main（aa42a0c），head 92fb7b9 的 unit / p1-postgres 均 success，main aa42a0c CI success；六个检查点远端 SHA 与 TEAMMATE-HANDOFF 一致（W1 1722995、W2 8063f27、W3 3bcbe8e、W4 3856a4c、S1f 58c4592 已是 main 祖先、S3a 6815547）。本机不是 Codex 所在机器：本机数据卷 safebank_pg-bank / pg-agent 创建于 2026-10-23T11:29:55Z，与 W0 worktree 的 `.secrets` 匹配；主 checkout 的 `.secrets` 是 W0 之前的旧版、与卷不符。替换主 checkout `.secrets` 被自动模式拦截，改为不动现有文件：新建 detached worktree `../Fintech2026-wt/main-baseline`（aa42a0c），`.secrets` 软链到 W0 worktree，在其中串行跑 make setup/keys/up/test/test-gateway/test-gateway-db 基线（结果另记）。新建 worktree：S1f（`feat/l2-demo-route-guard`，从 aa42a0c）、W1（1722995）、W2（8063f27），均软链同一 `.secrets`。已派 S1f worker（DeepSeek，后台，禁 up/down/test-p1/test-integration/docker volume/git push）；并行派 2 个只读评审：W1 检查点终审、W2 memo 增量（50c1bdb..8063f27）+ S3a 字段 F1 定点复审；协调者在 W1 worktree 亲自复跑 setup/lint/test-gateway/test-gateway-db/test/test-w1。 |
+| 2026-10-24 | Claude（主会话 89da7fbc） | main aa42a0c 基线（main-baseline worktree）串行全部 exit 0：setup；keys「Existing secrets preserved」；make up 六服务 healthy；make test 398 passed/302 skipped；test-gateway 163/254 skipped；test-gateway-db 17 passed。两卷 CreatedAt 仍 11:29:55Z，未删重建。协调者在 W1 1722995 亲自复跑：lint 通过；test-gateway 1692/412 skip；test-gateway-db 17；test 1927/460 skip；test-w1 1687 passed 零 skip（63.6s），与实现者自报一致。**纠正**：用户指出评审也须交本机 Claude Code CLI，不应用主会话 subagent；已停掉刚派的 2 个 Claude 评审 subagent（未产出文件），改派 2 个 DeepSeek 无头只读评审 worker（白名单仅读文件、git 只读、定点 pytest、写报告；禁 Edit/commit/push/make/docker）：R-W1 → W1 worktree `docs/reviews/L2-W1-final-review.md`；R-W2S3a → W2 worktree `docs/reviews/L2-W2-memo-review.md` 与 `L2-S3a-fields-f1-recheck.md`。`.git/info/exclude` 加 `/.secrets`，避免 worktree 软链被当成未跟踪文件。 |
+| 2026-10-24 | Claude（主会话 89da7fbc） | S1f worker（DeepSeek，84 轮）本地提交 38e382c（5 文件 +185/−5：main.py 每 app 独立装配公共 auth 路由，demo/eval 均关时不注册 G22；matrix.coverage_errors 按开关校验 G22；test_matrix 新增 8 项；README、进度）。协调者在 S1f worktree 亲自复跑六退出全部 exit 0：lint 175 files；test 406/302 skip；test-gateway 171/254 skip；test-gateway-db 17；test-shared-runtime 59 零 skip；contracts-check PASS。应用户要求 `brew install actionlint`（1.7.12），在 S1f worktree 运行 exit 0。已派 DeepSeek 只读评审 R-S1f（报告 `docs/reviews/L2-S1f-review.md`），结论未出前不推送。 |
+| 2026-10-24 | DeepSeek 只读评审 worker ×3 | R-S1f（39 轮）**APPROVE**，P0/P1 无；P2-1 G22 过滤只看 path 不看方法，P2-2 嵌套 router 时过滤 fail-open（coverage 构建期兜底）；亲跑 test_matrix 16 passed；报告 S1f worktree `docs/reviews/L2-S1f-review.md`。R-W1（65 轮）**APPROVE**，撤销追加任务逐条核对、冻结区零越界、与 S1f 合并风险低；P2：correction 双次 `_invalidate_plans`、intent_lexicon 死键；报告 W1 worktree `docs/reviews/L2-W1-final-review.md`。R-W2S3a（63 轮）：W2 memo 增量 **APPROVE**（只升级不放宽；P2：裸 ¥/￥ 无数字也升黄），报告 W2 worktree `docs/reviews/L2-W2-memo-review.md`；S3a F1 定点复审 **APPROVE**（SUCCESS ⇒ instruction_id 非空有应用层 + DB CHECK；备注实施时 PRD §8.3 补三个关系见证列与该 CHECK），报告 W2 worktree `docs/reviews/L2-S3a-fields-f1-recheck.md`。协调裁定：S1f 两条 P2 本轮修（`--resume` 原 worker，修复轮 1）；W1 / W2 的 P2 并入各自同步 main 的下一轮。 |
+| 2026-10-24 | Claude（主会话 89da7fbc） | S1f 修复轮 1（`--resume` 原 DeepSeek worker，32 轮）提交 d169f52：G22 过滤改为 method+path 精确匹配；auth.router 出现非 APIRoute 顶层项时构建期直接拒绝（fail-closed）；新增 2 红测（红 16/2 failed → 绿 18）；评审报告随提交。协调者在 d169f52 亲自复跑六退出全部 exit 0：lint 175 files；test 408/302 skip；test-gateway 173/254 skip；test-gateway-db 17；test-shared-runtime 59 零 skip；contracts-check PASS；actionlint exit 0；diff 密钥扫描无命中。主 checkout 未提交的协调文档（AGENTS 日志、接续计划）复制进 S1f 分支后在主 checkout `git stash`（未丢弃），新增验收记录 `docs/acceptance/L2-S1f-demo-route.md`，推送并开 base main PR。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
@@ -436,7 +442,7 @@ P0 准备阶段（决定后续一切）：
 | [x] | S1c PIN Settings 接线 | PR #8 merge `304adda`；五退出、独立评审与精确head四CI全绿 | `docs/plans/briefs/S1c-pin-settings.md`；证据 `docs/progress/S1c-pin-settings.md` |
 | [x] | S1e 孤儿job受控对账 | PR #9 merge `6815547`；独立APPROVE、亲自六退出/231专项及四CI全绿 | `docs/plans/briefs/S1e-orphan-jobs.md` |
 | [x] | S1d memo敏感内容黄级code | PR #10 merge `44ded2f`；亲自三退出/独立APPROVE/四CI全绿 | `docs/plans/briefs/S1d-memo-code.md` |
-| [ ] | S1f G22条件挂载 | `feat/l2-demo-route-guard`（已push `58c4592`，仅准备任务/分支，未实施；优先S3a） | `docs/plans/briefs/S1f-demo-route-mount.md` |
+| [ ] | S1f G22条件挂载 | `feat/l2-demo-route-guard` 38e382c+d169f52；协调者六退出+actionlint 亲验、DeepSeek 独立评审 APPROVE、P2 已修；PR 待 CI | `docs/plans/briefs/S1f-demo-route-mount.md`；`docs/acceptance/L2-S1f-demo-route.md` |
 | [ ] | S3a 真实完整义务数据 | `feat/l3-obligations-data`（已push `6815547`；模型提案F1已修、未定点复审/实施，先同步main） | `docs/plans/briefs/S3a-obligations-data.md`；`S3a-model-proposal.md` |
 | [ ] | W5 定时授权、通知、审计接口、D 接口 | 波次 2，任务书未写 | L2-plan §3 W5 |
 | [ ] | W6 网关层安全验收（A8、A1/A2/A3/A5） | 波次 2，任务书未写 | L2-plan §3 W6 |
