@@ -1,5 +1,5 @@
 from dataclasses import FrozenInstanceError
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -650,3 +650,198 @@ def test_report_is_identical_under_account_instruction_and_subscription_permutat
         }
     )
     assert bankcore.projected_shortfall(state) == bankcore.projected_shortfall(reversed_state)
+
+
+TIMEZONE_CASES = [
+    (
+        "ONCE",
+        None,
+        None,
+        "2026-10-18T06:00:00+08:00",
+        "2026-10-17T09:00:00+08:00",
+        "2026-10-24T09:00:00+08:00",
+        ["2026-10-18T06:00:00+08:00"],
+    ),
+    (
+        "WEEKLY",
+        None,
+        6,
+        "2026-10-18T06:00:00+08:00",
+        "2026-10-17T09:00:00+08:00",
+        "2026-11-01T06:00:00+08:00",
+        ["2026-10-18T06:00:00+08:00", "2026-10-25T06:00:00+08:00", "2026-11-01T06:00:00+08:00"],
+    ),
+    (
+        "MONTHLY",
+        31,
+        None,
+        "2024-02-29T06:00:00+08:00",
+        "2024-02-28T09:00:00+08:00",
+        "2024-04-30T06:00:00+08:00",
+        ["2024-02-29T06:00:00+08:00", "2024-03-31T06:00:00+08:00", "2024-04-30T06:00:00+08:00"],
+    ),
+    (
+        "MONTHLY",
+        31,
+        None,
+        "2026-12-31T06:00:00+08:00",
+        "2026-12-30T09:00:00+08:00",
+        "2027-02-28T06:00:00+08:00",
+        ["2026-12-31T06:00:00+08:00", "2027-01-31T06:00:00+08:00", "2027-02-28T06:00:00+08:00"],
+    ),
+    (
+        "MONTHLY",
+        1,
+        None,
+        "2027-01-01T06:00:00+08:00",
+        "2026-12-31T09:00:00+08:00",
+        "2027-02-01T06:00:00+08:00",
+        ["2027-01-01T06:00:00+08:00", "2027-02-01T06:00:00+08:00"],
+    ),
+]
+
+
+@pytest.mark.parametrize("offset_hours", [0, -7, 14])
+@pytest.mark.parametrize(
+    ("period", "anchor_day", "weekday", "first_due", "start", "end", "expected"), TIMEZONE_CASES
+)
+def test_scheduled_offsets_preserve_shanghai_calendar_and_recurrence(
+    offset_hours, period, anchor_day, weekday, first_due, start, end, expected
+):
+    offset = timezone(timedelta(hours=offset_hours))
+    item = instruction(
+        period=period,
+        anchor_day=anchor_day,
+        weekday=weekday,
+        next_run_at=at(first_due).astimezone(offset),
+        end_at=at(end).astimezone(UTC),
+    )
+    before = item.model_dump_json()
+    result = bankcore.scheduled_occurrences(
+        (item,), at(start).astimezone(UTC), at(end).astimezone(offset)
+    )
+    assert [due.due_at.isoformat() for due in result] == expected
+    canonical = instruction(
+        period=period,
+        anchor_day=anchor_day,
+        weekday=weekday,
+        next_run_at=at(first_due),
+        end_at=at(end),
+    )
+    assert result == bankcore.scheduled_occurrences((canonical,), at(start), at(end))
+    assert item.model_dump_json() == before
+
+
+@pytest.mark.parametrize("offset_hours", [0, -7, 14])
+@pytest.mark.parametrize(
+    ("period", "anchor_day", "weekday", "first_due", "start", "end", "expected"), TIMEZONE_CASES
+)
+def test_report_offsets_preserve_same_seven_day_obligations(
+    offset_hours, period, anchor_day, weekday, first_due, start, end, expected
+):
+    offset = timezone(timedelta(hours=offset_hours))
+    item = instruction(
+        period=period,
+        anchor_day=anchor_day,
+        weekday=weekday,
+        next_run_at=at(first_due).astimezone(offset),
+        end_at=at(end).astimezone(UTC),
+    )
+    state = projection_state(instructions=(item,)).model_copy(
+        update={
+            "sim_now": at(start).astimezone(offset),
+        }
+    )
+    report = bankcore.projected_shortfall(state)
+    # Each seven-day fixture contains only its first occurrence.
+    assert [due.due_at.isoformat() for due in report.obligations] == [expected[0]]
+    assert report.accounts["acc_a"].reserve_cents == 1000
+    canonical = state.model_copy(
+        update={
+            "sim_now": at(start),
+            "instructions": (
+                item.model_copy(
+                    update={
+                        "next_run_at": at(first_due),
+                        "end_at": at(end),
+                    }
+                ),
+            ),
+        }
+    )
+    assert report == bankcore.projected_shortfall(canonical)
+
+
+@pytest.mark.parametrize("end_shift_microseconds", [0, -1])
+def test_mixed_offset_window_and_end_at_compare_instants(end_shift_microseconds):
+    end = NOW + timedelta(days=7)
+    item = instruction(
+        period="WEEKLY",
+        weekday=3,
+        time_of_day="09:00",
+        next_run_at=NOW.astimezone(UTC),
+        end_at=(end + timedelta(microseconds=end_shift_microseconds)).astimezone(
+            timezone(timedelta(hours=14))
+        ),
+    )
+    result = bankcore.scheduled_occurrences(
+        (item,),
+        NOW.astimezone(timezone(timedelta(hours=-7))),
+        (end + timedelta(days=7)).astimezone(UTC),
+    )
+    assert [due.due_at.isoformat() for due in result] == (
+        ["2026-10-22T09:00:00+08:00"] if end_shift_microseconds == 0 else []
+    )
+
+
+def test_mixed_offset_report_keeps_merchant_and_scheduled_window_boundaries():
+    end = NOW + timedelta(days=7)
+    state = projection_state(
+        instructions=(
+            instruction(
+                period="WEEKLY",
+                weekday=3,
+                time_of_day="09:00",
+                next_run_at=NOW.astimezone(UTC),
+                end_at=end.astimezone(timezone(timedelta(hours=14))),
+            ),
+        ),
+        subscriptions=(
+            subscription(next_due_at=NOW.astimezone(UTC)),
+            subscription(
+                instruction_id="si_end",
+                billing_id="bill_end",
+                next_due_at=end.astimezone(timezone(timedelta(hours=-7))),
+            ),
+            subscription(
+                instruction_id="si_late",
+                billing_id="bill_late",
+                next_due_at=(end + timedelta(seconds=1)).astimezone(UTC),
+            ),
+        ),
+    ).model_copy(update={"sim_now": NOW.astimezone(timezone(timedelta(hours=-7)))})
+    report = bankcore.projected_shortfall(state)
+    assert [(due.due_at.isoformat(), due.rank, due.id) for due in report.obligations] == [
+        ("2026-10-22T09:00:00+08:00", 3, "si_1"),
+        ("2026-10-22T09:00:00+08:00", 4, "bill_end"),
+    ]
+    assert report.accounts["acc_a"].reserve_cents == 4000
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"next_run_at": at("2026-10-17T22:00:00Z"), "time_of_day": "22:00"},
+        {"period": "WEEKLY", "weekday": 5, "next_run_at": at("2026-10-17T22:00:00Z")},
+        {"period": "MONTHLY", "anchor_day": 31, "next_run_at": at("2027-01-31T22:00:00Z")},
+        {"period": "MONTHLY", "anchor_day": 28, "next_run_at": at("2024-02-28T22:00:00Z")},
+    ],
+)
+def test_offset_inputs_still_reject_wrong_shanghai_time_or_anchors(updates):
+    item = instruction(**updates)
+    start = item.next_run_at - timedelta(days=1)
+    with pytest.raises(ValueError):
+        bankcore.scheduled_occurrences((item,), start, start + timedelta(days=7))
+    state = projection_state(instructions=(item,)).model_copy(update={"sim_now": start})
+    with pytest.raises(ValueError):
+        bankcore.projected_shortfall(state)

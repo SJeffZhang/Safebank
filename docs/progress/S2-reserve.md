@@ -8,6 +8,7 @@
 - `projected_shortfall(state, *, days=7)` 仅支持严格整数 7；其他值显式拒绝。SubscriptionView 缺少月度原始锚点，不能据此支持任意天数。
 - `scheduled_occurrences(instructions, start, end)` 使用 ScheduledView 的原始锚点，可供后续 30 天承诺计算复用。
 - weekday 经协调者确认采用 `datetime.weekday()`：周一 0 至周日 6；范围外或与 next_run_at 不一致时报错。MONTHLY 保留原 anchor_day，短月截到月末，下一月恢复原锚点。
+- 所有带时区输入先归一化为 PRD §0.1 的 Asia/Shanghai，再校验本地时间/星期/月度锚点、展开周期和计算窗口；同瞬间的其他 offset 不拒绝。报告 due_at 统一为上海业务时间。
 - MONTHLY 商户 next_due_at 早于 sim_now 时显式报错，因为现有 SubscriptionView 没有原始锚点；等于 sim_now 按左开窗口排除。WEEKLY 可精确按 7 天推进，保留原执行时刻。
 - 未运行 Docker、真实 PostgreSQL、L3 业务 HTTP、LLM 或外部服务；完整单元回归包含 S1 的本地回环 HTTP 监听测试，不构成银行业务集成验收。
 
@@ -77,9 +78,33 @@
 
 - `packages/bankcore/src/safebank_bankcore/reserve.py`：唯一预留算法及三个不可变返回类型。
 - `packages/bankcore/src/safebank_bankcore/__init__.py`：必要公开导出。
-- `tests/bankcore/test_reserve.py`：73 项独立纯函数/场景验收。
+- `tests/bankcore/test_reserve.py`：110 项独立纯函数/场景验收（最初 73 项，加 R1 的 37 项时区回归）。
 - `Makefile`：末尾 `test-reserve` 目标，保留 S1 目标。
 - `docs/progress/S2-reserve.md`：本报告与限制。
+
+## 评审修复轮 1：R1 业务时区（完成，待原评审定点复核）
+
+- 修复起点：`8a7d6ddd4b71dacadf1df20b1f8e29846cbbb794`。
+- 独立评审指出：同一瞬间 `2026-10-18T06:00:00+08:00` 与 `2026-10-17T22:00:00Z` 在两个接口中的结果不一致。按 PRD §0.1，应按 Asia/Shanghai 校验业务日历。
+- 根因已核对：旧 `_schedule_time` 直接读取输入 offset 下的 `.time()`、`.weekday()`、年月日；后续月度递推又沿用该 offset。因此合法 UTC 表示被拒绝，错误的上海本地时刻反而可能按 UTC 时分被接受。
+- 单项修复：用 `_business_time` 在读取日历字段之前统一转 Asia/Shanghai；同时规范化 start/end/end_at、sim_now、商户 next_due_at 和返回 due_at。金额、排序、预留算式、所有权、API 签名和 7 天限制均未改动；没有修改 S1、gateway、L3 或 contracts。
+- 新增 37 项回归：两接口覆盖 ONCE/WEEKLY/月末闰年/年末递推/跨年一日锚点，每组接受 UTC、-07:00、+14:00 等价瞬间；显式断言上海时间结果和同源输入结果相同。混合 offset 验证左开右闭窗口、end_at 正好到期或提前 1 微秒；负例继续拒绝错误上海时刻、星期和月度锚点。输入深度不变也有断言。
+
+实际红绿与退出证据（2026-10-23）：
+
+1. 先只加测试，`.venv/bin/pytest tests/bankcore/test_reserve.py -q --tb=short`（同前 PYTEST_ADDOPTS）：**34 failed / 76 passed**，退出 1。新增 34 项复现误拒绝/误接受；另 3 项拒绝负例原本即通过。
+2. 实现归一化后同命令：**110 passed**，退出 0。
+3. `ruff format` 限定两个修复文件：1 file reformatted / 1 unchanged，退出 0。首轮 `make lint` 因测试中 8 处 `timezone.utc` 违反 UP017 退出 2，定向改为 datetime.UTC；下一轮因新增 UTC 导入排序违反 I001 退出 2，排序修正后通过。未放宽 lint 规则。
+4. 样式修正期间两次完整 `make test` 实际均为 **338 passed / 54 skipped**，退出 0；最后代码冻结前重新完整验收如下。
+
+| 最终退出命令 | 实际结果 | 退出码 |
+|---|---|---|
+| `RUFF_CACHE_DIR=/private/tmp/sbg-reserve-ruff-cache make lint` | All checks passed；158 files already formatted | 0 |
+| `PYTEST_ADDOPTS='-o cache_dir=/private/tmp/sbg-reserve-pytest-cache' make test`（提升环境，允许 S1 本地回环监听） | **338 passed / 54 skipped**，4.20s | 0 |
+| `PYTEST_ADDOPTS='-o cache_dir=/private/tmp/sbg-reserve-pytest-cache' make test-reserve` | **110 passed** | 0 |
+| `make contracts-check` | PASS: contracts v1 match frozen schemas | 0 |
+
+本轮仅修改 reserve.py、test_reserve.py 与本报告；本地提交后冻结，交由协调者和原评审者复核，不 push。生产接入及真实 L3 集成限制仍与下节相同。
 
 ## 待协调者同步
 

@@ -1,8 +1,10 @@
 """Deterministic obligation projection; callers must supply complete obligation data.
 
-Windows are left open and right closed. Scheduled recurrence uses the original
-monthly anchor and local execution time; weekday follows datetime.weekday():
-Monday=0 through Sunday=6. No wall clock, IO, or authorization decision is used.
+Windows are left open and right closed. Aware timestamps are normalized to
+Asia/Shanghai before calendar validation and recurrence. Scheduled recurrence
+uses the original monthly anchor and Shanghai local execution time; weekday
+follows datetime.weekday(): Monday=0 through Sunday=6. No wall clock, IO, or
+authorization decision is used.
 """
 
 from calendar import monthrange
@@ -10,9 +12,12 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from types import MappingProxyType
+from zoneinfo import ZoneInfo
 
 from safebank_contracts.state import Account, BankState
 from safebank_contracts.views import ScheduledView, SubscriptionView
+
+BUSINESS_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,15 +44,16 @@ class ShortfallReport:
     obligations: tuple[Obligation, ...]
 
 
-def _aware(value: datetime) -> None:
+def _business_time(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("obligation timestamps must include a timezone")
+    return value.astimezone(BUSINESS_TIMEZONE)
 
 
 def _schedule_time(item: ScheduledView) -> time:
     if item.next_run_at is None:
         raise ValueError(f"ACTIVE instruction {item.id} has no next_run_at")
-    _aware(item.next_run_at)
+    next_run = _business_time(item.next_run_at)
     if item.amount_cents <= 0:
         raise ValueError(f"instruction {item.id} must have a positive amount")
     if (item.payee_id is None) == (item.to_account_id is None):
@@ -55,10 +61,10 @@ def _schedule_time(item: ScheduledView) -> time:
     if item.to_account_id == item.from_account_id:
         raise ValueError(f"instruction {item.id} source equals target")
     local_time = time.fromisoformat(item.time_of_day)
-    if local_time.tzinfo is not None or local_time != item.next_run_at.time():
+    if local_time.tzinfo is not None or local_time != next_run.time():
         raise ValueError(f"instruction {item.id} has inconsistent local execution time")
     if item.end_at is not None:
-        _aware(item.end_at)
+        _business_time(item.end_at)
     if item.period == "ONCE":
         if item.anchor_day is not None or item.weekday is not None:
             raise ValueError(f"ONCE instruction {item.id} cannot have recurring anchors")
@@ -67,7 +73,7 @@ def _schedule_time(item: ScheduledView) -> time:
             type(item.weekday) is not int
             or not 0 <= item.weekday <= 6
             or item.anchor_day is not None
-            or item.next_run_at.weekday() != item.weekday
+            or next_run.weekday() != item.weekday
         ):
             raise ValueError(f"WEEKLY instruction {item.id} has invalid or inconsistent weekday")
     elif item.period == "MONTHLY":
@@ -77,7 +83,6 @@ def _schedule_time(item: ScheduledView) -> time:
             or item.weekday is not None
         ):
             raise ValueError(f"MONTHLY instruction {item.id} has invalid anchors")
-        next_run = item.next_run_at
         expected_day = min(item.anchor_day, monthrange(next_run.year, next_run.month)[1])
         if next_run.day != expected_day:
             raise ValueError(f"instruction {item.id} next_run_at disagrees with anchor_day")
@@ -100,12 +105,14 @@ def scheduled_occurrences(
 ) -> tuple[Obligation, ...]:
     """Expand ACTIVE scheduled debits in (start,end], including exact end_at.
 
-    Uses original monthly anchor_day. weekday uses Monday=0..Sunday=6.
+    Calendar fields and recurrence use Asia/Shanghai regardless of input offset;
+    returned due_at values use that business timezone. Uses original monthly
+    anchor_day. weekday uses Monday=0..Sunday=6.
     Ownership and own-account credits require BankState and are handled by
     projected_shortfall; this expansion also supports independent 30-day callers.
     """
-    _aware(start)
-    _aware(end)
+    start = _business_time(start)
+    end = _business_time(end)
     if end < start:
         raise ValueError("projection end precedes start")
     result: list[Obligation] = []
@@ -117,9 +124,9 @@ def scheduled_occurrences(
         if item.status != "ACTIVE":
             continue
         local_time = _schedule_time(item)
-        due_at = item.next_run_at
-        assert due_at is not None  # checked above; ACTIVE cannot silently lose obligations
-        cutoff = min(end, item.end_at) if item.end_at is not None else end
+        assert item.next_run_at is not None  # ACTIVE cannot silently lose obligations
+        due_at = _business_time(item.next_run_at)
+        cutoff = min(end, _business_time(item.end_at)) if item.end_at is not None else end
         while due_at <= cutoff:
             if due_at > start:
                 result.append(
@@ -185,10 +192,9 @@ def _merchant_occurrences(
         billing_ids.add(item.billing_id)
         if item.status != "ACTIVE":
             continue
-        _aware(item.next_due_at)
-        if item.period == "MONTHLY" and item.next_due_at < start:
+        due_at = _business_time(item.next_due_at)
+        if item.period == "MONTHLY" and due_at < start:
             raise ValueError(f"monthly bill {item.billing_id} lacks anchor for stale next_due_at")
-        due_at = item.next_due_at
         while due_at <= end:
             if due_at > start:
                 result.append(
@@ -211,13 +217,14 @@ def projected_shortfall(state: BankState, *, days: int = 7) -> ShortfallReport:
     anchors for longer windows. scheduled_occurrences separately supports them.
     Own-account scheduled transfers credit the target; cross-customer transfers,
     wages, fund settlements and pending income provide no guaranteed income.
+    The window and returned due_at values use Asia/Shanghai; any equivalent
+    aware input offset is accepted and preserves the same business calendar.
     max_outflow_cents remains negative when obligations exceed available funds.
     No L2 policy violation or authorization decision is returned here.
     """
     if type(days) is not int or days != 7:
         raise ValueError("projected_shortfall supports only integer days=7")
-    start = state.sim_now
-    _aware(start)
+    start = _business_time(state.sim_now)
     end = start + timedelta(days=days)
     scheduled = scheduled_occurrences(state.instructions, start, end)
     own_targets = {
