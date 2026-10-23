@@ -34,3 +34,7 @@
 两个最小测试例外由协调者明确批准：test_state_keys中UNKNOWN claim消费改409、独立无job claim保留PK测试；test_ddl_drift保留历史精确漂移保护并白名单回退四列/新CHECK。没有删除或skip失败断言。
 
 实现 checkpoint `4b364968d278b5a74e972b9133a0307fe67031ba`，随后仅同步SHA文档；尚未push/PR/merge；CI已增加专项但远端未运行。协调者复跑与独立只读评审仍待完成。
+
+## 协调者与独立评审确认
+
+协调者在8b151bc完整六退出全exit0：lint166、全量358/139skip（4.14s）、gateway129/91skip（3.46s）、PG17（2.09s）、专项105零skip（7.74s）、contracts PASS。review_s1b_state独立规范PASS/质量APPROVE，无可复现P0/P1/P2；亲自定向17 passed零skip（10.13s）。真实HTTP协议与W1/W3/W4接线仍未验收。随后仅合并协调文档与本确认，业务代码未变；准备推送组件PR，远端CI尚待运行。

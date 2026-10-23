@@ -353,7 +353,7 @@ P0 准备阶段（决定后续一切）：
 | [ ] | W2 读代理、参数来源与污点 | `feat/l2-provenance`（27a067a三项修复已评审通过，来源链集成中） | `docs/plans/briefs/W2-provenance.md` |
 | [ ] | W3 快照、预演、工作流、决策与 G4 | `feat/l2-decision`（检查点3bcbe8e，共享依赖阻塞） | `docs/plans/briefs/W3-decision.md` |
 | [ ] | W4 审批与执行 | `feat/l2-execution`（3856a4c部分检查点，G8待共享状态与真实依赖） | `docs/plans/briefs/W4-execution.md` |
-| [ ] | S1b / 0002_wave1 迁移与受控状态 | `feat/l2-wave1-state`（独立共享agent串行实施中） | `docs/plans/briefs/S1b-wave1-state.md` |
+| [ ] | S1b / 0002_wave1 迁移与受控状态 | `feat/l2-wave1-state`（8b151bc六退出和独立评审通过，准备组件PR/CI） | `docs/plans/briefs/S1b-wave1-state.md` |
 | [ ] | W5 定时授权、通知、审计接口、D 接口 | 波次 2，任务书未写 | L2-plan §3 W5 |
 | [ ] | W6 网关层安全验收（A8、A1/A2/A3/A5） | 波次 2，任务书未写 | L2-plan §3 W6 |
 
