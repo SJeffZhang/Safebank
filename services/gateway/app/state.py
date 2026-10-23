@@ -252,6 +252,8 @@ async def _locked_execution(
     conn: AsyncConnection, expected: ExecutionIdentity, status: ExecutionJobStatus
 ) -> tuple[Mapping[str, Any], Mapping[str, Any], Mapping[str, Any]]:
     _transaction(conn)
+    if not isinstance(expected, ExecutionIdentity):
+        raise ValueError("regular execution requires a revision-bound ExecutionIdentity")
     # All consumers must keep this lock order, on the same customer-lock conn.
     plan = (
         (
@@ -720,12 +722,177 @@ async def archive_execution_terminal(
         _conflict()
     plan, _, _ = await _locked_execution(conn, expected, from_status)
     await _claims(conn, plan)
+    terminal, result = _terminal_result(expected.plan_id, l3_status, result)
+    if plan["status"] in {PlanStatus.EXECUTED, PlanStatus.FAILED}:
+        _conflict()
+    await _job_update(
+        conn,
+        expected,
+        from_status,
+        status=terminal,
+        result=result.model_dump(mode="json") if result else None,
+    )
+    await _finish_terminal(conn, plan, terminal)
+
+
+@dataclass(frozen=True)
+class OrphanExecutionIdentity:
+    """Cleanup-only identity: explicitly expects no evaluation for this plan.
+
+    Never use this type for prepare, fence, replay or resume. Missing evaluation
+    data is not authorization, including when evidence/cap survived migration.
+    """
+
+    customer_id: str
+    plan_id: str
+    origin: Literal["agent", "app_form"]
+    attempt: int
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.origin, str)
+            or self.origin not in {"agent", "app_form"}
+            or type(self.attempt) is not int
+            or self.attempt < 1
+        ):
+            raise ValueError("invalid orphan execution identity")
+        if any(
+            not isinstance(value, str) or not value for value in (self.customer_id, self.plan_id)
+        ):
+            raise ValueError("empty orphan execution identity")
+
+
+async def _locked_orphan_execution(
+    conn: AsyncConnection,
+    expected: OrphanExecutionIdentity,
+    status: ExecutionJobStatus,
+) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
+    _transaction(conn)
+    if not isinstance(expected, OrphanExecutionIdentity):
+        raise ValueError("orphan cleanup requires OrphanExecutionIdentity")
+    plan = (
+        (
+            await conn.execute(
+                select(t.plans)
+                .where(
+                    t.plans.c.id == expected.plan_id,
+                    t.plans.c.customer_id == expected.customer_id,
+                    t.plans.c.origin == expected.origin,
+                )
+                .with_for_update()
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if plan is None:
+        _conflict()
+    job = (
+        (
+            await conn.execute(
+                select(t.execution_jobs)
+                .where(
+                    t.execution_jobs.c.plan_id == expected.plan_id,
+                    t.execution_jobs.c.l3_attempt == expected.attempt,
+                    t.execution_jobs.c.status == status,
+                )
+                .with_for_update()
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    has_evaluation = await conn.scalar(
+        select(
+            select(t.evaluations.c.id).where(t.evaluations.c.plan_id == expected.plan_id).exists()
+        )
+    )
+    if job is None or has_evaluation:
+        _conflict()
+    scopes = plan["scope_ids"]
+    if (
+        not isinstance(scopes, list)
+        or not scopes
+        or any(not isinstance(scope, str) or not scope for scope in scopes)
+    ):
+        _conflict()
+    # Keep the existing strict duplicate/ownership/status checks. This orphan-
+    # only shape guard makes malformed legacy JSON a controlled 409, not a
+    # set()/iteration TypeError, and never repairs missing authorization data.
+    await _claims(conn, plan)
+    return plan, job
+
+
+async def _orphan_job_update(
+    conn: AsyncConnection,
+    expected: OrphanExecutionIdentity,
+    from_status: ExecutionJobStatus,
+    **values: Any,
+) -> None:
+    # Keep absence in the actual CAS, not just the preceding read. The same
+    # plan row lock serializes compliant evaluation writers; they must recheck
+    # current status after waiting, never append a replay to an UNKNOWN job.
+    no_evaluation = (
+        ~select(t.evaluations.c.id).where(t.evaluations.c.plan_id == expected.plan_id).exists()
+    )
+    owner = select(t.plans.c.id).where(
+        t.plans.c.id == expected.plan_id,
+        t.plans.c.customer_id == expected.customer_id,
+        t.plans.c.origin == expected.origin,
+    )
+    changed = await conn.execute(
+        t.execution_jobs.update()
+        .where(
+            t.execution_jobs.c.plan_id.in_(owner),
+            t.execution_jobs.c.status == from_status,
+            t.execution_jobs.c.l3_attempt == expected.attempt,
+            no_evaluation,
+        )
+        .values(**values, updated_at_wall=func.now())
+        .returning(t.execution_jobs.c.plan_id)
+    )
+    if changed.scalar_one_or_none() is None:
+        _conflict()
+
+
+async def mark_orphan_execution_unknown(
+    conn: AsyncConnection,
+    *,
+    expected: OrphanExecutionIdentity,
+    from_status: ExecutionJobStatus,
+    reason: dict,
+) -> None:
+    """Persist cleanup work for a legacy job with explicitly absent evaluation.
+
+    W1 isolates expected CAS conflicts in a savepoint so revocation is not
+    rolled back. W4 proves actual customer-lock ownership and reconciles only
+    after commit. Evidence, cap, deadline, attempt and claims remain untouched.
+    """
+    if from_status not in LIVE_JOB_STATUSES:
+        _conflict()
+    plan, _ = await _locked_orphan_execution(conn, expected, from_status)
+    if plan["status"] in {PlanStatus.EXECUTED, PlanStatus.FAILED}:
+        _conflict()
+    await _orphan_job_update(conn, expected, from_status, status="UNKNOWN", last_error=reason)
+    await conn.execute(
+        t.plans.update().where(t.plans.c.id == expected.plan_id).values(status="UNKNOWN")
+    )
+
+
+def _terminal_result(
+    plan_id: str,
+    l3_status: Literal["COMMITTED", "CANCELLED"],
+    result: ExecutionResult | None,
+) -> tuple[str, ExecutionResult | None]:
+    """Shared result validation; the caller must prove true L3 authenticity."""
+    if l3_status not in {"COMMITTED", "CANCELLED"}:
+        _conflict()
     if result is not None:
         try:
             result = ExecutionResult.model_validate(result.model_dump(mode="json"))
         except (ValidationError, AttributeError):
             _conflict()
-        if result.plan_id != expected.plan_id:
+        if result.plan_id != plan_id:
             _conflict()
     if l3_status == "COMMITTED":
         if (
@@ -742,22 +909,20 @@ async def archive_execution_terminal(
         ):
             _conflict()
         terminal = "FAILED"
-    if plan["status"] in {PlanStatus.EXECUTED, PlanStatus.FAILED}:
-        _conflict()
-    await _job_update(
-        conn,
-        expected,
-        from_status,
-        status=terminal,
-        result=result.model_dump(mode="json") if result else None,
-    )
-    await conn.execute(
-        t.plans.update().where(t.plans.c.id == expected.plan_id).values(status=terminal)
-    )
+    return terminal, result
+
+
+async def _finish_terminal(
+    conn: AsyncConnection,
+    plan: Mapping[str, Any],
+    terminal: str,
+) -> None:
+    """Called only after guarded terminal CAS with the claims locked."""
+    await conn.execute(t.plans.update().where(t.plans.c.id == plan["id"]).values(status=terminal))
     await conn.execute(
         t.authorization_claims.update()
         .where(
-            t.authorization_claims.c.plan_id == expected.plan_id,
+            t.authorization_claims.c.plan_id == plan["id"],
             t.authorization_claims.c.status == "CLAIMED",
         )
         .values(status="CONSUMED")
@@ -770,5 +935,33 @@ async def archive_execution_terminal(
             t.utterances.c.id.in_(plan["utterance_ids"]),
             t.utterances.c.status == "ACTIVE",
         )
-        .values(status="CONSUMED", consumed_by=expected.plan_id)
+        .values(status="CONSUMED", consumed_by=plan["id"])
     )
+
+
+async def archive_orphan_execution_terminal(
+    conn: AsyncConnection,
+    *,
+    expected: OrphanExecutionIdentity,
+    l3_status: Literal["COMMITTED", "CANCELLED"],
+    result: ExecutionResult | None,
+) -> None:
+    """Archive a W4-verified terminal only for an UNKNOWN orphan job/plan.
+
+    Missing evaluation/evidence never permits a new submission. W4 proves the
+    response's authenticity, captured identity and actual customer lock. If an
+    evaluation appears, discard the orphan update and obtain a fresh ordinary
+    identity and fresh L3 query/reconcile; never attach a revision to old ACKs.
+    """
+    plan, _ = await _locked_orphan_execution(conn, expected, ExecutionJobStatus.UNKNOWN)
+    if plan["status"] != PlanStatus.UNKNOWN:
+        _conflict()
+    terminal, result = _terminal_result(expected.plan_id, l3_status, result)
+    await _orphan_job_update(
+        conn,
+        expected,
+        ExecutionJobStatus.UNKNOWN,
+        status=terminal,
+        result=result.model_dump(mode="json") if result else None,
+    )
+    await _finish_terminal(conn, plan, terminal)
