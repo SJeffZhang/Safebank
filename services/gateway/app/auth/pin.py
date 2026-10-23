@@ -22,27 +22,48 @@ HASHER = PasswordHasher()
 CUSTOMER_LABELS = {"cus_zs": "张三", "cus_ls": "李四", "cus_sb": "孙八", "cus_ww": "王五"}
 
 
+def _validated_hashes(values: object, *, plaintext: bool) -> dict[str, str]:
+    """Share customer/value validation and the Argon2 implementation across loaders."""
+    if not isinstance(values, dict):
+        raise ValueError("invalid PIN configuration")
+    hashes = {}
+    for customer, value in values.items():
+        if customer not in CUSTOMER_LABELS or not isinstance(value, str):
+            raise ValueError("invalid PIN configuration")
+        if plaintext:
+            if not 1 <= len(value) <= 128:
+                raise ValueError("invalid PIN configuration")
+            value = HASHER.hash(value)
+        # Parse the actual encoding rather than accepting a nominal prefix.
+        HASHER.check_needs_rehash(value)
+        hashes[customer] = value
+    return hashes
+
+
+def configured_hashes_from_file(pins_file: str) -> dict[str, str]:
+    """Load exactly this startup file, ignoring ambient secrets and legacy cache.
+
+    No cross-startup cache: a later startup may replace contents at the same path.
+    The runtime retains this returned in-memory snapshot for its own lifetime.
+    """
+    try:
+        pins = json.loads(Path(pins_file).read_text())
+        return _validated_hashes(pins, plaintext=True)
+    except (OSError, ValueError, TypeError, InvalidHashError) as exc:
+        raise GatewayError(
+            Code.DEPENDENCY_UNAVAILABLE, 503, message="PIN configuration unavailable"
+        ) from exc
+
+
 @lru_cache(maxsize=1)
 def configured_hashes() -> dict[str, str]:
-    """Load hashes, or hash generated per-customer demo PINs once in memory."""
+    """Legacy zero-argument startup entrypoint; explicit runtime paths use the loader above."""
     encoded = os.getenv("DEMO_PIN_HASHES")
+    if not encoded:
+        return configured_hashes_from_file(os.getenv("DEMO_PINS_FILE", "/run/secrets/demo_pins"))
     try:
-        if encoded:
-            hashes = json.loads(encoded)
-        else:
-            pins = json.loads(
-                Path(os.getenv("DEMO_PINS_FILE", "/run/secrets/demo_pins")).read_text()
-            )
-            hashes = {customer: HASHER.hash(pin) for customer, pin in pins.items()}
-        if not isinstance(hashes, dict) or any(
-            customer not in CUSTOMER_LABELS
-            or not isinstance(value, str)
-            or not value.startswith("$argon2")
-            for customer, value in hashes.items()
-        ):
-            raise ValueError("invalid PIN hash configuration")
-        return hashes
-    except (OSError, ValueError, TypeError, AttributeError) as exc:
+        return _validated_hashes(json.loads(encoded), plaintext=False)
+    except (ValueError, TypeError, InvalidHashError) as exc:
         raise GatewayError(
             Code.DEPENDENCY_UNAVAILABLE, 503, message="PIN configuration unavailable"
         ) from exc

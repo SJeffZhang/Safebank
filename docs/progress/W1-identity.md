@@ -119,3 +119,33 @@
 3. S1b PAUSED/claims状态原语未到，不越界修改state/tables/迁移。L3业务snapshot/谓词真实装载缺口、W2/W3来源链和W4执行仍待联合真实集成。FakeL3仍为契约替身；本组件不证明真实资金写入。
 
 文件：api/auth.py、utterance/runtime.py、W1 db/support.py、新两个W1测试文件、W1进度文档。`git diff --check`通过。只本地提交不推送，最终SHA见交付消息。
+
+
+## S1c owner小组件：显式PIN文件loader（42c86f5之后）
+
+已完整读取协调树`docs/plans/briefs/S1c-pin-settings.md`，按授权先同步origin/main a9d72cf49f518fbb2bd89d2e666f0d0e1196a4c9；本地merge 288569557c16b3ed4dae1584d39c05272a2daa61，无冲突，Makefile test-w1/test-shared-runtime/test-reserve全保留。此时S1b/W4a尚未合入。
+
+仅修改`services/gateway/app/auth/pin.py`，新增`configured_hashes_from_file(pins_file: str) -> dict[str, str]`；显式入口只读取传入文件，不查询DEMO_PINS_FILE或DEMO_PIN_HASHES，不使用legacy全局缓存，也不缓存文件路径/文件内容。每次启动调用得到独立内存hash快照，同一路径文件被替换后下次显式调用读到新值，既有快照不受文件删除影响。
+
+既有`configured_hashes()`固定零参签名与其兼容缓存保留。两入口共用`_validated_hashes`：客户白名单、值严格为字符串、明文PIN长度按现有Login契约1–128、Argon2库哈希与真实编码检查。不复制哈希算法；legacy DEMO_PIN_HASHES不再仅靠“$argon2”前缀判断合法性。文件缺失、目录、乱码、JSON/类型/客户/值非法均503 DEPENDENCY_UNAVAILABLE，错误不输出指定路径或PIN，也不会从有效环境secret兜底。
+
+新测试`tests/gateway/w1/test_pin_files.py`覆盖相反环境/有效或损坏环境hash、两个不同文件、legacy缓存已填充、同一路径后续启动替换、旧快照在文件删除后仍可校验、缺失/非法文件failclosed、零参兼容。红绿证据：
+
+- `.venv/bin/ruff format tests/gateway/w1/test_pin_files.py`：1 file reformatted。
+- `.venv/bin/pytest tests/gateway/w1/test_pin_files.py -q --tb=short`：实现前17 failed / 1 passed in 0.92s；16例显式helper尚不存在，另1例复现旧encoding前缀校验接受非法hash。
+- `.venv/bin/ruff format services/gateway/app/auth/pin.py`：1 file left unchanged。
+- `.venv/bin/pytest tests/gateway/w1/test_pin_files.py tests/gateway/w1/test_pin.py -q --tb=short`：实现后19 passed in 1.77s（新增18+原PIN1）。
+
+最终五退出均exit0：
+
+| 实际命令 | 实际输出 |
+|---|---|
+| `make lint` | All checks passed；181 files already formatted |
+| `make test-gateway` | 1638 passed, 64 skipped in 14.75s |
+| `PATH=/Applications/Docker.app/Contents/Resources/bin:$PATH make test-gateway-db` | 17 passed in 13.26s |
+| `make test` | 1867 passed, 112 skipped in 16.13s |
+| `PATH=/Applications/Docker.app/Contents/Resources/bin:$PATH make test-w1` | 1587 passed in 38.37s；0 skipped（沿用58真实PG） |
+
+本轮只证明显式文件helper及兼容校验；尚未修改共享runtime，它仍调用旧零参loader，所以**未证明Settings.demo_pins_file整体接线已完成**。下一共享组件必须调用新函数，之后W1再用两套Settings+相反环境+真实runtime/真实PG登录做完整集成。现有58 PG并非新函数的Settings接线证明，W4锁替身仍按旧进度明确保留。没有修改runtime/config/state/tables/迁移、依赖或其他任务代码，不推送/开PR，不跑up/down/test-p1、不删卷、不派生agent。
+
+`git diff --check`通过；本轮文件为auth/pin.py、新test_pin_files.py、W1两份进度。自审后仅本地提交并冻结，最终SHA见交付消息，待协调者复跑及独立评审。
