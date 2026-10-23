@@ -19,6 +19,7 @@ from services.agent.app.graph import (
     CrossCustomerError,
     Decision,
     DecisionValue,
+    EmptyUtterancesError,
     Finding,
     MissingPortError,
     PortFailure,
@@ -28,6 +29,7 @@ from services.agent.app.graph import (
     Understanding,
     UtteranceRef,
     build_graph,
+    invoke_new_input,
 )
 
 SECRET = "TEST_ONLY_ASSISTANT_TOKEN_SECRET"
@@ -133,8 +135,8 @@ def default_ports(calls=None, **overrides):
 
 
 def run(graph, input_utterances, customer="cus_a", session="ses_a", token=SECRET):
-    return graph.invoke(
-        {"utterances": input_utterances}, config(session), context=ctx(customer, session, token)
+    return invoke_new_input(
+        graph, input_utterances, config=config(session), context=ctx(customer, session, token)
     )
 
 
@@ -362,3 +364,80 @@ def test_deny_routes_to_respond_without_execute():
     assert result["decision"].decision is DecisionValue.DENY
     assert result.get("execution") is None
     assert calls.get("execute", 0) == 0
+
+
+def _approval_graph(calls):
+    ports = default_ports(
+        calls, evaluate=lambda s, c: decision("REQUIRE_APPROVAL", "pln_a", "apv_a")
+    )
+    return build_graph(ports, InMemorySaver())
+
+
+def test_resume_wrong_customer_rejected_without_execute():
+    calls = {}
+    graph = _approval_graph(calls)
+    run(graph, [utterance()])
+    with pytest.raises(CrossCustomerError):
+        graph.invoke(Command(resume="apv_a"), config(), context=ctx("cus_b", "ses_a"))
+    assert calls.get("execute", 0) == 0
+
+
+def test_resume_wrong_session_rejected_without_execute():
+    calls = {}
+    graph = _approval_graph(calls)
+    run(graph, [utterance()])
+    with pytest.raises(SessionMismatchError):
+        graph.invoke(Command(resume="apv_a"), config(), context=ctx("cus_a", "ses_wrong"))
+    assert calls.get("execute", 0) == 0
+
+
+def test_resume_thread_id_mismatch_rejected_without_execute():
+    calls = {}
+    graph = _approval_graph(calls)
+    run(graph, [utterance()])
+    with pytest.raises(SessionMismatchError):
+        graph.invoke(
+            Command(resume="apv_a"), config(session="ses_other"), context=ctx("cus_a", "ses_a")
+        )
+    assert calls.get("execute", 0) == 0
+
+
+def test_correct_resume_after_bad_resume_is_safe():
+    calls = {}
+    graph = _approval_graph(calls)
+    run(graph, [utterance()])
+    with pytest.raises(CrossCustomerError):
+        graph.invoke(Command(resume="apv_a"), config(), context=ctx("cus_b", "ses_a"))
+    with pytest.raises(SessionMismatchError):
+        graph.invoke(Command(resume="apv_a"), config(), context=ctx("cus_a", "ses_wrong"))
+    result = graph.invoke(Command(resume="apv_a"), config(), context=ctx("cus_a", "ses_a"))
+    assert result["approval_id"] == "apv_a"
+    assert result["execution"].status == "EXECUTED"
+    assert calls["execute"] == 1
+
+
+def test_empty_utterances_new_input_rejected_without_ports():
+    calls = {}
+    graph = build_graph(default_ports(calls), InMemorySaver())
+    with pytest.raises(EmptyUtterancesError):
+        run(graph, [])
+    assert calls == {}
+
+
+def test_empty_utterances_does_not_reuse_completed_round():
+    calls = {}
+    graph = build_graph(default_ports(calls), InMemorySaver())
+    run(graph, [utterance("第一句")])
+    assert calls["execute"] == 1
+    with pytest.raises(EmptyUtterancesError):
+        run(graph, [])
+    assert calls["understand"] == 1
+    assert calls["execute"] == 1
+
+
+def test_direct_invoke_with_empty_utterances_rejected():
+    calls = {}
+    graph = build_graph(default_ports(calls), InMemorySaver())
+    with pytest.raises(EmptyUtterancesError):
+        graph.invoke({"utterances": []}, config(), context=ctx())
+    assert calls == {}

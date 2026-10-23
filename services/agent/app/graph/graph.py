@@ -17,12 +17,18 @@ from langgraph.types import interrupt
 
 from services.agent.app.graph.errors import (
     CrossCustomerError,
+    EmptyUtterancesError,
     MissingPortError,
     PortFailure,
     SessionMismatchError,
 )
 from services.agent.app.graph.ports import Ports
-from services.agent.app.graph.state import AgentContext, AgentState, DecisionValue
+from services.agent.app.graph.state import (
+    AgentContext,
+    AgentInput,
+    AgentState,
+    DecisionValue,
+)
 
 _REQUIRED_PORTS = (
     "understand",
@@ -73,6 +79,28 @@ def _route_await_approval(state: AgentState) -> str:
     return "execute" if state.get("approval_id") else "respond"
 
 
+def _require_resume_binding(state: AgentState, context: AgentContext, thread_id: object) -> None:
+    """Reject a resume whose runtime identity does not match the thread's persisted binding.
+
+    Runs before ``interrupt()`` so it holds on both the initial entry into
+    ``await_approval`` and its resume re-entry; any port side effect (execute/respond/
+    verify_output) is therefore never reached with a mismatched customer/session.
+    """
+
+    if thread_id != context.session_id:
+        raise SessionMismatchError(
+            f"thread_id {thread_id!r} does not match session {context.session_id!r}"
+        )
+    if state.get("customer_id") != context.customer_id:
+        raise CrossCustomerError(
+            f"thread bound to customer {state.get('customer_id')!r}, got {context.customer_id!r}"
+        )
+    if state.get("session_id") != context.session_id:
+        raise SessionMismatchError(
+            f"thread bound to session {state.get('session_id')!r}, got {context.session_id!r}"
+        )
+
+
 def build_graph(ports: Ports, checkpointer: BaseCheckpointSaver) -> CompiledStateGraph:
     """Compile the C1a skeleton.
 
@@ -98,7 +126,10 @@ def build_graph(ports: Ports, checkpointer: BaseCheckpointSaver) -> CompiledStat
             raise CrossCustomerError(
                 f"thread already bound to customer {existing!r}, got {context.customer_id!r}"
             )
-        texts = [utterance.text for utterance in state.get("utterances", [])]
+        utterances = state.get("utterances") or []
+        if not utterances:
+            raise EmptyUtterancesError("a new input round requires at least one utterance")
+        texts = [utterance.text for utterance in utterances]
         return {
             "customer_id": context.customer_id,
             "session_id": context.session_id,
@@ -111,7 +142,7 @@ def build_graph(ports: Ports, checkpointer: BaseCheckpointSaver) -> CompiledStat
             "approval_id": None,
             "execution": None,
             "reply_draft": None,
-            "messages": [HumanMessage(content=" ".join(texts))] if texts else [],
+            "messages": [HumanMessage(content=" ".join(texts))],
         }
 
     def understand(state: AgentState, runtime: Runtime[AgentContext]) -> dict:
@@ -143,7 +174,12 @@ def build_graph(ports: Ports, checkpointer: BaseCheckpointSaver) -> CompiledStat
             raise PortFailure("evaluate port returned None")
         return {"plan_id": decision.plan_id, "decision": decision}
 
-    def await_approval(state: AgentState, runtime: Runtime[AgentContext]) -> dict:
+    def await_approval(
+        state: AgentState, runtime: Runtime[AgentContext], config: RunnableConfig
+    ) -> dict:
+        context = runtime.context
+        thread_id = (config.get("configurable") or {}).get("thread_id")
+        _require_resume_binding(state, context, thread_id)
         decision = state.get("decision")
         approval_id = decision.approval_id if decision is not None else None
         if approval_id is None:
@@ -171,7 +207,7 @@ def build_graph(ports: Ports, checkpointer: BaseCheckpointSaver) -> CompiledStat
             raise PortFailure("verify_output port returned None")
         return {"messages": [AIMessage(content=final)]}
 
-    builder = StateGraph(AgentState, context_schema=AgentContext)
+    builder = StateGraph(AgentState, context_schema=AgentContext, input_schema=AgentInput)
     builder.add_node("ingest", ingest)
     builder.add_node("understand", understand)
     builder.add_node("gather", gather)

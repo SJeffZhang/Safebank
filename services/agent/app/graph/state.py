@@ -106,3 +106,10 @@ class AgentState(TypedDict, total=False):
     approval_id: str | None
     execution: ExecutionResult | None
     reply_draft: str | None
+
+
+class AgentInput(TypedDict):
+    """New-input boundary schema: ``utterances`` is required so an empty/omitted input can
+    never silently reuse the previous round's persisted utterances (P2 guard)."""
+
+    utterances: list[UtteranceRef]

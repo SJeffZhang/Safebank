@@ -14,7 +14,13 @@ P0 探针（`scripts/health_app.py`），本组件**未**开放业务入口、�
   approval_id/execution/reply_draft），并在 `thread_id != session_id` 或同 thread 跨 customer 时
   fail-closed（`SessionMismatchError` / `CrossCustomerError`）。
 - 中断语义：`await_approval` 用 `interrupt({"approval_id": ...})`；正确 resume 才进 `execute`，
-  resume 值不等于 `approval_id` 时结束本轮（经条件边回到 `respond`）。
+  resume 值不等于 `approval_id` 时结束本轮（经条件边回到 `respond`）。`await_approval` 在
+  `interrupt()` 之前复核身份/会话绑定（`thread_id == context.session_id`、
+  `context.customer_id == state.customer_id`、`context.session_id == state.session_id`），不一致
+  fail-closed（`SessionMismatchError` / `CrossCustomerError`），任何端口副作用之前拒绝。
+- 新输入只经 `invoke_new_input(graph, utterances, ...)`（`services/agent/app/graph/invoke.py`），
+  空/缺原话抛 `EmptyUtterancesError`；resume 只经 `graph.invoke(Command(resume=...))`。二者边界
+  清楚，避免裸 `graph.invoke({})` 复用旧 checkpoint 的原话/计划。
 - 助手令牌只放在 `AgentContext`（LangGraph 运行时 context），不进入 `AgentState` /
   `config["configurable"]`，因此不进 checkpoint。
 - `Decision` / `Understanding` / `ReadRecord` / `UtteranceRef` 是 C1a 本地最小模型，**不代表 L2

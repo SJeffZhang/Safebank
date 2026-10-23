@@ -21,5 +21,9 @@ class MissingPortError(AgentGraphError):
     code = "MISSING_PORT"
 
 
+class EmptyUtterancesError(AgentGraphError):
+    code = "EMPTY_UTTERANCES"
+
+
 class PortFailure(AgentGraphError):
     code = "PORT_FAILURE"

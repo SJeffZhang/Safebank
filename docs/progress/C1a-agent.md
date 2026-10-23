@@ -6,15 +6,17 @@
 ## 交付内容
 
 - `services/agent/app/graph/state.py`：`AgentState`（TypedDict，`messages` 用 `add_messages`）、
-  `AgentContext`（助手令牌/customer/session，运行时 context）与 C1a 本地模型 `UtteranceRef`、
-  `Slot`、`Understanding`、`ReadRecord`、`Decision`、`Finding`、`DecisionValue`。
+  `AgentContext`（助手令牌/customer/session，运行时 context）、`AgentInput`（新输入边界 Schema，
+  `utterances` 必填）与 C1a 本地模型 `UtteranceRef`、`Slot`、`Understanding`、`ReadRecord`、
+  `Decision`、`Finding`、`DecisionValue`。
 - `services/agent/app/graph/ports.py`：`Ports`（7 个显式注入的类型化端口）。
 - `services/agent/app/graph/errors.py`：`AgentGraphError` / `CrossCustomerError` /
-  `SessionMismatchError` / `MissingPortError` / `PortFailure`。
+  `SessionMismatchError` / `MissingPortError` / `EmptyUtterancesError` / `PortFailure`。
 - `services/agent/app/graph/graph.py`：`build_graph(ports, checkpointer)`，节点
   `ingest/understand/gather/plan/evaluate/await_approval/execute/respond/verify_output` 与
-  条件边（understand/gather/evaluate/await_approval 四处分叉）。
-- `tests/agent/test_graph.py`：15 项行为测试（内存 `InMemorySaver`）。
+  条件边；`await_approval` 在 `interrupt()` 之前复核身份/会话绑定（P0）。
+- `services/agent/app/graph/invoke.py`：`invoke_new_input`，唯一的新输入边界，空原话 fail-closed（P2）。
+- `tests/agent/test_graph.py`：22 项行为测试（内存 `InMemorySaver`）。
 - `services/agent/README.md`：骨架可用范围 / 运行方式 / 生产入口仍为探针。
 
 ## 红 → 绿记录
@@ -32,13 +34,39 @@
      resume 才 `approval_id` 非空 → execute，错 resume → None → respond。
 2. **实现后绿测**：`pytest tests/agent -q` = `15 passed`（零 skip）。
 
+### 独立评审 REQUEST_CHANGES 后的 P0/P2 修复（2026-10-24）
+
+评审 `docs/reviews/C1a-agent-review.md`：P0-1 resume 身份绑定绕过（`await_approval` 不复核
+customer/session，`ingest` 被 resume 跳过，跨客户 execute 端口被调用）；P2-1 `ingest` 不校验本轮
+原话非空，空输入可走完整写链。
+
+**P0 红→绿**：先落 4 项红测（同 thread pending `apv_a` 分别以 `cus_b/ses_a`、`cus_a/ses_wrong`、
+不一致 thread_id resume 均不得调 execute；坏 resume 后再以正确身份 resume 必须安全）。临时注释掉
+`await_approval` 里的绑定 guard 复跑，实际红测 `3 failed, 1 passed`：`test_resume_wrong_customer_*`、
+`test_resume_wrong_session_*`、`test_correct_resume_after_bad_resume_is_safe` 均 `DID NOT RAISE`
+（execute 端口被以错配身份调用）；`test_resume_thread_id_mismatch_*` 由 ingest 的 thread_id 校验兜底
+（fresh thread 路径）故红测通过。恢复 guard 后 4 项转绿。修复：`await_approval` 增加
+`config: RunnableConfig` 形参，`interrupt()` 之前调用共享 guard `_require_resume_binding` 复核
+`thread_id == context.session_id`、`context.customer_id == state.customer_id`、
+`context.session_id == state.session_id`，不一致抛 `SessionMismatchError`/`CrossCustomerError`，
+任何 execute/respond/verify 端口副作用之前拒绝；正确 resume 仍不重跑 ingest/plan/evaluate，不重复消费。
+
+**P2 红→绿**：先探针复现两事实：① `graph.invoke({})` 在已完成 round 的同 thread 上**会默默复用旧
+utterances**（`SAME_THREAD_MISSING_UTT: NO ERROR (old utterances reused!)`，此时 input_schema +
+ingest 空校验都无法区分缺 key）；② `graph.invoke({"utterances": []})` 走 ingest 空校验可拒。修复：
+新增 `AgentInput` 输入 Schema（`utterances` 必填，声明契约）+ 唯一新输入边界 `invoke_new_input`
+（`utterances` 非空才 `graph.invoke({"utterances": [...]})`，空/缺一律 `EmptyUtterancesError`，
+不触碰旧 checkpoint 的旧计划）+ `ingest` 空原话 fail-closed 兜底（直接 `invoke({"utterances": []})`
+也被拒）。新 input 与 resume 保持清楚区分：新 input 只经 `invoke_new_input`，resume 只经
+`Command(resume=...)`。仅改 services/agent 与 tests/agent，未自制平行状态机、未越界改 API/共享 schema。
+
 ## 退出命令与结果（本组件无 PG）
 
 | 命令 | 结果 |
 |---|---|
-| `make lint` | ruff check 通过；ruff format --check 通过（184 files already formatted） |
-| `.venv/bin/pytest tests/agent -q` | `15 passed`（零 skip） |
-| `make test` | `423 passed, 302 skipped`（skip 为无 PG 配置的集成/持久化项，非本组件范围） |
+| `make lint` | ruff check 通过；ruff format --check 通过（212 files already formatted） |
+| `.venv/bin/pytest tests/agent -q` | `22 passed`（零 skip） |
+| `make test` | `1959 passed, 461 skipped`（skip 为无 PG 配置的集成/持久化项，非本组件范围） |
 | `make contracts-check` | `PASS: contracts v1 match frozen schemas` |
 
 ## 未覆盖 / 待决（交协调者或后续组件）
@@ -50,6 +78,10 @@
   REPLAN 定向补读（`evidence_refs`）与 execute 结果路由留 C1c。
 - `Decision`/`Understanding`/`ReadRecord` 等是 C1a 本地最小模型，未对齐真实 L2 wire / contracts；
   `messages` 的 user 文本由 `ingest` 拼接原话 text 写入（C1b/C1c 若调整入口需同步）。
+- `AgentInput` 的 `input_schema` 在当前库版本不强制执行（`invoke({})` 仍走 state 合并），真正拒空
+  依赖 `invoke_new_input` 边界 + `ingest` 兜底；C1d HTTP 层须只经 `invoke_new_input` 发起新输入。
 - 序列化提示：InMemorySaver 对 L1 本地 pydantic 模型与 `PlanDraft`/`ExecutionResult` 反序列化会打
   `Deserializing unregistered type ... will be blocked in a future version` 告警（当前可重建）；若
   后续启用 `LANGGRAPH_STRICT_MSGPACK=true` 需显式 `allowed_msgpack_modules`，留待 C1d/协调者定夺。
+- resume 送达时若线程已无 pending interrupt（前一 round 已完结）的 LangGraph 原生行为未在本组件
+  测试（评审「未确认」节）；属 C1d HTTP 层处理，不在本组件控制流内。
