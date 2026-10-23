@@ -23,6 +23,7 @@ from .config import Settings, from_env
 from .errors import GatewayError
 from .internal import scheduled
 from .middleware import install_middleware
+from .runtime import GatewayRuntime, gateway_runtime
 
 
 def load_public_key(path: str) -> bytes:
@@ -56,8 +57,14 @@ def _routes(app: FastAPI) -> list[tuple[Any, str]]:
 
 
 def build_public_app(
-    settings: Settings, *, env: dict[str, str] | None = None, public_key: bytes | None = None
+    settings: Settings,
+    *,
+    env: dict[str, str] | None = None,
+    public_key: bytes | None = None,
+    runtime: GatewayRuntime | None = None,
 ) -> FastAPI:
+    if public_key is None and runtime is not None:
+        public_key = runtime.jwt_public_key
     # The global dependency enforces the auth matrix on every route (open routes
     # return None; anything else must present a valid F/A/D credential + JWT).
     app = FastAPI(
@@ -67,6 +74,8 @@ def build_public_app(
         openapi_url=None,
         dependencies=[Depends(caller_dependency(env, public_key))],
     )
+    if runtime is not None:
+        runtime.install(app)
     install_middleware(app)
 
     @app.get("/health")
@@ -94,11 +103,19 @@ def build_public_app(
 
 
 def build_internal_app(
-    settings: Settings, *, env: dict[str, str] | None = None, public_key: bytes | None = None
+    settings: Settings,
+    *,
+    env: dict[str, str] | None = None,
+    public_key: bytes | None = None,
+    runtime: GatewayRuntime | None = None,
 ) -> FastAPI:
+    if public_key is None and runtime is not None:
+        public_key = runtime.jwt_public_key
     app = FastAPI(
         title="SafeBank Gateway internal", docs_url=None, redoc_url=None, openapi_url=None
     )
+    if runtime is not None:
+        runtime.install(app)
     install_middleware(app)
 
     @app.get("/internal/health", dependencies=[Depends(caller_dependency(env, public_key))])
@@ -127,18 +144,35 @@ async def serve(settings: Settings) -> None:
             500,
             message="gateway must bind its named network interfaces, not 0.0.0.0",
         )
-    public_key = load_public_key(settings.jwt_public_key_path)
-    public = build_public_app(settings, public_key=public_key)
-    internal = build_internal_app(settings, public_key=public_key)
-    servers = [
-        uvicorn.Server(
-            uvicorn.Config(public, host=settings.public_bind, port=8200, log_level="warning")
-        ),
-        uvicorn.Server(
-            uvicorn.Config(internal, host=settings.internal_bind, port=8201, log_level="warning")
-        ),
-    ]
-    await asyncio.gather(*(server.serve() for server in servers))
+    async with gateway_runtime(settings) as runtime:
+        public = build_public_app(settings, runtime=runtime)
+        internal = build_internal_app(settings, runtime=runtime)
+        servers = [
+            uvicorn.Server(
+                uvicorn.Config(public, host=settings.public_bind, port=8200, log_level="warning")
+            ),
+            uvicorn.Server(
+                uvicorn.Config(
+                    internal, host=settings.internal_bind, port=8201, log_level="warning"
+                )
+            ),
+        ]
+        tasks = [asyncio.create_task(server.serve()) for server in servers]
+        try:
+            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for server in servers:
+                server.should_exit = True
+            await asyncio.gather(*done)
+            await asyncio.gather(*pending)
+        finally:
+            # A failed server must not leave its peer using resources after
+            # the shared context exits. Await cancellation before disposal.
+            for server in servers:
+                server.should_exit = True
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def run() -> None:
