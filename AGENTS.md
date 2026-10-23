@@ -378,6 +378,8 @@
 
 | 2026-10-23 | Codex（协调者） | PR #10精确head d6b8f4e的push/PR两套unit+p1-postgres四检查全部COMPLETED SUCCESS后执行gh pr merge 10 --merge --match-head-commit成功，merge44ded2f2431bdb0ce1d3f90f2c5d7d1b2ac67697，16:06:07Z。已fetch并同步main，仅PRD异段自动合并无冲突；S1d组件完成，通知W1稳定检查点后同步新main，S3a继续只读模型准备、未启动实现。 |
 
+| 2026-10-23 | Codex（协调者） | W2独立分支c945cd8同步最新main44ded2f为50c1bdb，仅AGENTS追加日志冲突，核全为日志行后保留双方，Makefile自动合并；未改W2业务。派w2_memo_integration接续已评审检查点，先落实已合S1d的memo/alias黄级TODO、移除严格xfail并补来源不放宽边界；保留W1/S3真实接线待决，不作为完整W2交付。W1继续自己的deferred撤销实现，S3a仅只读字段设计，各自所有权不冲突。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
