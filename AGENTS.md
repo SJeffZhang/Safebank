@@ -312,6 +312,8 @@
 
 | 2026-10-23 | Codex（协调者） | S1b独立review_s1b_state规范PASS/质量APPROVE，无可复现P0/P1/P2；实际定向17 passed零skip（10.13s），核查迁移保留/权限/漂移/并发CAS/claims。协调者六退出已全绿，准备合入最新协调文档后立即push并开base main组件PR。W2来源独立review_w2_lineage规格PASS/质量APPROVE，真实PG46 passed及关联回归25 passed；完整W2的memo xfail/S3/跨W1联调继续开放，不按完整W2合并。 |
 
+| 2026-10-23 | Codex（协调者） | W4a同步main94e40fe后05af2ec亲自actionlint及六退出全exit0：lint169、all376/184skip（4.27s）、gateway147/136skip（3.46s）、PG17（2.77s）、locks63零skip（8.26s）、shared51零skip（8.71s）。相对独立APPROVE的e4023ed业务/专属测试diff为空；同步仅解决CI/Makefile目标追加冲突并保留两边。新增验收与复审记录，准备立即push base main组件PR，远端CI全绿后merge commit。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
@@ -348,7 +350,7 @@ P0 准备阶段（决定后续一切）：
 | [x] | W0 基础骨架 | `feat/l2-foundation` / PR #2 已合并 | `docs/plans/briefs/W0-*.md`，评审 `docs/reviews/L2-W0-architecture.md` |
 | [x] | S1 共享运行层 | PR #4，merge `691cf88`；独立评审与四CI全绿 | `docs/acceptance/L2-S1-runtime.md` |
 | [x] | S2 七天预留纯函数 | PR #5，merge `a9d72cf`；真实生产接入待S3 | `docs/acceptance/L2-S2-reserve.md` |
-| [ ] | W4a 客户锁先决组件 | `feat/l2-customer-locks`（d582752，协调者复跑及独立评审中） | `docs/plans/briefs/W4a-customer-locks.md` |
+| [ ] | W4a 客户锁先决组件 | `feat/l2-customer-locks`（05af2ec同步版六退出通过、独立评审通过，准备PR） | `docs/plans/briefs/W4a-customer-locks.md` |
 | [ ] | W1 身份、会话与原话 | `feat/l2-identity`（42c86f5，7缺陷与S1接线评审通过；真实锁/PIN路径/后续状态待联调） | `docs/plans/briefs/W1-identity.md` |
 | [ ] | W2 读代理、参数来源与污点 | `feat/l2-provenance`（27a067a三项修复已评审通过，来源链集成中） | `docs/plans/briefs/W2-provenance.md` |
 | [ ] | W3 快照、预演、工作流、决策与 G4 | `feat/l2-decision`（检查点3bcbe8e，共享依赖阻塞） | `docs/plans/briefs/W3-decision.md` |
