@@ -352,6 +352,8 @@
 
 | 2026-10-23 | Codex（协调者） | S3a独立只读设计审核规范PASS/可实施性APPROVE，无阻塞，报告L2-S3a-obligations-design.md；据其具体建议补最新head/drift断言定点适配许可，历史迁移/数据升级/权限门禁保留；消除旧seed提案与后置裁定的重复表述，未实施或跑测试。复核W1原任务明确允许未实现谓词L3使用契约fake并登记，故不额外等待S3才交付W1 owner组件；真实锁/PIN/S1e与原五退出仍必过，完整生产谓词留集成待决。S1e任务补scope非空/不可重复的既有严格约束。 |
 
+| 2026-10-23 | Codex（协调者） | W1按授权以本地WIP4f88c63保留真实孤儿红测，再同步main304adda为e2e5095；自报两Settings/相反env的8项runtime PG通过，五退出尚有孤儿1失败及旧pytest同名模块冲突，非协调者验收。允许仅重命名W1旧test_identity避免与共享state测试同名，并精确追加checks.yml p1-postgres的make test-w1一行，使正式PR的W1 PG不被默认skip漏掉；其余CI结构不变，之后个人actionlint/五退出与独立审。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
