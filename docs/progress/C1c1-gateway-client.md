@@ -71,11 +71,32 @@
 
 修复后 `tests/agent/gateway -q`：124 passed。
 
+## 评审修复轮 2（同报告 §Fix-round-1，REQUEST_CHANGES：P0 + trace 凭据反例）
+
+- **P0 真实 transport 必崩**：`request.extensions["timeout"] = httpx.Timeout(...)`（对象）被 httpcore
+  `connection_pool` 以 `dict.get("pool")` 消费 → 每次真实请求 `AttributeError`。红：临时回退该行后
+  `test_default_client_refused_connection_is_transport_error` 实际复现
+  `AttributeError: 'Timeout' object has no attribute 'get'`（httpcore `_sync/connection_pool.py:216`）。
+  修：按 httpx 标准写 `httpx.Timeout(self._timeout).as_dict()`（dict 四阶段有限数），不回退注入 client
+  不安全配置。绿：3 个真实 transport 测试通过。
+- **真实 transport 回归**（`tests/agent/gateway/test_real_transport.py`，非 Mock）：默认 client 对
+  `127.0.0.1:1` 拒绝连接 → 安全 `GatewayTransportError`（非 AttributeError）；本地 `http.server` 监听
+  localhost 200 往返（`X-Service-Token`/`Authorization` 仅到原网关、路径正确）；跨域 302 不跟、恰一次
+  请求到原网关、redirect 目标 0 请求。完全离线 loopback，不外联/API/真实密钥。
+- **MockTransport 断言收紧**：`test_injected_client_timeout_is_enforced_via_request_extensions` 改断言
+  `extensions["timeout"]` 是 dict 且四阶段均为有限 float（不再把错误 `httpx.Timeout` 对象当成功）。
+- **trace 凭据排除（协调者已证反例）**：`_error_from` 的 `trace_id` 在保留安全形状前提下，排除等于/嵌入
+  当前 `service_token` 或 `context.assistant_token` 的值（子串包含），命中即省略为空串；合法固定安全
+  trace（`trc_01JABC`）仍保留。测试合成 A/JWT 等值与前后缀嵌入 trace 均不保留，正常安全 trace 可测。
+  未引入新网关协议、未改真实 Decision、未做任意 payload 净化。
+
+修复后 `tests/agent/gateway -q`：129 passed。
+
 ## 退出命令（全部实际运行）
 
-- `make lint`：ruff check 全绿；273 files already formatted。
-- `.venv/bin/pytest tests/agent -q`：207 passed（C1b 83 + 本组件 124），零 skip/xfail。
-- `make test`：2326 passed / 531 skipped（9.10s）。
+- `make lint`：ruff check 全绿；274 files already formatted。
+- `.venv/bin/pytest tests/agent -q`：212 passed（C1b 83 + 本组件 129），零 skip/xfail。
+- `make test`：2331 passed / 531 skipped（10.65s）。
 - `make contracts-check`：PASS（契约 v1 未漂移）。
 
 ## 未覆盖 / 待决

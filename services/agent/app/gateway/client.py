@@ -198,8 +198,9 @@ class GatewayClient:
             )
             # Enforce a finite per-request timeout and disable redirects regardless of the
             # injected client's defaults: a shared follow_redirects=True client must never
-            # forward X-Service-Token to a cross-host redirect target.
-            request.extensions["timeout"] = httpx.Timeout(self._timeout)
+            # forward X-Service-Token to a cross-host redirect target.  httpcore reads this
+            # extension as a dict (``.get("pool")``), so write ``Timeout.as_dict()``.
+            request.extensions["timeout"] = httpx.Timeout(self._timeout).as_dict()
             response = self._client.send(request, follow_redirects=False)
         except httpx.HTTPError:
             raise GatewayTransportError() from None
@@ -211,10 +212,10 @@ class GatewayClient:
         except ValueError:
             raise GatewayProtocolError(status) from None
         if status >= 400:
-            raise self._error_from(status, payload)
+            raise self._error_from(status, payload, context)
         return status, payload
 
-    def _error_from(self, status: int, payload: Any) -> GatewayResponseError:
+    def _error_from(self, status: int, payload: Any, context: AgentContext) -> GatewayResponseError:
         if not isinstance(payload, dict):
             raise GatewayProtocolError(status)
         error = payload.get("error")
@@ -244,7 +245,14 @@ class GatewayClient:
                 raise GatewayProtocolError(status) from None
             details = {"decision": decision.model_dump(mode="json")}
         trace_id = error.get("trace_id", "")
-        if not isinstance(trace_id, str) or not _TRACE_ID_RE.fullmatch(trace_id):
+        if (
+            not isinstance(trace_id, str)
+            or not _TRACE_ID_RE.fullmatch(trace_id)
+            or self._service_token in trace_id
+            or context.assistant_token in trace_id
+        ):
+            # A correlation id that happens to be (or embed) a configured credential is not
+            # safe to surface; drop it rather than persist/surface the credential text.
             trace_id = ""
         return GatewayResponseError(
             status=status, code=code, details=details, trace_id=trace_id, decision=decision

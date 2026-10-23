@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import traceback
 
 import httpx
@@ -184,6 +185,33 @@ def test_trace_id_unsafe_shape_is_omitted_but_safe_shape_preserved():
     assert info.value.trace_id == "trc_01JABC"
 
 
+def test_trace_id_equal_to_service_token_is_omitted():
+    transport = ScriptedGateway([error_response(429, "RATE_LIMITED", trace_id=SERVICE_TOKEN)])
+    with pytest.raises(GatewayResponseError) as info:
+        client_with(transport).get_utterances(("utt_a",), ctx())
+    assert info.value.trace_id == ""
+    assert SERVICE_TOKEN not in str(info.value)
+    assert SERVICE_TOKEN not in repr(info.value)
+
+
+def test_trace_id_embedding_credentials_is_omitted():
+    embedded_service = f"pre{SERVICE_TOKEN}post"
+    embedded_jwt = f"xx{SECRET}yy"
+    transport = ScriptedGateway(
+        [
+            error_response(429, "RATE_LIMITED", trace_id=embedded_service),
+            error_response(429, "RATE_LIMITED", trace_id=embedded_jwt),
+        ]
+    )
+    client = client_with(transport)
+    with pytest.raises(GatewayResponseError) as info:
+        client.get_utterances(("utt_a",), ctx())
+    assert info.value.trace_id == ""
+    with pytest.raises(GatewayResponseError) as info:
+        client.get_utterances(("utt_a",), ctx())
+    assert info.value.trace_id == ""
+
+
 def test_invalid_args_do_not_leak_raw_input_in_output():
     transport = ScriptedGateway([])
     client = client_with(transport)
@@ -255,11 +283,14 @@ def test_injected_client_timeout_is_enforced_via_request_extensions():
     client = GatewayClient("http://gw", SERVICE_TOKEN, http_client=injected, timeout=5.0)
     client.read_tool("get_accounts", {"history_days": 30}, ctx())
     timeout = transport.requests[0]["timeout"]
-    assert isinstance(timeout, httpx.Timeout)
-    assert timeout.connect == 5.0
-    assert timeout.read == 5.0
-    assert timeout.write == 5.0
-    assert timeout.pool == 5.0
+    # httpcore reads this extension with ``.get("pool")`` — it must be a dict of four
+    # finite numbers, not a ``httpx.Timeout`` object.
+    assert isinstance(timeout, dict)
+    assert set(timeout.keys()) == {"connect", "read", "write", "pool"}
+    for value in timeout.values():
+        assert isinstance(value, float)
+        assert math.isfinite(value)
+        assert value == 5.0
 
 
 @pytest.mark.parametrize("bad", [0, -1, float("nan"), float("inf"), float("-inf"), "not-a-number"])
