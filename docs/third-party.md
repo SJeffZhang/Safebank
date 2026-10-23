@@ -102,4 +102,6 @@ psycopg/psycopg-binary 仅 POC 使用，按其 LGPL 及附带依赖许可证保�
 
 用途：PyJWT 承载 EdDSA JWT 签验（W0 校验接口，W1 签发登录）；argon2-cffi 用于 W1 PIN 哈希；pypinyin 用于 W1 意图解析近音候选。W0 只实际使用 PyJWT，argon2-cffi 与 pypinyin 按 L2-plan §4 由 W0 一次性锁定，供 W1 使用。
 
+> 第四轮：`pyyaml==6.0.3` 从 dev 分组移到主依赖（W0 的 `app/policy/registry.py` 在运行时读取 `policies/tools.yaml`），已重新导出 `requirements*.txt` 并重建 `.wheels`；许可证见上表 MIT 行。
+
 P1 银行业务代码自研。TigerBeetle 账本原则、Blnk 预演思想为文档参考，未引入其运行时或复制源码；具体映射与来源见 PRD §4。

@@ -96,24 +96,24 @@ def action_kind(tool: str, args: Any, shadow_state: Any) -> ActionKind:
             if values.get("to_account_id")
             else ActionKind.TRANSFER_EXTERNAL
         )
-    if tool == "update_card_limits":
+    if tool in ("update_card_limits", "update_card_controls"):
         current = _card(shadow_state, values.get("card_id"))
-        loosened = any(
-            values.get(field) is not None and values[field] > getattr(current, field)
-            for field in _CARD_LIMIT_FIELDS
-            if current is not None
-        )
-        return ActionKind.CARD_LIMIT_LOOSEN if loosened else ActionKind.CARD_LIMIT_TIGHTEN
-    if tool == "update_card_controls":
-        current = _card(shadow_state, values.get("card_id"))
-        if current is not None:
-            controls = current.controls
+        if current is None:
+            # Fail closed: an unseen card must be handled by the entity stage,
+            # never silently assumed to be a tightening.
+            raise LookupError(f"card {values.get('card_id')!r} not in shadow state")
+        if tool == "update_card_limits":
             loosened = any(
-                values.get(field) is True and getattr(controls, field) is False
-                for field in _CARD_CONTROL_FIELDS
+                values.get(field) is not None and values[field] > getattr(current, field)
+                for field in _CARD_LIMIT_FIELDS
             )
-            return ActionKind.CARD_CONTROL_LOOSEN if loosened else ActionKind.CARD_CONTROL_TIGHTEN
-        return ActionKind.CARD_CONTROL_TIGHTEN
+            return ActionKind.CARD_LIMIT_LOOSEN if loosened else ActionKind.CARD_LIMIT_TIGHTEN
+        controls = current.controls
+        loosened = any(
+            values.get(field) is True and getattr(controls, field) is False
+            for field in _CARD_CONTROL_FIELDS
+        )
+        return ActionKind.CARD_CONTROL_LOOSEN if loosened else ActionKind.CARD_CONTROL_TIGHTEN
     return {
         "add_payee": ActionKind.PAYEE_ADD,
         "schedule_transfer": ActionKind.SCHEDULE_CREATE,
@@ -127,3 +127,16 @@ def action_kind(tool: str, args: Any, shadow_state: Any) -> ActionKind:
         "subscribe_product": ActionKind.FUND_SUBSCRIBE,
         "redeem_product": ActionKind.FUND_REDEEM,
     }[tool]
+
+
+def outflow(tool: str, args: Any, shadow_state: Any) -> bool:
+    """Whether the step counts as external outflow (PRD §5.0 / §7.8 口径).
+
+    Only a transfer to another payee (TRANSFER_EXTERNAL) and a scheduled
+    transfer whose target is a payee count. Self transfers, fund subscriptions
+    and redemptions never count as external outflow.
+    """
+    if tool in ("transfer", "schedule_transfer"):
+        values = _as_dict(args)
+        return values.get("to_account_id") is None and values.get("payee_id") is not None
+    return False

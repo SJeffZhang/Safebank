@@ -1,13 +1,13 @@
 # 写工具注册表（PRD §9.4）。结构由 W0 锁定；W2 之后只能改值，不能改结构。
 # base_risk: GREEN/YELLOW/RED —— 基础等级，规则只升不降（§5.0）。
-# outflow: 该工具是否产生对外资金流出（CUMULATIVE_OUTFLOW / SPLIT_TRANSFER 口径）。
+# outflow: 静态初值；transfer / schedule_transfer 的对外判定由 registry.outflow() 按参数决定。
 # otp_required: 基础等级为 RED 时恒 true；卡类 LOOSEN 升红的 OTP 由 W3 规则在决策时给。
 # allowed_origins: agent / app_form；W12 仅 app_form（§7.6）。
 - tool: transfer
   base_risk: YELLOW
   sensitive_params: [from_account_id, payee_id, to_account_id, amount_cents, memo]
   allowed_origins: [agent, app_form]
-  outflow: true
+  outflow: false
   irreversible: true
   otp_required: false
   title_template: "转账"
@@ -23,7 +23,7 @@
   base_risk: YELLOW
   sensitive_params: [from_account_id, payee_id, to_account_id, amount_cents, period, first_run_at, end_at]
   allowed_origins: [agent, app_form]
-  outflow: true
+  outflow: false
   irreversible: true
   otp_required: false
   title_template: "定时转账"
@@ -103,7 +103,7 @@
   base_risk: RED
   sensitive_params: [account_id, product_id, amount_cents]
   allowed_origins: [agent, app_form]
-  outflow: true
+  outflow: false
   irreversible: true
   otp_required: true
   title_template: "申购产品"

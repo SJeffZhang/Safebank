@@ -9,6 +9,7 @@ once; W1–W5 edit only their own ``app/api/*`` / ``app/internal/*`` module.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 import uvicorn
@@ -22,6 +23,19 @@ from .config import Settings, from_env
 from .errors import GatewayError
 from .internal import scheduled
 from .middleware import install_middleware
+
+
+def load_public_key(path: str) -> bytes:
+    """Load the EdDSA public key; refuse to start if it is missing or unreadable."""
+    try:
+        data = Path(path).read_bytes()
+    except OSError as exc:
+        raise GatewayError(
+            Code.FORBIDDEN, 500, message=f"cannot read JWT public key at {path}: {exc}"
+        ) from exc
+    if not data.strip():
+        raise GatewayError(Code.FORBIDDEN, 500, message=f"JWT public key at {path} is empty")
+    return data
 
 
 def _collect(routes: list) -> list:
@@ -113,8 +127,9 @@ async def serve(settings: Settings) -> None:
             500,
             message="gateway must bind its named network interfaces, not 0.0.0.0",
         )
-    public = build_public_app(settings)
-    internal = build_internal_app(settings)
+    public_key = load_public_key(settings.jwt_public_key_path)
+    public = build_public_app(settings, public_key=public_key)
+    internal = build_internal_app(settings, public_key=public_key)
     servers = [
         uvicorn.Server(
             uvicorn.Config(public, host=settings.public_bind, port=8200, log_level="warning")

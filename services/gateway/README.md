@@ -44,6 +44,7 @@ make up && make test-p1  # 全栈健康 + P1 真实 PG 验收（指挥在集成�
 | `GATEWAY_PROFILE` | `B0/B1/B2/B2_NO_PREFLIGHT/B2_NO_WORKFLOW/B2_NO_TAINT`，默认 B2 |
 | `GATEWAY_MAX_EXECUTIONS` | 并发执行上限，默认 8 |
 | `BANK_BACKEND_URL` | L3 base URL，默认 `http://bank-backend:8300` |
+| `JWT_PUBLIC_KEY_PATH` | EdDSA 公钥路径，默认 `/run/secrets/jwt-public.pem`；缺失/读不到拒绝启动 |
 
 ## 目录结构
 
@@ -66,7 +67,7 @@ services/gateway/
     ├── locks.py                # customer_lock（W4 实现、W5 复用）
     ├── schemas/                # 对外的 Pydantic 模型 + 枚举（仅 W0 改，改即接口变更）
     ├── policy/
-    │   └── registry.py         # ToolPolicy + action_kind + 加载校验（结构仅 W0 改，W2 只改值）
+    │   └── registry.py         # ToolPolicy + action_kind + outflow + 加载校验（结构仅 W0 改，W2 只改值）
     ├── approval/               # W4：service.create_for_evaluation / planview.build_view
     ├── evaluation/             # W3：repo.append_evaluation
     ├── execution/              # W4：replay（W3 实现、W4 调用）
@@ -98,7 +99,7 @@ services/gateway/
 
 - **阶段归属**：① contract、② entity、③ provenance、④ intent → **W2**；⑤ snapshot、⑥ preflight、⑦ workflow、⑧ decision、⑨ audit 阶段 + G4 组装 → **W3**；W1 生产原话/scope，W4 审批与执行。
 - **不改的文件**：`pipeline/__init__.py`、`pipeline/context.py`、`schemas/**`、`auth/matrix.py`、`state.py`、`tables.py`、`migrations/**`、`main.py`、`policy/registry.py` 的结构、`policies/tools.yaml` 的结构、`pyproject.toml`、`uv.lock`、compose。需要改就写「待决」由指挥统一改。
-- **工具注册表**：`policies/tools.yaml` 的结构与 14 个工具的集合由 W0 锁定，W2 之后只能提交值的修正。
+- **工具注册表**：`policies/tools.yaml` 的结构与 14 个工具的集合由 W0 锁定，W2 之后只能提交值的修正。`action_kind` 对找不到的卡 fail-closed（抛 `LookupError`）；对外转出口径用 `registry.outflow(tool, args, shadow_state)`（只有 TRANSFER_EXTERNAL 与目标为他人的 schedule_transfer 计，申购/赎回不计）。
 - **状态变更**只能调 `state.transition`（会校验合法迁移表，非法边直接 `ValueError`）；**request_id 接口**只能用 `app.idempotency.request_idempotent`（进行中返回 409 `EXECUTION_IN_PROGRESS`，produce 抛异常清进行中行）；错误只能 `raise GatewayError(Code.X)`；调 L3 只能用 `L3Client`（测试用 fake L3 的 `transport()`）；审计只能用 `audit.append_tx`（不要在含 HTTP 调用的事务里 append）。
 - **交叉接口占位**（签名已定，实现方标注在 docstring）：`approval.service.create_for_evaluation`（W4）、`approval.planview.build_view`（W4）、`evaluation.repo.append_evaluation`（W3）、`locks.customer_lock`（W4）、`execution.replay.replay`（W3 实现、W4 调用）。
 - **波次 1 不写迁移**：需要改表写进「待决」，由指挥在集成分支串行加 `0002_wave1`。

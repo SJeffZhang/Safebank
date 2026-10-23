@@ -92,3 +92,30 @@
 | `make test-p1` | 33 passed |
 
 本轮未删除、重建或 `docker volume rm` 任何数据卷；`make up` 复用第二轮的 `safebank_pg-bank`/`safebank_pg-agent` 卷与 `.secrets`。
+
+---
+
+## 第四轮（开工前最后修补）
+
+第三轮定点复核结论「有条件通过」，条件为 R1/R2/R3 三处；本轮按任务书只修 R1–R4，另完成 R4 的 outflow 口径修正。
+
+| 项 | 处理 | 证据 |
+|---|---|---|
+| R1 JWT 公钥加载 | `Settings` 加 `jwt_public_key_path`（默认 `/run/secrets/jwt-public.pem`）；`main.load_public_key()` 读不到/为空拒绝启动；`serve()` 加载后传给两个 app | `test_routing.py::test_load_public_key_missing_refuses_r1`（缺公钥 raise）、`test_valid_jwt_with_public_key_passes_auth_r1`（合法 JWT 通过鉴权进入 503 占位） |
+| R2 pyyaml 进主依赖 | `pyyaml==6.0.3` 从 dev 移到 `[project] dependencies`，`uv lock` + `uv export` 重导 `requirements*.txt`，`make wheels` 更新；third-party.md 加注 | `requirements.txt` 含 pyyaml（`# via safebank-gateway`）；`docker run safebank-p0:local python -c "import yaml"` → `6.0.3` |
+| R3 action_kind fail-closed | 卡类工具在影子状态找不到卡时抛 `LookupError`（不再默认 TIGHTEN） | `test_policy.py::test_action_kind_card_absent_fails_closed_r3`（卡不存在两种工具都抛错）、`test_action_kind_huge_limit_is_loosen_when_card_present_r3`（卡存在 + 极大限额 → LOOSEN） |
+| R4 outflow 口径 | 新增 `registry.outflow(tool, args, shadow_state)`：仅 TRANSFER_EXTERNAL 与目标为他人的 schedule_transfer 计对外转出，本人互转/申购/赎回不计；`tools.yaml` 中 transfer/schedule_transfer/subscribe_product 的静态 `outflow` 改 false | `test_policy.py::test_outflow_matches_external_transfer_and_schedule_r4`（三类六断言） |
+
+## 第四轮退出命令实测
+
+| 命令 | 结果 |
+|---|---|
+| `make lint` | 通过（145 文件） |
+| `make test-gateway` | 64 passed |
+| `make test-gateway-db` | 17 passed |
+| `make test` | 182 passed, 48 skipped |
+| `make up`（现有卷，未删卷） | 全部 6 服务 healthy |
+| 镜像内 `import yaml` | `6.0.3` |
+| `make test-p1` | 33 passed |
+
+本轮未删除、重建或 `docker volume rm` 任何数据卷；`make up` 复用既有 `safebank_pg-bank`/`safebank_pg-agent` 卷与 `.secrets`。

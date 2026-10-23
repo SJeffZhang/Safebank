@@ -31,6 +31,7 @@ class Settings:
     database_url: str | None
     l3_base_url: str
     service_tokens: dict[str, str]
+    jwt_public_key_path: str
 
     def validate(self) -> None:
         """Refuse to start on configuration combinations that weaken isolation."""
@@ -88,4 +89,5 @@ def from_env(env: dict[str, str] | None = None) -> Settings:
             "S": env.get("SCHEDULER_SERVICE_TOKEN") or "",
             "D": env.get("DEMO_CONSOLE_TOKEN") or "",
         },
+        jwt_public_key_path=env.get("JWT_PUBLIC_KEY_PATH") or "/run/secrets/jwt-public.pem",
     )

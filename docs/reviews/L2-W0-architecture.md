@@ -379,3 +379,96 @@
 4. **开工前顺手修完的 P1**：N3（`bank_state` 报错与取快照范围）、N4（审计时区）、N5（幂等的进行中行与错误码）、N6（结果类型的所有权与 `steps` 位置）。每条改动都很小，但不修的话 W2、W3 第一天就会撞上，或者被迫去改共享文件。
 
 以上修完后，只需要定点复核：探针 A–D 全部变成符合预期的结果，新增测试通过。之后即可开启波次 1。如果时间紧，可以先只修 1、2、3 与 N3、N4，N5、N6 写进 W1、W3 的任务书作为首项，但这不是推荐做法。
+
+---
+
+## 第三轮定点复核（c691e15，相对 3059b53）
+
+- 复核人：只读评审 subagent（Claude），2026-10-23
+- 只核对第二轮复审中的阻塞项（P0-3、N1、N2、N2b）和 P1（N3–N6），同时检查本轮改动有没有引入新问题。
+- 重跑的探针：
+  - **A**：public_app 在不带凭证、只带 A 服务令牌、以及只带 F 服务令牌调 G1 三种情况下的响应。
+  - **B**：`EvalContext.bank_state()` 调两次，看返回什么、发了几次 snapshot 请求。
+  - **C**：在临时 Postgres 16 上 `upgrade head`，用 +08:00 时钟 `append_tx`，再跑 `verify_chain`。
+  - **D**：检查交叉接口占位文件，并试一次非法状态迁移。
+- 另外在同一个临时库上补跑了 N5：先让 `produce()` 抛异常，再用同一个 request_id 重试。
+
+### 一、阻塞项与 P1 核对
+
+| 编号 | 判定 | 证据 |
+|---|---|---|
+| P0-3 工具注册表 | **已修复**（有新问题，见 R2、R3） | `policies/tools.yaml` 登记了 14 个工具；`app/policy/registry.py:24-129` 有 `ToolPolicy`、`load_policies`（校验工具集合等于 `WRITE_ARGS`、base_risk 只能取三档）和 `action_kind(tool, args, shadow_state)`。基础等级和敏感参数逐项对照 PRD §9.4，全部一致 |
+| N1 公共路由鉴权 | **已修复** | `main.py:47-55` 给 FastAPI 加了全局依赖 `caller_dependency(env, public_key)`；`deps.py` 把 `Caller` 写到 `request.state.caller`。探针 A：不带凭证调 `/plans/evaluate`、`/approvals/{id}` 返回 401；只带 A 服务令牌、不带 JWT 也是 401；F 服务令牌调 G1 进入占位实现（503）；`/health` 返回 200。还剩一处：`serve()` 没有加载公钥，见 R1 |
+| N2 迁移表执行与新状态边 | **已修复** | `state.py:142-153`：每条边都对照 `TRANSITIONS` 检查，非法时抛 `ValueError`（探针 D 用 EXECUTED → EVALUATED 证实）；新增 CONFIRMED → PENDING_APPROVAL、DENIED、REPLAN 三条边；`execution_jobs` 纳入迁移表；文件头注明了 EXECUTING 在复演通过之后才写入 |
+| N2b 交叉接口占位 | **已修复** | 新增 `approval/service.py`（`create_for_evaluation`）、`approval/planview.py`（`build_view -> (PlanView, view_hash)`）、`evaluation/repo.py`（`append_evaluation`）、`execution/replay.py`（`replay(ctx) -> Decision`）、`locks.py`（`customer_lock` 异步上下文管理器）。每个都写明了归属，函数体都是 `NotImplementedError`。`test_probes.py` 断言它们存在 |
+| N3 bank_state | **已修复**（有一个小问题，见 R5） | `context.py:153-174`：改为 `BankState.model_validate(response)`，请求时带上 `plan_draft.steps`。探针 B：调两次返回同一个对象，snapshot 只请求了 1 次 |
+| N4 审计 UTC | **已修复** | `chain.py:46-50`：拒绝 naive datetime，统一转成 UTC，精确到微秒。探针 C 在第二轮返回 `(False, tampered)`，本轮变成 `(True, '1 events')` |
+| N5 request_dedup | **已修复**（有一个小问题，见 R6） | `idempotency.py:58-69`：`produce` 抛异常时删除进行中的那一行；进行中改为返回 `EXECUTION_IN_PROGRESS`；文档字符串写明「同一事务、不得包含 HTTP 调用、G8 不走这里」。补跑：`produce` 抛异常后，用同一个 ID 重试得到 `(201, …, False)` |
+| N6 结果类型归属与 steps | **已修复** | `context.py` 文件头注明「各阶段结果类的拥有者可以新增字段，不能删改已有字段」；新增 `ResolvedStep`（step_id、tool、args、action_kind、base_risk、outflow）和 `ctx.steps`，规定由 ② 写入 |
+
+附带的修复：fake L3 现在要求先 prepare 才能 execute；同一 plan 换了 `plan_hash` 会返回 `IDEMPOTENCY_CONFLICT`；`business_fail` 时 intent 保持 PREPARED。`AppFormPlanRequest` 已加上 1..5 的长度约束。这些都对应第二轮的 N7、N8。
+
+### 二、本轮引入或暴露的新问题
+
+只列真问题。R1–R3 改动的都是 worker 无权修改的共享文件或 W0 拥有的文件，所以需要在开工前由 W0 或指挥修掉。
+
+**P1（开工前由 W0 或指挥修，各约 1–5 行）**
+
+- **R1 生产入口不加载 JWT 公钥**
+  - 位置：`main.py:116-117`（`serve()` 调用 `build_public_app(settings)` 时既没有传 `env` 也没有传 `public_key`）；`config.py` 里也没有公钥路径这一项。
+  - 问题：部署之后，所有需要 JWT 的路由都会固定返回 401。`main.py` 已经冻结，W1 没有权限补上这一步。
+  - 修改建议：在 Settings 中增加 `jwt_public_key_path`（默认 `/run/secrets/jwt-public.pem`，compose 已经挂载了这个文件），`serve()` 读取后传给两个应用。文件不存在时拒绝启动，不要静默降级成「全部 401」。
+
+- **R2 pyyaml 不在运行依赖里**
+  - 位置：`policy/registry.py:13` 在模块导入时就 `import yaml`，并在模块层执行 `load_policies()`。但 pyyaml 只在 `pyproject.toml` 的 dev 分组和 `requirements-test.txt` 里，`requirements.txt` 中没有。
+  - 问题：W2、W3 一旦在运行路径上 import 注册表，gateway 容器就会启动失败，和第一轮的 P0-7 是同一类问题。`pyproject.toml` 只有 W0 能改。
+  - 修改建议：把 `pyyaml==6.0.3` 移到主依赖，重新导出 requirements 并重建 wheels。
+
+- **R3 `action_kind` 在找不到卡时默认判为收紧（fail-open）**
+  - 位置：`registry.py:99-116`
+  - 问题：已实测，`card_id` 不在影子状态中时，`update_card_limits` 把限额调到 99,999,999 分返回 `CARD_LIMIT_TIGHTEN`，`update_card_controls` 打开 online 返回 `CARD_CONTROL_TIGHTEN`。正常情况下 ② 会先拒绝不存在的卡，但这里作为安全判定，默认值应该偏保守。
+  - 修改建议：找不到卡时直接抛错（让调用方按 NOT_FOUND 处理），或者返回 LOOSEN；补一条测试。
+
+**P2（写进波次 1 任务书即可）**
+
+- **R4 `outflow` 按工具定义，口径偏粗**
+  - 问题：`tools.yaml` 中 transfer 的 `outflow: true`，但给本人账户转账（TRANSFER_SELF）不是对外转出。`subscribe_product` 也标成了 `outflow: true`，而 PRD §7.8 的 CUMULATIVE_OUTFLOW 和 SPLIT_TRANSFER 口径是「对外转账」。
+  - 建议：W3 在实现时按 `action_kind == TRANSFER_EXTERNAL` 加上创建定时转账（SCHEDULE_CREATE）的口径计算，`ResolvedStep.outflow` 只作为初值。申购是否计入，由指挥裁定后改 tools.yaml 的值。
+
+- **R5 app_form 计划的快照取不到步骤**
+  - 位置：`bank_state()` 只从 `plan_draft.steps` 取步骤。
+  - 问题：app_form 计划没有 PlanDraft，取快照时 `steps=[]`，拿不到收款人目录。
+  - 建议：W3 在组装 G4 时，把由 form_action 生成的步骤放进同一个位置（例如构造一份内部 draft），或者由指挥改成从统一的 `draft_steps` 取。另外，复演必须使用新的 `EvalContext`（缓存的快照不能跨评估复用），这一点要在 `replay` 的说明中写明。
+
+- **R6 数据库错误时的清理会掩盖原始异常**
+  - 位置：`idempotency.py:61-69`
+  - 问题：如果 `produce` 抛出的是数据库错误，事务已经中止，接下来的 DELETE 会再抛 `InFailedSQLTransaction`，原始异常就看不到了。行本身会随事务回滚消失，所以结果没错，只是诊断信息丢了。
+  - 建议：DELETE 外面包一层 `try`，失败就忽略，然后重新抛出原始异常。
+
+### 三、最终结论
+
+**是（有条件）：可以作为 W1–W4 的并行基础。** 前两轮的所有 P0、P1 都已关闭，探针 A–D 全部符合预期。架构层面已经没有阻塞项。
+
+条件是开工前由 W0 或指挥修完 R1、R2、R3。这三项改动的都是 worker 无权修改或由 W0 拥有的文件（`main.py`、`config.py`、`pyproject.toml`、`requirements.txt`、`policy/registry.py`），每项只有几行。修完只需复跑 `make test-gateway` 和 `make up`，不必再做完整复审。
+
+### 四、波次 1 任务书接口约定：相对第一轮「接口约定要点」的更新
+
+第一轮的要点整体仍然有效，以下按本轮实际代码更新或补充：
+
+1. **文件与模块名以实际代码为准**：
+   - 表定义在 `app/tables.py`（不是 models.py），对外模型在 `app/schemas/**`；
+   - 幂等用 `app/idempotency.request_idempotent`：插入、produce、更新在同一事务里，事务内不得有 HTTP 调用，G8 的执行幂等走 `plans`、`execution_jobs`，不走这里；
+   - 测试替身用 `FakeL3().transport()` 配合 `L3Client`。
+2. **阶段归属按指挥决定 #3，与第一轮不同**：①②③④ 归 W2（第一轮写的是 ① 归 W3），⑤⑥⑦⑧⑨ 和 G4 组装归 W3。② 写 `ctx.steps`，其中的 action_kind 和基础等级用 `policy.registry.action_kind` 和 `policy()` 计算，不得另写一套映射。
+3. **注册表**：`policies/tools.yaml` 和 `app/policy/registry.py` 的结构由 W0 冻结。任何任务只能提出值的修正，写进待决，由 W2 或指挥落地。outflow 的口径见 R4。
+4. **状态迁移**：只能调用 `state.transition`。非法边会抛 `ValueError`，属于代码错误，不要捕获后转成 409。需要新边就写待决。EXECUTING 只在复演通过之后写入。
+5. **鉴权**：所有公共路由已由全局依赖鉴权。处理函数从 `request.state.caller` 读取 `Caller`（含 customer_id、sid、utts、origin），不要再声明一遍依赖，也不得从请求体读取 origin 或 customer_id。授权矩阵冻结。
+6. **交叉接口**：
+   - W3 实现 `evaluation/repo.append_evaluation` 和 `execution/replay.replay`。
+   - W4 实现 `approval/service.create_for_evaluation`、`approval/planview.build_view` 和 `locks.customer_lock`。
+   - 双方签名都不能改，在对方合入之前各自用测试替身打桩。W3 的 G4 测试要用打桩的 `create_for_evaluation`；W4 的执行测试要用打桩的 `replay`。
+   - `replay` 必须使用新的 `EvalContext`。
+7. **结果类**：拥有者只能在自己的结果类里新增字段。`EvalContext` 本身的字段冻结。
+8. **审计**：只能用 `audit.append_tx`，`now_wall` 必须带时区。
+9. **迁移**：波次 1 期间不写迁移，需要改表写进待决，由指挥串行追加 `0002_wave1`。
+10. **W1 新增事项**：如果 R1 没有在 W0 完成，就把「公钥加载」明确写进 W1 的任务书，并授权 W1 只改 `config.py` 和 `serve()` 中加载公钥的那几行。
