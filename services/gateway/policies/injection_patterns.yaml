@@ -1,0 +1,6 @@
+# Heuristics can only raise risk; they never authorize or block an operation alone.
+patterns:
+  - '忽略.{0,8}(之前|前面|以上|先前).{0,8}(指令|规则|提示)'
+  - '(系统|开发者).{0,6}(指令|消息|提示词)'
+  - '(ignore|disregard).{0,30}(previous|prior|above).{0,20}(instructions|rules|prompt)'
+  - '(system|developer)\s*(message|prompt|instruction)'

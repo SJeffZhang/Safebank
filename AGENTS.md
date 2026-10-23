@@ -292,6 +292,7 @@
 
 | 2026-10-23 | Codex（协调者） | S2同步main691cf88后独立评审发现UTC与上海同瞬间误拒绝（P1），原owner修复e25b140。协调者亲自四退出全部exit0：lint158、全量338/54skip（4.30s）、reserve110零skip（0.09s）、contracts PASS；原review_s2定点110 passed并APPROVE，R1关闭。新增docs/acceptance/L2-S2-reserve.md，准备单独base main PR；只交付纯预留组件，真实L3快照/其他窗口仍待S3，尚未远端CI或合并。 |
 
+| 2026-10-23 | Codex（协调者） | W2来源链269469b独立review_w2_lineage规格PASS/质量APPROVE，真实PG46+关联25通过，协调者五退出记录在L2-W2-lineage验收报告。按用户逐组件推送要求，推送feat/l2-provenance检查点留存；完整W2仍有memo严格xfail、S3与跨W1/W3联调缺口，不作为完整交付开合并PR。 |
 | 2026-10-23 | Codex（协调者） | PR #5精确head665f6b4的push/PR两套unit+p1-postgres四检查全部COMPLETED SUCCESS，执行gh pr merge 5 --merge --match-head-commit成功，merge a9d72cf49f518fbb2bd89d2e666f0d0e1196a4c9，14:26:59Z。fetch后协调分支merge origin/main成功，无冲突。S2纯函数组件完成，开始S1b串行共享实施；W2原owner独立启动自身来源链适配，跨真实W1和生产义务仍待后续。原execution_state文档复核5项全ADDRESSED/APPROVE，仅文档不算运行通过。W4a允许最小适配S1资源单测的fake Engine configure hook，不改共享生产代码、不扩大测试替身。 |
 
 | 2026-10-23 | Codex（协调者） | S1b worktree已先快进最新main a9d72cf，再纳入已评审协调文档97d5a33，派独立s1b_wave1_state实施0002与五类受控CAS；S2已合并，共享实施保持串行。准备S3a义务数据任务草稿，将存储/真实快照与后续读工具/领域写拆组件，要求增量迁移保留现有账本，当前未派发或改银行代码。 |
