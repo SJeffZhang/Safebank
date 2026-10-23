@@ -162,3 +162,28 @@ CI仅在 `.github/workflows/checks.yml` 既有p1-postgres job新增 `make test-c
 本轮只改`services/gateway/app/locks.py`、`tests/gateway/customer_locks/test_postgres.py`和本文。未改共享runtime、schemas、state、迁移、CI、Makefile或原W4；只读核实原feat/l2-execution仍为3856a4c。既有check-to-send窗口限制不变。等待协调者亲自复跑与独立只读复审；未获APPROVE，不推送、不建PR、不合并。提交SHA由后续记账记录。
 
 修复轮2实现SHA：`ccbcafe1b0b9a2b7f84efd00a42635dbb72cebff`（本地，未push）。本条仅记录实现SHA；工作冻结等待独立复审与协调者复跑。
+
+
+## 同步S1b main后冻结（2026-10-23）
+
+协调者确认此前e4023ed六退出全0（lint161；all356/99skip；gateway127/51skip；PG17；locks63/9.12s；shared51/9.56s）。新独立review_w4a_fixes规格PASS/质量APPROVE，R1、R2、None-checkin均ADDRESSED，评审亲自26项真实PG通过。此为协调者回传的独立证据；本worker未代替评审声明自行批准。
+
+按指示同步精确origin/main `94e40fec12dd4496b978ad11e094ab321737a2fc`（S1b PR #6，协调者确认四CI全绿后已合并）。同步提交`a2b2fce41e3ec9f3e6e73ef649e9d3e52d78dc81`。仅两处新增目标文本冲突：Makefile末尾test-customer-locks与test-wave1-state；CI的两者相邻run步骤。保留双方全部目标，包括原test-shared-runtime和其他既有步骤。相对94e40fe的Makefile/CI差异严格只新增customer-locks目标/步骤。
+
+没有业务冲突；`git diff e4023ed HEAD -- services/gateway/app/locks.py tests/gateway/customer_locks tests/gateway/shared_runtime/test_runtime.py`为空，已批准的锁实现和测试适配未变。S1b生产/表/迁移等仅随已合并main原样同步，本worker没有另行修改。
+
+同步后本worker亲自完整六门禁均exit0：
+
+| 命令 | 实际结果 |
+|---|---|
+| make lint | All checks passed；169 files already formatted |
+| make test | 376 passed / 184 skipped，4.27s |
+| make test-gateway | 147 passed / 136 skipped，3.46s |
+| make test-gateway-db | 17 passed零skip，3.18s |
+| make test-customer-locks | **63 passed零skip，8.99s** |
+| make test-shared-runtime | **51 passed零skip，8.70s**；原ASGI取消测试仍有预期CancelledError traceback |
+| git diff --check | 通过 |
+
+普通目标数量变化来自同步S1b新增测试；其PG项仍由显式目标启用，不将普通skip计为真实通过。本轮按要求执行上述六门禁，保留test-wave1-state及其CI步骤，没有额外声称本轮独立运行该目标。数据库门禁使用既有显式PGDATA tmpfs、随机临时PG与后台Docker CLI；未运行make up/down/test-p1，未触及持久数据卷。
+
+只读核实原feat/l2-execution仍为`3856a4c899fc6e9747f42cc6488484649c9158dc`，保持不动。本轮仅同步目标冲突与本文记账，无新业务修改、不push/PR；同步版待协调者亲自复跑后按组件流程发布。现在冻结并结束本轮释放槽位。
