@@ -1,0 +1,69 @@
+{
+  "snapshot_date": "2026-10-24",
+  "timezone": "Asia/Shanghai",
+  "head": "8ad47d0bd1b3d4c7ca6b1e389c39afad7d231432",
+  "kind": "copy_of_preexisting_acceptance_logs_not_a_new_test_run",
+  "source_directory": "/private/tmp/sbg-main-pr22-regression-20261024",
+  "files": [
+    {
+      "file": "setup.log",
+      "bytes": 71,
+      "sha256": "765382a586185d5dbc5dd98a036b9662f04337f145f93a115cee94de2ae0241f"
+    },
+    {
+      "file": "lint.log",
+      "bytes": 102,
+      "sha256": "8d1a387434aa0cf5248e3115c744f8c609be09592a679343996a518d67551463"
+    },
+    {
+      "file": "agent.log",
+      "bytes": 260,
+      "sha256": "afb10617f5c2e5cf82756437289cd5b42306b0f92983c3ab7b5a212e80477582"
+    },
+    {
+      "file": "gateway.log",
+      "bytes": 2894,
+      "sha256": "b9ca90d5babaaece04d66d2928ec68f29a62211b8889021c80849e4b9abe5d68"
+    },
+    {
+      "file": "db.log",
+      "bytes": 155,
+      "sha256": "daf2a3761c692cd0e47bec02dc9b4f64b54839fbca07cc15fa4274ac2e3b0f5a"
+    },
+    {
+      "file": "test.log",
+      "bytes": 3415,
+      "sha256": "f16da99df6a0d1116214657986417026e65ee6bd61bb5adba1340b0cd565569e"
+    },
+    {
+      "file": "w4b1.log",
+      "bytes": 157,
+      "sha256": "a5faae65829431721ade230a14e7ee1ee2ce631c685c12f309c6c0c911de6585"
+    },
+    {
+      "file": "w3a.log",
+      "bytes": 179,
+      "sha256": "5ad286d011eb88786cac20814a40fa3bdf328a005ab42ed029da6bfeb46a0a77"
+    },
+    {
+      "file": "w2.log",
+      "bytes": 420,
+      "sha256": "0e78b0e811a696bd1bf533e364ae5045a885b05680a2d3cfda3806056c980a6f"
+    },
+    {
+      "file": "obligations.log",
+      "bytes": 882,
+      "sha256": "4d41018fd7006edb802c07e88f56916eeac70fa2f88d8dafb36d2bf1aa63c205"
+    },
+    {
+      "file": "contracts.log",
+      "bytes": 127,
+      "sha256": "0bc54b26f149b341e2f407b0c76ef92aa9d89a98760f38eaf822052876bba7ba"
+    },
+    {
+      "file": "actionlint.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

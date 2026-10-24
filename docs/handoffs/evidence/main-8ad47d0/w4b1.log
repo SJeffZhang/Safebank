@@ -1,0 +1,3 @@
+GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w4b1 -q
+.........................................................                [100%]
+57 passed in 3.02s

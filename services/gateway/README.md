@@ -39,7 +39,7 @@ make up && make test-p1  # 全栈健康 + P1 真实 PG 验收（指挥在集成�
 | `GATEWAY_PUBLIC_BIND` / `GATEWAY_INTERNAL_BIND` | 两端口绑定地址（必须不同、不能 `0.0.0.0`） |
 | `GATEWAY_SERVICE_TOKEN` | L2 → L3 |
 | `FRONTEND_SERVICE_TOKEN` / `AGENT_SERVICE_TOKEN` / `SCHEDULER_SERVICE_TOKEN` / `DEMO_CONSOLE_TOKEN` | F/A/S/D 服务令牌，常量时间比较，启动时校验互不相同 |
-| `APPROVAL_HMAC_KEY` / `OTP_HMAC_KEY` / `FINGERPRINT_KEY` | W4/W5 用 |
+| `APPROVAL_HMAC_KEY` / `OTP_HMAC_KEY` | W4/W5 用。显式 Settings 一次性快照，UTF-8 编码各 ≥32 bytes、互异且不等任何服务令牌；缺失/短/重复在 DB/L3 分配前 503 拒绝。|
 | `DEMO_MODE` / `EVAL_MODE` | 互斥；非 B2 `GATEWAY_PROFILE` 只在 EVAL_MODE |
 | `GATEWAY_PROFILE` | `B0/B1/B2/B2_NO_PREFLIGHT/B2_NO_WORKFLOW/B2_NO_TAINT`，默认 B2 |
 | `GATEWAY_MAX_EXECUTIONS` | 并发执行上限，默认 8 |
@@ -137,5 +137,13 @@ make test-shared-runtime # 明确启用真实临时PG与独立Linux秘密权限�
 该目标要求 Docker 后台可用，使用已有 `safebank-p0:local` 为 Linux 验收基底，只构建独立随机 tag，既不替换现有镜像 tag，也不启动/停止 compose 栈。临时 PG 的 PGDATA 与秘密验收均显式使用 tmpfs，不分配 Docker 数据卷。
 
 W4 锁服务接口已确定为 `locks.configure(db,max_executions=...)`；集中 runtime 在 hook 存在时传入同一个 engine，缺失时保留尚未实现状态。生产连接池为 `max(18,2*max_executions+2)`，无 overflow。
+
+## 审批 / OTP 密钥（W4b2a）
+
+`GatewayRuntime` 启动时从显式 `Settings.approval_hmac_key` / `Settings.otp_hmac_key` 一次性取得两项独立密钥快照（UTF-8 编码为 `bytes`，`repr=False`），在分配 DB 连接池、锁和 L3 客户端**之前**校验：非空非空白、各 ≥32 bytes、互异且不等任何已配置服务令牌。任一失败 `DEPENDENCY_UNAVAILABLE` / 503，错误消息不泄露原值。
+
+`install(app)` 将同一个 bytes 对象分别放到 `app.state.approval_hmac_key` / `app.state.otp_hmac_key`；双应用共享同一 runtime 资源，不重复编码或缓存。`Settings` 上的字段 `repr=False` 确保日志/错误仅打印 `<hidden>`。
+
+本组件不调用 `approval.service.configure`——该库当前为全局 `_config`，将全局重配当成实例隔离会在两个不同 runtime 间串用密钥。后续确认/OTP 调用方须设计显式实例适配，本组件仅提供资源快照。
 
 S1 评审修复后，监听器由 GatewayServer 包装真实 Uvicorn 生命周期：停止监听、等待或取消并等待在途请求、完成 lifespan 后才释放 DB/L3；任一 listener 的启动/运行异常及上层取消都走此路径。Compose healthcheck 是独立进程，单独降权到 UID/GID 10001 后才发起 HTTP。状态入口按表唯一单列 PK 寻址，authorization_claims 只允许 CLAIMED→CONSUMED。
