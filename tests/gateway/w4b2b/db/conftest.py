@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
+import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
+from pathlib import Path
 
 import httpx
 import pytest
@@ -23,8 +24,6 @@ from sqlalchemy.pool import NullPool
 
 from services.gateway.app import tables as t
 from services.gateway.app.api.approvals import ConfirmRejectRequest, ConfirmRequest
-from services.gateway.app.approval import service as approval_service
-from services.gateway.app.approval.planview import build_view
 from services.gateway.app.approval.service import ApprovalBinding, binding_mac
 from services.gateway.app.auth.tokens import APP_AUDIENCE, sign_jwt
 from services.gateway.app.config import Settings
@@ -39,11 +38,6 @@ from services.gateway.app.schemas.scope import (
     UtteranceRef,
 )
 from tests.gateway.db.conftest import gateway_db  # noqa: F401
-from tests.gateway.w4b1.conftest import (
-    configure_approval,
-    state,
-    transfer_step,
-)
 
 # ── Test constants ────────────────────────────────────────────────────────────
 
@@ -123,6 +117,15 @@ def test_app(gateway_db):
     """
     private_pem, public_pem = _generate_key_pair()
 
+    # Write PEM files so gateway_runtime can load them from disk.
+    tmpdir = tempfile.mkdtemp(prefix="sbg-w4b2b-test-")
+    private_path = Path(tmpdir) / "jwt-private.pem"
+    public_path = Path(tmpdir) / "jwt-public.pem"
+    private_path.write_bytes(private_pem)
+    public_path.write_bytes(public_pem)
+    os.chmod(private_path, 0o600)
+    os.chmod(public_path, 0o644)
+
     settings = Settings(
         demo_mode=False,
         eval_mode=False,
@@ -140,8 +143,8 @@ def test_app(gateway_db):
             "S": SCHEDULER_TOKEN,
             "D": "",
         },
-        jwt_private_key_path="/nonexistent/test-private.pem",  # not read — we pass keys directly
-        jwt_public_key_path="/nonexistent/test-public.pem",
+        jwt_private_key_path=str(private_path),
+        jwt_public_key_path=str(public_path),
         demo_pins_file="/nonexistent/test-pins",
         approval_hmac_key=HMAC_KEY.decode(),
         otp_hmac_key=OTP_KEY.decode(),
@@ -156,8 +159,6 @@ def test_app(gateway_db):
             pin_hashes={},
         ) as rt:
             app = build_public_app(settings, public_key=public_pem, runtime=rt)
-            # approval_service.configure() for tests that call library directly
-            approval_service.configure(HMAC_KEY, profile="B2", wall_now=lambda: WALL)
             transport = httpx.ASGITransport(app=app)
             client = httpx.AsyncClient(transport=transport, base_url="http://test")
             return TestApp(
@@ -172,6 +173,13 @@ def test_app(gateway_db):
     app = asyncio.run(_build())
     yield app
     asyncio.run(app.client.aclose())
+    # Clean up temp PEM files.
+    try:
+        os.unlink(private_path)
+        os.unlink(public_path)
+        os.rmdir(tmpdir)
+    except OSError:
+        pass
 
 
 # ── Per-test cleanup ──────────────────────────────────────────────────────────
@@ -188,8 +196,6 @@ def _clean_gateway(test_app):
         await admin_db.dispose()
 
     asyncio.run(truncate())
-    # Reconfigure approval_service after truncate (global state was reset)
-    approval_service.configure(HMAC_KEY, profile="B2", wall_now=lambda: WALL)
 
 
 # ── Seed helpers (mirror W4b1 but compatible with W4b2b needs) ────────────────
