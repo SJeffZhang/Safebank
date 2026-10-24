@@ -1,8 +1,8 @@
 # C1c2 Gateway Graph Routing — Independent Review
 
 **Reviewer:** DeepSeek V4 Pro (read-only, headless CLI)
-**Date:** 2026-10-24  
-**Scope:** `git diff 22dbb48 478b673` (main 8ad47d0 merged as 22dbb48)  
+**Date:** 2026-10-24
+**Scope:** `git diff 22dbb48 478b673` (main 8ad47d0 merged as 22dbb48)
 **Verdict:** REQUEST_CHANGES
 
 ## Summary
@@ -141,7 +141,7 @@ Annotated as `Decision | None` but gateway graph stores `dict` (from `model_dump
 
 ## 修复轮 1 定点复审（2026-10-24，478b673..1e303e7）
 
-**Reviewer:** DeepSeek V4 Pro (read-only, headless CLI)  
+**Reviewer:** DeepSeek V4 Pro (read-only, headless CLI)
 **Verdict:** APPROVE — all 6 P0/P1 findings closed, no new P0/P1 introduced.
 
 ### 逐条核对
@@ -204,7 +204,7 @@ Annotated as `Decision | None` but gateway graph stores `dict` (from `model_dump
 
 ## 修复轮 2 定点复审（2026-10-24，1e303e7..786949d）
 
-**Reviewer:** DeepSeek V4 Pro (read-only, headless CLI)  
+**Reviewer:** DeepSeek V4 Pro (read-only, headless CLI)
 **Verdict:** APPROVE — both coordinator-mandated fixes verified, no new P0/P1.
 
 ### 逐条核对
@@ -252,7 +252,7 @@ Annotated as `Decision | None` but gateway graph stores `dict` (from `model_dump
 
 ## 修复轮 3–5 定点复审（2026-10-24，786949d..21cb904）
 
-**Reviewer:** DeepSeek V4 Pro (read-only, headless CLI)  
+**Reviewer:** DeepSeek V4 Pro (read-only, headless CLI)
 **Verdict:** APPROVE — both Round-2 P2s addressed, no new P0/P1.
 
 ### 逐条核对
