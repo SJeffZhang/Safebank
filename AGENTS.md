@@ -42,11 +42,11 @@
 | 调研 | 开源项目元数据和 DeepSeek 官方信息已核实；评分/提交已从官网公开 JS 核实（docs/acceptance/official-v1.md）；竞品「明鉴」未核实 |
 | PRD | **`PRD.md` = v2.1 定稿**（§0–§16；三轮多 agent 审核 + 两次修订复核，决议 D1–D47 见 §0.5；执行屏障增量约定见ADR-008）。v1.2 与作废的 v2.0 草稿在 `docs/archive/`；审核报告在 `docs/reviews/` |
 | 代码 | **P1 完成并逐组件验收且已由PR #1合入main**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116项单元+33项真实PG通过，契约v1已冻结。历史功能提交7fd7a26、CI权限修复70dcabe，远端unit与p1-postgres均通过（run 39929405919）；完整六场景业务仍未完成。 |
-| L2 网关 | main `8ad47d0`；W2b PR #18、W3a PR #20、W4b1 PR #22均已精确head四CI合入。W4b1业务c317f82亲验57专项（34纯函数/23真PG）及原独审APPROVE，main实际十二退出组合通过。生产运行密钥/确认/OTP/G4/G8仍待W4b2a/端点/W3b/W4c。 |
+| L2 网关 | main `8ad47d0`；W2b PR #18、W3a PR #20、W4b1 PR #22、W4b2a PR #23、W4b2b PR #25均已精确head四CI合入。W4b2c OTP端点(POST /approvals/{id}/otp + G6红级OTP校验)已在本worktree完成，56测试通过(30纯函数+26真PG含D0跨应用密钥隔离)，待push/PR/合并。生产G4/G8/执行仍待W3b/W4c。 |
 | L1 Agent | C1a PR #17、C1b PR #19、C1c1 PR #21均已精确head四CI合入；C1b真实live7请求通过（read仍fake），C1c1客户端212项及原独审通过，最新main8ad47d0实际组合回归通过。C1c2任务已准备并派发，但DeepSeek API 402余额不足启动即失败，无业务变更；原会话1562cb21-2895-4dbe-938d-add2573d7c95保留待恢复。PG saver/服务/输出仍待C1d/e。 |
 | 前端 | **暂停**，用户亲自下令才开工（§2 第 13 条） |
 | 协调状态 | **2026-10-24 用户要求交回Claude，Codex已准备详细交接**：`docs/handoffs/2026-10-24-claude-handoff.md`与`2026-10-24-claude-prompt.md`。用户最新要求暂停所有定时任务，safebank-worker/skillloop均已核为PAUSED，未经明确恢复不得启用。实现/独审仍沿用本机Claude Code CLI / DeepSeek V4 Pro，协调者只计划/文档/亲验/发布；本机已有两个非已知无头worker的Claude CLI在root，接手先确认唯一协调者，不擅kill。worktree与匹配W0密钥保留，Codex本轮只交接不派业务worker。 |
-| 下一步 | Claude先只读核对现场/唯一协调者、HEAD/WIP与402恢复证据。W4b2a任务已准备未派，之后确认/OTP端点→W3b→W4c；L1 C1c2→C1d/e。402无恢复证据前不反复请求/换模型；保留原会话。P2真实验收闭合后才进入P3，前端/BFF及所有定时任务继续暂停。 |
+| 下一步 | W4b2c OTP 端点已完成待 push/PR。之后 W3b（完整G4）→ W4c（执行）；L1 C1c2→C1d/e。402无恢复证据前不反复请求/换模型；保留原会话。P2真实验收闭合后才进入P3，前端/BFF及所有定时任务继续暂停。 |
 
 ### 已确认事实
 
@@ -631,6 +631,7 @@
 | 2026-10-24 | Claude（主会话 89da7fbc） | W4b2b 修复轮 4（W4b2b-fix-r4，24 轮）提交 ee4628e：test_list_empty 回归源于测试间库污染，改为每测 TRUNCATE（核实 admin_url 来自 tmpfs `gateway_db` fixture，不涉长期业务库）。协调者复跑全部 exit 0（test-w4b2b 57 passed，连跑两次稳定）。**但红测核验不成立**：精确删除 sessions 行 `.with_for_update()` 后 test_race.py 连跑 2 次仍 1 passed，worker 所称「去锁 1 failed」与实测不符（继 C1c2 后第二次出现 worker 红测结论失实）。代码修复本身正确，测试无效。续接原会话（W4b2b-fix-r5）给出确定性两连接 + lock_timeout 设计。 |
 | 2026-10-24 | Claude（主会话 89da7fbc） | W4b2b 修复轮 5（W4b2b-fix-r5，63 轮）提交 ef83931：test_race 改为直接调用真实 `_lock_approval` + `_validate_confirmable`，两连接 + `lock_timeout=500ms`。协调者红绿核验成立：精确删除 sessions 行 `.with_for_update()` 后连跑 2 次均 1 failed，`git checkout` 还原后 2 次均 1 passed（approvals.py 本轮未改）。ef83931 复跑全部 exit 0：lint 302；test 2428/613 skip；test-gateway 1987/553 skip；gateway-db 17；shared-runtime 79；w1 1688；w4b1 57；test-w4b2b 57；contracts；actionlint。评审 worktree 切至 ef83931，续接评审会话 e79cabb1 定点复审（R-W4b2b-r2）。 |
 | 2026-10-24 | Claude（主会话 89da7fbc） | W4b2b 修复轮 3–5 定点复审 R-W4b2b-r2（16 轮）**APPROVE**：P1-1 与 P2-1/2/3 关闭；新增 P2-4 `_supersede_session`（W4b1）与 G6/G7 可能 ABBA 死锁，PG 自动检测并中止一方、可安全重试、低概率，协调者裁定不阻塞本 PR，记为已知问题由 W3b 接通 supersede 路径时统一锁序解决。评审报告提交入 W4b2b；`git merge origin/main`（1ce15f0）无冲突；带入 root AGENTS 日志；验收 `docs/acceptance/L2-W4b2b-approval-endpoints.md`。 |
+| 2026-10-25 | Claude（主会话 89da7fbc，续接 W4b2c） | W4b2c 修复与完成：G6 RED OTP handler 中 `Code.UNKNOWN` fallback 不存在 → 改 `Code.CONTRACT_INVALID`；G6 长行拆分、test_g10_send 未用 import 清理；lint 通过。修复后 54 测试全绿。新增 D0 跨应用 OTP 密钥隔离测试 2 项（app A 用 KEY_X 发码→app A 验过、app B 用 KEY_Y 验不过）。写 `docs/progress/W4b2c-otp.md`。完整退出 suite（lint、test、test-gateway、gateway-db、shared-runtime 79、w1 1688、w4b1 57、w4b2b 58、w4b2c 56、w2 246、w3a 45、obligations 30、contracts、agent 287）全部 exit 0。CI checks.yml 加 test-w4b2c。提交 64d8f09/a99995a，待 push/PR。 |
 
 ## 5. 下一步待办（按顺序）
 
@@ -683,7 +684,9 @@ P0 准备阶段（决定后续一切）：
 | [ ] | W3b 完整G4持久化/复演/hint | 待W4b确认/OTP先决；旧3bcbe8e仅只读参考，不覆盖现行main | `docs/plans/briefs/W3-decision.md`；`W3-W4-integration-order.md` |
 | [ ] | W4c 执行与UNKNOWN恢复 | 待W3b；旧3856a4c仅参考，不覆盖现行locks/state/屏障 | `docs/plans/briefs/W4-execution.md` |
 | [x] | W4b1 面板/HMAC审批库 | PR #22 merge8ad47d0；亲验/独审/精确head四CI与实际main组合通过 | `docs/acceptance/L2-W4b1-planview-binding.md` |
-| [ ] | W4b2a 运行密钥资源 | 任务已准备，DS余额402待恢复，未派发 | `docs/plans/briefs/W4b2a-runtime-keys.md` |
+| [x] | W4b2a 运行密钥资源 | PR #23已合45b9b45；Settings密钥repr=False、两app实例隔离、16+4测试 | `docs/acceptance/L2-W4b2a-runtime-keys.md` |
+| [x] | W4b2b 审批端点/确认/拒绝/面板列表 | PR #25已合72a4161；G6黄级/G7/G9/G17 + approval adapter D0实例适配；58专项及四CI通过 | `docs/acceptance/L2-W4b2b-approval-endpoints.md` |
+| [x] | W4b2c OTP 发送/红级校验/锁定 (本worktree) | 提交 a99995a 待 push/PR；G10 端点 + G6 红级OTP + D0 跨应用密钥隔离；56 测试(30纯函数+26真PG)及全回归通过 | `docs/acceptance/L2-W4b2c-otp.md`；`docs/progress/W4b2c-otp.md` |
 | [x] | S1b / 0002_wave1 迁移与受控状态 | PR #6已合并94e40fe（四CI成功，真实现有库升级与集成通过） | `docs/plans/briefs/S1b-wave1-state.md` |
 | [x] | S1c PIN Settings 接线 | PR #8 merge `304adda`；五退出、独立评审与精确head四CI全绿 | `docs/plans/briefs/S1c-pin-settings.md`；证据 `docs/progress/S1c-pin-settings.md` |
 | [x] | S1e 孤儿job受控对账 | PR #9 merge `6815547`；独立APPROVE、亲自六退出/231专项及四CI全绿 | `docs/plans/briefs/S1e-orphan-jobs.md` |
