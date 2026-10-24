@@ -117,3 +117,7 @@ test-agent-db:
 .PHONY: test-w4b2b
 test-w4b2b:
 	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w4b2b -q
+
+.PHONY: test-w4b2c
+test-w4b2c:
+	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w4b2c -q

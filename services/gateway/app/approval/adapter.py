@@ -23,6 +23,11 @@ def profile(request: Request) -> str:
     return request.app.state.settings.profile
 
 
+def otp_hmac_key(request: Request) -> bytes:
+    """OTP HMAC key for code digest and AEAD encryption (from runtime snapshot)."""
+    return request.app.state.otp_hmac_key
+
+
 def wall_now(request: Request) -> Callable[[], datetime]:
     """Return the app's wall-clock callable."""
     return request.app.state.wall_now
