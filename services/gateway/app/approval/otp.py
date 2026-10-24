@@ -72,7 +72,7 @@ def compute_code_digest(code: str, approval_id: str, key: bytes) -> str:
 
     The key is the domain-separated ``code_digest_key`` from :func:`derive_otp_keys`.
     """
-    payload = f"{code}||{approval_id}".encode("utf-8")
+    payload = f"{code}||{approval_id}".encode()
     return hmac.new(key, payload, hashlib.sha256).hexdigest()
 
 

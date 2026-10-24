@@ -149,7 +149,12 @@ def test_decrypt_wrong_key_returns_none():
         "111111", approval_id="apv_1", plan_id="pln_1", view_hash="v" * 64, wall_now=WALL, key=key_a
     )
     result = decrypt_otp_code(
-        ciphertext, approval_id="apv_1", plan_id="pln_1", view_hash="v" * 64, wall_now=WALL, key=key_b
+        ciphertext,
+        approval_id="apv_1",
+        plan_id="pln_1",
+        view_hash="v" * 64,
+        wall_now=WALL,
+        key=key_b,
     )
     assert result is None, "decrypt with wrong key must return None"
 
@@ -202,7 +207,12 @@ def test_decrypt_wrong_wall_now_returns_none():
     )
     later = WALL + timedelta(seconds=1)
     result = decrypt_otp_code(
-        ciphertext, approval_id="apv_1", plan_id="pln_1", view_hash="v" * 64, wall_now=later, key=key
+        ciphertext,
+        approval_id="apv_1",
+        plan_id="pln_1",
+        view_hash="v" * 64,
+        wall_now=later,
+        key=key,
     )
     assert result is None, "AAD mismatch (wrong wall_now) must fail"
 
@@ -219,7 +229,12 @@ def test_decrypt_bitflipped_ciphertext_returns_none():
     # Flip the last byte.
     flipped = bytes(raw[:-1]) + bytes([raw[-1] ^ 0x01])
     result = decrypt_otp_code(
-        flipped.hex(), approval_id="apv_1", plan_id="pln_1", view_hash="v" * 64, wall_now=WALL, key=key
+        flipped.hex(),
+        approval_id="apv_1",
+        plan_id="pln_1",
+        view_hash="v" * 64,
+        wall_now=WALL,
+        key=key,
     )
     assert result is None, "bit-flipped ciphertext must fail AEAD tag check"
 
@@ -261,7 +276,9 @@ def test_verify_otp_wrong_key_returns_false():
     key_a = b"key-a-32-bytes-long-at-least-bytes!!"
     digest = compute_code_digest("123456", "apv_1", key_a)
     challenge = {"code_digest": digest}
-    assert verify_otp(challenge, "123456", "apv_1", b"key-b-32-bytes-long-at-least-bytes!!") is False
+    assert (
+        verify_otp(challenge, "123456", "apv_1", b"key-b-32-bytes-long-at-least-bytes!!") is False
+    )
 
 
 def test_verify_otp_same_length_wrong_code_no_early_exit():
