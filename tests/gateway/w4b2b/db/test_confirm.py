@@ -26,8 +26,11 @@ CONFIRM_URL = "/approvals/apv_1/confirm"
 VIEW_HASH = "b" * 64
 
 
-def _body(request_id="req_c1", view_hash=VIEW_HASH, risk_ack=True):
-    return {"request_id": request_id, "view_hash": view_hash, "risk_ack": risk_ack}
+def _body(request_id="req_c1", view_hash=VIEW_HASH, risk_ack=True, otp=None):
+    d = {"request_id": request_id, "view_hash": view_hash, "risk_ack": risk_ack}
+    if otp is not None:
+        d["otp"] = otp
+    return d
 
 
 def test_confirm_yellow_succeeds(app_config):
@@ -303,8 +306,11 @@ def test_confirm_risk_ack_false_when_not_required_succeeds(app_config):
     asyncio.run(run())
 
 
-def test_confirm_red_returns_503(app_config):
-    """Red approval confirm returns 503 DEPENDENCY_UNAVAILABLE (D6). Approval stays PENDING."""
+# ── RED OTP tests (R3: W4b2c implements real OTP, no more 503) ─────────
+
+
+def test_confirm_red_no_challenge_returns_otp_expired(app_config):
+    """RED approval + no OTP sent → 409 OTP_EXPIRED (R3-a). DB unchanged."""
 
     async def run():
         app = await build_app(app_config)
@@ -313,8 +319,10 @@ def test_confirm_red_returns_503(app_config):
         async with db.begin() as conn:
             await _seed_full(conn, risk=Risk.RED, view_json=view_json)
 
-        resp = await app.client.post(CONFIRM_URL, json=_body(), headers=app.auth_headers())
-        assert resp.status_code == 503
+        resp = await app.client.post(
+            CONFIRM_URL, json=_body(otp="123456"), headers=app.auth_headers()
+        )
+        assert resp.status_code == 409
 
         # DB unchanged — approval still PENDING.
         async with db.connect() as conn:
@@ -324,6 +332,84 @@ def test_confirm_red_returns_503(app_config):
                 .one()
             )
         assert approval["status"] == ApprovalStatus.PENDING.value
+        await db.dispose()
+
+    asyncio.run(run())
+
+
+def test_confirm_red_with_otp_succeeds(app_config):
+    """RED approval + pre-seeded OTP challenge + correct code → 200 CONFIRMED (R3-b)."""
+
+    from services.gateway.app.approval.otp import compute_code_digest, derive_otp_keys
+    from tests.gateway.w4b2b.db.conftest import OTP_KEY
+
+    _code_key, _aead_key = derive_otp_keys(OTP_KEY)
+    OTP_CODE = "123456"
+    OTP_DIGEST = compute_code_digest(OTP_CODE, "apv_1", _code_key)
+
+    async def run():
+        app = await build_app(app_config)
+        db = _runtime_db(app)
+        view_json = {"risk_ack_required": True, "otp_required": True}
+        async with db.begin() as conn:
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+            await _seed_full(conn, risk=Risk.RED, view_json=view_json)
+            # Pre-seed an OTP challenge matching our known code.
+            await conn.execute(
+                pg_insert(t.otp_challenges)
+                .values(
+                    approval_id="apv_1",
+                    code_digest=OTP_DIGEST,
+                    code_ciphertext="deadbeef",
+                    view_hash=VIEW_HASH,
+                    expires_at_wall=WALL + timedelta(minutes=2),
+                    attempt_count=0,
+                    sent_count=1,
+                    last_sent_at_wall=WALL,
+                )
+                .on_conflict_do_update(
+                    index_elements=["approval_id"],
+                    set_={
+                        "code_digest": OTP_DIGEST,
+                        "code_ciphertext": "deadbeef",
+                        "view_hash": VIEW_HASH,
+                        "expires_at_wall": WALL + timedelta(minutes=2),
+                        "attempt_count": 0,
+                        "sent_count": 1,
+                        "last_sent_at_wall": WALL,
+                    },
+                )
+            )
+
+        resp = await app.client.post(
+            CONFIRM_URL,
+            json=_body(otp=OTP_CODE),
+            headers=app.auth_headers(),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "CONFIRMED"
+
+        # DB: approval CONFIRMED, OTP challenge deleted.
+        async with db.connect() as conn:
+            approval = (
+                (await conn.execute(select(t.approvals).where(t.approvals.c.id == "apv_1")))
+                .mappings()
+                .one()
+            )
+            challenge = (
+                (
+                    await conn.execute(
+                        select(t.otp_challenges).where(t.otp_challenges.c.approval_id == "apv_1")
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+        assert approval["status"] == ApprovalStatus.CONFIRMED.value
+        assert challenge is None, "OTP challenge should be deleted after successful verification"
+
         await db.dispose()
 
     asyncio.run(run())
