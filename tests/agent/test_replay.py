@@ -509,3 +509,17 @@ class TestScrubSensitive:
         result = _replay._scrub_sensitive(deeply_nested)
         # Should not raise RecursionError
         assert isinstance(result, dict)
+
+    # ── P2-2 token_usage fields must survive scrubbing ──────────────────
+
+    def test_preserves_token_usage(self):
+        """completion_tokens/prompt_tokens/total_tokens must NOT be scrubbed."""
+        usage = {
+            "completion_tokens": 150,
+            "prompt_tokens": 800,
+            "total_tokens": 950,
+        }
+        result = _replay._scrub_sensitive(usage)
+        assert result["completion_tokens"] == 150
+        assert result["prompt_tokens"] == 800
+        assert result["total_tokens"] == 950

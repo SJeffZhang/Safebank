@@ -326,7 +326,7 @@ def generate_cards(state: AgentState) -> tuple[UICard, ...]:
         if not needs_write:
             _cards_from_reads(state, cards)
 
-    return tuple(cards)
+    return tuple(cards[:5])
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────

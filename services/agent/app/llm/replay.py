@@ -421,7 +421,6 @@ _SENSITIVE_KEYS = frozenset(
         "x-api-key",
         "service_token",
         "jwt",
-        "token",
         "access_token",
         "assistant_token",
         "auth",

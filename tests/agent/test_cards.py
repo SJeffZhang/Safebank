@@ -261,3 +261,24 @@ class TestGenerateCards:
         }
         cards = generate_cards(state)
         assert any(c.type == "BLOCKED" for c in cards)
+
+    # ── P1-3 card cap at 5 ─────────────────────────────────────────────
+
+    def test_card_cap_at_5(self):
+        """With 6+ read cards, output capped at 5; priority cards first."""
+        state = {
+            "reads": [
+                ReadRecord(
+                    source_ref=f"src_{i}",
+                    tool="get_accounts",
+                    args={},
+                    data={"accounts": [{"id": f"acc_{i}", "balance_cents": i}]},
+                )
+                for i in range(8)
+            ],
+            "understanding": type(
+                "u", (), {"unclear": False, "needs_write": False, "intents": []}
+            )(),
+        }
+        cards = generate_cards(state)
+        assert len(cards) == 5

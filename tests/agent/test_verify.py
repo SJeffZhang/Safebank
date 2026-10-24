@@ -83,6 +83,49 @@ class TestExtractAmounts:
     def test_no_amount(self):
         assert extract_amounts("你的请求已收到") == []
 
+    # ── P1-1 Chinese numeral amounts ───────────────────────────────────
+
+    def test_chinese_bayuan(self):
+        items = extract_amounts("已向赵六转账八百元")
+        assert len(items) == 1
+        assert items[0]["cents"] == 80000
+
+    def test_chinese_shi_er(self):
+        items = extract_amounts("十二元")
+        assert len(items) == 1
+        assert items[0]["cents"] == 1200
+
+    def test_chinese_ling(self):
+        items = extract_amounts("一百零五元")
+        assert len(items) == 1
+        assert items[0]["cents"] == 10500
+
+    def test_chinese_large(self):
+        items = extract_amounts("三千块")
+        assert len(items) == 1
+        assert items[0]["cents"] == 300000
+
+    def test_chinese_wan(self):
+        items = extract_amounts("两万元")
+        assert len(items) == 1
+        assert items[0]["cents"] == 2000000
+
+    def test_chinese_wan_abbrev(self):
+        items = extract_amounts("三万五千元")
+        assert len(items) == 1
+        assert items[0]["cents"] == 3500000
+
+    def test_chinese_not_money_not_extracted(self):
+        items = extract_amounts("十二年陈酿")
+        assert items == []
+
+    def test_chinese_mixed(self):
+        items = extract_amounts("¥800.00 和 一千元")
+        assert len(items) == 2
+        cents = {i["cents"] for i in items}
+        assert 80000 in cents
+        assert 100000 in cents
+
 
 # ── extract_percentages ─────────────────────────────────────────────────
 
@@ -295,6 +338,53 @@ class TestMaskLongNumbers:
         result = mask_long_numbers("尾号6222021234567890")
         assert "****7890" in result
 
+    # ── P1-2 multi-separator bypass ────────────────────────────────────
+
+    def test_p12_double_space_separator(self):
+        """6222  0212  3456  7890 — double spaces → still masked."""
+        result = mask_long_numbers("卡号6222  0212  3456  7890")
+        assert "6222" not in result
+        assert "****7890" in result
+
+    def test_p12_double_hyphen_separator(self):
+        """6222--0212--3456--7890 — double hyphens → still masked."""
+        result = mask_long_numbers("卡号6222--0212--3456--7890")
+        assert "6222" not in result
+        assert "****7890" in result
+
+    def test_p12_tab_separator(self):
+        """Tab-separated digit groups → still masked."""
+        result = mask_long_numbers("卡号6222\t0212\t3456\t7890")
+        assert "6222" not in result
+        assert "****7890" in result
+
+    def test_p12_nfkc_fullwidth_digits(self):
+        """Fullwidth ６２２２０２１２３４５６７８９０ → NFKC → masked."""
+        text = "６２２２０２１２３４５６７８９０"
+        result = mask_long_numbers(text)
+        assert "6222" not in result
+        assert "****7890" in result
+
+    def test_p12_zero_width_chars(self):
+        """Zero-width chars between digit groups → still masked."""
+        text = "6222​0212​3456​7890"
+        result = mask_long_numbers(text)
+        assert "6222" not in result
+        assert "****7890" in result
+
+    # ── P2-3 decimal+元 protection ─────────────────────────────────────
+
+    def test_p23_decimal_yuan_preserved(self):
+        """10000000.00元 should be protected as amount, not masked."""
+        result = mask_long_numbers("余额 10000000.00元")
+        assert "10000000.00元" in result
+
+    def test_p23_plain_10m_not_protected(self):
+        """10000000 without amount marker → masked."""
+        result = mask_long_numbers("账号 10000000")
+        assert "10000000" not in result
+        assert "****0000" in result
+
 
 # ── semantic checks ─────────────────────────────────────────────────────
 
@@ -376,6 +466,7 @@ class TestOutputVerifierNoLLM:
                 return type("r", (), {"content": "已向王五转账 800.00 元。"})
 
         verifier = OutputVerifier(llm=FakeLLM())
+        # balance_cents=80000 → 800.00 yuan; FakeLLM returns 800.00 → match
         state = {
             "reply_draft": "已向王五转账 900.00 元。",
             "execution": {
@@ -385,14 +476,15 @@ class TestOutputVerifierNoLLM:
                         "step_id": "s1",
                         "tool": "transfer",
                         "status": "SUCCESS",
-                        "result": {"balance_cents": 520000},
+                        "result": {"balance_cents": 80000},
                     }
                 ],
             },
         }
         result = verifier(state, None)
-        # Should have been repaired (900 → 800) or passed through (then masked)
-        assert len(result) > 0
+        # FakeLLM returns "800.00" → repair corrected the wrong "900.00"
+        assert "800.00" in result
+        assert "900.00" not in result
 
     def test_llm_repair_fails(self):
         """When LLM raises, original text is used (with masking)."""

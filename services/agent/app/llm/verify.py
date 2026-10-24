@@ -26,16 +26,118 @@ _PCT_RE = re.compile(r"([\d]+(?:\.[\d]+)?)\s*%")
 # Card last-4: 尾号 + 4 digits
 _CARD_LAST4_RE = re.compile(r"尾号\s*(\d{4})")
 
-# Amount string that should be preserved during masking (contains ¥/元/块/)
-_AMOUNT_TEXT_RE = re.compile(r"(?:¥|￥)[\d,.]+|[\d,]+\s*(?:元|块)")
+# Amount string that should be preserved during masking (contains ¥/元/块)
+_AMOUNT_TEXT_RE = re.compile(r"(?:¥|￥)[\d,.]+|[\d,.]+\s*(?:元|块)")
 
-# Digit run: one or more digit groups separated by at most one space or hyphen.
+# Digit run: one or more digit groups separated by one or more space/hyphen/tab chars.
 # Does NOT rely on \b — CJK characters are \w in Python 3, so \b fails at
 # Chinese-digit boundaries.  Total digit count is checked post-match.
-_DIGIT_RUN_RE = re.compile(r"\d+(?:[ -]\d+)*")
+_DIGIT_RUN_RE = re.compile(r"\d+(?:[ \t\-]+\d+)*")
+
+# Chinese numeral + 元/块 (e.g. 八百元, 三千块)
+_CHINESE_AMOUNT_RE = re.compile(r"([零〇一二两三四五六七八九十百千万亿]+)\s*(元|块)")
+
+# Fullwidth digits (U+FF10-U+FF19) → ASCII
+_FULLWIDTH_DIGIT_TABLE = str.maketrans(
+    "０１２３４５６７８９",
+    "0123456789",
+)
+# Zero-width characters to strip before masking
+_ZERO_WIDTH_RE = re.compile(r"[​-‍⁠﻿]")
 
 # Date pattern: YYYY-MM-DD or 8-digit YYYYMMDD (2020-2099)
 _DATE_RE = re.compile(r"(?:19|20)\d{2}[-/]?(?:0[1-9]|1[0-2])[-/]?(?:0[1-9]|[12]\d|3[01])")
+
+# ── Chinese numeral parsing ──────────────────────────────────────────────
+
+_CN_DIGIT: dict[str, int] = {
+    "零": 0,
+    "〇": 0,
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+}
+_CN_UNIT: dict[str, int] = {"十": 10, "百": 100, "千": 1000}
+
+
+def _chinese_to_value(text: str) -> int | None:
+    """Parse a Chinese numeral (e.g. 三万五千, 一百零五) to an integer.
+
+    Returns None if the string contains unrecognised characters.
+    """
+    if not text:
+        return None
+
+    def _parse_below_wan(seg: str) -> int | None:
+        """Parse a segment below 万 (e.g. 三百零五, 十二)."""
+        if not seg:
+            return 0
+        val = 0
+        i = 0
+        chars = list(seg)
+        n = len(chars)
+        while i < n:
+            c = chars[i]
+            if c in _CN_DIGIT:
+                d = _CN_DIGIT[c]
+                if i + 1 < n and chars[i + 1] in _CN_UNIT:
+                    val += d * _CN_UNIT[chars[i + 1]]
+                    i += 2
+                else:
+                    val += d
+                    i += 1
+            elif c in _CN_UNIT:
+                # Leading unit: 十 → 10 (e.g. 十二 = 10 then +2)
+                if c == "十":
+                    val += 10
+                    i += 1
+                else:
+                    return None
+            elif c in ("零", "〇"):
+                i += 1
+            else:
+                return None
+        return val
+
+    # 亿 boundary
+    yi_parts = text.split("亿", 1)
+    yi_val = 0
+    rest = text
+    if len(yi_parts) == 2:
+        yi_v = _parse_below_wan(yi_parts[0])
+        if yi_v is None:
+            return None
+        yi_val = yi_v * 100_000_000
+        rest = yi_parts[1]
+
+    # 万 boundary
+    wan_parts = rest.split("万", 1)
+    wan_val = 0
+    after_wan = rest
+    if len(wan_parts) == 2:
+        wan_v = _parse_below_wan(wan_parts[0])
+        if wan_v is None:
+            return None
+        wan_val = wan_v * 10_000
+        after_wan = wan_parts[1]
+
+    remaining = _parse_below_wan(after_wan)
+    if remaining is None:
+        return None
+
+    # Abbreviated form after 万: 三万五 means 三万五千 (bare digit → 千)
+    if len(after_wan) == 1 and after_wan in _CN_DIGIT and _CN_DIGIT[after_wan] in range(1, 10):
+        if wan_val > 0:
+            remaining *= 1000
+
+    return yi_val + wan_val + remaining
 
 
 class ExtractedKind(StrEnum):
@@ -49,6 +151,8 @@ class ExtractedKind(StrEnum):
 
 def extract_amounts(text: str) -> list[dict]:
     """Extract amount references from *text*, converting to cents.
+
+    Handles ¥/￥ prefix, 元/块 suffix, and Chinese numerals (八百元).
 
     Returns ``[{span, raw, cents, kind}, ...]`` where *span* is (start, end).
     """
@@ -66,6 +170,14 @@ def extract_amounts(text: str) -> list[dict]:
         num_str = m.group(1).replace(",", "")
         cents = _yuan_str_to_cents(num_str)
         if cents is not None:
+            results.append(
+                {"span": m.span(), "raw": raw, "cents": cents, "kind": ExtractedKind.AMOUNT}
+            )
+    for m in _CHINESE_AMOUNT_RE.finditer(text):
+        raw = m.group(0)
+        value = _chinese_to_value(m.group(1))
+        if value is not None:
+            cents = value * 100
             results.append(
                 {"span": m.span(), "raw": raw, "cents": cents, "kind": ExtractedKind.AMOUNT}
             )
@@ -291,31 +403,41 @@ def _pct_in_facts(value: float, facts: list[float]) -> bool:
 
 
 def mask_long_numbers(text: str) -> str:
-    """Mask ≥8-digit sequences (with optional single space/hyphen separators).
+    """Mask ≥8-digit sequences (with optional space/hyphen/tab separators).
 
     - ISO dates (YYYY-MM-DD, YYYYMMDD) are preserved.
     - Amount strings with explicit currency markers (¥/￥ prefix or 元 suffix)
       are preserved.  This is a deviation from PRD §6.7 "一律" — see ADR-004.
     - All other digit runs ≥8 total digits → ``****`` + last 4 digits.
     - CJK-adjacent and punctuation-adjacent numbers are masked (no \\b dependency).
+    - Fullwidth digits (U+FF10-U+FF19) are normalised to ASCII.
+    - Zero-width characters (U+200B-U+200D, U+2060, U+FEFF) are stripped.
+    - NFKC normalisation handles other compatibility forms.
     """
     if not text:
         return text
 
+    # Preprocess: NFKC → strip zero-width → fullwidth→ASCII
+    import unicodedata
+
+    working = unicodedata.normalize("NFKC", text)
+    working = _ZERO_WIDTH_RE.sub("", working)
+    working = working.translate(_FULLWIDTH_DIGIT_TABLE)
+
     # Phase 1: identify spans to protect (dates and amounts)
     protected: set[tuple[int, int]] = set()
 
-    for m in _DATE_RE.finditer(text):
+    for m in _DATE_RE.finditer(working):
         span = m.span()
         if (span[1] - span[0]) in (8, 10):
             protected.add(span)
 
-    for m in _AMOUNT_TEXT_RE.finditer(text):
+    for m in _AMOUNT_TEXT_RE.finditer(working):
         protected.add(m.span())
 
     # Phase 2: find digit runs with ≥8 total digits
     spans: list[tuple[int, int]] = []
-    for m in _DIGIT_RUN_RE.finditer(text):
+    for m in _DIGIT_RUN_RE.finditer(working):
         span = m.span()
         if any(_overlaps(span, p) for p in protected):
             continue
@@ -324,12 +446,12 @@ def mask_long_numbers(text: str) -> str:
             spans.append(span)
 
     if not spans:
-        return text
+        return working
 
     # Phase 3: replace spans from right to left (preserve indices)
-    result = list(text)
+    result = list(working)
     for start, end in reversed(spans):
-        digits_only = "".join(c for c in text[start:end] if c.isdigit())
+        digits_only = "".join(c for c in working[start:end] if c.isdigit())
         masked = "****" + digits_only[-4:]
         result[start:end] = masked
 
