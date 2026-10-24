@@ -592,7 +592,9 @@
 
 | 2026-10-24 | Codex（协调者） | C1干净worktree复用，保留旧分支，从已验main b281023建codex/c1c2-gateway-routing；任务与协调日志文档提交后启动新DS实现C1c2-gateway-routing pid15899。只控制流/适配与精准owner，L2 G4/G8未落地如实fake；不启动PG/SSE/输出或前端。W4原独审另worktree并行不重复派发。 |
 
+| 2026-10-24 | Codex（协调者） | W4b1 c317f82亲验十退出全绿：lint278、gateway1962/501skip、PG17、all2274/561skip、W4b1真57（3.19s）、W3a45、W2246、义务30、contracts/actionlint；日志/private/tmp/sbg-codex-w4b1-r2-20261024。原独审R-W4b1-fix-r2完整APPROVE无P0/P1/P2，review进程结束且HEAD/仅review WIP核实；三反例闭合。合入已验main b281023，唯一AGENTS文档冲突保留双方全部历史，开始组合复验；未发布。 |
 
+| 2026-10-24 | Codex（协调者） | W4b1同步main组合e6a9ee6十二退出全绿：setup78、lint290、agent212（2.64s）、gateway1962/501skip、PG17、all2403/561skip（10.49s）、W4b1 57（3.09s）、W3a45、W2246、义务30、contracts/actionlint；日志/private/tmp/sbg-w4b1-main-combination-20261024。口径纠正：W4b1收集核实共57项=34纯函数+23真实tmpfs PG，前述“57真PG”属专项总数而非全部DB用例，历史保留以此条纠正。C1c2实现1562cb21-2895-4dbe-938d-add2573d7c95启动即DeepSeek API 402 Insufficient Balance，无业务变更且已停止，不无限重试、不更换模型；先完成不受影响的W4发布/CI/main复验，余额恢复后才续原会话。 |
 
 ## 5. 下一步待办（按顺序）
 
