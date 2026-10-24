@@ -8,7 +8,7 @@ setup:
 	uv sync --frozen --group poc --python 3.12
 keys:
 	$(PYTHON) -m scripts.keys
-test:
+test: test-replay test-verify test-cards
 	.venv/bin/pytest -q
 lint:
 	.venv/bin/ruff check .
@@ -117,3 +117,15 @@ test-agent-db:
 .PHONY: test-w4b2b
 test-w4b2b:
 	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w4b2b -q
+
+.PHONY: test-replay
+test-replay:
+	.venv/bin/pytest tests/agent/test_replay.py -q
+
+.PHONY: test-verify
+test-verify:
+	.venv/bin/pytest tests/agent/test_verify.py -q
+
+.PHONY: test-cards
+test-cards:
+	.venv/bin/pytest tests/agent/test_cards.py -q
