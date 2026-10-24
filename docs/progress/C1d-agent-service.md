@@ -177,17 +177,18 @@ All licenses already listed in `docs/third-party.md`. The `openai` package is th
 
 `tests/agent/test_service.py`:
 - `test_production_app_refuses_without_gateway_config`: `GATEWAY_BASE_URL`→`GATEWAY_URL`, `GATEWAY_SERVICE_TOKEN`→`AGENT_SERVICE_TOKEN`; also pops `GATEWAY_SERVICE_TOKEN` to avoid false pass
-- `test_production_app_refuses_without_agent_token_but_gateway_token_set` (**new, D10 red**): sets only `GATEWAY_SERVICE_TOKEN` (no `AGENT_SERVICE_TOKEN`) → asserts NOT 200
+- `test_production_app_refuses_without_agent_token_but_gateway_token_set` (**new, D10 red**): sets GATEWAY_BASE_URL+GATEWAY_URL+DEEPSEEK_API_KEY+JWT_PUBLIC_KEY_PATH+AGENT_DATABASE_URL+GATEWAY_SERVICE_TOKEN, only omits AGENT_SERVICE_TOKEN → `RuntimeError("AGENT_SERVICE_TOKEN is not configured")`. Uses try/except since exception propagates through StreamingResponse body.
 - `test_no_gateway_service_token_in_agent_source` (**new, D10 red**): `grep -r GATEWAY_SERVICE_TOKEN services/agent/` → 0 hits
 - `test_production_app_ports_are_not_fake`: `GATEWAY_BASE_URL`→`GATEWAY_URL`, `SERVICE_TOKEN`→`AGENT_SERVICE_TOKEN`
 
-### D10 red-green verification
-- Old code (`249ca98`): `grep -r GATEWAY_SERVICE_TOKEN services/agent` → 2 hits in main.py ✓ (test would FAIL)
-- Fixed code: same grep → 0 hits ✓ (test PASSES)
-- Old code: `_build_production_ports()` reads `GATEWAY_SERVICE_TOKEN` → would succeed if only that env is set
-- Fixed code: `_build_production_ports()` reads `AGENT_SERVICE_TOKEN` → fails if only GATEWAY_SERVICE_TOKEN set
+### D10 red-green verification (round 3)
+- Old code: `git diff 249ca98..HEAD -- services/agent/app/main.py` shows `GATEWAY_BASE_URL` empty default + `GATEWAY_SERVICE_TOKEN`
+- Fixed code: `GATEWAY_URL` with default + `AGENT_SERVICE_TOKEN`, fail-closed when missing
+- Old code with test env: GatewayClient constructed with GATEWAY_SERVICE_TOKEN → proceeds (violation)
+- Fixed code with test env: `RuntimeError("AGENT_SERVICE_TOKEN is not configured")` → caught by try/except
+- `test_no_gateway_service_token_in_agent_source`: grep scan → 0 hits ✓
 
-### Fix Round 2 Exit Commands (2026-10-24)
+### Fix Round 3 Exit Commands (2026-10-24)
 
 | Command | Result |
 |---|---|

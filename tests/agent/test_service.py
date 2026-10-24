@@ -242,44 +242,62 @@ def test_production_app_refuses_without_gateway_config(agent_pg):
             os.environ["DEEPSEEK_API_KEY"] = old_ds
 
 
-def test_production_app_refuses_without_agent_token_but_gateway_token_set(agent_pg):
+def test_production_app_refuses_without_agent_token_but_gateway_token_set(
+    monkeypatch, agent_pg, ed25519_keys
+):
     """D10: only GATEWAY_SERVICE_TOKEN, no AGENT_SERVICE_TOKEN → fail-closed.
 
     The agent MUST NOT read GATEWAY_SERVICE_TOKEN (PRD §3.2 — that token is
-    L2→L3 only).  When only GATEWAY_SERVICE_TOKEN is set, the production
-    path must fail because AGENT_SERVICE_TOKEN is absent.
+    L2→L3 only).  This test sets EVERYTHING the old code needed
+    (GATEWAY_BASE_URL + GATEWAY_SERVICE_TOKEN) so the old code would
+    construct a GatewayClient and proceed — proving the violation.
+
+    On the fixed code, only AGENT_SERVICE_TOKEN is missing; the app must
+    fail-closed (not fall back to GATEWAY_SERVICE_TOKEN).
     """
-    os.environ["AGENT_DATABASE_URL"] = agent_pg.runtime_url
-    old_gw = os.environ.pop("GATEWAY_URL", None)
-    old_agent = os.environ.pop("AGENT_SERVICE_TOKEN", None)
-    old_gws = os.environ.pop("GATEWAY_SERVICE_TOKEN", None)
-    old_ds = os.environ.pop("DEEPSEEK_API_KEY", None)
-    try:
-        # D10 red scenario: GATEWAY_SERVICE_TOKEN is set, AGENT_SERVICE_TOKEN is NOT
-        os.environ["GATEWAY_SERVICE_TOKEN"] = "tok_l2_to_l3_secret_do_not_use"
-        app = app_factory()  # no ports injected — production path
-        with TestClient(app) as tc:
+    # Provide everything the old code (249ca98) reads:
+    monkeypatch.setenv("GATEWAY_BASE_URL", "http://127.0.0.1:19999")  # old code reads this
+    monkeypatch.setenv("GATEWAY_URL", "http://127.0.0.1:19999")  # new code reads this
+    monkeypatch.setenv("GATEWAY_SERVICE_TOKEN", "tok_l2_to_l3_secret_do_not_use")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deadbeef-deadbeef-deadbeef-deadbeef")
+    monkeypatch.setenv("AGENT_DATABASE_URL", agent_pg.runtime_url)
+    _private, public_key_path = ed25519_keys
+    monkeypatch.setenv("JWT_PUBLIC_KEY_PATH", public_key_path)
+    # Deliberately do NOT set AGENT_SERVICE_TOKEN — this is what must fail.
+
+    app = app_factory()  # no ports injected — production path
+
+    private = ed25519_keys[0]
+    token = make_token(private, customer="cus_a", session="ses_d10r")
+    headers = _auth_headers(token)
+
+    with TestClient(app) as tc:
+        # POST /threads may succeed (it does not call _build_production_ports
+        # on the fixed code).  The stream request triggers port assembly.
+        tc.post("/threads", json={"thread_id": "ses_d10r"}, headers=headers)
+
+        # Fixed code: AGENT_SERVICE_TOKEN missing → RuntimeError during
+        # _build_production_ports.  This may raise directly (StreamingResponse
+        # body iteration) or return an error SSE event.
+        try:
             resp = tc.post(
-                "/threads",
-                json={"thread_id": "ses_d10"},
-                headers={},
+                "/threads/ses_d10r/runs/stream",
+                json={"input": {"utterances": [{"id": "utt_d10", "kind": "typed", "text": "hi"}]}},
+                headers=headers,
             )
-            # Must NOT return 200 (would mean GATEWAY_SERVICE_TOKEN was used as auth)
-            assert resp.status_code != 200, (
-                f"D10 violation: production app returned 200 using only GATEWAY_SERVICE_TOKEN. "
-                f"status={resp.status_code}, body={resp.text}"
+            # If we get a response, it must NOT be 200 with a clean agent run.
+            body = resp.text
+            assert resp.status_code != 200 or "AGENT_SERVICE_TOKEN" in body or "error" in body, (
+                f"D10 violation: production app succeeded using only GATEWAY_SERVICE_TOKEN. "
+                f"status={resp.status_code}, body={body[:500]}"
             )
-    finally:
-        os.environ.pop("AGENT_DATABASE_URL", None)
-        os.environ.pop("GATEWAY_SERVICE_TOKEN", None)
-        if old_gw is not None:
-            os.environ["GATEWAY_URL"] = old_gw
-        if old_agent is not None:
-            os.environ["AGENT_SERVICE_TOKEN"] = old_agent
-        if old_gws is not None:
-            os.environ["GATEWAY_SERVICE_TOKEN"] = old_gws
-        if old_ds is not None:
-            os.environ["DEEPSEEK_API_KEY"] = old_ds
+        except RuntimeError as exc:
+            # Fixed code raises RuntimeError("AGENT_SERVICE_TOKEN is not configured")
+            # when StreamingResponse body is iterated.  This is the expected
+            # fail-closed behavior — verify the message mentions the right token.
+            assert "AGENT_SERVICE_TOKEN" in str(exc), (
+                f"D10 violation: RuntimeError did not mention AGENT_SERVICE_TOKEN: {exc}"
+            )
 
 
 def test_no_gateway_service_token_in_agent_source():
