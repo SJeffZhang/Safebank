@@ -11,6 +11,7 @@ anyio==4.15.1
     #   httpx
     #   httpx2
     #   langsmith
+    #   openai
     #   starlette
 argon2-cffi==25.1.0
     # via safebank-gateway
@@ -22,6 +23,7 @@ certifi==2026.10.19
     # via
     #   httpcore
     #   httpx
+    #   langchain-openai
     #   requests
 cffi==2.1.1
     # via
@@ -54,7 +56,9 @@ httpx==0.28.1
     #   langgraph-sdk
     #   safebank-gateway
 httpx2==2.16.0
-    # via langsmith
+    # via
+    #   langsmith
+    #   openai
 httpx2-jsfetch==1.0 ; sys_platform == 'emscripten'
     # via httpx2
 idna==3.20
@@ -63,16 +67,24 @@ idna==3.20
     #   httpx
     #   httpx2
     #   requests
+jiter==0.17.0
+    # via openai
 jsonpatch==1.36
     # via langchain-core
 jsonpointer==3.4
     # via jsonpatch
 langchain-core==1.7.0
     # via
+    #   langchain-deepseek
+    #   langchain-openai
     #   langgraph
     #   langgraph-checkpoint
     #   langgraph-prebuilt
     #   langgraph-sdk
+langchain-deepseek==1.1.1
+    # via safebank-gateway
+langchain-openai==1.7.2
+    # via langchain-deepseek
 langchain-protocol==0.0.20
     # via
     #   langchain-core
@@ -96,6 +108,8 @@ mako==1.4.3
     # via alembic
 markupsafe==3.0.4
     # via mako
+openai==3.37.0
+    # via langchain-openai
 opentelemetry-api==1.45.1
     # via fastapi
 orjson==3.13.0
@@ -127,6 +141,7 @@ pydantic==2.14.1
     #   langchain-core
     #   langgraph
     #   langsmith
+    #   openai
     #   safebank-gateway
 pydantic-core==2.50.1
     # via pydantic
@@ -138,14 +153,19 @@ pyyaml==6.0.3
     # via
     #   langchain-core
     #   safebank-gateway
+regex==2026.9.29
+    # via tiktoken
 requests==2.34.2
     # via
     #   langsmith
     #   requests-toolbelt
+    #   tiktoken
 requests-toolbelt==1.0.0
     # via langsmith
 sniffio==1.3.1
-    # via langsmith
+    # via
+    #   langsmith
+    #   openai
 socksio==1.0.0
     # via httpx
 sqlalchemy==2.1.6
@@ -156,6 +176,8 @@ starlette==1.9.0
     # via fastapi
 tenacity==9.2.1
     # via langchain-core
+tiktoken==0.14.0
+    # via langchain-openai
 truststore==0.10.5 ; sys_platform != 'emscripten'
     # via
     #   httpcore2
@@ -169,6 +191,7 @@ typing-extensions==4.16.0
     #   langchain-core
     #   langchain-protocol
     #   langsmith
+    #   openai
     #   opentelemetry-api
     #   psycopg
     #   psycopg-pool

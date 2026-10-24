@@ -63,8 +63,10 @@ lock、SSE 流式输出。
 - `pg_try_advisory_lock(hashtext(thread_id))`：每 thread 最多一个运行实例，冲突返回 409。
 - JWT 鉴权：Ed25519/EdDSA，`verify_aud: False`，要求 `sub/sid/exp`；L1 只提取身份不做授权（D4）。
 - SSE 事件：`updates`（含 `__interrupt__`）、`values`、`messages`、`error`。
-- **端口当前为 fake**（`_make_fake_ports`）：understand/gather/plan/evaluate/execute/respond/verify_output
-  均为返回固定结果的 lambda，不调真实 L2/L3；C1c2 图路由与 C1e 输出将替换为真实实现。
+- **生产路径（D9）**：`app_factory(ports=None)` 组装真实端口——C1b DeepSeek 适配器
+  （understand/gather/plan）+ C1c1 GatewayClient + C1c2 `make_gateway_ports` / `build_gateway_graph`。
+  L2 G4/G8 尚未实现时走 C1c2 路由模板，不伪造成功。fake ports 仅测试通过
+  `_install_test_ports()` 注入。
 
 ## 运行方式
 
@@ -75,6 +77,6 @@ lock、SSE 流式输出。
 
 ### 未覆盖 / 后续组件
 
-- C1c2：完整图路由，真实 L2 G4/G8 适配与 gather→plan→evaluate→execute 控制流。
+- C1c2：完整图路由（已交付），L2 G4/G8 尚未实现时走固定模板。
 - C1e：输出校验、卡片适配、回放（replay）。
-- 端口当前为 fake（`_make_fake_ports`），不调真实 L2/L3；真实联调待 C1c2/C1e。
+- 生产路径已组装真实端口（D9），L2 G4/G8 联调待后续组件。

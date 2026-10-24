@@ -1043,6 +1043,7 @@ dependencies = [
     { name = "cryptography" },
     { name = "fastapi" },
     { name = "httpx", extra = ["socks"] },
+    { name = "langchain-deepseek" },
     { name = "langgraph" },
     { name = "langgraph-checkpoint-postgres" },
     { name = "psycopg", extra = ["binary", "pool"] },
@@ -1060,9 +1061,6 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
 ]
-poc = [
-    { name = "langchain-deepseek" },
-]
 
 [package.metadata]
 requires-dist = [
@@ -1072,6 +1070,7 @@ requires-dist = [
     { name = "cryptography", specifier = "==50.0.2" },
     { name = "fastapi", specifier = "==0.161.1" },
     { name = "httpx", extras = ["socks"], specifier = "==0.28.1" },
+    { name = "langchain-deepseek", specifier = "==1.1.1" },
     { name = "langgraph", specifier = "==1.2.16" },
     { name = "langgraph-checkpoint-postgres", specifier = "==3.2.0" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = "==3.3.3" },
@@ -1089,7 +1088,7 @@ dev = [
     { name = "pytest", specifier = "==9.1.1" },
     { name = "ruff", specifier = "==0.14.0" },
 ]
-poc = [{ name = "langchain-deepseek", specifier = "==1.1.1" }]
+poc = []
 
 [[package]]
 name = "sniffio"

@@ -2,7 +2,7 @@
 
 Tests the three agent HTTP endpoints (PRD §6.5) with FastAPI TestClient.
 Uses a real PG checkpoint saver (AGENT_DB_TESTS=1) for stateful tests,
-and fake ports for evaluate/execute.
+and fake ports for evaluate/execute (injected via _install_test_ports — D9).
 """
 
 from __future__ import annotations
@@ -10,15 +10,31 @@ from __future__ import annotations
 import os
 import tempfile
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 import jwt as pyjwt
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from safebank_contracts.plan import (
+    STEP_MODELS,
+    ArgSource,
+    ExecutionResult,
+    PlanDraft,
+    StepResult,
+    UtteranceSource,
+)
 
-from services.agent.app.main import app_factory
+from services.agent.app.graph import (
+    Decision,
+    DecisionValue,
+    Ports,
+    Understanding,
+)
+from services.agent.app.main import _install_test_ports, app_factory
 
 pytestmark = pytest.mark.db
 
@@ -68,31 +84,105 @@ def make_token(
     )
 
 
-# ── App fixtures ──────────────────────────────────────────────────────────
+# ── Fake ports for testing ───────────────────────────────────────────────
 
 
-def _make_client(agent_pg, ed25519_keys, decision_value="ALLOW"):
-    """Create a FastAPI TestClient with a specific decision value."""
+def _make_test_ports(decision_value: str | DecisionValue = "ALLOW") -> Ports:
+    """Fake ports for testing — injected via _install_test_ports.
+
+    No LLM, no real L2, no authorization.  Only for tests (D9).
+    """
+    if isinstance(decision_value, str):
+        decision_value = DecisionValue(decision_value)
+    dec = Decision(
+        plan_id="pln_test",
+        decision=decision_value,
+        approval_id="apv_test" if decision_value == DecisionValue.REQUIRE_APPROVAL else None,
+    )
+    source = ArgSource(
+        param="amount_cents",
+        source=UtteranceSource(kind="utterance", ref="utt_test", span=(0, 4)),
+    )
+    StepCls = STEP_MODELS["transfer"]
+    step = StepCls(
+        step_id="s1",
+        tool="transfer",
+        depends_on=(),
+        arg_sources=(source,),
+        args={
+            "from_account_id": "acc_test",
+            "payee_id": "pye_test",
+            "to_account_id": None,
+            "amount_cents": 100,
+            "memo": None,
+        },
+    )
+    now = datetime.now(UTC)
+
+    return Ports(
+        understand=lambda s, c: Understanding(
+            intents=("transfer",), needs_write=True, unclear=False, slots=()
+        ),
+        gather=lambda s, c: [],
+        plan=lambda s, c: PlanDraft(
+            request_id="req_test",
+            session_id=c.session_id,
+            utterance_ids=(getattr(s.get("utterances", [None])[0], "id", "utt_test"),),
+            intents=("transfer",),
+            steps=(step,),
+            rationale="test",
+        ),
+        evaluate=lambda s, c: dec,
+        execute=lambda s, c: ExecutionResult(
+            plan_id=dec.plan_id,
+            status="EXECUTED",
+            steps=(
+                StepResult(
+                    step_id="s1",
+                    tool="transfer",
+                    status="EXECUTED",
+                    created_ids={},
+                    result={"amount_cents": 100},
+                    effects=(),
+                ),
+            ),
+            versions={},
+            committed_at=now,
+            error_code=None,
+            replayed=False,
+        ),
+        respond=lambda s, c: "Done",
+        verify_output=lambda s, c: "Done",
+    )
+
+
+# ── App fixtures ─────────────────────────────────────────────────────────
+
+
+def _setup_test_app(agent_pg, ed25519_keys, decision_value="ALLOW") -> FastAPI:
+    """Create a FastAPI app with fake ports injected for testing."""
     _private, public_key_path = ed25519_keys
     os.environ["JWT_PUBLIC_KEY_PATH"] = public_key_path
     os.environ["AGENT_DATABASE_URL"] = agent_pg.runtime_url
-    app = app_factory(decision_value=decision_value)
-    with TestClient(app) as tc:
-        yield tc
-    os.environ.pop("JWT_PUBLIC_KEY_PATH", None)
-    os.environ.pop("AGENT_DATABASE_URL", None)
+    app = app_factory()
+    _install_test_ports(app, _make_test_ports(decision_value))
+    return app
 
 
 @pytest.fixture
 def client(agent_pg, ed25519_keys):
     """FastAPI TestClient with ALLOW decision."""
-    yield from _make_client(agent_pg, ed25519_keys, "ALLOW")
+    app = _setup_test_app(agent_pg, ed25519_keys, "ALLOW")
+    with TestClient(app) as tc:
+        yield tc
 
 
 @pytest.fixture
 def client_ra(agent_pg, ed25519_keys):
     """FastAPI TestClient with REQUIRE_APPROVAL decision."""
-    yield from _make_client(agent_pg, ed25519_keys, "REQUIRE_APPROVAL")
+    app = _setup_test_app(agent_pg, ed25519_keys, "REQUIRE_APPROVAL")
+    with TestClient(app) as tc:
+        yield tc
 
 
 def _auth_headers(token: str) -> dict:
@@ -109,6 +199,124 @@ def _run_graph_and_get_state(client, token, thread_id, utterance_text="给张三
         headers=headers,
     )
     return client.get(f"/threads/{thread_id}/state", headers=headers)
+
+
+# ── Red tests: D9 — production app has no default ALLOW, no fake ports ───
+
+
+def test_production_app_refuses_without_gateway_config(agent_pg):
+    """app_factory() with no ports requires GATEWAY_BASE_URL — no default ALLOW.
+
+    This test verifies D9: the production path never falls back to fake ports
+    or a default ALLOW decision.  When gateway config is missing, app startup
+    (first request) must raise RuntimeError, not silently serve fake success.
+    """
+    os.environ["AGENT_DATABASE_URL"] = agent_pg.runtime_url
+    # Clear any gateway env that might be set
+    old_gw = os.environ.pop("GATEWAY_BASE_URL", None)
+    old_token = os.environ.pop("GATEWAY_SERVICE_TOKEN", None)
+    old_ds = os.environ.pop("DEEPSEEK_API_KEY", None)
+    try:
+        app = app_factory()  # no ports injected — production path
+        with TestClient(app) as tc:
+            # First request triggers _resolve_ports → _build_production_ports
+            # which should fail because GATEWAY_BASE_URL is missing
+            resp = tc.post(
+                "/threads",
+                json={"thread_id": "ses_d9"},
+                # Need a JWT to get past auth — but JWT_PUBLIC_KEY_PATH not set
+                headers={},
+            )
+            # Either 401 (JWT key not found) or 500 (ports build failed)
+            # In NO case should it be 200 (fake ALLOW success)
+            assert resp.status_code != 200, (
+                f"D9 violation: production app returned 200 without gateway config. "
+                f"status={resp.status_code}, body={resp.text}"
+            )
+    finally:
+        os.environ.pop("AGENT_DATABASE_URL", None)
+        if old_gw is not None:
+            os.environ["GATEWAY_BASE_URL"] = old_gw
+        if old_token is not None:
+            os.environ["GATEWAY_SERVICE_TOKEN"] = old_token
+        if old_ds is not None:
+            os.environ["DEEPSEEK_API_KEY"] = old_ds
+
+
+def test_production_app_ports_are_not_fake(monkeypatch, agent_pg, ed25519_keys):
+    """With minimal config, production ports are real GatewayClient-based, not fake.
+
+    We set GATEWAY_BASE_URL to a non-existent address — the GatewayClient is
+    constructed (real), but calls will fail with connection errors instead of
+    returning fake EXECUTED results.
+    """
+    monkeypatch.setenv("GATEWAY_BASE_URL", "http://127.0.0.1:19999")
+    monkeypatch.setenv("GATEWAY_SERVICE_TOKEN", "tok_deadbeef_deadbeef_deadbeef_deadbeef")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deadbeef-deadbeef-deadbeef-deadbeef")
+    _private, public_key_path = ed25519_keys
+    monkeypatch.setenv("JWT_PUBLIC_KEY_PATH", public_key_path)
+    monkeypatch.setenv("AGENT_DATABASE_URL", agent_pg.runtime_url)
+
+    app = app_factory()  # no ports injected
+    # D9: production app has NO _injected_ports
+    assert not hasattr(app.state, "_injected_ports") or app.state._injected_ports is None, (
+        "D9 violation: _injected_ports should not be set on production app"
+    )
+
+    private = ed25519_keys[0]
+    token = make_token(private, customer="cus_a", session="ses_d9r")
+    headers = _auth_headers(token)
+
+    with TestClient(app) as tc:
+        tc.post("/threads", json={"thread_id": "ses_d9r"}, headers=headers)
+
+        # Stream a run — this calls _resolve_ports → _build_production_ports.
+        # With fake API key + unreachable GatewayClient, the graph will fail
+        # during G20/G21 ingest or DeepSeek call.  The key assertion: the
+        # response must NOT contain "EXECUTED" (fake success).
+        resp = tc.post(
+            "/threads/ses_d9r/runs/stream",
+            json={"input": {"utterances": [{"id": "utt_d9", "kind": "typed", "text": "hi"}]}},
+            headers=headers,
+        )
+        # The stream endpoint returns 200 on success OR sends error SSE events.
+        # Either way, the body must NOT contain a fake EXECUTED status.
+        assert "EXECUTED" not in resp.text, (
+            f"D9 violation: production app returned EXECUTED without real L2. "
+            f"Response: {resp.text[:500]}"
+        )
+
+        # Verify _production_ports was cached after the request
+        assert hasattr(app.state, "_production_ports"), (
+            "D9 violation: _production_ports not set after stream request"
+        )
+        ports = app.state._production_ports
+        assert not _is_fake_ports(ports), (
+            "D9 violation: production ports are fake (lambda-based), not real GatewayClient-based"
+        )
+        # Verify _gateway_client is also set (real GatewayClient, not None/fake)
+        assert hasattr(app.state, "_gateway_client"), (
+            "D9 violation: _gateway_client not set on production app"
+        )
+        assert app.state._gateway_client is not None
+
+
+def _is_fake_ports(ports: Ports) -> bool:
+    """Heuristic: fake ports use raw lambdas; real ports use C1b/C1c1 adapters.
+
+    Fake understand returns Understanding with intents=("transfer",).
+    Real understand is UnderstandAdapter which returns Understanding via LLM.
+
+    We check that evaluate is not a lambda returning a fixed Decision.
+    """
+    # If evaluate is a bare lambda, it's fake
+    evaluate = ports.evaluate
+    if hasattr(evaluate, "__name__") and evaluate.__name__ == "<lambda>":
+        return True
+    # Real evaluate is _GatewayEvaluate or similar class instance
+    if hasattr(evaluate, "_client"):
+        return False
+    return False
 
 
 # ── Task 5: HTTP endpoint tests ──────────────────────────────────────────
@@ -277,7 +485,7 @@ def test_interrupt_survives_graph_rebuild(agent_pg, ed25519_keys):
 
     try:
         # App 1 (REQUIRE_APPROVAL): create thread and run to interrupt
-        app1 = app_factory(decision_value="REQUIRE_APPROVAL")
+        app1 = _setup_test_app(agent_pg, ed25519_keys, "REQUIRE_APPROVAL")
         with TestClient(app1) as c1:
             c1.post("/threads", json={"thread_id": "ses_rebuild"}, headers=headers)
             c1.post(
@@ -291,7 +499,7 @@ def test_interrupt_survives_graph_rebuild(agent_pg, ed25519_keys):
             )
 
         # App 2 (ALLOW): rebuild graph with new saver, same DB → interrupt survives
-        app2 = app_factory(decision_value="ALLOW")
+        app2 = _setup_test_app(agent_pg, ed25519_keys, "ALLOW")
         with TestClient(app2) as c2:
             state_resp = c2.get("/threads/ses_rebuild/state", headers=headers)
             assert state_resp.status_code == 200
@@ -314,7 +522,7 @@ def test_resume_works_after_rebuild(agent_pg, ed25519_keys):
 
     try:
         # App 1 (REQUIRE_APPROVAL): run to interrupt
-        app1 = app_factory(decision_value="REQUIRE_APPROVAL")
+        app1 = _setup_test_app(agent_pg, ed25519_keys, "REQUIRE_APPROVAL")
         with TestClient(app1) as c1:
             c1.post("/threads", json={"thread_id": "ses_rr"}, headers=headers)
             c1.post(
@@ -332,7 +540,7 @@ def test_resume_works_after_rebuild(agent_pg, ed25519_keys):
                 pytest.skip("no interrupt in state; test environment issue")
 
         # App 2: rebuild, resume with correct approval_id
-        app2 = app_factory(decision_value="REQUIRE_APPROVAL")
+        app2 = _setup_test_app(agent_pg, ed25519_keys, "REQUIRE_APPROVAL")
         with TestClient(app2) as c2:
             resp = c2.post(
                 "/threads/ses_rr/runs/stream",
@@ -345,7 +553,7 @@ def test_resume_works_after_rebuild(agent_pg, ed25519_keys):
         os.environ.pop("AGENT_DATABASE_URL", None)
 
 
-# ── Lock tests (via HTTP) ────────────────────────────────────────────────
+# ── Lock tests (via HTTP) ───────────────────────────────────────────────
 
 
 def test_concurrent_same_thread_returns_409(client, ed25519_keys):

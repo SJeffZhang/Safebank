@@ -2,6 +2,10 @@
 
 FastAPI app with three HTTP endpoints, async PG checkpoint saver, per-thread
 advisory lock, and Ed25519 JWT verification.
+
+Production path (no *ports* argument) assembles real C1b DeepSeek adapters +
+C1c1 GatewayClient + C1c2 gateway graph.  Fake ports only allowed via test
+injection — D9 (2026-10-24).
 """
 
 from __future__ import annotations
@@ -10,7 +14,6 @@ import json
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
 from pathlib import Path
 
 import jwt as pyjwt
@@ -23,15 +26,12 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
-from safebank_contracts.plan import ExecutionResult, PlanDraft, StepResult
 
 from services.agent.app.graph import (
     AgentContext,
-    Decision,
-    DecisionValue,
     Ports,
-    Understanding,
     UtteranceRef,
+    build_gateway_graph,
     build_graph,
 )
 
@@ -134,77 +134,89 @@ async def _try_thread_lock(db_url: str, thread_id: str) -> psycopg.AsyncConnecti
     return conn
 
 
-# ── Fake ports ───────────────────────────────────────────────────────────
+# ── Production port helpers ──────────────────────────────────────────────
 
 
-def _make_fake_ports(decision_value: DecisionValue) -> Ports:
-    """Fake ports for C1d.  No LLM, no real L2, no authorization."""
-    from safebank_contracts.plan import (
-        STEP_MODELS,
-        ArgSource,
-        UtteranceSource,
+def _build_production_ports() -> tuple[Ports, object]:
+    """Assemble real C1b+C1c1+C1c2 ports and gateway client (D9).
+
+    Returns (ports, gateway_client). The client is stored on app.state for
+    use by build_gateway_graph.
+    """
+    # -- Gateway client --
+    gw_url = os.environ.get("GATEWAY_BASE_URL", "")
+    gw_token = os.environ.get("GATEWAY_SERVICE_TOKEN", "")
+    if not gw_url:
+        raise RuntimeError("GATEWAY_BASE_URL is not configured")
+    if not gw_token:
+        raise RuntimeError("GATEWAY_SERVICE_TOKEN is not configured")
+
+    from services.agent.app.gateway.client import GatewayClient
+
+    gateway_client = GatewayClient(base_url=gw_url, service_token=gw_token)
+
+    # -- DeepSeek LLM --
+    from services.agent.app.llm.client import make_llm
+
+    try:
+        llm = make_llm()
+    except RuntimeError:
+        raise  # "DEEPSEEK_API_KEY is not set; no API calls made"
+
+    # -- C1b adapters --
+    from services.agent.app.llm.gather import GatherAdapter
+    from services.agent.app.llm.plan import PlanAdapter
+    from services.agent.app.llm.understand import UnderstandAdapter
+
+    understand = UnderstandAdapter(llm)
+    gather = GatherAdapter(llm, read_executor=_dummy_read_executor)
+    plan = PlanAdapter(llm)
+
+    # -- respond / verify_output (simple: pass through reply_draft; C1e replaces) --
+    respond = _make_production_respond()
+    verify_output = _make_production_verify()
+
+    # -- Wire gateway client into evaluate/execute slots --
+    from services.agent.app.gateway.adapters import make_gateway_ports
+
+    ports = make_gateway_ports(
+        gateway_client,
+        understand=understand,
+        gather=gather,
+        plan=plan,
+        respond=respond,
+        verify_output=verify_output,
     )
 
-    dec = Decision(
-        plan_id="pln_test",
-        decision=decision_value,
-        approval_id="apv_test" if decision_value == DecisionValue.REQUIRE_APPROVAL else None,
-    )
-    source = ArgSource(
-        param="amount_cents",
-        source=UtteranceSource(kind="utterance", ref="utt_test", span=(0, 4)),
-    )
-    StepCls = STEP_MODELS["transfer"]
-    step = StepCls(
-        step_id="s1",
-        tool="transfer",
-        depends_on=(),
-        arg_sources=(source,),
-        args={
-            "from_account_id": "acc_test",
-            "payee_id": "pye_test",
-            "to_account_id": None,
-            "amount_cents": 100,
-            "memo": None,
-        },
-    )
-    now = datetime.now(UTC)
+    return ports, gateway_client
 
-    return Ports(
-        understand=lambda s, c: Understanding(
-            intents=("transfer",), needs_write=True, unclear=False, slots=()
-        ),
-        gather=lambda s, c: [],
-        plan=lambda s, c: PlanDraft(
-            request_id="req_test",
-            session_id=c.session_id,
-            utterance_ids=(getattr(s.get("utterances", [None])[0], "id", "utt_test"),),
-            intents=("transfer",),
-            steps=(step,),
-            rationale="test",
-        ),
-        evaluate=lambda s, c: dec,
-        execute=lambda s, c: ExecutionResult(
-            plan_id=dec.plan_id,
-            status="EXECUTED",
-            steps=(
-                StepResult(
-                    step_id="s1",
-                    tool="transfer",
-                    status="EXECUTED",
-                    created_ids={},
-                    result={"amount_cents": 100},
-                    effects=(),
-                ),
-            ),
-            versions={},
-            committed_at=now,
-            error_code=None,
-            replayed=False,
-        ),
-        respond=lambda s, c: "您好，操作已完成。",
-        verify_output=lambda s, c: "您好，操作已完成。",
-    )
+
+def _dummy_read_executor(_tool: str, _args: dict):
+    """Placeholder — the gateway graph replaces this with a real executor per invocation."""
+    raise RuntimeError("gather read executor not wired — graph should replace it")
+
+
+def _make_production_respond():
+    """Production respond port — uses reply_draft from state (C1e will add LLM)."""
+
+    def respond(state, _context) -> str:
+        reply = state.get("reply_draft", "") if hasattr(state, "get") else ""
+        if reply:
+            return reply
+        return "您的请求已收到。"
+
+    return respond
+
+
+def _make_production_verify():
+    """Production verify_output port — returns reply_draft (C1e will add LLM)."""
+
+    def verify_output(state, _context) -> str:
+        if hasattr(state, "get"):
+            return state.get("reply_draft", "") or "Done"
+        return "Done"
+
+    return verify_output
 
 
 # ── SSE helpers ──────────────────────────────────────────────────────────
@@ -236,25 +248,18 @@ def _serialize_interrupts(tasks: tuple) -> list[dict]:
 # ── App factory ──────────────────────────────────────────────────────────
 
 
-def _app_decision(request: Request) -> DecisionValue:
-    val = getattr(request.app.state, "decision_value", None)
-    if val is None:
-        return DecisionValue.ALLOW
-    return val if isinstance(val, DecisionValue) else DecisionValue(val)
-
-
 def app_factory(
     *,
-    decision_value: DecisionValue | str = DecisionValue.ALLOW,
+    ports: Ports | None = None,
 ) -> FastAPI:
-    """Create a FastAPI app with real PG checkpoint saver and fake ports.
+    """Create a FastAPI app with real PG checkpoint saver.
 
     Parameters:
-        decision_value: Default decision returned by fake evaluate port
-                        (ALLOW, REQUIRE_APPROVAL, DENY, REPLAN).
+        ports: Injected ports for testing.  If ``None`` (production), the factory
+               assembles real C1b DeepSeek adapters + C1c1 GatewayClient + C1c2
+               gateway graph.  Must NOT be ``None`` in deployed environments (D9).
     """
-    if isinstance(decision_value, str):
-        decision_value = DecisionValue(decision_value)
+    _ports = ports  # mutable for lifespan closure
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -270,7 +275,6 @@ def app_factory(
             yield
 
     app = FastAPI(title="SafeBank L1 Agent", lifespan=lifespan)
-    app.state.decision_value = decision_value
 
     # ── Health ────────────────────────────────────────────────────────
 
@@ -327,7 +331,8 @@ def app_factory(
         if saved is None:
             raise HTTPException(status_code=404, detail="Thread not found")
 
-        graph = build_graph(_make_fake_ports(_app_decision(request)), saver)
+        resolved_ports = _resolve_ports(request, saver)
+        graph = build_graph(resolved_ports, saver)
         state = await graph.aget_state(config)
         if state is None or state.values is None:
             raise HTTPException(status_code=404, detail="Thread not found")
@@ -388,8 +393,16 @@ def app_factory(
             session_id=identity.session_id,
         )
         config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
-        ports = _make_fake_ports(_app_decision(request))
-        graph: CompiledStateGraph = build_graph(ports, saver)
+        resolved_ports = _resolve_ports(request, saver)
+        gw_client = getattr(request.app.state, "_gateway_client", None)
+        if gw_client is not None:
+            # Production: gateway graph with G20/G21 ingest
+            graph: CompiledStateGraph = build_gateway_graph(
+                resolved_ports, saver, gw_client, gateway_read_client=gw_client
+            )
+        else:
+            # Test injection: basic graph
+            graph = build_graph(resolved_ports, saver)
 
         async def _stream() -> AsyncIterator[str]:
             lock_conn = await _try_thread_lock(db_url, thread_id)
@@ -482,3 +495,31 @@ def app_factory(
         )
 
     return app
+
+
+def _resolve_ports(request: Request, saver) -> Ports:
+    """Resolve ports from *request.app.state* if injected, else build production ports.
+
+    Production ports are cached on ``app.state._production_ports`` after first
+    assembly so they are built exactly once (not on every request).
+    """
+    injected = getattr(request.app.state, "_injected_ports", None)
+    if injected is not None:
+        return injected
+    cached = getattr(request.app.state, "_production_ports", None)
+    if cached is None:
+        ports_obj, gw_client = _build_production_ports()
+        request.app.state._production_ports = ports_obj
+        request.app.state._gateway_client = gw_client
+    return request.app.state._production_ports
+
+
+# ── Test helper: install injected ports on an app ───────────────────────
+
+
+def _install_test_ports(app: FastAPI, ports: Ports) -> None:
+    """Store *ports* on app state so the next request uses them.
+
+    This is the ONLY way fake ports can enter the request path (D9).
+    """
+    app.state._injected_ports = ports
