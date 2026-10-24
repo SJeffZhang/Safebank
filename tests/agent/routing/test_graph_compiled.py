@@ -919,24 +919,36 @@ def test_concurrent_reads_no_cross_customer_leak():
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# 修复轮 3: 真实执行 read 的并发凭据隔离测试
+# ═══════════════════════════════════════════════════════════════════════════
+
+
 def test_concurrent_reads_token_isolation_with_real_tool_calls():
     """Two concurrent invocations on a **shared GatherAdapter** must not leak tokens.
 
-    Unlike the shallow-copy test above, this test uses a fake LLM that actually
-    emits ``get_accounts`` tool calls, so the read bridge is really exercised.
-    Both threads share the **same** ``GatherAdapter`` instance — the
-    monkey-patch version would cause one invocation's ``_read_executor`` to be
-    overwritten by the other, leaking the token/customer identity.
+    Uses ``threading.Barrier(2, timeout=5)`` inside the fake LLM's ``invoke()``
+    to force interleaving at the exact point where the monkey-patch race occurs:
 
-    A shared ``_RecordingReadClient`` records ``(thread_id, token, customer_id)``
-    for every ``read_tool`` call.
+    1. Each thread's gather closure sets ``adapter._read_executor = executor_<n>``
+       on the shared adapter.
+    2. Each thread calls ``adapter(state, context)`` → ``__call__`` →
+       ``self._model.invoke()`` → barrier.wait().
+    3. After the barrier releases, both threads proceed to ``_execute``, which
+       reads ``self._read_executor``.
+
+    With the old monkey-patch version the last ``_read_executor`` writer wins,
+    so both threads end up using the same executor → token leak → test FAILS.
+
+    With ``with_read_executor`` each invocation gets its own adapter copy →
+    no shared ``_read_executor`` → tokens stay isolated → test PASSES.
 
     **FAKE BOUNDARY**: the LLM and gateway read backend are fully scripted; no
-    real model or network is used.  The assertion is on the token/customer
-    attached to each recorded call, not on the response content.
+    real model or network is used.
     """
-    import concurrent.futures
     import threading
+
+    import pytest
 
     from services.agent.app.llm.gather import GatherAdapter
     from services.agent.app.llm.gather import ReadResult as GatherReadResult
@@ -954,6 +966,10 @@ def test_concurrent_reads_token_isolation_with_real_tool_calls():
         "versions": {},
         "observed_at": "2026-10-24T12:00:00Z",
     }
+
+    # ── Barrier to force interleaving ────────────────────────────────────
+
+    barrier = threading.Barrier(2, timeout=5)
 
     # ── Shared recording client ──────────────────────────────────────────
 
@@ -983,12 +999,16 @@ def test_concurrent_reads_token_isolation_with_real_tool_calls():
         ).client,
     )
 
-    # ── Shared fake LLM (per-thread tracking) ── emits one tool_call per thread ──
+    # ── Shared fake LLM (per-thread tracking + barrier) ──────────────────
+    # Both threads share the same LLM object.  On the first invoke() per
+    # thread we wait on the barrier so BOTH threads have already set
+    # _read_executor on the shared adapter before either proceeds to
+    # _execute → _read_executor().
 
     _llm_lock = threading.Lock()
 
     class _ReadOneLLM:
-        """Per-thread: first ``invoke`` in each thread → tool_calls, rest → stop."""
+        """Per-thread first invoke → barrier wait → tool_calls, rest → stop."""
 
         def __init__(self):
             self._per_thread: dict[int, int] = {}  # thread_id → call_count
@@ -1004,6 +1024,19 @@ def test_concurrent_reads_token_isolation_with_real_tool_calls():
                 count = self._per_thread.get(tid, 0) + 1
                 self._per_thread[tid] = count
             if count == 1:
+                # Rendezvous: both threads have set _read_executor on the
+                # shared adapter.  After the barrier releases, whichever
+                # thread set _read_executor last wins — both threads read
+                # the same executor value.  With monkey-patch this causes a
+                # token leak; with with_read_executor each thread has its
+                # own copy so isolation is preserved.
+                try:
+                    barrier.wait()
+                except threading.BrokenBarrierError as err:
+                    raise RuntimeError(
+                        "Barrier broken — one thread did not reach invoke() "
+                        "within the 5 s timeout (deadlock or schedule stall)"
+                    ) from err
                 return AIMessage(
                     content="",
                     tool_calls=[
@@ -1061,22 +1094,49 @@ def test_concurrent_reads_token_isolation_with_real_tool_calls():
             context=ctx(customer_id, session_id, token=token),
         )
 
-    # ── Concurrent execution ─────────────────────────────────────────────
+    # ── Concurrent execution via real threads ────────────────────────────
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-        future_a = pool.submit(_build_and_invoke, "cus_a", "ses_a", "tok_read_a")
-        future_b = pool.submit(_build_and_invoke, "cus_b", "ses_b", "tok_read_b")
-        result_a = future_a.result()
-        result_b = future_b.result()
+    results: dict[str, dict | Exception] = {}
 
-    assert result_a["execution"]["status"] == "EXECUTED"
-    assert result_b["execution"]["status"] == "EXECUTED"
+    def _run_thread(customer_id: str, session_id: str, token: str, label: str) -> None:
+        try:
+            results[label] = _build_and_invoke(customer_id, session_id, token)
+        except Exception as exc:
+            results[label] = exc
+
+    ta = threading.Thread(
+        target=_run_thread,
+        args=("cus_a", "ses_a", "tok_read_a", "a"),
+        name="test-reader-a",
+    )
+    tb = threading.Thread(
+        target=_run_thread,
+        args=("cus_b", "ses_b", "tok_read_b", "b"),
+        name="test-reader-b",
+    )
+    ta.start()
+    tb.start()
+    ta.join(timeout=10)
+    tb.join(timeout=10)
+
+    if ta.is_alive() or tb.is_alive():
+        pytest.fail(
+            "thread(s) still alive after 10 s join — "
+            "likely deadlocked in LangGraph invoke. "
+            "If the graph serialises internally, switch to "
+            "asyncio.run(graph.ainvoke(…)). "
+            f"ta alive={ta.is_alive()}, tb alive={tb.is_alive()}"
+        )
+
+    for label, res in results.items():
+        if isinstance(res, Exception):
+            raise res
+        assert res["execution"]["status"] == "EXECUTED", f"thread {label}: {res}"
 
     # ── Assertions: one token per thread ────────────────────────────────
 
-    # Each invocation's gather should have made one read_tool call
     assert len(call_records) == 2, (
-        f"expected 2 read_tool calls (one per invocation), got {len(call_records)}"
+        f"expected 2 read_tool calls (one per invocation), got {len(call_records)}: {call_records}"
     )
 
     # Group by thread — each thread must use only its own token and customer

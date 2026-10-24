@@ -225,3 +225,35 @@ Final SHA + workspace state reported after freeze.
 - `docs/reviews/C1c2-gateway-routing-review.md` — 修复轮 2 复审报告，`Co-Authored-By: DeepSeek V4 Pro`
 
 总计编译图测试: 20 passed (原始 16 + 修复轮 2 新增 4)。
+
+## 修复轮 4 (a19fdf7..)
+
+**原由:** 修复轮 3 的并发测试 `test_concurrent_reads_token_isolation_with_real_tool_calls` 在旧 monkey-patch 代码上也通过（协调者实测 `1e303e7` + `786949d` 均 1 passed），两个线程的实际 `_read_executor` 调用未在同一适配器对象上真正交错 → 抓不住全局 monkey-patch 的串用缺陷。
+
+### 重写并发测试 — `threading.Barrier(2, timeout=5)` 强制交错
+
+- **关键改动:** 将 `ThreadPoolExecutor` + `_NoopLLM`（不产生 read 调用）替换为 `threading.Thread` + `_ReadOneLLM`（barrier 同步 + 真实 `tool_calls`）
+
+- **同步点:** `_ReadOneLLM.invoke()` 首次调用时在 `threading.Barrier(2, timeout=5)` 等待，确保两个线程都已完成各自的 `_read_executor` 安装后才各自执行 `_execute` → 读到 `self._read_executor`
+
+- **旧代码 RED 验证（协调者亲自执行）:**
+  - 临时将 graph.py 改为 monkey-patch: `adapter = ports.gather; adapter._read_executor = executor_for_call`
+  - 测试 **FAIL** — `AssertionError: expected both tokens, got {'tok_read_b'}`
+  - 两个线程都使用 T2 的 token（last-write-wins on `_read_executor`）
+
+- **当前代码 GREEN:** `with_read_executor` 每次调用返回独立浅拷贝 → token 隔离 → 测试 PASS（`all_tokens == {"tok_read_a", "tok_read_b"}`）
+
+- **死锁防护:** Barrier 5s timeout → `BrokenBarrierError` → `raise RuntimeError(...) from err`；thread join 10s timeout → `pytest.fail` 附死活信息
+
+### Exit commands (修复轮 4)
+
+| Command | Result |
+|---|---|
+| `make lint` | ✅ All checks passed (297 files) |
+| `.venv/bin/pytest tests/agent -q` | ✅ 287 passed, 0 skip, 0 xfail |
+| `make test` | ✅ 2478 passed, 561 skipped |
+| `make contracts-check` | ✅ PASS: contracts v1 match frozen schemas |
+
+### 变更文件
+
+- `tests/agent/routing/test_graph_compiled.py` — 重写并发测试（旧约 130 行 → 新约 179 行，使用 barrier + 真实线程 + 真实 tool_calls）
