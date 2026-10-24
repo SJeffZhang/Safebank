@@ -60,4 +60,27 @@ shared-runtime 的 `test_servers.py:68` 取消场景继续打印预期的 `Cance
 - 后续 `approval.service.configure()` 显式实例适配设计（当前库用全局 `_config`），需在 W4b2 确认/OTP 组件中决定：是一次性在 gateway_runtime 调用 configure，还是给每个 HTTP 请求传入 runtime key。
 - OTP 密钥的消费者（W5 OTP 挑战/验证端点）尚未实现，届时直接从 `app.state.otp_hmac_key` 取。
 
+
+## 修复轮 1（独立评审 P2-1）
+
+独立评审 `docs/reviews/W4b2a-runtime-keys-review.md` 结论 **APPROVE**，P2-1 要求补服务令牌复用守卫的测试覆盖。
+
+**P2-1 修复：** 新增 `test_key_reuse_of_long_service_token_rejected_before_resources`（4 参数化用例）：
+- 构造 ≥32 字节的 `gateway_service_token` 与 F 服务令牌
+- 审批密钥 / OTP 密钥分别等于这些长令牌
+- 断言在资源分配前被 `DEPENDENCY_UNAVAILABLE` 503 拒绝
+- 错误消息含 "service token" 但不含原值
+- `factory_called` 列表为空（db/l3 工厂未调用）
+
+**红→绿验证：** 临时注释 `runtime.py` 的 113-123 行（服务令牌复用守卫）→ 4 项全部 FAIL（`AttributeError: 'NoneType' object has no attribute 'dispose'`，证明 `forbidden_resource` 被调用即验证通过）→ 还原守卫 → 4 项全部 PASS。
+
+| 命令 | 结果 |
+|---|---|
+| `make lint` | ✅ 291 files |
+| `make test-shared-runtime` | ✅ 79 passed（20 新 + 59 既有），8.22s |
+| `make test-gateway` | ✅ 1982 passed / 501 skipped |
+| `make test` | ✅ 2423 passed / 561 skipped，10.75s |
+
+无 Docker 数据卷操作；未 push/PR/merge。本地提交冻结。
+
 Co-Authored-By: DeepSeek V4 Pro via Claude Code <noreply@anthropic.com>

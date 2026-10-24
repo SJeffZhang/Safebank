@@ -147,6 +147,76 @@ def test_invalid_keys_fail_before_resource_allocation(
     asyncio.run(run())
 
 
+# -- service token reuse with >= 32-byte tokens (P2-1 fix) --------------------
+
+LONG_SVC = "gateway-service-token-32-bytes-x"  # 32 chars exactly
+LONG_F = "frontend-service-token-32-bytes-xx"
+LONG_APPROVAL = "approval-hmac-key-32-bytes-minimum!!"  # distinct valid key
+LONG_OTP = "otp-hmac-key-32-bytes-minimum!!!!!"  # distinct valid key
+
+
+@pytest.fixture
+def long_token_settings(secret_settings, tmp_path):
+    """secret_settings with ≥32 byte service tokens so reuse guard is testable."""
+    return replace(
+        secret_settings,
+        gateway_service_token=LONG_SVC,
+        approval_hmac_key=LONG_APPROVAL,
+        otp_hmac_key=LONG_OTP,
+        service_tokens={"F": LONG_F, "A": "a-token", "S": "s-token", "D": "d" * 32},
+    )
+
+
+@pytest.mark.parametrize(
+    "override_approval,override_otp,reused_label",
+    [
+        # approval key == gateway_service_token (both >= 32 bytes)
+        (LONG_SVC, LONG_OTP, "approval reuses gateway_service_token"),
+        # otp key == gateway_service_token
+        (LONG_APPROVAL, LONG_SVC, "otp reuses gateway_service_token"),
+        # approval key == F service token
+        (LONG_F, LONG_OTP, "approval reuses F service token"),
+        # otp key == F service token
+        (LONG_APPROVAL, LONG_F, "otp reuses F service token"),
+    ],
+)
+def test_key_reuse_of_long_service_token_rejected_before_resources(
+    long_token_settings,
+    override_approval,
+    override_otp,
+    reused_label,
+):
+    """When a >=32 byte service token is reused, the reuse guard trips."""
+    from services.gateway.app.runtime import gateway_runtime
+
+    bad = replace(
+        long_token_settings,
+        approval_hmac_key=override_approval,
+        otp_hmac_key=override_otp,
+    )
+
+    factory_called = []
+
+    def forbidden_resource(*args, **kwargs):
+        factory_called.append(True)
+
+    async def run():
+        with pytest.raises(GatewayError) as exc:
+            async with gateway_runtime(
+                bad, db_factory=forbidden_resource, l3_factory=forbidden_resource, pin_hashes={}
+            ):
+                pytest.fail("must reject service token reuse")
+        assert exc.value.code is Code.DEPENDENCY_UNAVAILABLE
+        assert exc.value.status == 503
+        assert "service token" in str(exc.value)
+        # Error message must not leak the actual token value
+        assert LONG_SVC not in str(exc.value)
+        assert LONG_F not in str(exc.value)
+        assert not factory_called, "resource factory must not be called for service token reuse"
+
+    asyncio.run(run())
+
+
 def test_keys_do_not_appear_in_repr_or_error_chain(keyed_settings, fake_engine_lock_hook):
     """repr and error messages must never leak the actual key bytes."""
     from services.gateway.app.runtime import gateway_runtime
