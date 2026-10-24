@@ -1,0 +1,4 @@
+.venv/bin/ruff check .
+All checks passed!
+.venv/bin/ruff format --check .
+290 files already formatted

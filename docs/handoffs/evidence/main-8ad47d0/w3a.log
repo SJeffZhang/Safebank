@@ -1,0 +1,3 @@
+GATEWAY_DB_TESTS=1 OBLIGATIONS_DB_TESTS=1 .venv/bin/pytest tests/gateway/w3a -q
+.............................................                            [100%]
+45 passed in 3.33s

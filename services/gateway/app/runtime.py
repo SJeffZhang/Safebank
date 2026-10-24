@@ -10,7 +10,7 @@ import os
 import stat
 from collections.abc import Callable
 from contextlib import AsyncExitStack, asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from importlib import import_module
 from pathlib import Path
@@ -82,6 +82,49 @@ def _configured_pin_hashes(settings: Settings) -> dict[str, str] | None:
     return loader(settings.demo_pins_file)
 
 
+def _validate_approval_keys(settings: Settings) -> tuple[bytes, bytes]:
+    """Validate approval/OTP HMAC keys before allocating any resource.
+
+    Returns (approval_bytes, otp_bytes) on success. Raises GatewayError(503)
+    with a generic message on any failure — the message never includes the key
+    values.  Must be called before ``db_factory``, ``locks.configure`` or
+    ``l3_factory`` so no pool, lock connection or L3 client is created for bad
+    configuration.
+    """
+    approval = settings.approval_hmac_key
+    otp = settings.otp_hmac_key
+
+    if not isinstance(approval, str) or not approval.strip():
+        raise _unavailable("approval HMAC key must not be empty or blank")
+    if not isinstance(otp, str) or not otp.strip():
+        raise _unavailable("OTP HMAC key must not be empty or blank")
+
+    approval_bytes = approval.encode("utf-8")
+    otp_bytes = otp.encode("utf-8")
+
+    if len(approval_bytes) < 32:
+        raise _unavailable("approval HMAC key must be at least 32 bytes")
+    if len(otp_bytes) < 32:
+        raise _unavailable("OTP HMAC key must be at least 32 bytes")
+
+    if approval_bytes == otp_bytes:
+        raise _unavailable("approval and OTP HMAC keys must be different")
+
+    for token in settings.service_tokens.values():
+        if token and approval_bytes == token.encode("utf-8"):
+            raise _unavailable("approval HMAC key must not reuse a service token")
+        if token and otp_bytes == token.encode("utf-8"):
+            raise _unavailable("OTP HMAC key must not reuse a service token")
+
+    if settings.gateway_service_token:
+        if approval_bytes == settings.gateway_service_token.encode("utf-8"):
+            raise _unavailable("approval HMAC key must not reuse the gateway service token")
+        if otp_bytes == settings.gateway_service_token.encode("utf-8"):
+            raise _unavailable("OTP HMAC key must not reuse the gateway service token")
+
+    return approval_bytes, otp_bytes
+
+
 @dataclass(frozen=True)
 class GatewayRuntime:
     settings: Settings
@@ -91,6 +134,8 @@ class GatewayRuntime:
     jwt_private_key: bytes
     jwt_public_key: bytes
     pin_hashes: dict[str, str] | None
+    approval_hmac_key: bytes = field(repr=False)
+    otp_hmac_key: bytes = field(repr=False)
 
     def install(self, app: FastAPI) -> None:
         app.state.settings = self.settings
@@ -99,6 +144,8 @@ class GatewayRuntime:
         app.state.wall_now = self.wall_now
         app.state.jwt_private_key = self.jwt_private_key
         app.state.jwt_public_key = self.jwt_public_key
+        app.state.approval_hmac_key = self.approval_hmac_key
+        app.state.otp_hmac_key = self.otp_hmac_key
         if self.pin_hashes is not None:
             app.state.pin_hashes = self.pin_hashes
 
@@ -121,6 +168,7 @@ async def gateway_runtime(
         raise _unavailable("gateway wall clock must be timezone-aware")
     private, public = _key_pair(settings)
     hashes = _configured_pin_hashes(settings) if pin_hashes is None else pin_hashes
+    approval_key, otp_key = _validate_approval_keys(settings)
     async with AsyncExitStack() as stack:
         # One lock connection and one short-transaction slot per concurrent
         # executor, plus two slots for other traffic; PRD floor is eighteen.
@@ -136,4 +184,6 @@ async def gateway_runtime(
             configure_locks(db, max_executions=settings.max_executions)
         l3 = l3_factory(settings.l3_base_url, settings.gateway_service_token)
         stack.push_async_callback(l3.close)
-        yield GatewayRuntime(settings, db, l3, wall_now, private, public, hashes)
+        yield GatewayRuntime(
+            settings, db, l3, wall_now, private, public, hashes, approval_key, otp_key
+        )

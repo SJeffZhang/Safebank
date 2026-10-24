@@ -1,0 +1,2 @@
+PYTHONPATH=packages/contracts/src .venv/bin/python -m scripts.freeze_contracts --check
+PASS: contracts v1 match frozen schemas

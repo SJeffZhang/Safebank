@@ -41,12 +41,12 @@
 |---|---|
 | 调研 | 开源项目元数据和 DeepSeek 官方信息已核实；评分/提交已从官网公开 JS 核实（docs/acceptance/official-v1.md）；竞品「明鉴」未核实 |
 | PRD | **`PRD.md` = v2.1 定稿**（§0–§16；三轮多 agent 审核 + 两次修订复核，决议 D1–D47 见 §0.5；执行屏障增量约定见ADR-008）。v1.2 与作废的 v2.0 草稿在 `docs/archive/`；审核报告在 `docs/reviews/` |
-| 代码 | **P1 完成并逐组件验收**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116项单元+33项真实PG通过，契约v1已冻结。分支 feat/l3-core，P1代码已提交并推送私有仓库（功能提交7fd7a26）；CI权限修复70dcabe已推送，远端unit与p1-postgres均通过（run 39929405919） |
-| L2 网关 | main `b281023`；W2b PR #18已精确head四CI成功合并（383cd6f），默认真实预留/来源接线246真PG/HTTP与独审通过。W3a438c035亲验/独审均通过，已同步最新main并亲验组合7951daa，PR #20已精确head四CI合入26dea40，main实际组合回归通过；W4b1 baa1efc独审阻断，原worker r1修复中；完整G4/审批/执行仍待W4b/W3b/W4c。 |
-| L1 Agent | C1a PR #17已精确head四CI成功合并（eea02a6），图骨架/状态/身份绑定22项通过。仅内存saver与fake端口；C1b de86830真实live7请求及83项/独审通过，已同步main并亲验组合，PR #19已精确head四CI合入main22aeb3f且组合回归通过；C1c1 9ebfa12亲验212项及原独审通过，已合main亲验组合9f192ad，准备组件PR；真实gateway/PG saver仍待后续。 |
+| 代码 | **P1 完成并逐组件验收且已由PR #1合入main**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116项单元+33项真实PG通过，契约v1已冻结。历史功能提交7fd7a26、CI权限修复70dcabe，远端unit与p1-postgres均通过（run 39929405919）；完整六场景业务仍未完成。 |
+| L2 网关 | main `8ad47d0`；W2b PR #18、W3a PR #20、W4b1 PR #22均已精确head四CI合入。W4b1业务c317f82亲验57专项（34纯函数/23真PG）及原独审APPROVE，main实际十二退出组合通过。生产运行密钥/确认/OTP/G4/G8仍待W4b2a/端点/W3b/W4c。 |
+| L1 Agent | C1a PR #17、C1b PR #19、C1c1 PR #21均已精确head四CI合入；C1b真实live7请求通过（read仍fake），C1c1客户端212项及原独审通过，最新main8ad47d0实际组合回归通过。C1c2任务已准备并派发，但DeepSeek API 402余额不足启动即失败，无业务变更；原会话1562cb21-2895-4dbe-938d-add2573d7c95保留待恢复。PG saver/服务/输出仍待C1d/e。 |
 | 前端 | **暂停**，用户亲自下令才开工（§2 第 13 条） |
-| 协调状态 | **2026-10-24 Codex 同机接手**：实现与评审均由本机 Claude Code CLI（DeepSeek V4 Pro）无头 worker 完成，协调者只复跑、推送、开 PR、合并、记日志。接续计划 `docs/plans/L2-resume-2026-10-24.md`。本机 worktree 在 `../Fintech2026-wt/<名>`，`.secrets` 软链到与本机数据卷匹配的 W0 worktree 密钥；本会话已启用每5分钟worker定时跟进（safebank-worker），用户2026-10-24睡前新授权全自动推进P2→P3；跟进每次可有界核对待发PR的CI。 |
-| 下一步 | W3a已合且main回归→W4b1面板/绑定库→W4b2运行接线/确认OTP→W3b→W4c；C1b已合且回归，C1c1原worker r2修真实transport timeout类型及凭据trace反例（C1），冻结后亲验/原独审；之后C1c2路由；按P2-P3自主门禁真闭合才进入P3。 |
+| 协调状态 | **2026-10-24 用户要求交回Claude，Codex已准备详细交接**：`docs/handoffs/2026-10-24-claude-handoff.md`与`2026-10-24-claude-prompt.md`。用户最新要求暂停所有定时任务，safebank-worker/skillloop均已核为PAUSED，未经明确恢复不得启用。实现/独审仍沿用本机Claude Code CLI / DeepSeek V4 Pro，协调者只计划/文档/亲验/发布；本机已有两个非已知无头worker的Claude CLI在root，接手先确认唯一协调者，不擅kill。worktree与匹配W0密钥保留，Codex本轮只交接不派业务worker。 |
+| 下一步 | Claude先只读核对现场/唯一协调者、HEAD/WIP与402恢复证据。W4b2a任务已准备未派，之后确认/OTP端点→W3b→W4c；L1 C1c2→C1d/e。402无恢复证据前不反复请求/换模型；保留原会话。P2真实验收闭合后才进入P3，前端/BFF及所有定时任务继续暂停。 |
 
 ### 已确认事实
 
@@ -596,6 +596,19 @@
 
 | 2026-10-24 | Codex（协调者） | W4b1同步main组合e6a9ee6十二退出全绿：setup78、lint290、agent212（2.64s）、gateway1962/501skip、PG17、all2403/561skip（10.49s）、W4b1 57（3.09s）、W3a45、W2246、义务30、contracts/actionlint；日志/private/tmp/sbg-w4b1-main-combination-20261024。口径纠正：W4b1收集核实共57项=34纯函数+23真实tmpfs PG，前述“57真PG”属专项总数而非全部DB用例，历史保留以此条纠正。C1c2实现1562cb21-2895-4dbe-938d-add2573d7c95启动即DeepSeek API 402 Insufficient Balance，无业务变更且已停止，不无限重试、不更换模型；先完成不受影响的W4发布/CI/main复验，余额恢复后才续原会话。 |
 
+| 2026-10-24 | Codex（协调者） | W4b1最终文档提交a496f5d8826b7befcf0ef52f89ae39bd1669e81e，业务/测试/CI相对已独审c317f82零diff；15候选文件敏感扫描无命中、diffcheck与干净工作区通过。已push并建base main PR #22且附加；本次初查四CI均运行（40050106828/40050112005，事件未到合并门禁才核验），未合并。C1c2余额402失败已完整记录，原会话/干净工作区保留；余额无恢复证据前不无限重试/换模型，仍可继续CI与本地复验。 |
+| 2026-10-24 | Codex（协调者） | 本次PR #22仅一次有界CI核对：精确a496f5d，两unit成功、两p1-postgres运行，未合并，不重试DS 402。核对发现§3摘要仍沿用同步main前的W4b1-r1/C1c1待发旧文案（历史最新日志已正确），已按明确行前缀更新§3三行，避免文本替换未命中导致摘要滞后；不改历史验收记录。W4b1验收文件在未合worktree/W4读取，不能误认为已在main。 |
+
+| 2026-10-24 | Codex（协调者） | PR #22 head a496f5d8826b7befcf0ef52f89ae39bd1669e81e四CI COMPLETED SUCCESS，两事件已核push40050106828/pull_request40050112005及相同完整SHA；已match-head merge为8ad47d0bd1b3d4c7ca6b1e389c39afad7d231432（01:41:59Z）。root所有WIP/计划/日志已备份到/private/tmp/sbg-main-before-pr22-ff-20261024并保留stash，ff后逐行保留双方历史并恢复最新摘要；准备main-baseline实际组合回归，不将合并当P2闭合。 |
+
+| 2026-10-24 | Codex（协调者） | main8ad47d0实际十二退出全绿：setup78、lint290、agent212（2.63s）、gateway1962/501skip、PG17、all2403/561skip（10.46s）、W4b1 57含23真PG（3.02s）、W3a45、W2246、义务30、contracts/actionlint，日志/private/tmp/sbg-main-pr22-regression-20261024。已准备W4b2a-runtime-keys小组件任务：只显式Settings→实例Runtime密钥快照，缺配置前置拒绝、两实例隔离；不把全局approval.configure误当实例隔离，端点/OTP后续。DeepSeek 402无恢复证据，未派该任务、不替代实现。 |
+
+| 2026-10-24 | Codex（交接） | 用户明确“先暂停所有的定时任务”；通过Codex app将safebank-worker更新PAUSED，skillloop原已PAUSED，本轮重新读配置核实两者均暂停。用户随后要求详细进度及交回Claude：已核本地main8ad47d0、root四项既有WIP、C1/main-baseline/W4/W3/W2/W0干净状态、10个stash与原日志；C1c2原JSON仍is_error=true/402，无业务变更，无恢复证据，未新请求API。创建docs/handoffs/2026-10-24-claude-handoff.md与claude-prompt.md，更新当前摘要/清单和旧计划入口，保留全部历史；main十二退出原日志经凭据模式扫描逐字节复制到docs/handoffs/evidence/main-8ad47d0并附SHA256清单，非新测试。只读进程核查发现root两个Claude CLI（快照82427/95066，非已知JSON worker），未终止，接手须先确认唯一协调者。本次未重跑业务测试、未派业务worker、未fetch/新核远端CI、未提交推送，文档WIP保留交接。 |
+| 2026-10-24 | Claude（主会话 89da7fbc，PID 82427，接回协调） | 只读接手核查：root main = origin/main = 8ad47d0（最新已合 PR #22）；root WIP（AGENTS、L2-resume、P2-P3 计划改动，未跟踪 handoffs/、C1c2 与 W4b2a 任务书）全部保留；10 个 stash 保留；C1 `codex/c1c2-gateway-routing` fd7fdd9 干净（领先 main 1 个纯文档提交、落后 8）；main-baseline、W1–W4、S1f、S3a 均干净。唯一协调者为本会话：另一 Claude 进程 95066 对应会话「SafeBank Gateway 主要开发」isRunning=false（最后活动 10-23 18:24Z），未停止该进程。本机 Claude 侧无定时任务；safebank-worker / skillloop 属 Codex 自动化，本会话不可见、未触碰。核实 `.ds-logs/C1c2-gateway-routing.json`：subtype=success 但 is_error=true，result 为 402 Insufficient Balance（SID 1562cb21）。用户未提供充值或成功调用证据，按指令**不 probe、不重试、不换模型**；C1c2 与 W4b2a 都依赖 DeepSeek worker，均停在派发前。未运行任何测试、未派 worker、未提交推送。 |
+| 2026-10-24 | Claude（主会话 89da7fbc） | 用户告知 DeepSeek 已充值。有界验证一次（`ds-worker.sh review` 于 main-baseline，日志 `probe-balance-20261024-1`）：is_error=false、1 轮、无 402；modelUsage 显示 `claude-opus-5[1m]`——用户确认这是其本机路由的正常模型名（以后核对以此为准，不再期望 `deepseek-v4-pro[1m]`）。C1：`git merge origin/main` 入 `codex/c1c2-gateway-routing`，AGENTS 冲突中 C1 侧 3 条日志全部包含于 main 侧，取并集，合并提交 22dbb48；root 与 C1 的 C1c2 任务书逐字节一致。续接原 C1c2 会话 1562cb21（新日志名 `C1c2-resume-r1`）。W4：从 origin/main 8ad47d0 新建 `codex/w4b2a-runtime-keys`，提交任务书（协调文档），派 W4b2a 新 DeepSeek 实现 worker（日志 `W4b2a-impl-r1`）。两线 owner 文件不重叠（services/agent vs gateway config/runtime/测试），并行。 |
+| 2026-10-24 | Claude（主会话 89da7fbc） | W4b2a 实现 worker（SID 3718d6b6，78 轮，is_error=false）提交 4decdfd（9 文件 +538/−4：Settings 两项 repr=False 密钥、runtime 资源分配前校验、两 app 安装、16 项新测试、fixture 合成 key、README）。协调者在 4decdfd 亲自复跑全部 exit 0：setup；lint 291；test 2419/561 skip；test-gateway 1978/501 skip；gateway-db 17；shared-runtime 75 零 skip；w1 1688；w4b1 57；contracts PASS；actionlint。只核变量名：本机 W0 `gateway.env` 已含 APPROVAL_HMAC_KEY/OTP_HMAC_KEY，长期栈不受新启动校验影响。独立评审 worktree `R-W4b2a`（detached 4decdfd）派 R-W4b2a-r1。C1c2 原会话续接（105 轮，is_error=false）提交 478b673（11 文件 +1820/−4：routing.py、gateway/adapters.py、build_gateway_graph、3 个路由测试文件）。协调者在 478b673 亲自复跑：lint 296；tests/agent 266 passed 零 skip（`-m ''` 同为 266）；test 2457/561 skip；contracts PASS；actionlint exit 0；make demo exit 2（如实未实现）。worker 自报 253+13 deselected 与实测不同，已交评审查明；worker 自称 read 桥接端到端留给 C1d，交评审判断是否违背任务书。独立评审 worktree `R-C1c2`（detached 478b673）派 R-C1c2-r1。 |
+| 2026-10-24 | Claude（主会话 89da7fbc） | W4b2a 独立评审 R-W4b2a-r1（SID c4b27ffa，26 轮）**APPROVE**，P0/P1 无；P2-1 服务令牌复用守卫无测试真正走到（种子令牌短于 32 字节先被长度检查拦下），P2-2 shared_runtime/conftest.py 不在白名单但属必要 fixture 再导出、无需改。续接原实现会话 3718d6b6 修 P2-1（W4b2a-fix-r1，20 轮）提交 6db2090：新增 4 参数化用例（≥32 字节服务令牌与审批/OTP 密钥相同）。协调者红绿核验：临时删除 runtime.py 复用守卫 → test_approval_keys 4 failed/16 passed，`git checkout` 还原 → 20 passed，工作区干净。6db2090 亲自复跑全部 exit 0：setup；lint 291；test 2423/561 skip；test-gateway 1982/501 skip；gateway-db 17；shared-runtime 79 零 skip；w1 1688；w4b1 57；contracts PASS；actionlint。敏感扫描无命中；diff --check 仅评审报告 Markdown 行尾双空格，协调文档提交中去除。验收 `docs/acceptance/L2-W4b2a-runtime-keys.md`。随本 PR 带入 root 未提交协调文档（AGENTS 日志、docs/handoffs/、P2-P3 计划与 L2-resume 修订；三者在分支上均未被改动，基线同为 8ad47d0）。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
@@ -628,7 +641,10 @@ P0 准备阶段（决定后续一切）：
 ### L1 进度（用户2026-10-24授权并行）
 
 - [x] C1a 图骨架与AgentState：PR #17已合eea02a6，22专项零skip、独审APPROVE、当前head四CI成功。
-- [ ] C1b DeepSeek strict → C1c gateway客户端与路由 → C1d持久化/审批/服务 → C1e输出/卡片/回放。任务书 `docs/plans/briefs/C1-agent.md`；每小组件独立门禁，前端/BFF暂停不变。
+- [x] C1b DeepSeek strict适配：PR #19已合，83专项及最终7次真实模型请求通过；read executor仍fake，非真实三层闭环。
+- [x] C1c1 gateway协议客户端：PR #21已合，Agent212项含3真实loopback transport；协议主体MockTransport，非真实L2/L3。
+- [ ] C1c2完整图路由：任务书 `docs/plans/briefs/C1c2-gateway-routing.md`；原会话402启动失败、无业务变更，待恢复证据。
+- [ ] C1d真实PG持久化/恢复/服务 → C1e输出/卡片/回放。总任务书 `docs/plans/briefs/C1-agent.md`；每小组件独立门禁，前端/BFF与定时器保持暂停。
 
 ### L2 进度（Security Gateway 后端，计划 `docs/plans/L2-plan.md`）
 
@@ -636,12 +652,15 @@ P0 准备阶段（决定后续一切）：
 |---|---|---|---|
 | [x] | W0 基础骨架 | `feat/l2-foundation` / PR #2 已合并 | `docs/plans/briefs/W0-*.md`，评审 `docs/reviews/L2-W0-architecture.md` |
 | [x] | S1 共享运行层 | PR #4，merge `691cf88`；独立评审与四CI全绿 | `docs/acceptance/L2-S1-runtime.md` |
-| [x] | S2 七天预留纯函数 | PR #5，merge `a9d72cf`；真实生产接入待S3 | `docs/acceptance/L2-S2-reserve.md` |
+| [x] | S2 七天预留纯函数 | PR #5，merge `a9d72cf`；后续S3a/W2b已完成真实义务/默认生产预留接线 | `docs/acceptance/L2-S2-reserve.md`；`L2-W2b-reserve-integration.md` |
 | [x] | W4a 客户锁先决组件 | PR #7 merge d5ac9ed（六退出、独立评审及四CI全绿） | `docs/plans/briefs/W4a-customer-locks.md` |
 | [x] | W1 身份、会话与原话 | PR #13 已合并，merge `79dc943`；精确head `8dfdec1` push/PR两套四CI成功，五退出亲验与独立APPROVE已记录 | `docs/plans/briefs/W1-identity.md`；`W1-revocation-deferred.md` |
 | [x] | W2 读代理、参数来源与污点 | W2a #16与W2b #18均已合，W2b246真PG/HTTP、独审及当前head四CI成功；跨真实G4/审批执行待后续组件 | `docs/acceptance/L2-W2b-reserve-integration.md` |
-| [ ] | W3 快照、预演、工作流、决策与 G4 | `feat/l2-decision`（检查点3bcbe8e，共享依赖阻塞） | `docs/plans/briefs/W3-decision.md` |
-| [ ] | W4 审批与执行 | `feat/l2-execution`（3856a4c部分检查点，G8待共享状态与真实依赖） | `docs/plans/briefs/W4-execution.md` |
+| [x] | W3a 快照、预演、工作流、决策阶段 | PR #20已合26dea40；45真实PG/HTTP及独审/四CI通过，非完整G4 | `docs/acceptance/L2-W3a-stages.md` |
+| [ ] | W3b 完整G4持久化/复演/hint | 待W4b确认/OTP先决；旧3bcbe8e仅只读参考，不覆盖现行main | `docs/plans/briefs/W3-decision.md`；`W3-W4-integration-order.md` |
+| [ ] | W4c 执行与UNKNOWN恢复 | 待W3b；旧3856a4c仅参考，不覆盖现行locks/state/屏障 | `docs/plans/briefs/W4-execution.md` |
+| [x] | W4b1 面板/HMAC审批库 | PR #22 merge8ad47d0；亲验/独审/精确head四CI与实际main组合通过 | `docs/acceptance/L2-W4b1-planview-binding.md` |
+| [ ] | W4b2a 运行密钥资源 | 任务已准备，DS余额402待恢复，未派发 | `docs/plans/briefs/W4b2a-runtime-keys.md` |
 | [x] | S1b / 0002_wave1 迁移与受控状态 | PR #6已合并94e40fe（四CI成功，真实现有库升级与集成通过） | `docs/plans/briefs/S1b-wave1-state.md` |
 | [x] | S1c PIN Settings 接线 | PR #8 merge `304adda`；五退出、独立评审与精确head四CI全绿 | `docs/plans/briefs/S1c-pin-settings.md`；证据 `docs/progress/S1c-pin-settings.md` |
 | [x] | S1e 孤儿job受控对账 | PR #9 merge `6815547`；独立APPROVE、亲自六退出/231专项及四CI全绿 | `docs/plans/briefs/S1e-orphan-jobs.md` |
@@ -667,9 +686,10 @@ P0 准备阶段（决定后续一切）：
 | `AGENTS.md` | 本文件 |
 | `packages/contracts/` | 已实现并冻结v1的三层共享 Pydantic 契约。**修改它就等于修改接口，必须同步三层并更新 PRD §6.2 与 §9** |
 | `packages/bankcore/` | 已实现P1的纯函数领域规则，L2 预演与 L3 执行共用 |
-| `services/{bank-backend,gateway,agent}/` | L3 P1与L2 W1/共享组件已合；L1图骨架C1a待PR #17四CI，尚无生产业务HTTP入口 |
+| `services/{bank-backend,gateway,agent}/` | P1、L2 W1/W2b/W3a/W4b1与共享组件已合；L1 C1a/b/c1已合，完整图路由/PG/服务/输出及真实G4/G8仍待后续 |
 | `evaluation/` | 目录骨架，正常 / 攻击 / 绕过runner尚未实现 |
-| `docs/decisions/ADR-*.md` | 架构决策记录（ADR-001–007） |
+| `docs/decisions/ADR-*.md` | 架构决策记录（现有001/002/003/006/007/008/009；004/005仍待对应验收/暂停说明） |
+| `docs/handoffs/2026-10-24-claude-handoff.md` | Codex交回Claude的详细本机快照、WIP/会话/进程/证据/阻塞与接续门禁；同目录claude-prompt.md为可复制prompt |
 
 调研时的临时克隆位于 `/tmp/sbg-research/`（可能已被系统清理，不要依赖它）。
 

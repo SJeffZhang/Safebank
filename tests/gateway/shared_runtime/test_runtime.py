@@ -38,6 +38,8 @@ def secret_settings(tmp_path):
             "JWT_PUBLIC_KEY_PATH": str(public_path),
             "GATEWAY_DATABASE_URL": "postgresql://unused/db",
             "GATEWAY_SERVICE_TOKEN": "l3-token",
+            "APPROVAL_HMAC_KEY": "approval-hmac-key-32-bytes-minimum!!",
+            "OTP_HMAC_KEY": "otp-hmac-key-32-bytes-minimum!!!!!",
         }
     )
 
