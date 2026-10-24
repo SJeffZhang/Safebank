@@ -67,6 +67,9 @@ lock、SSE 流式输出。
   （understand/gather/plan）+ C1c1 GatewayClient + C1c2 `make_gateway_ports` / `build_gateway_graph`。
   L2 G4/G8 尚未实现时走 C1c2 路由模板，不伪造成功。fake ports 仅测试通过
   `_install_test_ports()` 注入。
+- **凭证（D10）**：agent 以 `AGENT_SERVICE_TOKEN`（A 身份）调用 L2，**不持有或读取
+  `GATEWAY_SERVICE_TOKEN`**（该令牌仅 L2→L3）。L2 地址通过 `GATEWAY_URL` 配置（默认
+  `http://gateway:8200`）。
 
 ## 运行方式
 

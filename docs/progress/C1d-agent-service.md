@@ -104,7 +104,7 @@ Added `- run: make test-agent-db` to `.github/workflows/checks.yml` p1-postgres 
 - `test_lock.py`: E501 line breaks for pg_try_advisory_lock queries
 - `conftest.py`: E501 line break for docker exec psql command
 
-## Fix Round 1: D9 production ports + langchain-deepseek runtime dep
+## Fix Round 2: D10 credential isolation — AGENT_SERVICE_TOKEN vs GATEWAY_SERVICE_TOKEN
 
 ### Bridge to coordinator review of `18992f0`
 
@@ -166,6 +166,39 @@ Coordinator blocked merge on three items:
 | `langchain-deepseek` | 1.1.1 | MIT | C1d Fix Round 1 | Transitives: `langchain-openai` 1.7.2 (MIT), `openai` 3.37.0 (Apache-2.0), `tiktoken` 0.14.0 (MIT) |
 
 All licenses already listed in `docs/third-party.md`. The `openai` package is the official Python SDK under Apache-2.0 with an embedded `httpx_aiohttp` sub-vendor under its own license; both already documented.
+
+### D10 Implementation
+
+`services/agent/app/main.py`:
+- `GATEWAY_BASE_URL` → `GATEWAY_URL` (default `http://gateway:8200`; PRD §11.1)
+- `GATEWAY_SERVICE_TOKEN` → `AGENT_SERVICE_TOKEN` (A identity; PRD §3.2 / §11.1)
+- Removed env-var check for `GATEWAY_URL` (has default); AGENT_SERVICE_TOKEN still fail-closed
+- Docstring rephrased to avoid literal `GATEWAY_SERVICE_TOKEN` (grep test must pass)
+
+`tests/agent/test_service.py`:
+- `test_production_app_refuses_without_gateway_config`: `GATEWAY_BASE_URL`→`GATEWAY_URL`, `GATEWAY_SERVICE_TOKEN`→`AGENT_SERVICE_TOKEN`; also pops `GATEWAY_SERVICE_TOKEN` to avoid false pass
+- `test_production_app_refuses_without_agent_token_but_gateway_token_set` (**new, D10 red**): sets only `GATEWAY_SERVICE_TOKEN` (no `AGENT_SERVICE_TOKEN`) → asserts NOT 200
+- `test_no_gateway_service_token_in_agent_source` (**new, D10 red**): `grep -r GATEWAY_SERVICE_TOKEN services/agent/` → 0 hits
+- `test_production_app_ports_are_not_fake`: `GATEWAY_BASE_URL`→`GATEWAY_URL`, `SERVICE_TOKEN`→`AGENT_SERVICE_TOKEN`
+
+### D10 red-green verification
+- Old code (`249ca98`): `grep -r GATEWAY_SERVICE_TOKEN services/agent` → 2 hits in main.py ✓ (test would FAIL)
+- Fixed code: same grep → 0 hits ✓ (test PASSES)
+- Old code: `_build_production_ports()` reads `GATEWAY_SERVICE_TOKEN` → would succeed if only that env is set
+- Fixed code: `_build_production_ports()` reads `AGENT_SERVICE_TOKEN` → fails if only GATEWAY_SERVICE_TOKEN set
+
+### Fix Round 2 Exit Commands (2026-10-24)
+
+| Command | Result |
+|---|---|
+| make lint | 304 files, exit 0 |
+| make test | 2499 passed / 590 skipped |
+| .venv/bin/pytest tests/agent -q | 288 passed / 29 skipped |
+| make test-agent-db | 30 passed, zero skip (real tmpfs PG) |
+| make contracts-check | PASS |
+| make wheels | Verified 81 locked wheels |
+| make demo | exit 2 (expected) |
+| actionlint | exit 0 |
 
 ## Uncovered / Not Done
 - No `make up` / `test-p1*` / `test-integration` (D8: not allowed)

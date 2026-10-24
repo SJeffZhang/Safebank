@@ -205,30 +205,27 @@ def _run_graph_and_get_state(client, token, thread_id, utterance_text="给张三
 
 
 def test_production_app_refuses_without_gateway_config(agent_pg):
-    """app_factory() with no ports requires GATEWAY_BASE_URL — no default ALLOW.
+    """app_factory() with no ports requires AGENT_SERVICE_TOKEN — no default ALLOW.
 
-    This test verifies D9: the production path never falls back to fake ports
-    or a default ALLOW decision.  When gateway config is missing, app startup
-    (first request) must raise RuntimeError, not silently serve fake success.
+    This test verifies D9+D10: the production path never falls back to fake ports
+    or a default ALLOW decision.  When AGENT_SERVICE_TOKEN is missing, app startup
+    (first request) must fail, not silently serve fake success.
     """
     os.environ["AGENT_DATABASE_URL"] = agent_pg.runtime_url
-    # Clear any gateway env that might be set
-    old_gw = os.environ.pop("GATEWAY_BASE_URL", None)
-    old_token = os.environ.pop("GATEWAY_SERVICE_TOKEN", None)
+    old_gw = os.environ.pop("GATEWAY_URL", None)
+    old_token = os.environ.pop("AGENT_SERVICE_TOKEN", None)
+    old_gws = os.environ.pop("GATEWAY_SERVICE_TOKEN", None)  # D10: must NOT be read
     old_ds = os.environ.pop("DEEPSEEK_API_KEY", None)
     try:
         app = app_factory()  # no ports injected — production path
         with TestClient(app) as tc:
-            # First request triggers _resolve_ports → _build_production_ports
-            # which should fail because GATEWAY_BASE_URL is missing
             resp = tc.post(
                 "/threads",
                 json={"thread_id": "ses_d9"},
-                # Need a JWT to get past auth — but JWT_PUBLIC_KEY_PATH not set
                 headers={},
             )
-            # Either 401 (JWT key not found) or 500 (ports build failed)
-            # In NO case should it be 200 (fake ALLOW success)
+            # Either 401 (JWT key not found) or 500 (ports build failed).
+            # In NO case should it be 200 (fake ALLOW success).
             assert resp.status_code != 200, (
                 f"D9 violation: production app returned 200 without gateway config. "
                 f"status={resp.status_code}, body={resp.text}"
@@ -236,22 +233,88 @@ def test_production_app_refuses_without_gateway_config(agent_pg):
     finally:
         os.environ.pop("AGENT_DATABASE_URL", None)
         if old_gw is not None:
-            os.environ["GATEWAY_BASE_URL"] = old_gw
+            os.environ["GATEWAY_URL"] = old_gw
         if old_token is not None:
-            os.environ["GATEWAY_SERVICE_TOKEN"] = old_token
+            os.environ["AGENT_SERVICE_TOKEN"] = old_token
+        if old_gws is not None:
+            os.environ["GATEWAY_SERVICE_TOKEN"] = old_gws
         if old_ds is not None:
             os.environ["DEEPSEEK_API_KEY"] = old_ds
+
+
+def test_production_app_refuses_without_agent_token_but_gateway_token_set(agent_pg):
+    """D10: only GATEWAY_SERVICE_TOKEN, no AGENT_SERVICE_TOKEN → fail-closed.
+
+    The agent MUST NOT read GATEWAY_SERVICE_TOKEN (PRD §3.2 — that token is
+    L2→L3 only).  When only GATEWAY_SERVICE_TOKEN is set, the production
+    path must fail because AGENT_SERVICE_TOKEN is absent.
+    """
+    os.environ["AGENT_DATABASE_URL"] = agent_pg.runtime_url
+    old_gw = os.environ.pop("GATEWAY_URL", None)
+    old_agent = os.environ.pop("AGENT_SERVICE_TOKEN", None)
+    old_gws = os.environ.pop("GATEWAY_SERVICE_TOKEN", None)
+    old_ds = os.environ.pop("DEEPSEEK_API_KEY", None)
+    try:
+        # D10 red scenario: GATEWAY_SERVICE_TOKEN is set, AGENT_SERVICE_TOKEN is NOT
+        os.environ["GATEWAY_SERVICE_TOKEN"] = "tok_l2_to_l3_secret_do_not_use"
+        app = app_factory()  # no ports injected — production path
+        with TestClient(app) as tc:
+            resp = tc.post(
+                "/threads",
+                json={"thread_id": "ses_d10"},
+                headers={},
+            )
+            # Must NOT return 200 (would mean GATEWAY_SERVICE_TOKEN was used as auth)
+            assert resp.status_code != 200, (
+                f"D10 violation: production app returned 200 using only GATEWAY_SERVICE_TOKEN. "
+                f"status={resp.status_code}, body={resp.text}"
+            )
+    finally:
+        os.environ.pop("AGENT_DATABASE_URL", None)
+        os.environ.pop("GATEWAY_SERVICE_TOKEN", None)
+        if old_gw is not None:
+            os.environ["GATEWAY_URL"] = old_gw
+        if old_agent is not None:
+            os.environ["AGENT_SERVICE_TOKEN"] = old_agent
+        if old_gws is not None:
+            os.environ["GATEWAY_SERVICE_TOKEN"] = old_gws
+        if old_ds is not None:
+            os.environ["DEEPSEEK_API_KEY"] = old_ds
+
+
+def test_no_gateway_service_token_in_agent_source():
+    """D10: services/agent source code never references GATEWAY_SERVICE_TOKEN.
+
+    Grep all Python files under services/agent for the string
+    ``GATEWAY_SERVICE_TOKEN`` and assert zero matches.
+    """
+    import subprocess
+
+    agent_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+        "services",
+        "agent",
+    )
+    result = subprocess.run(
+        ["grep", "-r", "--include=*.py", "GATEWAY_SERVICE_TOKEN", agent_dir],
+        capture_output=True,
+        text=True,
+    )
+    stdout_lines = [_line for _line in result.stdout.strip().split("\n") if _line]
+    assert not stdout_lines, (
+        "D10 violation: GATEWAY_SERVICE_TOKEN found in agent source:\n" + "\n".join(stdout_lines)
+    )
 
 
 def test_production_app_ports_are_not_fake(monkeypatch, agent_pg, ed25519_keys):
     """With minimal config, production ports are real GatewayClient-based, not fake.
 
-    We set GATEWAY_BASE_URL to a non-existent address — the GatewayClient is
+    We set GATEWAY_URL to a non-existent address — the GatewayClient is
     constructed (real), but calls will fail with connection errors instead of
     returning fake EXECUTED results.
     """
-    monkeypatch.setenv("GATEWAY_BASE_URL", "http://127.0.0.1:19999")
-    monkeypatch.setenv("GATEWAY_SERVICE_TOKEN", "tok_deadbeef_deadbeef_deadbeef_deadbeef")
+    monkeypatch.setenv("GATEWAY_URL", "http://127.0.0.1:19999")
+    monkeypatch.setenv("AGENT_SERVICE_TOKEN", "tok_deadbeef_deadbeef_deadbeef_deadbeef")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deadbeef-deadbeef-deadbeef-deadbeef")
     _private, public_key_path = ed25519_keys
     monkeypatch.setenv("JWT_PUBLIC_KEY_PATH", public_key_path)

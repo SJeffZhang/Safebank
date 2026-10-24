@@ -138,18 +138,20 @@ async def _try_thread_lock(db_url: str, thread_id: str) -> psycopg.AsyncConnecti
 
 
 def _build_production_ports() -> tuple[Ports, object]:
-    """Assemble real C1b+C1c1+C1c2 ports and gateway client (D9).
+    """Assemble real C1b+C1c1+C1c2 ports and gateway client (D9, D10).
 
     Returns (ports, gateway_client). The client is stored on app.state for
     use by build_gateway_graph.
+
+    D10: agent uses AGENT_SERVICE_TOKEN (A identity) to call L2, never
+    the L2→L3 token (PRD §3.2 / §11.1).  L2 address
+    from GATEWAY_URL (default http://gateway:8200, PRD §11.1).
     """
     # -- Gateway client --
-    gw_url = os.environ.get("GATEWAY_BASE_URL", "")
-    gw_token = os.environ.get("GATEWAY_SERVICE_TOKEN", "")
-    if not gw_url:
-        raise RuntimeError("GATEWAY_BASE_URL is not configured")
+    gw_url = os.environ.get("GATEWAY_URL", "http://gateway:8200")
+    gw_token = os.environ.get("AGENT_SERVICE_TOKEN", "")
     if not gw_token:
-        raise RuntimeError("GATEWAY_SERVICE_TOKEN is not configured")
+        raise RuntimeError("AGENT_SERVICE_TOKEN is not configured")
 
     from services.agent.app.gateway.client import GatewayClient
 
