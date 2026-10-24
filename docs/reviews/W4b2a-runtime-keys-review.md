@@ -1,8 +1,8 @@
 # W4b2a Runtime Approval Keys — 独立只读评审
 
-**评审日期**: 2026-10-24  
-**范围**: `git diff 8ad47d0 4decdfd`（9 files, +538/-4）  
-**基准**: 任务书 `docs/plans/briefs/W4b2a-runtime-keys.md`、进度 `docs/progress/W4b2a-runtime-keys.md`、PRD §7.10/§11.1、W4b1 验收、S1c 先例。  
+**评审日期**: 2026-10-24
+**范围**: `git diff 8ad47d0 4decdfd`（9 files, +538/-4）
+**基准**: 任务书 `docs/plans/briefs/W4b2a-runtime-keys.md`、进度 `docs/progress/W4b2a-runtime-keys.md`、PRD §7.10/§11.1、W4b1 验收、S1c 先例。
 **测试定点验证**: `test_approval_keys.py` 16 passed、`test_runtime.py` 23 passed/2 skipped。
 
 ## 逐项核对

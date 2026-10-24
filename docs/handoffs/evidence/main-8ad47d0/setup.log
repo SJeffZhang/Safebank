@@ -1,0 +1,2 @@
+uv sync --frozen --group poc --python 3.12
+Checked 78 packages in 10ms

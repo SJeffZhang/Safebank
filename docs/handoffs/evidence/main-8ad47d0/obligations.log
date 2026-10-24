@@ -1,0 +1,9 @@
+OBLIGATIONS_DB_TESTS=1 .venv/bin/pytest tests/obligations_data -q
+..............................                                           [100%]
+=============================== warnings summary ===============================
+tests/obligations_data/test_obligations_data.py::test_migrated_database_matches_metadata
+  /Users/zhangshijie/Desktop/Project/Fintech2026-wt/main-baseline/tests/obligations_data/test_obligations_data.py:143: SAWarning: Cannot correctly sort tables; there are unresolvable cycles between tables "accounts, cards", which is usually caused by mutually dependent foreign key constraints.  Foreign key constraints involving these tables will not be considered; this warning may raise an error in a future release.
+    return compare_metadata(ctx, metadata)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+30 passed, 1 warning in 4.41s
