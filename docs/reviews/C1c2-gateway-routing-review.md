@@ -1,6 +1,6 @@
 # C1c2 Gateway Graph Routing — Independent Review
 
-**Reviewer:** DeepSeek V4 Pro (read-only, headless CLI)  
+**Reviewer:** DeepSeek V4 Pro (read-only, headless CLI)
 **Date:** 2026-10-24  
 **Scope:** `git diff 22dbb48 478b673` (main 8ad47d0 merged as 22dbb48)  
 **Verdict:** REQUEST_CHANGES
@@ -136,3 +136,68 @@ Annotated as `Decision | None` but gateway graph stores `dict` (from `model_dump
 
 - **422 → gather path integration**: Whether the `_route_evaluate` intercept (P0-1) is the ONLY blocker or whether there's a secondary issue in how LangGraph handles the state transition from evaluate error → gather (e.g., gather node seeing `decision: None`). The routing function is correct; the graph integration is the issue.
 - **G8 not implemented**: Cannot verify whether `GatewayClient.execute` properly returns 202/UNKNOWN vs raising for transport errors since L2 G8 is not available. The routing handles both paths in theory.
+
+---
+
+## 修复轮 1 定点复审（2026-10-24，478b673..1e303e7）
+
+**Reviewer:** DeepSeek V4 Pro (read-only, headless CLI)  
+**Verdict:** APPROVE — all 6 P0/P1 findings closed, no new P0/P1 introduced.
+
+### 逐条核对
+
+| # | 原发现 | 修复方式 | 证据 | |
+|---|---|---|---|---|
+| P0-1 | `_route_evaluate` 拦截 422→gather | `route_error` 字典新增 `target` 字段；`_route_evaluate_gw` 检查 `target=="gather"` 时返回 `"gather"` 而非 `"respond"` | `graph.py:414` (`err["target"] = r.node`)，`graph.py:586-588` (target 检查)；编译图 `test_p01_422_*` 2 条全部通过 | ✅ |
+| P0-2 | `execute→respond` 静态边阻止 STATE_CHANGED 重入 | `add_edge("execute","respond")` 替换为 `add_conditional_edges("execute", _route_execute, {"execute":..., "await_approval":..., "respond":...})`；`_route_execute` 按 `route_error.target` 路由 | `graph.py:772-779` (条件边)，`graph.py:600-613` (`_route_execute` 函数)；编译图 `test_p02_state_changed_*` 3 条全部通过 | ✅ |
+| P1-1 | 缺 clarify 节点 | 新增 `clarify` 节点（从 G21 `candidates[].label` 生成固定补充草稿）+ `_route_understand_gw` 路由（unclear+needs_write+clarification 或 CLARIFYING+clarification → clarify）+ `clarify→respond` 边 | `graph.py:514-527` (节点)，`graph.py:549-567` (路由)，`graph.py:734,754` (边)；`test_p11_*` 通过，reply 含"王五" | ✅ |
+| P1-2 | `_GatewayExecute.request_id` 死代码 | 简化为 `draft = state.get("plan_draft"); request_id = draft.request_id if draft is not None else "req_unknown"` | `adapters.py:98-99`（diff 确认 7行→2行，无遗留） | ✅ |
+| P1-3 | 读桥接未接入图 | `build_gateway_graph` 新增 `gateway_read_client` 可选参数；提供时 gather 节点 monkey-patch `_read_executor` 每次调用后恢复 | `graph.py:617-651` (gateway gather)；`test_p13_*` 通过 — `source_ref="src_read_1"`、versions/observed_at 保留、契约 READ_CASES 匹配 | ✅ |
+| P1-4 | FAILED 与 EXECUTED 未区分 | `route_execute_success` 增加 `exec_status` 参数，FAILED 返回 `use_fixed_reply=True` + "执行失败" 模板；graph execute 节点在 FAILED 时设置 `route_error` 使 respond 跳过 LLM | `routing.py:160-162,170-171` (exec_status 分支)，`graph.py:507-511` (FAILED 路径)；`test_p14_*` 通过 — `calls["respond"]==0`，reply 含"执行失败" | ✅ |
+
+### 关键路径回归（编译图实测通过）
+
+| 路径 | 测试 | 断言 |
+|---|---|---|
+| 422→gather→plan→ALLOW→execute | `test_p01_422_contract_invalid_routes_to_gather_via_compiled_graph` | replan_count=1, execution EXECUTED |
+| 422 两次后第三次 blocked | `test_p01_422_twice_then_respond` | replan_count=2, "暂时无法处理" |
+| STATE_CHANGED+ALLOW 重入 execute | `test_p02_state_changed_allow_reenters_execute_via_compiled_graph` | evaluate_reentry_count=1, execution EXECUTED |
+| STATE_CHANGED+REQUIRE_APPROVAL 重入 await | `test_p02_state_changed_require_approval_reenters_await` | interrupt approval_id="apv_new" |
+| STATE_CHANGED 二次重入 blocked | `test_p02_state_changed_second_reentry_blocked` | reentry_count=1, "重新发起" |
+| 202 UNKNOWN | `test_execute_202_unknown_via_compiled_graph` | "确认中", 无重试指令 |
+| 503→UNKNOWN | `test_execute_503_via_compiled_graph` | "确认中", execution=None |
+| 409 APPROVAL_EXPIRED | `test_execute_409_approval_expired_via_compiled_graph` | "审批", execution=None |
+| ALLOW 全路径 | `test_allow_path_full_graph` | execution EXECUTED |
+| DENY | `test_deny_path_full_graph` | "无法执行", execution=None |
+| REQUIRE_APPROVAL interrupt+resume | `test_require_approval_interrupt_full_graph` | interrupt→resume→EXECUTED |
+| REPLAN agent→gather→ALLOW | `test_replan_agent_full_graph` | replan_count=1, EXECUTED |
+| INTENT_UNCLEAR | `test_intent_unclear_full_graph` | understanding.unclear=True |
+
+### 回归核查
+
+- **P2-1~P2-4（未修，限定范围内）**: 双 G20 调用、r.state 死代码、decision 类型不一致 — 均未恶化，C1d 解决。P2-4（parse_status 三元嵌套）已改善：加 `len(gateway_utts) > 0` 守卫（`graph.py:360`）。
+- **冻结文件**: diff 确认 contracts/gateway/bankcore/L3/pyproject/Makefile/CI 零改动
+- **JWT 不进 state**: 修复中无新增 `assistant_token` 写入 AgentState 路径
+- **REPLAN 共享预算（自动修订 + 422 共享 2 次）**: `test_p01_422_twice_then_respond` 验证 422 两次后第三次 blocked；`route_evaluate_error(422, ...)` 正确检查 `replan_count >= 2`
+- **STATE_CHANGED 有界重入（最多 1 次）**: `test_p02_state_changed_second_reentry_blocked` 验证第二次 STATE_CHANGED 被 block
+- **UNKNOWN 不重提**: `test_execute_202_unknown_via_compiled_graph` 验证模板"确认中"、无 poll/"重试"字样
+- **FAILED 走固定模板**: `test_p14_*` 验证 LLM respond 零次调用
+- **clarify 不洗白**: clarify 节点只从 L2 G21 `candidates[].label` 生成补充文本，不创建 typed 原话、不授权
+
+### 新发现问题
+
+**P2: evaluate 成功路径两次调用 `route_evaluate`**（`graph.py:434` + `graph.py:595`）：evaluate 节点预计算 `reply_draft` 时调用一次，`_route_evaluate_gw` 路由时再调用一次。输入相同、结果一致，仅冗余。P2。
+
+**P2: 读桥接 monkey-patch 非线程安全**（`graph.py:629-637`）：`adapter._read_executor` 的临时替换在并发调用同一 compiled graph 时会竞态。C1c2 单线程测试不受影响，C1d 需改为每次调用新建 adapter 实例。P2。
+
+### 测试结果
+
+| 命令 | 结果 |
+|---|---|
+| `.venv/bin/pytest tests/agent/routing -q` | 70 passed (54 原始 + 16 编译图) |
+| `.venv/bin/pytest tests/agent/routing/test_graph_compiled.py -q` | 16 passed (0.91s) |
+| `.venv/bin/pytest tests/agent -q -k "not test_llm_live"` | 269 passed, 13 deselected |
+
+### 结论
+
+所有 6 条 P0/P1 已修复并经验证。两处新 P2 不阻塞合并（C1d 可自然解决：双调用属去重优化，线程安全属 PG 服务层职责）。APPROVE。

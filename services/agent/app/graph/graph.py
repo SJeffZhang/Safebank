@@ -427,12 +427,33 @@ def build_gateway_graph(
         if decision is None:
             raise PortFailure("evaluate port returned None")
 
-        # Determine reply_draft for routes that use fixed templates
-        from services.agent.app.gateway.wire import GatewayDecision
+        # Compute reply_draft inline (avoid duplicate route_evaluate call —
+        # _route_evaluate_gw handles routing; we just set the fixed reply text).
+        reply = ""
+        d_value = decision.decision
+        if d_value == "DENY":
+            from services.agent.app.graph.routing import respond_template as _rt
 
-        gw_dec = GatewayDecision.model_validate(decision.model_dump(mode="json"))
-        r = route_evaluate(gw_dec, state.get("replan_count", 0))
-        reply = r.fixed_reply if r.use_fixed_reply else ""
+            reply = _rt("DENY")
+        elif d_value == "REPLAN":
+            from services.agent.app.graph.routing import respond_template as _rt
+
+            findings = decision.findings or ()
+            resolvers = [f.resolver for f in findings]
+            if (
+                resolvers
+                and all(r == "agent" for r in resolvers)
+                and state.get("replan_count", 0) < 2
+            ):
+                reply = ""  # going to gather — no fixed reply
+            else:
+                key = (
+                    "REPLAN_USER"
+                    if any(r == "user" for r in resolvers)
+                    else "REPLAN_AGENT_EXHAUSTED"
+                )
+                reply = _rt(key)
+
         return {
             "plan_id": decision.plan_id,
             "decision": decision.model_dump(mode="json"),
@@ -625,26 +646,20 @@ def build_gateway_graph(
     # ── gather node (with optional gateway read bridge P1-3) ───────────
 
     if gateway_read_client is not None:
-        # Gateway read bridge: wraps GatherAdapter's _read_executor with
-        # GatewayClient.read_tool per call, preserving source_ref/untrusted_paths/
-        # versions/observed_at through the ReadEnvelope→ReadResult mapping.
+        # Gateway read bridge: per-invocation shallow copy of the GatherAdapter.
+        # Shares _model/_observer (read-only during inference), but gives each
+        # invocation its own _read_executor — safe for concurrent graph calls.
         _read_factory = make_gateway_read_executor(gateway_read_client)
 
         def gather(state: AgentState, runtime: Runtime[AgentContext]) -> dict:
             context = runtime.context
             executor_for_call = _read_factory(context)
-            adapter = ports.gather
 
-            # Inject gateway-backed executor before call; restore after.
-            # GatherAdapter.__init__ stores _read_executor; we monkey-patch it
-            # per invocation so each AgentContext gets the correct JWT.
-            original_executor = getattr(adapter, "_read_executor", None)
-            try:
-                adapter._read_executor = executor_for_call  # type: ignore[attr-defined]
-                reads = adapter(state, context)
-            finally:
-                if original_executor is not None:
-                    adapter._read_executor = original_executor  # type: ignore[attr-defined]
+            # Shallow copy: no shared mutation, no monkey-patching.
+            adapter = object.__new__(type(ports.gather))
+            adapter.__dict__.update(ports.gather.__dict__)
+            adapter.__dict__["_read_executor"] = executor_for_call
+            reads = adapter(state, context)
 
             if reads is None:
                 raise PortFailure("gather port returned None")

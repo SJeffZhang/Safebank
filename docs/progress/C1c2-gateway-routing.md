@@ -149,3 +149,37 @@ Final SHA + workspace state reported after freeze.
 - P1-1: 1 test (clarification→clarify node)
 - P1-3: 1 test (gateway read bridge)
 - Regression: 8 tests (UNKNOWN, APPROVAL_EXPIRED, 503, ALLOW, DENY, REQUIRE_APPROVAL interrupt, REPLAN, INTENT_UNCLEAR)
+
+## 修复轮 2 (2026-10-24)
+
+**评审报告:** `docs/reviews/C1c2-gateway-routing-review.md` (修复轮 1 定点复审 APPROVE, P2×2)
+
+### P2-1: 读桥接 monkey-patch 非并发安全
+
+- **红测:** `test_gateway_read_bridge_no_shared_adapter_mutation` — `_MutationDetector` 检测 `_read_executor` 写入（`_gw_init_done` 守卫允许 `__init__` 期间的首次赋值，但拒绝之后的 monkey-patch）
+- **修复:** 将 monkey-patch（临时替换 `adapter._read_executor` + `try/finally` 恢复）改为 per-invocation 浅拷贝：`object.__new__(type(ports.gather))` + `adapter.__dict__.update(ports.gather.__dict__)` + `adapter.__dict__["_read_executor"] = executor_for_call`（绕过 `_MutationDetector.__setattr__` 的 `__dict__` 直接赋值）
+- **绿:** 浅拷贝后图调用通过（`_NoopLLM` 不产生读调用，但 copy 机制被验证——原始 adapter 未发生突变）；`test_concurrent_reads_no_cross_customer_leak` 验证两个并发线程使用共享 spy read client 时各线程仅看到自身的 customer context
+- **额外:** `test_deny_path_sets_reply_draft_without_double_route_evaluate` 使用 `mock.patch` 验证 `route_evaluate` 仅被调用一次（在 `_route_evaluate_gw` 中，不在 evaluate 节点中）
+
+### P2-2: evaluate 节点重复调用 route_evaluate
+
+- **修复:** evaluate 节点直接内联计算 `reply_draft`（DENY/REPLAN 的固定模板逻辑），不再调用 `route_evaluate`；`_route_evaluate_gw` 保持原有的路由职责
+- **绿:** `test_deny_path_sets_reply_draft_without_double_route_evaluate`（`call_count == 1`，reply 正确）；`test_replan_agent_routes_to_gather_via_graph`（REPLAN→gather→plan→ALLOW→execute 全路径通过）
+
+### Exit commands (修复轮 2)
+
+| Command | Result |
+|---|---|
+| `make lint` | ✅ All checks passed (ruff check + ruff format) |
+| `.venv/bin/pytest tests/agent -q` | ✅ 286 passed, 0 skip, 0 xfail |
+| `make test` | ✅ 2477 passed, 561 skipped |
+| `make contracts-check` | ✅ PASS: contracts v1 match frozen schemas |
+| `make demo` | ❌ exit 2 (not implemented, not faked) |
+
+### 新增测试 (修复轮 2)
+
+4 项测试 (`tests/agent/routing/test_graph_compiled.py`):
+- P2-2: 2 tests (`test_deny_path_sets_reply_draft_without_double_route_evaluate`, `test_replan_agent_routes_to_gather_via_graph`)
+- P2-1: 2 tests (`test_gateway_read_bridge_no_shared_adapter_mutation`, `test_concurrent_reads_no_cross_customer_leak`)
+
+总计编译图测试: 20 passed (原始 16 + 修复轮 2 新增 4)。

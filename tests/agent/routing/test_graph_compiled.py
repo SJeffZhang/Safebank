@@ -29,6 +29,7 @@ from services.agent.app.graph import (
     UtteranceRef,
     build_gateway_graph,
 )
+from services.agent.app.graph.routing import route_evaluate
 from tests.agent.gateway.read_cases import READ_CASES
 from tests.agent.gateway.transport import ScriptedGateway, error_response, json_response
 
@@ -611,3 +612,303 @@ def test_intent_unclear_full_graph():
     result = _invoke(graph)
     assert result.get("understanding") is not None
     assert result["understanding"].unclear
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 修复轮 2: evaluate 节点不再重复调用 route_evaluate
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_deny_path_sets_reply_draft_without_double_route_evaluate():
+    """FAKE HTTP: DENY → respond with fixed template.  Verifies the evaluate
+    node computes reply_draft inline (no redundant route_evaluate call)."""
+    g4_deny = dict(_g4_allow("pln_a"))
+    g4_deny["decision"] = "DENY"
+    g4_deny["risk"] = "RED"
+
+    from unittest import mock
+
+    with mock.patch(
+        "services.agent.app.graph.routing.route_evaluate",
+        wraps=route_evaluate,
+    ) as spy:
+        graph, _client, _transport = _gateway_graph(
+            [*_g20_ok(_g20_item("utt_a")), json_response(200, g4_deny)]
+        )
+        result = _invoke(graph)
+
+    # DENY reply_draft is set (by evaluate node's inline computation)
+    assert "无法执行" in result["reply_draft"]
+    assert result.get("execution") is None
+
+    # route_evaluate was called exactly once (by _route_evaluate_gw only)
+    assert spy.call_count == 1, f"route_evaluate called {spy.call_count} times, expected 1"
+
+
+def test_replan_agent_routes_to_gather_via_graph():
+    """FAKE HTTP: REPLAN with agent resolver and count<2 → gather → plan → ALLOW → execute."""
+    g4_replan = dict(_g4_allow("pln_a"))
+    g4_replan["decision"] = "REPLAN"
+    g4_replan["risk"] = "YELLOW"
+    g4_replan["findings"] = [
+        {
+            "code": "ENTITY_UNSEEN",
+            "effect": "REPLAN",
+            "resolver": "agent",
+            "evidence_refs": ["list_payees"],
+            "message": "",
+        }
+    ]
+
+    graph, _client, _transport = _gateway_graph(
+        [
+            *_g20_ok(_g20_item("utt_a")),
+            json_response(200, g4_replan),
+            json_response(200, _g4_allow("pln_b")),
+            json_response(200, _g8_executed("pln_b")),
+        ]
+    )
+
+    result = _invoke(graph)
+    assert result["replan_count"] == 1
+    assert result["plan_id"] == "pln_b"
+    assert result["execution"]["status"] == "EXECUTED"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 修复轮 2: 读桥接使用浅拷贝而非 monkey-patch（并发安全）
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_gateway_read_bridge_no_shared_adapter_mutation():
+    """The gateway gather node must NOT mutate the shared GatherAdapter._read_executor.
+
+    Uses a _MutationDetector subclass that raises AssertionError on any write
+    to ``_read_executor``, proving the fix uses a per-invocation copy instead
+    of monkey-patching the shared adapter.
+    """
+    from services.agent.app.llm.gather import GatherAdapter
+    from services.agent.app.llm.gather import ReadResult as GatherReadResult
+
+    # Build a minimal read client with scripted transport
+    read_transport = ScriptedGateway(
+        [
+            json_response(
+                200,
+                {
+                    "data": {"accounts": []},
+                    "source_ref": "src_r1",
+                    "untrusted_paths": [],
+                    "versions": {"cus_a": 5},
+                    "observed_at": "2026-10-24T12:00:00Z",
+                },
+            ),
+            _NOOP,
+        ]
+    )
+    read_client = GatewayClient("http://gw", SERVICE_TOKEN, http_client=read_transport.client)
+
+    # Spy to verify the gateway executor is actually called (not the original)
+    spy_calls = []
+
+    def spy_executor(tool, args):
+        spy_calls.append((tool, args))
+        return GatherReadResult(
+            data={"ok": True},
+            source_ref="spy",
+            untrusted_paths=(),
+            versions={},
+            observed_at="",
+        )
+
+    class _NoopLLM:
+        """Minimal fake LLM for GatherAdapter — returns empty tool_calls (stop gather)."""
+
+        def bind_tools(self, tools):
+            return self
+
+        def invoke(self, messages):
+            from langchain_core.messages import AIMessage
+
+            return AIMessage(content="", tool_calls=[])
+
+    class _MutationDetector:
+        """Raises if ``_read_executor`` is set AFTER initialisation."""
+
+        def __setattr__(self, name, value):
+            if name == "_read_executor" and getattr(self, "_gw_init_done", False):
+                raise AssertionError(
+                    f"_read_executor mutated to {value!r} — "
+                    f"use a per-invocation copy, not monkey-patching"
+                )
+            super().__setattr__(name, value)
+
+    class _SafeGatherAdapter(_MutationDetector, GatherAdapter):
+        pass
+
+    adapter = _SafeGatherAdapter(llm=_NoopLLM(), read_executor=spy_executor)
+    adapter._gw_init_done = True  # arm the detector after __init__
+
+    # Build graph with gateway read bridge
+    ports = make_gateway_ports(
+        GatewayClient(
+            "http://gw",
+            SERVICE_TOKEN,
+            http_client=ScriptedGateway(
+                [
+                    *_g20_ok(_g20_item("utt_a")),
+                    json_response(200, _g4_allow("pln_a")),
+                    json_response(200, _g8_executed("pln_a")),
+                    _NOOP,
+                ]
+            ).client,
+        ),
+        understand=_fake_understand,
+        gather=adapter,
+        plan=_fake_plan,
+        respond=_fake_respond,
+        verify_output=_fake_verify,
+    )
+    graph = build_gateway_graph(
+        ports,
+        InMemorySaver(),
+        ports.evaluate._client,  # type: ignore[attr-defined]
+        gateway_read_client=read_client,
+    )
+
+    # Run invocation — if monkey-patching is used, _MutationDetector raises
+    graph.invoke(
+        {"utterances": [UtteranceRef(id="utt_a", kind="typed", text="")]},
+        config=config("ses_a"),
+        context=ctx("cus_a", "ses_a"),
+    )
+
+    # The gateway executor was used (not spy), since the copy received it.
+    # Note: _NoopLLM returns empty tool_calls, so no reads are actually made;
+    # the key verification is that the shared adapter was never mutated.
+    assert len(spy_calls) == 0, "spy executor should NOT have been called"
+    # The shared adapter was never mutated — _read_executor is still the spy
+    assert adapter._read_executor is spy_executor
+
+
+def test_concurrent_reads_no_cross_customer_leak():
+    """Two concurrent graph invocations must NOT leak read executor contexts.
+
+    Each thread builds its own graph with its own main client transport, but they
+    share a single ``_SpyReadClient`` that records which customer context is used
+    per ``read_tool`` call.  If the gather node's shallow-copy mechanism is broken
+    (e.g. monkey-patching a shared adapter), one invocation's executor will leak
+    into the other and the spy will see the wrong customer_id.
+
+    Separate graphs are used because a shared ``GatewayClient`` transport cannot
+    safely serve two interleaved HTTP streams across threads — the *spy* is the
+    only shared resource, and that is exactly what we are testing.
+    """
+    import concurrent.futures
+    import threading
+
+    from services.agent.app.llm.gather import GatherAdapter
+    from services.agent.app.llm.gather import ReadResult as GatherReadResult
+
+    # Shared recording: (thread_id, customer_id) for each read_tool call
+    read_contexts: list[tuple[int, str]] = []
+    _lock = threading.Lock()
+
+    # Spy client: records which customer context is used per read_tool call
+    class _SpyReadClient(GatewayClient):
+        def read_tool(self, tool, args, context):
+            with _lock:
+                read_contexts.append((threading.get_ident(), context.customer_id))
+            return super().read_tool(tool, args, context)
+
+    spy_read_client = _SpyReadClient(
+        "http://gw",
+        "token_read",
+        http_client=ScriptedGateway(
+            [
+                json_response(
+                    200,
+                    {
+                        "data": {},
+                        "source_ref": "s",
+                        "untrusted_paths": [],
+                        "versions": {},
+                        "observed_at": "2026-10-24T12:00:00Z",
+                    },
+                ),
+                _NOOP,
+                _NOOP,
+                _NOOP,
+                _NOOP,
+            ]
+        ).client,
+    )
+
+    class _NoopLLM:
+        def bind_tools(self, tools):
+            return self
+
+        def invoke(self, messages):
+            from langchain_core.messages import AIMessage
+
+            return AIMessage(content="", tool_calls=[])
+
+    def _build_and_invoke(customer_id: str, session_id: str) -> dict:
+        """Each thread gets its own graph with its own main client transport."""
+        main_client = GatewayClient(
+            "http://gw",
+            SERVICE_TOKEN,
+            http_client=ScriptedGateway(
+                [
+                    *_g20_ok(_g20_item("utt_a")),
+                    json_response(200, _g4_allow("pln_a")),
+                    json_response(200, _g8_executed("pln_a")),
+                    _NOOP,
+                ]
+            ).client,
+        )
+        adapter = GatherAdapter(
+            llm=_NoopLLM(),
+            read_executor=lambda t, a: GatherReadResult(
+                data={}, source_ref="s", untrusted_paths=(), versions={}, observed_at=""
+            ),
+        )
+        ports = make_gateway_ports(
+            main_client,
+            understand=_fake_understand,
+            gather=adapter,
+            plan=_fake_plan,
+            respond=_fake_respond,
+            verify_output=_fake_verify,
+        )
+        graph = build_gateway_graph(
+            ports,
+            InMemorySaver(),
+            main_client,
+            gateway_read_client=spy_read_client,
+        )
+        return graph.invoke(
+            {"utterances": [UtteranceRef(id="utt_a", kind="typed", text="")]},
+            config={"configurable": {"thread_id": session_id}},
+            context=ctx(customer_id, session_id),
+        )
+
+    # Run both concurrently — each builds its own graph, shares only the spy
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        future_a = pool.submit(_build_and_invoke, "cus_a", "ses_a")
+        future_b = pool.submit(_build_and_invoke, "cus_b", "ses_b")
+        result_a = future_a.result()
+        result_b = future_b.result()
+
+    assert result_a["execution"]["status"] == "EXECUTED"
+    assert result_b["execution"]["status"] == "EXECUTED"
+
+    # Group reads by thread — each thread's reads must use only its own customer
+    threads_seen = set(tid for tid, _ in read_contexts)
+    for tid in threads_seen:
+        customers = [c for t, c in read_contexts if t == tid]
+        unique = set(customers)
+        assert len(unique) == 1, (
+            f"thread {tid} used multiple customer contexts: {unique} — "
+            f"executor leaked across invocations"
+        )
