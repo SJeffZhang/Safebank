@@ -180,19 +180,72 @@ def _wall(cfg: _ApprovalConfig) -> datetime:
     return now
 
 
-def _existing_approval_id(existing: Mapping[str, Any], *, view_hash: str, now: datetime) -> str:
+def _existing_approval_id(
+    existing: Mapping[str, Any],
+    *,
+    cfg: _ApprovalConfig,
+    db_plan: Mapping[str, Any],
+    db_eval: Mapping[str, Any],
+    view_hash: str,
+    now: datetime,
+) -> str:
     status = existing["status"]
-    if status in (ApprovalStatus.PENDING.value, ApprovalStatus.CONFIRMED.value):
-        if existing["expires_at_wall"] <= now:
-            raise GatewayError(Code.APPROVAL_EXPIRED, 409, "existing approval has expired")
-        if existing["view_hash"] != view_hash:
-            raise ValueError("existing approval view_hash differs from the view")
-        return existing["id"]
-    raise GatewayError(
-        _EXISTING_CONFLICT.get(status, Code.STATE_CHANGED),
-        409,
-        f"existing approval is {status}",
+    if status not in (ApprovalStatus.PENDING.value, ApprovalStatus.CONFIRMED.value):
+        raise GatewayError(
+            _EXISTING_CONFLICT.get(status, Code.STATE_CHANGED),
+            409,
+            f"existing approval is {status}",
+        )
+    if existing["expires_at_wall"] <= now:
+        raise GatewayError(Code.APPROVAL_EXPIRED, 409, "existing approval has expired")
+    if (
+        existing["plan_id"] != db_plan["id"]
+        or existing["customer_id"] != db_plan["customer_id"]
+        or existing["sid"] != db_plan["sid"]
+        or existing["plan_hash"] != db_plan["plan_hash"]
+        or existing["evaluation_id"] != db_eval["id"]
+        or existing["view_hash"] != view_hash
+    ):
+        raise GatewayError(
+            Code.APPROVAL_BINDING_MISMATCH, 409, "existing approval binding fields mismatch"
+        )
+    binding = ApprovalBinding(
+        customer_id=db_plan["customer_id"],
+        sid=db_plan["sid"],
+        plan_id=db_plan["id"],
+        plan_hash=db_plan["plan_hash"],
+        evaluation_id=db_eval["id"],
+        versions=db_eval["versions"],
+        clock_version=db_eval["clock_version"],
+        policy_version=db_eval["policy_version"],
+        profile=cfg.profile,
+        view_hash=existing["view_hash"],
+        expires_at_wall=existing["expires_at_wall"],
     )
+    if not verify_binding(cfg.key, binding, existing["binding_mac"]):
+        raise GatewayError(
+            Code.APPROVAL_BINDING_MISMATCH, 409, "existing approval MAC does not verify"
+        )
+    return existing["id"]
+
+
+async def _has_claimed(conn: AsyncConnection, plan_id: str) -> bool:
+    """True when the plan still holds an unconsumed CLAIMED authorization claim.
+
+    A CLAIMED claim is persistent proof that execution already consumed the
+    scope; normal approval creation must not re-approve or supersede it. Only
+    CLAIMED blocks — CONSUMED (already archived) does not.
+    """
+    claimed = await conn.scalar(
+        select(t.authorization_claims.c.scope_id)
+        .where(
+            t.authorization_claims.c.plan_id == plan_id,
+            t.authorization_claims.c.status == "CLAIMED",
+        )
+        .limit(1)
+        .with_for_update()
+    )
+    return claimed is not None
 
 
 async def _supersede_session(conn: AsyncConnection, *, sid: str, except_evaluation_id: str) -> None:
@@ -232,6 +285,14 @@ async def _supersede_session(conn: AsyncConnection, *, sid: str, except_evaluati
                 Code.STATE_CHANGED,
                 409,
                 "another plan in this session has a live execution job",
+            )
+        # A persistent CLAIMED claim (even without a job, e.g. legacy/malformed
+        # state) is proof execution consumed the scope: never supersede it.
+        if await _has_claimed(conn, row["plan_id"]):
+            raise GatewayError(
+                Code.STATE_CHANGED,
+                409,
+                "another plan in this session has unconsumed authorization claims",
             )
     for row in candidates:
         await state.transition(
@@ -282,7 +343,19 @@ async def create_for_evaluation(
     now = _wall(cfg)
     expires = _expiry(view, now)
 
-    # Authoritative locked rows: plan -> evaluation -> session -> live job.
+    # Authoritative locked rows. Session is locked first so the order matches
+    # W1 (session -> plan -> job -> approval); locking plan first would form an
+    # ABBA with a W1 cancel_session that already holds the session row lock.
+    session = (
+        (await conn.execute(select(t.sessions).where(t.sessions.c.id == sid).with_for_update()))
+        .mappings()
+        .one_or_none()
+    )
+    if session is None or session["customer_id"] != customer_id:
+        raise GatewayError(Code.OWNERSHIP_MISMATCH, 404)
+    if session["revoked_at_wall"] is not None:
+        raise GatewayError(Code.AUTHORIZATION_CANCELLED, 409, "session has been revoked")
+
     db_plan = (
         (await conn.execute(select(t.plans).where(t.plans.c.id == plan_id).with_for_update()))
         .mappings()
@@ -324,19 +397,8 @@ async def create_for_evaluation(
     if db_eval["revision"] != latest_revision:
         raise GatewayError(Code.STATE_CHANGED, 409, "evaluation is not the latest revision")
 
-    session = (
-        (await conn.execute(select(t.sessions).where(t.sessions.c.id == sid).with_for_update()))
-        .mappings()
-        .one_or_none()
-    )
-    if session is None or session["customer_id"] != customer_id:
-        raise GatewayError(Code.OWNERSHIP_MISMATCH, 404)
-    if session["revoked_at_wall"] is not None:
-        raise GatewayError(Code.AUTHORIZATION_CANCELLED, 409, "session has been revoked")
-
     # A live execution job means the plan is past the approval boundary; a new
-    # approval must go through the ADR-008 barrier, not this path. Claims are
-    # never released here.
+    # approval must go through the ADR-008 barrier, not this path.
     job_status = await conn.scalar(
         select(t.execution_jobs.c.status)
         .where(t.execution_jobs.c.plan_id == plan_id)
@@ -344,8 +406,14 @@ async def create_for_evaluation(
     )
     if job_status is not None and job_status in {s.value for s in state.LIVE_JOB_STATUSES}:
         raise GatewayError(Code.STATE_CHANGED, 409, "a live execution job exists for this plan")
+    # An unconsumed CLAIMED claim on this plan is proof the scope was already
+    # consumed; normal creation (and idempotent return) must not proceed.
+    if await _has_claimed(conn, plan_id):
+        raise GatewayError(
+            Code.STATE_CHANGED, 409, "unconsumed authorization claims exist for this plan"
+        )
 
-    # Idempotency: re-check only after the serializing plan/session locks so two
+    # Idempotency: re-check only after the serializing session/plan locks so two
     # concurrent creators of the same evaluation return the same ID (P1-2).
     existing = (
         (
@@ -362,7 +430,14 @@ async def create_for_evaluation(
         .one_or_none()
     )
     if existing is not None:
-        return _existing_approval_id(existing, view_hash=view.view_hash, now=now)
+        return _existing_approval_id(
+            existing,
+            cfg=cfg,
+            db_plan=db_plan,
+            db_eval=db_eval,
+            view_hash=view.view_hash,
+            now=now,
+        )
 
     await _supersede_session(conn, sid=sid, except_evaluation_id=evaluation_id)
 

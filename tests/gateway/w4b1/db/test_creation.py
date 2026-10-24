@@ -781,3 +781,207 @@ def test_live_job_of_other_plan_blocks_supersede(gateway_db, approval_config):
         await db.dispose()
 
     asyncio.run(run())
+
+
+def test_orphan_claim_without_job_blocks_supersede(gateway_db, approval_config):
+    configure_approval()
+
+    async def run():
+        db = _runtime(gateway_db)
+        async with db.begin() as conn:
+            await _seed(conn, plan_id="pln_a")
+            await _seed_evaluation(conn, plan_id="pln_a", evaluation_id="evl_a")
+            await _insert_approval(
+                conn,
+                approval_id="apv_a",
+                plan_id="pln_a",
+                evaluation_id="evl_a",
+                status="CONFIRMED",
+            )
+            # Legacy/malformed persistent state: CLAIMED claim without any job.
+            await conn.execute(
+                t.authorization_claims.insert().values(
+                    scope_id="utt_1", plan_id="pln_a", status="CLAIMED"
+                )
+            )
+            await _insert_plan(conn, plan_id="pln_b", sid="ses_1")
+            await _seed_evaluation(conn, plan_id="pln_b", evaluation_id="evl_b")
+            plan_b, evaluation_b = await _rows(conn, plan_id="pln_b", evaluation_id="evl_b")
+            with pytest.raises(GatewayError) as exc:
+                await approval_service.create_for_evaluation(
+                    conn,
+                    plan=plan_b,
+                    evaluation=evaluation_b,
+                    view=_view(plan_id="pln_b", evaluation_id="evl_b"),
+                )
+            assert exc.value.code is Code.STATE_CHANGED
+            assert exc.value.status == 409
+        async with db.connect() as conn:
+            approval_a = (
+                (await conn.execute(select(t.approvals).where(t.approvals.c.id == "apv_a")))
+                .mappings()
+                .one()
+            )
+            claim = (
+                (
+                    await conn.execute(
+                        select(t.authorization_claims).where(
+                            t.authorization_claims.c.plan_id == "pln_a"
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            new_approvals = (
+                (await conn.execute(select(t.approvals).where(t.approvals.c.plan_id == "pln_b")))
+                .mappings()
+                .all()
+            )
+        assert approval_a["status"] == "CONFIRMED"
+        assert claim["status"] == "CLAIMED"
+        assert new_approvals == []
+        await db.dispose()
+
+    asyncio.run(run())
+
+
+def test_consumed_claim_does_not_block_supersede(gateway_db, approval_config):
+    configure_approval()
+
+    async def run():
+        db = _runtime(gateway_db)
+        async with db.begin() as conn:
+            await _seed(conn, plan_id="pln_a")
+            await _seed_evaluation(conn, plan_id="pln_a", evaluation_id="evl_a")
+            await _insert_approval(
+                conn,
+                approval_id="apv_a",
+                plan_id="pln_a",
+                evaluation_id="evl_a",
+                status="CONFIRMED",
+            )
+            await conn.execute(
+                t.authorization_claims.insert().values(
+                    scope_id="utt_1", plan_id="pln_a", status="CONSUMED"
+                )
+            )
+            await _insert_plan(conn, plan_id="pln_b", sid="ses_1")
+            await _seed_evaluation(conn, plan_id="pln_b", evaluation_id="evl_b")
+            plan_b, evaluation_b = await _rows(conn, plan_id="pln_b", evaluation_id="evl_b")
+            second = await approval_service.create_for_evaluation(
+                conn,
+                plan=plan_b,
+                evaluation=evaluation_b,
+                view=_view(plan_id="pln_b", evaluation_id="evl_b"),
+            )
+        async with db.connect() as conn:
+            approval_a = (
+                (await conn.execute(select(t.approvals).where(t.approvals.c.id == "apv_a")))
+                .mappings()
+                .one()
+            )
+        assert approval_a["status"] == "SUPERSEDED"
+        assert second.startswith("apv_")
+        await db.dispose()
+
+    asyncio.run(run())
+
+
+def test_existing_approval_with_tampered_mac_rejected(gateway_db, approval_config):
+    configure_approval()
+
+    async def run():
+        db = _runtime(gateway_db)
+        view = _view()
+        async with db.begin() as conn:
+            await _seed(conn)
+            await _seed_evaluation(conn)
+            plan, evaluation = await _rows(conn)
+            approval_id = await approval_service.create_for_evaluation(
+                conn, plan=plan, evaluation=evaluation, view=view
+            )
+            await conn.execute(
+                t.approvals.update()
+                .where(t.approvals.c.id == approval_id)
+                .values(binding_mac="0" * 64)
+            )
+            with pytest.raises(GatewayError) as exc:
+                await approval_service.create_for_evaluation(
+                    conn, plan=plan, evaluation=evaluation, view=view
+                )
+            assert exc.value.code is Code.APPROVAL_BINDING_MISMATCH
+            assert exc.value.status == 409
+        await db.dispose()
+
+    asyncio.run(run())
+
+
+def test_existing_approval_binding_field_mismatch_rejected(gateway_db, approval_config):
+    configure_approval()
+
+    async def run():
+        db = _runtime(gateway_db)
+        view = _view()
+        async with db.begin() as conn:
+            await _seed(conn)
+            await _seed_evaluation(conn)
+            plan, evaluation = await _rows(conn)
+            approval_id = await approval_service.create_for_evaluation(
+                conn, plan=plan, evaluation=evaluation, view=view
+            )
+            await conn.execute(
+                t.approvals.update()
+                .where(t.approvals.c.id == approval_id)
+                .values(plan_hash="f" * 64)
+            )
+            with pytest.raises(GatewayError) as exc:
+                await approval_service.create_for_evaluation(
+                    conn, plan=plan, evaluation=evaluation, view=view
+                )
+            assert exc.value.code is Code.APPROVAL_BINDING_MISMATCH
+            assert exc.value.status == 409
+        await db.dispose()
+
+    asyncio.run(run())
+
+
+def test_create_lock_order_is_session_first(gateway_db, approval_config):
+    configure_approval()
+
+    async def run():
+        db = _runtime(gateway_db)
+        async with db.begin() as conn:
+            await _seed(conn)
+            await _seed_evaluation(conn)
+        view = _view()
+
+        async def create():
+            async with db.begin() as conn:
+                plan, evaluation = await _rows(conn)
+                return await approval_service.create_for_evaluation(
+                    conn, plan=plan, evaluation=evaluation, view=view
+                )
+
+        # T1 (W1-style caller) holds the session row lock first, then locks the
+        # plan row as a cancel_session does. create must hold no plan lock while
+        # blocked on session, otherwise this is a deterministic ABBA deadlock.
+        conn1 = await db.connect()
+        tx1 = await conn1.begin()
+        await conn1.execute(
+            select(t.sessions.c.id).where(t.sessions.c.id == "ses_1").with_for_update()
+        )
+
+        task2 = asyncio.create_task(create())
+        await asyncio.sleep(0.2)
+        assert not task2.done()
+
+        await conn1.execute(select(t.plans.c.id).where(t.plans.c.id == "pln_1").with_for_update())
+        await tx1.commit()
+
+        approval_id = await asyncio.wait_for(task2, timeout=10)
+        assert approval_id.startswith("apv_")
+        await conn1.close()
+        await db.dispose()
+
+    asyncio.run(run())

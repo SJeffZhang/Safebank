@@ -76,3 +76,31 @@
 | `make contracts-check` | PASS |
 
 冻结区（state/locks/tables/runtime/config/schema/contracts/bankcore/L3/PRD/AGENTS）未改；仍只临时 tmpfs PG，未长期卷/密钥/全栈/push/PR/merge/派 agent。
+
+## 修复轮 2（协调者新 tmpfs 亲证三项残余，不凭 r1 APPROVE 跳过）
+
+逐条红→绿。
+
+- **① CLAIMED 无 job 的孤儿/畸形持久状态**：`_supersede_session` 除 live job 外，对每条候选审批的 plan 再检查未消费 `CLAIMED` claim（`_has_claimed`），命中即整体 409、不改任何旧审批/claim/新 view；本 plan 自身若有未消费 claim 同样拒绝普通创建（job 之外独立检查）。只 CLAIMED 阻断，CONSUMED 不误伤。红绿：`test_orphan_claim_without_job_blocks_supersede`（旧 CONFIRMED+CLAIMED 无 job 全原样、新 plan 零新行）、`test_consumed_claim_does_not_block_supersede`。
+- **② existing 幂等必须重算并 constant-time 校验 MAC**：`_existing_approval_id` 现用锁定权威 plan/eval/existing 行重建 `ApprovalBinding`（customer/sid/plan_hash/eval/view_hash/期限 + 配置 profile/key），先逐字段归属核对再 `verify_binding` 重算 MAC；坏 MAC/错归属/篡改绑定字段一律 `APPROVAL_BINDING_MISMATCH 409`，合法幂等仍同 ID、不延时、不改 view。红绿：`test_existing_approval_with_tampered_mac_rejected`、`test_existing_approval_binding_field_mismatch_rejected`。
+- **③ 锁序统一为 session→plan→eval/job/claim/approval**：`create_for_evaluation` 改为先锁 session（与 W1 的 session→plan 一致），再 plan→evaluation→job→claim→existing→supersede，消除与 W1 cancel_session 的 plan↔session ABBA；claim 锁在 job 之后（与执行路径 plan→job→claim→approval 一致）。未改 W1/locks/state，未吞 40P01。红绿：`test_create_lock_order_is_session_first`（T1 持 session 再锁 plan、T2 create 阻塞于 session 且不持 plan 锁，确定性无死锁）。
+
+原 P1×3/P2×4/未确认与 probe import 全部回归保持，未倒退。
+
+### 修复轮 2 退出命令（本机实际运行，全绿）
+
+| 命令 | 结果 |
+|---|---|
+| `make lint` | All checks passed / 278 formatted |
+| `make test-gateway` | 1962 passed, 501 skipped |
+| `make test-gateway-db` | 17 passed |
+| `make test` | 2274 passed, 561 skipped |
+| `make test-w4b1`（真实临时 PG） | 57 passed 零 skip/xfail |
+| `make test-w3a` / `test-w2` / `test-obligations` | 45 / 246 / 30 passed |
+| `make contracts-check` | PASS |
+| `make test-w1`（额外组合回归） | 1688 passed |
+
+## 边界 / 未闭（如实列出）
+
+- 本库合同仍只声明「caller 持短事务」；G3/G4 入口是否持有同客户 `customer_lock` 属调用方前置，本库不验证/不声明，仅在 owner 范围内把锁序统一为 session 优先。若未来 W4c 需要跨表共享锁序，仍按 session→plan→job→claim→approval 延展。
+- 生产 runtime 接线、G6/G7/G9/G10/G17/OTP → **W4b2**；G8 执行 → **W4c**；完整 G4 由 **W3b** 零替身联调；`submit_risk_assessment` 面板留 **P4**。不自称 P2 完成。
