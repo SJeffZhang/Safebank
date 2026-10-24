@@ -305,14 +305,15 @@ async def confirm_approval(
         if risk == "RED":
             from sqlalchemy import delete as sqla_delete
 
-            # Read challenge (no FOR UPDATE — the approval lock provides
-            # serialisation against concurrent confirm requests).
+            # Lock the challenge row to satisfy R5: the approval lock serialises
+            # concurrent confirm requests, but FOR UPDATE here prevents lock-order
+            # inversion if a future code path locks otp_challenges first.
             challenge = (
                 (
                     await conn.execute(
-                        select(t.otp_challenges).where(
-                            t.otp_challenges.c.approval_id == approval_id
-                        )
+                        select(t.otp_challenges)
+                        .where(t.otp_challenges.c.approval_id == approval_id)
+                        .with_for_update()
                     )
                 )
                 .mappings()
@@ -465,7 +466,7 @@ async def confirm_approval(
     # Replayed error response: convert cached dict to proper error.
     if status >= 400:
         raise GatewayError(
-            Code(response.get("code", "UNKNOWN")),
+            getattr(Code, response.get("code", ""), Code.CONTRACT_INVALID),
             status,
             message=response.get("message", ""),
             details=response.get("details"),
@@ -797,6 +798,7 @@ async def otp_send(
             "view_hash": body.view_hash,
             "expires_at_wall": expiry.isoformat(),
         }
+        _result["plan_id"] = approval["plan_id"]
         return 200, response.model_dump(mode="json")
 
     async with db.begin() as conn:
@@ -817,7 +819,7 @@ async def otp_send(
             event_type="APPROVAL_OTP_SENT",
             payload=_result["payload"],
             event_id=new_id("evt"),
-            plan_id=approval_id,
+            plan_id=_result["plan_id"],
             now_wall=now,
         )
 

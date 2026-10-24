@@ -370,6 +370,9 @@ def test_g10_within_30s_interval_returns_429(app_config):
             OTP_URL, json=_body(request_id="req_otp_b"), headers=app.auth_headers()
         )
         assert r2.status_code == 429
+        data = r2.json()
+        rr = data.get("error", {}).get("details", {}).get("retry_after_seconds")
+        assert isinstance(rr, int) and 0 < rr <= 30, f"unexpected retry_after_seconds: {rr}"
 
         await db.dispose()
 
@@ -467,12 +470,15 @@ def test_g10_audit_event(app_config):
         assert len(events) == 1
         evt = events[0]
         assert evt["customer_id"] == "cus_zs"
+        assert evt["plan_id"] == "pln_1", f"plan_id should be pln_1, got {evt['plan_id']}"
         payload = evt["payload"]
         assert payload["approval_id"] == "apv_1"
         assert payload["view_hash"] == VIEW_HASH
         # Code or ciphertext must NOT appear.
         payload_str = str(payload)
         assert "code" not in payload_str.lower()
+        assert "ciphertext" not in payload_str.lower()
+        assert "digest" not in payload_str.lower()
 
         await db.dispose()
 
