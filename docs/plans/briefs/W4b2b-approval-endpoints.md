@@ -42,7 +42,7 @@
 ```python
 async def approval_from_request(request) -> _ApprovalService:
     """从 request.app.state 取密钥快照，调 configure() 并返回可调用的服务引用。
-    
+
     因两 app 共享同一 GatewayRuntime、同一密钥对象，configure() 可安全调用；
     幂等重复调用不改变配置。"""
 ```
