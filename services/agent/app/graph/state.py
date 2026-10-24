@@ -124,6 +124,15 @@ class AgentState(TypedDict, total=False):
     approval_id: str | None
     execution: ExecutionResult | None
     reply_draft: str | None
+    # ── C1c2 gateway fields (PRD §6.1) ──
+    parse_status: str | None  # G20 parse_status
+    echoes_untrusted: bool  # G20 echoes_untrusted flag
+    parent_ids: tuple[str, ...]  # G20 parent utterance ids
+    clarification_id: str | None  # G20 linked clarification id
+    clarification: dict | None  # G21 clarification payload
+    hints: list[dict]  # G20 ingested hint/action data (kind/id/scope)
+    route_error: dict | None  # Safe error {status, code, phase, category}
+    evaluate_reentry_count: int  # STATE_CHANGED re-entry counter (max 1)
 
 
 class AgentInput(TypedDict):
