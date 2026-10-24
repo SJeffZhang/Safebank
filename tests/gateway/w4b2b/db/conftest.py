@@ -132,12 +132,21 @@ class AppConfig:
     public_pem: bytes
 
 
-async def build_app(config: AppConfig, *, truncate: bool = True) -> TestApp:
+async def build_app(
+    config: AppConfig,
+    *,
+    truncate: bool = True,
+    approval_hmac_key: bytes | None = None,
+    otp_hmac_key: bytes | None = None,
+) -> TestApp:
     """Build a FastAPI test app.
 
     When *truncate* is True (default), truncates all gateway tables so each
     test starts with a clean slate.  Tests seed their own data via
     ``_seed_full`` or the individual helpers.
+
+    *approval_hmac_key* and *otp_hmac_key* override the default test
+    constants, allowing multi-instance D0 tests with genuinely different keys.
 
     MUST be called inside ``asyncio.run()`` so the DB engine and the ASGI
     request processing share the same event loop.
@@ -154,6 +163,9 @@ async def build_app(config: AppConfig, *, truncate: bool = True) -> TestApp:
     public_path.write_bytes(public_pem)
     os.chmod(private_path, 0o600)
     os.chmod(public_path, 0o644)
+
+    _ak = (approval_hmac_key or HMAC_KEY).decode()
+    _ok = (otp_hmac_key or OTP_KEY).decode()
 
     settings = Settings(
         demo_mode=False,
@@ -175,8 +187,8 @@ async def build_app(config: AppConfig, *, truncate: bool = True) -> TestApp:
         jwt_private_key_path=str(private_path),
         jwt_public_key_path=str(public_path),
         demo_pins_file="/nonexistent/test-pins",
-        approval_hmac_key=HMAC_KEY.decode(),
-        otp_hmac_key=OTP_KEY.decode(),
+        approval_hmac_key=_ak,
+        otp_hmac_key=_ok,
     )
     settings.validate()
 
@@ -407,6 +419,7 @@ def _compute_binding(
     profile="B2",
     view_hash,
     expires_at_wall,
+    hmac_key: bytes = HMAC_KEY,
 ) -> str:
     """Compute a valid binding_mac for test seed data."""
     binding = ApprovalBinding(
@@ -422,7 +435,7 @@ def _compute_binding(
         view_hash=view_hash,
         expires_at_wall=expires_at_wall,
     )
-    return binding_mac(HMAC_KEY, binding)
+    return binding_mac(hmac_key, binding)
 
 
 async def _seed_approval(
@@ -436,6 +449,7 @@ async def _seed_approval(
     status="PENDING",
     view_hash="b" * 64,
     expires_at_wall=None,
+    hmac_key: bytes = HMAC_KEY,
 ):
     """Seed an approvals row.
 
@@ -453,6 +467,7 @@ async def _seed_approval(
         sid=sid,
         view_hash=view_hash,
         expires_at_wall=expiry,
+        hmac_key=hmac_key,
     )
     await conn.execute(
         insert(t.approvals)
@@ -504,6 +519,7 @@ async def _seed_full(
     view_json=None,
     expires_at_wall=None,
     jti="test-jti",
+    hmac_key: bytes = HMAC_KEY,
 ):
     """Seed a complete auth → session → plan → evaluation → approval chain."""
     _view = view_json if view_json is not None else {"plan_id": plan_id, "risk_ack_required": False}
@@ -535,6 +551,7 @@ async def _seed_full(
         status=approval_status,
         view_hash=view_hash,
         expires_at_wall=expires_at_wall,
+        hmac_key=hmac_key,
     )
 
 
