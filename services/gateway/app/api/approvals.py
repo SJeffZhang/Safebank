@@ -7,22 +7,24 @@ Instance keys come from ``request.app.state`` — no global ``configure()``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime
-from enum import StrEnum
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Request
-from pydantic import BaseModel, Field, ValidationError
+from fastapi import APIRouter, Query, Request
+from pydantic import BaseModel
 from safebank_contracts.codes import Code
-from sqlalchemy import func, select, union_all
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .. import state
 from .. import tables as t
 from ..approval.adapter import (
     approval_hmac_key as _adapter_key,
+)
+from ..approval.adapter import (
     profile as _adapter_profile,
+)
+from ..approval.adapter import (
     wall_now as _adapter_wall,
 )
 from ..approval.service import (
@@ -106,7 +108,6 @@ async def _validate_confirmable(
     Returns (plan_row, evaluation_row, binding). Raises GatewayError on any
     validation failure.
     """
-    approval_id = approval["id"]
     plan_id = approval["plan_id"]
     customer_id = approval["customer_id"]
 
@@ -130,7 +131,10 @@ async def _validate_confirmable(
         (
             await conn.execute(
                 select(t.evaluations)
-                .where(t.evaluations.c.id == approval["evaluation_id"], t.evaluations.c.plan_id == plan_id)
+                .where(
+                    t.evaluations.c.id == approval["evaluation_id"],
+                    t.evaluations.c.plan_id == plan_id,
+                )
                 .with_for_update()
             )
         )
@@ -210,11 +214,14 @@ async def get_approval_panel(approval_id: str, request: Request):
             raise GatewayError(Code.OTP_LOCKED, 409)
 
         evaluation = (
-            (await conn.execute(
-                select(t.evaluations.c.view_json)
-                .where(t.evaluations.c.id == approval["evaluation_id"],
-                       t.evaluations.c.plan_id == approval["plan_id"])
-            ))
+            (
+                await conn.execute(
+                    select(t.evaluations.c.view_json).where(
+                        t.evaluations.c.id == approval["evaluation_id"],
+                        t.evaluations.c.plan_id == approval["plan_id"],
+                    )
+                )
+            )
             .mappings()
             .one_or_none()
         )

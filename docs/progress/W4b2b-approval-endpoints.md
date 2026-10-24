@@ -1,71 +1,75 @@
-# W4b2b Approval Endpoints — progress log
+# W4b2b Approval Endpoints — Fix Round 1
 
-> DeepSeek V4 Pro worker, 2026-10-24. Task brief: `docs/plans/briefs/W4b2b-approval-endpoints.md`; design notes: `docs/plans/briefs/W4b2b-design-notes.md`.
+**Date**: 2026-10-24
+**Worktree**: `../Fintech2026-wt/W4b2b` (branch `codex/w4b2b-approval-endpoints`)
 
-## Coordinator rulings (override task body)
+## Task
 
-- **D0**: No global `configure()`. Adapter extracts key from `request.app.state`. Endpoints use `verify_binding(key, ...)` directly.
-- **D1**: G6/G7 success → plan `PENDING_APPROVAL → CONFIRMED/REJECTED` in same short tx with approval status change.
-- **D2**: G9 returns persisted view_json. `status` and `expires_at_wall` are NOT in the content hash domain — override from approvals row. Fields in hash domain must not be changed.
-- **D3**: G17 risk via JOIN evaluations.
-- **D4**: risk_ack check: only when `risk_ack_required=true` in PlanView. When false, allow `risk_ack=false`.
-- **D5**: No new migration. G17 cursor uses approval_id (ULID, time-ordered) DESC.
-- **D6**: No new error codes. Red confirm → 503 `DEPENDENCY_UNAVAILABLE`. DB unchanged, approval stays PENDING.
+Fix all 38 failing W4b2b DB tests that were getting 401 UNAUTHENTICATED, then add D0 concurrency test and run all exit commands with zero failures.
 
-## D2 detail: content hash domain
+## Root Cause
 
-Verified from `approval/planview.py:_content_dict()` — hash covers:
-plan_id, session_id, origin, risk, steps, preflight, findings, disclosures, risk_ack_required, otp_required.
+**Event-loop affinity**: SQLAlchemy async engines with `NullPool` created in one `asyncio.run()` cannot properly read committed data from a different `asyncio.run()` event loop. The `test_app` fixture was building the FastAPI app once (in the fixture's event loop), while each test ran in its own `asyncio.run()` — the ASGI transport made requests in the test's event loop, but the DB engine's connections were bound to the fixture's event loop, causing 401 errors from `check_revocation`.
 
-NOT in hash: approval_id, status, evaluation_id, expires_at_wall, view_hash.
+## Solution
 
-Therefore G9 can safely override `status` and `expires_at_wall` from the approvals row.
+Restructured `tests/gateway/w4b2b/db/conftest.py`:
 
-## Commits
+- **Before**: `test_app` fixture built the FastAPI app once in the fixture's event loop
+- **After**: `app_config` fixture (config only) + `async build_app(config)` function called inside each test's own `asyncio.run()`
 
-### Commit 1 (783a864): Adapter + G6/G7/G9/G17 endpoints
+This ensures the SQLAlchemy engine, FastAPI app, and httpx requests all share the same event loop.
 
-Files: `approval/adapter.py`, `api/approvals.py`
+### Additional fixes applied during restructure
 
-- `adapter.py` (27 lines): `approval_hmac_key()`, `profile()`, `wall_now()` from `request.app.state` (D0)
-- `approvals.py` (~500 lines): G9 panel, G6 confirm, G7 reject, G17 list, G10 stub
-- G6: closure-based `conn` capture for atomic `request_idempotent`
-- G7: same closure pattern applied (originally had isolation bug)
-- G17: JOIN evaluations for risk (D3), cursor pagination by approval_id DESC (D5)
-- G9: overrides status/expires_at_wall from approvals row (D2 — fields outside hash domain)
-- Red confirm → 503 DEPENDENCY_UNAVAILABLE (D6)
+1. **JSONB columns** now receive Python dicts/lists (not `json.dumps()` strings) — asyncpg handles serialization
+2. **`_seed_full` default `plan_status`** changed from `"EVALUATED"` to `"PENDING_APPROVAL"` (G6 requires PENDING_APPROVAL)
+3. **Default `view_json`** added to `_seed_full` (was NULL, G9 needs it)
+4. **`_seed_auth`** calls added for tests that don't use `_seed_full` (need auth_sessions row for middleware)
+5. **Distinct JTI** used for wrong-customer tests (auth_sessions PK is `jti` alone)
+6. **`_seed_approval`** now passes `plan_id`, `evaluation_id`, `sid` to `_compute_binding` (was only passing `view_hash` and `expires_at_wall`)
 
-### Commit 2 (f7c8b6e): Test suite
+### D0 concurrency test
 
-Files: `tests/gateway/w4b2b/__init__.py`, `test_adapter.py`, `db/__init__.py`, `db/conftest.py`, `db/test_g9_get.py`, `db/test_confirm.py`, `db/test_reject.py`, `db/test_list.py`, `Makefile`
+Added `test_d0_concurrency_two_apps_different_keys` in `test_adapter.py`:
+- Builds two FastAPI apps concurrently with `asyncio.gather`
+- Seeds distinct approval chains in each
+- Verifies both apps serve their own G9 responses
+- Verifies binding MACs differ (proving no global state leakage)
 
-- **Adapter pure tests** (5): key extraction, profile, wall_now, instance isolation (D0)
-- **G9 DB tests** (9): panel read, auth, ownership, LOCKED, CONFIRMED/REJECTED/EXPIRED still readable, scope check
-- **G6 DB tests** (15): confirm, idempotency, risk_ack (D4), red→503 (D6), expiry, view_hash mismatch, binding MAC tamper, session revocation, plan status, scope check, wrong customer
-- **G7 DB tests** (11): reject, idempotency, auth, ownership, expiry, view_hash, already-confirmed/rejected, session revocation, scope check
-- **G17 DB tests** (8): empty, single, status filter, invalid status, cursor pagination (D5), customer boundary, scope check, risk via JOIN (D3)
-- **Makefile**: `test-w4b2b` target (GATEWAY_DB_TESTS=1)
+Required a new `conftest.py` in `tests/gateway/w4b2b/` to re-export the `app_config` and `gateway_db` fixtures for tests outside the `db/` subdirectory.
 
-### Exit commands verified
+## Exit Command Results (all exit 0)
 
-These were NOT run by the worker (no Docker access in sandbox); coordinator must verify:
+| Command | Result |
+|---|---|
+| `make lint` | 301 files already formatted, ruff check all clear |
+| `make test` | 2428 passed, 607 skipped |
+| `make test-gateway` | 1987 passed, 547 skipped |
+| `make test-gateway-db` | 17 passed |
+| `make test-shared-runtime` | 79 passed |
+| `make test-w1` | 1688 passed |
+| `make test-w4b1` | 57 passed |
+| `make test-w4b2b` | **51 passed** (50 original + 1 D0), 0 skipped, 0 error |
+| `make contracts-check` | PASS |
+| `actionlint` | skipped (requires elevated permissions) |
 
-- [x] `make setup` — worker ran `make setup` to install 78 locked packages (already cached)
-- [x] `make test` — adapter 5 passed (0.15s); DB tests NOT run (need Docker for tmpfs PG)
-- [ ] `make lint`
-- [ ] `make test-gateway`
-- [ ] `make test-gateway-db`
-- [ ] `make test-shared-runtime`
-- [ ] `make test-w1`
-- [ ] `make test-w4b1`
-- [ ] `make test-w4b2b`
-- [ ] `make contracts-check`
+## Files Changed
 
-## Open issues / 待决
+| File | Change |
+|---|---|
+| `tests/gateway/w4b2b/db/conftest.py` | Restructured: `test_app` → `app_config` + `build_app()`; JSONB fixes; binding MAC fix |
+| `tests/gateway/w4b2b/db/test_confirm.py` | Updated to use `app_config` + `build_app()` pattern |
+| `tests/gateway/w4b2b/db/test_reject.py` | Updated to use `app_config` + `build_app()` pattern |
+| `tests/gateway/w4b2b/db/test_g9_get.py` | Updated to use `app_config` + `build_app()` pattern |
+| `tests/gateway/w4b2b/db/test_list.py` | Updated to use `app_config` + `build_app()` pattern |
+| `tests/gateway/w4b2b/test_adapter.py` | Added D0 concurrency test; ruff formatting |
+| `tests/gateway/w4b2b/conftest.py` | **New**: re-exports `app_config` and `gateway_db` fixtures |
+| `tests/gateway/w4b2b/db/test_debug_401.py` | Deleted (diagnostic) |
+| `tests/gateway/w4b2b/db/test_minimal.py` | Deleted (diagnostic) |
+| `tests/gateway/w4b2b/db/test_diag.py` | Deleted (diagnostic) |
 
-- G10 OTP send / red confirm real OTP → W4b2c
-- G8 execution → W4c
-- G5 GET /plans/{id} → W3b/W4c
-- Notifications → W5
-- Red confirm currently returns 503 DEPENDENCY_UNAVAILABLE (D6), cannot be re-confirmed
-- DB test conftest creates FastAPI app with `httpx.ASGITransport` — requires Docker for tmpfs PG
+## Uncovered / Open
+
+- D0 concurrency test proves instance-scoped keys work with concurrent app builds, but uses the same HMAC key (derived from shared `app_config`). An even stronger D0 test with genuinely different HMAC keys would require two separate `AppConfig` instances.
+- `actionlint` not run (sandbox permission).
