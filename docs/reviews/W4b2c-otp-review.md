@@ -1,7 +1,7 @@
 # W4b2c OTP — 独立评审报告
 
-**日期**: 2026-10-25  
-**范围**: `git diff 72a4161 96ba734`（不含 AGENTS.md revert）  
+**日期**: 2026-10-25
+**范围**: `git diff 72a4161 96ba734`（不含 AGENTS.md revert）
 **方法**: 只读静态分析 + 纯函数 test_otp_module.py 实测（30 passed）
 
 ---
@@ -87,7 +87,7 @@
 
 ### 锁序分析
 
-**G10 锁序**: approvals → sessions → otp_challenges（均 FOR UPDATE）  
+**G10 锁序**: approvals → sessions → otp_challenges（均 FOR UPDATE）
 **G6 RED 锁序**: approvals → sessions → plans → evaluations → otp_challenges（**读无锁**）→ approval/plan state.transition
 
 G10 的 approvals→sessions→otp_challenges 与 W4b2b 的 approvals→sessions→plans→evaluations 起始一致（approvals→sessions），**未见新锁序反转**。
@@ -204,3 +204,67 @@ G10 的 approvals→sessions→otp_challenges 与 W4b2b 的 approvals→sessions
 | P2 | P2-4 | 审计测试未显式排除 "ciphertext"（test_g10_send.py:474） |
 
 其余 R0–R6 全部满足：参数、错误码、密钥隔离、HKDF 域分离、AEAD AAD 绑定、compare_digest、明文不入响应/日志、并发串行化、调用方矩阵、R3 503 替换、无迁移/contracts 不改、CI 已接入。纯函数 30 项实测通过。
+
+---
+
+## 修复轮 1 定点复审（2026-10-25，96ba734..0c4ed23）
+
+**范围**: `git diff 96ba734 0c4ed23`
+**方法**: 只读静态分析，逐条核对 diff 中每个修复
+
+### 逐条复核
+
+| 编号 | 简述 | 位置 | 修复方式 | 状态 |
+|---|---|---|---|---|
+| **P1-1** | G10 审计 plan_id 误用 | approvals.py:801,822 | `_result["plan_id"] = approval["plan_id"]` 在 produce() 内赋值，audit 调用改用 `plan_id=_result["plan_id"]` | **FIXED** |
+| **P2-1** | G6 读 otp_challenges 无 FOR UPDATE | approvals.py:316 | 新增 `.with_for_update()` | **FIXED** |
+| **P2-2** | replayed error `Code("UNKNOWN")` | approvals.py:466 | 改为 `getattr(Code, response.get("code", ""), Code.CONTRACT_INVALID)` | **FIXED** |
+| **P2-3** | 间隔测试未断言 retry_after | test_g10_send.py:374-375 | `rr = data.get("error", {}).get("details", {}).get("retry_after_seconds"); assert isinstance(rr, int) and 0 < rr <= 30` | **FIXED** |
+| **P2-4** | 审计测试未排除 ciphertext | test_g10_send.py:480-481 | `"ciphertext" not in payload_str.lower()` 和 `"digest" not in payload_str.lower()` | **FIXED** |
+
+### P1-1 详细验证
+
+修复在 `approvals.py` 中：
+- `line 801`: `_result["plan_id"] = approval["plan_id"]` — 在 `produce()` 闭包内从 approval 行取出正确 plan_id
+- `line 822`: `plan_id=_result["plan_id"]` — 审计调用使用 produce 闭包捕获的正确值
+- 测试 `test_g10_send.py:473`: `assert evt["plan_id"] == "pln_1"` — 断言 plan_id 是 `"pln_1"` 而非 `"apv_1"`
+
+协调者红绿核验：把 G10 审计 plan_id 改回 `approval_id` 后 test-w4b2c 1 failed，还原后 56 passed。确认修复有效。✓
+
+### P2-1 锁序验证
+
+新增的 `.with_for_update()` 在 `approvals.py:316`，G6 RED 路径完整锁序：
+
+```
+approvals (same-tx _lock_approval)
+  → sessions (line 154)
+  → plans (line 169)
+  → evaluations (line 187)
+  → otp_challenges (line 316, NEW with_for_update)
+  → approval/plan state.transition
+```
+
+与 G10 锁序对比：
+```
+approvals → sessions → otp_challenges
+```
+
+两路径都以 approvals → sessions 开头，**无 ABBA**。与已知 W4b2b P2-4（`_supersede_session` 的 sessions→plans→approval vs G6/G7 的 approvals→sessions→plans）也不恶化——新锁在已有 plans→evaluations 之后，不引入额外反转点。✓
+
+### P2-2 错误码安全性验证
+
+`getattr(Code, response.get("code", ""), Code.CONTRACT_INVALID)`:
+- 正常路径：缓存响应中 `code` 字段为有效 Code 成员 → `getattr` 返回对应枚举
+- 损坏路径：`code` 缺失或为空 → `getattr(Code, "", Code.CONTRACT_INVALID)` → 返回 `Code.CONTRACT_INVALID`
+- 无新增枚举值，纯现有 Code 成员，fail-closed ✓
+
+### 新问题检查
+
+- **无新增文件**: diff 仅涉及 `api/approvals.py`（7 行）、`test_g10_send.py`（6 行）、进度日志（1 文件）、本报告（1 文件）
+- **锁序无变化**: P2-1 在现有路径末尾加 `.with_for_update()`，不改变锁获取顺序
+- **无回归**: 生产代码改动最小（3 处），测试改动仅增强断言，不弱化
+- **无新 P0/P1/P2**
+
+### 结论
+
+**APPROVE** — P1-1、P2-1/2/3/4 全部关闭，无回归、无新问题。锁序保持安全，错误码 fallback fail-closed。
