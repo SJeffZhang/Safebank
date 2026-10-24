@@ -164,3 +164,70 @@ twice, stable).
 | `make test-w4b1` | 57 passed |
 | `make test-w4b2b` | 57 passed, 0 failed (confirmed ×2) |
 | `make contracts-check` | PASS |
+
+---
+
+# W4b2b Approval Endpoints — Fix Round 5
+
+**Date**: 2026-10-24
+**Worktree**: `../Fintech2026-wt/W4b2b` (branch `codex/w4b2b-approval-endpoints`)
+
+## Task
+
+Rewrite `test_race.py` so it exercises the **actual production code's** FOR UPDATE
+(via `_validate_confirmable`) rather than writing its own SQL. Direct function
+call with raw DB connections — no HTTP, no monkey-patching.
+
+## Design
+
+- **connA**: opens transaction, calls `_lock_approval` then
+  `_validate_confirmable` (the real production function). This acquires
+  `SELECT … FOR UPDATE` on session, plan, and evaluation rows.
+- **connB**: separate transaction, `SET LOCAL lock_timeout = '500ms'`, then
+  `UPDATE sessions SET revoked_at_wall = WALL WHERE id = 'ses_race'`.
+- **Assertion**: connB MUST be blocked by connA's FOR UPDATE lock.
+- **Mock Request**: simple class providing `app.state.approval_hmac_key` and
+  `app.state.settings.profile`.
+
+Both connections use `_runtime_db(app)` (same NullPool engine, same PostgreSQL).
+connA rolls back after the assertion so neither confirm nor revoke are persisted.
+
+## Red-verification
+
+Temporarily removed `.with_for_update()` from the session SELECT in
+`_validate_confirmable` (api/approvals.py line 139):
+
+```
+FAILED tests/gateway/w4b2b/db/test_race.py::test_for_update_blocks_concurrent_session_revoke
+1 failed, 56 passed in 8.93s
+
+E  AssertionError: FOR UPDATE must block concurrent session revocation;
+E  connB committed revocation while connA held FOR UPDATE
+E  assert False
+```
+
+Without FOR UPDATE, connB's revocation committed while connA held a stale
+snapshot — the assertion caught the race window. Reverted via `git checkout`.
+
+**Green** (restored `.with_for_update()`): 57 passed ×2, 0 failed.
+
+## Files Changed (Round 5)
+
+| File | Change |
+|---|---|
+| `tests/gateway/w4b2b/db/test_race.py` | Complete rewrite: direct `_validate_confirmable` call, mock Request, two raw connections, red-verification |
+| `docs/progress/W4b2b-approval-endpoints.md` | This file (appended) |
+
+## Exit Command Results (all exit 0)
+
+| Command | Result |
+|---|---|
+| `make lint` | All checks passed, 302 files formatted |
+| `make test` | 2428 passed, 613 skipped |
+| `make test-gateway` | 1987 passed, 553 skipped |
+| `make test-gateway-db` | 17 passed |
+| `make test-shared-runtime` | 79 passed |
+| `make test-w1` | 1688 passed |
+| `make test-w4b1` | 57 passed |
+| `make test-w4b2b` | 57 passed, 0 failed (confirmed ×2) |
+| `make contracts-check` | PASS |
