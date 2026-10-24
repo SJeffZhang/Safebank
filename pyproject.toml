@@ -16,14 +16,14 @@ dependencies = [
   "argon2-cffi==25.1.0",
   "pypinyin==0.55.0",
   "pyyaml==6.0.3",
+  "langgraph==1.2.16",
+  "langgraph-checkpoint-postgres==3.2.0",
+  "psycopg[binary,pool]==3.3.3",
 ]
 [dependency-groups]
 dev = ["pytest==9.1.1", "ruff==0.14.0", "jsonschema==4.25.1"]
 poc = [
     "langchain-deepseek==1.1.1",
-    "langgraph==1.2.16",
-    "langgraph-checkpoint-postgres==3.2.0",
-    "psycopg[binary,pool]==3.3.3",
 ]
 [tool.pytest.ini_options]
 pythonpath = [".", "packages/contracts/src", "packages/bankcore/src", "services/bank-backend"]

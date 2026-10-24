@@ -74,7 +74,7 @@
 | [xxhash](https://pypi.org/project/xxhash/4.0.2/) | 4.0.2 | BSD-2-Clause | xxhash-4.0.2.dist-info/licenses/LICENSE |
 | [zstandard](https://pypi.org/project/zstandard/0.25.0/) | 0.25.0 | BSD-3-Clause | zstandard-0.25.0.dist-info/licenses/LICENSE |
 
-psycopg/psycopg-binary 仅 POC 使用，按其 LGPL 及附带依赖许可证保留授权文本；正式镜像引入时需同步分发 notice。此表不等于对未实现功能作兼容性承诺。
+psycopg/psycopg-binary 按其 LGPL 及附带依赖许可证保留授权文本；正式镜像引入时需同步分发 notice。自 C1d 起，langgraph、langgraph-checkpoint-postgres 与 psycopg 从 POC 组移入主依赖（pyproject.toml `[project.dependencies]`），运行时镜像中已包含。此表不等于对未实现功能作兼容性承诺。
 
 ## P1 新增依赖
 
