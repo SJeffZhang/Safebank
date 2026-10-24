@@ -8,7 +8,7 @@ setup:
 	uv sync --frozen --group poc --python 3.12
 keys:
 	$(PYTHON) -m scripts.keys
-test: test-replay test-verify test-cards
+test:
 	.venv/bin/pytest -q
 lint:
 	.venv/bin/ruff check .

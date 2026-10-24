@@ -11,7 +11,6 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any
 
 import httpx
 
@@ -90,9 +89,7 @@ class LLMMode:
         """Read ``LLM_MODE`` from environment, fail-closed on unknown value."""
         value = os.environ.get("LLM_MODE", default).strip().lower()
         if value not in cls._VALID:
-            raise ValueError(
-                f"LLM_MODE={value!r} is not one of {sorted(cls._VALID)}"
-            )
+            raise ValueError(f"LLM_MODE={value!r} is not one of {sorted(cls._VALID)}")
         return value
 
 
@@ -186,11 +183,7 @@ def strip_wall_fields(obj: object) -> object:
     Returns a new object — never mutates the input.
     """
     if isinstance(obj, dict):
-        return {
-            k: strip_wall_fields(v)
-            for k, v in obj.items()
-            if not _is_wall_key(k)
-        }
+        return {k: strip_wall_fields(v) for k, v in obj.items() if not _is_wall_key(k)}
     if isinstance(obj, (list, tuple)):
         return type(obj)(strip_wall_fields(v) for v in obj)
     return obj
@@ -357,9 +350,7 @@ class ReplayLoader:
         try:
             header = json.loads(lines[0])
         except json.JSONDecodeError as exc:
-            raise ReplayStaleError(
-                f"Replay file header is not valid JSON: {self._path}"
-            ) from exc
+            raise ReplayStaleError(f"Replay file header is not valid JSON: {self._path}") from exc
 
         file_version = header.get("schema_version", "")
         if file_version != self._schema_version:

@@ -15,6 +15,16 @@ import pytest
 
 from services.agent.app.llm import replay as _replay
 
+# ── httpx transport helpers (used by RecordTransport tests) ─────────────
+
+
+def _ok_response(req: httpx.Request) -> httpx.Response:
+    return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+
+def _empty_response(req: httpx.Request) -> httpx.Response:
+    return httpx.Response(200, json={"choices": []})
+
 
 # ── ID helpers ──────────────────────────────────────────────────────────
 
@@ -76,7 +86,7 @@ class TestLLMMode:
 
 class TestCanonicalText:
     def test_runtime_id_replaced(self):
-        text = f"transfer 80000 from {_rid('acc',0)} to {_rid('pye',1)}"
+        text = f"transfer 80000 from {_rid('acc', 0)} to {_rid('pye', 1)}"
         result = _replay.canonical_text(text)
         # Both runtime IDs should be replaced with sequential <IDn>
         assert "<ID1>" in result
@@ -103,21 +113,18 @@ class TestCanonicalText:
 
     def test_different_ids_increment(self):
         # Use different prefixes with same known-good 26-char suffix
-        text = f"a={_rid('acc',0)} b={_rid('crd',0)} c={_rid('pye',0)}"
+        text = f"a={_rid('acc', 0)} b={_rid('crd', 0)} c={_rid('pye', 0)}"
         # But since they all use the same 26-char suffix, canonical gives them
         # different <IDn> because the full token (prefix_suffix) differs.
         # Wait — same suffix → same ID after canonical → only 1 <ID>.
-        # Need different suffixes for this test.
-        a_id = "acc_N9JH2M4PQ6RVX8T3EFGAB7K5ZD"  # 26 Crockford
-        b_id = "crd_ABCDEFGHJKMNPQRSTVWXYZ123456"  # 26 Crockford, different
-        # Build using first two suffixes from _rid helper
-        text = f"a={_rid('acc',0)} b={_rid('crd',1)}"
+        # Use different prefixes with different 26-char suffixes
+        text = f"a={_rid('acc', 0)} b={_rid('crd', 1)}"
         result = _replay.canonical_text(text)
         assert "<ID1>" in result
         assert "<ID2>" in result
 
     def test_uuid5_id_replaced(self):
-        text = f"step {_uuid_id('step',0)} and hnt {_uuid_id('hnt',1)}"
+        text = f"step {_uuid_id('step', 0)} and hnt {_uuid_id('hnt', 1)}"
         result = _replay.canonical_text(text)
         assert "step_a1b2c3d4" not in result
         assert "<ID1>" in result
@@ -132,7 +139,7 @@ class TestCanonicalText:
         rid = _rid("cus", 0)
         text = f"hello {rid} world"
         result = _replay.canonical_text(text)
-        assert f"hello <ID1> world" in result
+        assert "hello <ID1> world" in result
 
     def test_digits_only_not_matched(self):
         text = "account 6222021234567890"
@@ -307,11 +314,8 @@ class TestRecordTransport:
     def test_writes_header_and_entry(self):
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.object(_replay, "_replay_dir", return_value=Path(tmp)):
-                inner = lambda req: httpx.Response(
-                        200, json={"choices": [{"message": {"content": "ok"}}]}
-                    )
                 transport = _replay.RecordTransport(
-                    inner,
+                    _ok_response,
                     schema_version="abc123",
                     profile="b1",
                     tools_schema=[],
@@ -340,9 +344,8 @@ class TestRecordTransport:
     def test_sensitive_keys_scrubbed(self):
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.object(_replay, "_replay_dir", return_value=Path(tmp)):
-                inner = lambda req: httpx.Response(200, json={"choices": []})
                 transport = _replay.RecordTransport(
-                    inner,
+                    _empty_response,
                     schema_version="abc123",
                     profile="b1",
                     tools_schema=[],
@@ -371,9 +374,8 @@ class TestRecordTransport:
         """Verify JWT tokens are scrubbed from recorded entries (E6)."""
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.object(_replay, "_replay_dir", return_value=Path(tmp)):
-                inner = lambda req: httpx.Response(200, json={"choices": []})
                 transport = _replay.RecordTransport(
-                    inner,
+                    _empty_response,
                     schema_version="abc123",
                     profile="b1",
                     tools_schema=[],
@@ -385,7 +387,7 @@ class TestRecordTransport:
                     json={
                         "model": "deepseek-v4-pro",
                         "messages": [],
-                        "Authorization": "Bearer eyJhbGciOiJFZERTQSJ9.eyJzdWIiOiJjdXNfYSJ9.signature",
+                        "Authorization": ("Bearer eyJhbGciOiJFZERTQSJ9.eyJzdWIiOiJjdXNfYSJ9.sig"),
                         "assistant_token": "tok_deadbeef",
                     },
                 )
@@ -402,9 +404,7 @@ class TestRecordTransport:
 
 
 class TestReplayLoader:
-    def _write_replay_file(
-        self, directory: Path, schema_version: str, entries: list[dict]
-    ) -> Path:
+    def _write_replay_file(self, directory: Path, schema_version: str, entries: list[dict]) -> Path:
         path = directory / "replay.jsonl"
         with open(path, "w") as fh:
             fh.write(
@@ -462,9 +462,7 @@ class TestReplayLoader:
                     _replay.ReplayLoader(schema_version="new_version")
 
     def test_missing_file_raises(self):
-        with mock.patch.object(
-            _replay, "_replay_dir", return_value=Path("/nonexistent/path")
-        ):
+        with mock.patch.object(_replay, "_replay_dir", return_value=Path("/nonexistent/path")):
             with pytest.raises(_replay.ReplayMissError, match="Replay file not found"):
                 _replay.ReplayLoader(schema_version="abc")
 
