@@ -248,3 +248,49 @@ Annotated as `Decision | None` but gateway graph stores `dict` (from `model_dump
 ### 结论
 
 两条协调者裁定的修复均已正确实施并经验证。浅拷贝安全、无共享可变状态、凭据仅来自 runtime.context。`route_evaluate` 从两次调用减为一次，`_route_evaluate_gw` 行为不变。无新增 P0/P1。两处新 P2 均不阻塞合并。**APPROVE。**
+
+
+## 修复轮 3–5 定点复审（2026-10-24，786949d..21cb904）
+
+**Reviewer:** DeepSeek V4 Pro (read-only, headless CLI)  
+**Verdict:** APPROVE — both Round-2 P2s addressed, no new P0/P1.
+
+### 逐条核对
+
+| # | 上次 P2 | 修复方式 | 证据 | |
+|---|---|---|---|---|
+| (1) | 浅拷贝依赖 `__init__` 无副作用 | 新增 `GatherAdapter.with_read_executor(executor)`（`gather.py:55-66`），封装 `object.__new__ + __dict__.update + __dict__["_read_executor"]` 于类内；graph.py 改为 `ports.gather.with_read_executor(executor_for_call)`（`graph.py:659`），零 `__dict__`/`object.__new__` 引用 | `git diff 786949d 21cb904 -- graph.py`: 3行→1行；`grep -n 'with_read_executor\|__dict__\|object.__new__' graph.py`: 仅 line 659 | ✅ |
+| (2) | 并发测试未真实执行 read | 新增 `test_concurrent_reads_token_isolation_with_real_tool_calls`：双 `threading.Barrier(2, timeout=5)` 强制交错，`_ReadOneLLM` 首次调用返回 `get_accounts` tool_call 后等待 barrier，`_patched_execute` 在读取 `self._read_executor` 后等待 barrier；`_RecordingReadClient` 记录 `(thread_id, token, customer_id)`；断言 `call_records` 含两种不同 token | `test_graph_compiled.py:933-1064`；亲跑 2 passed（并发）+ 1 passed（mutation detector）；274 agent tests 全绿 | ✅ |
+
+### 行为等价性
+
+- **`with_read_executor` vs 旧内联浅拷贝**：逻辑完全相同（`object.__new__` → `__dict__.update` → `__dict__["_read_executor"]`），仅位置从 `graph.py` 内联移至 `GatherAdapter` 方法。`graph.py` 不再触碰 `__dict__`，封装性提升。不修改原实例（新旧均只创建拷贝）。
+- **`_patched_execute` 对被测逻辑的影响**：patch 在 `self._read_executor` 读取后、调用前插入 barrier（行 1021-1029），并用 CAPTURED 引用代替重读 `self._read_executor`。在 `with_read_executor` 路径下每个 invocation 持有独立 adapter 拷贝，capture 与重读等价（无人修改拷贝的 `_read_executor`）。barrier 仅用于强制并发交错，不改变执行语义。
+- **旧代码（1e303e7 monkey-patch）下的失败验证**：协调者实测 1e303e7 的 services/agent 上连跑 3 次均 1 failed，HEAD 上 3 次均 2 passed。旧代码失败原因：共享 adapter 的 `_read_executor` 被最后写入者覆盖 → 两线程使用相同 executor → token 泄漏。
+
+### 死锁与 flaky 风险
+
+- **Barrier 超时**：`Barrier(2, timeout=5)`，超时 → `BrokenBarrierError` → 包装为 `RuntimeError`，测试明确失败而非挂死（`graph.py:1023-1028, 1102-1107`）
+- **Thread join 超时**：`join(timeout=10)`（行 1204-1205），超时后 `is_alive()` 检查 → `pytest.fail`（行 1207-1211），不会无限等待
+- **`finally` 恢复**：`GatherAdapter._execute = _patched_execute` 后 `try/finally` 保证 `_orig_execute` 恢复（行 1056-1064），即使 `_run_barrier_test` 内断言失败
+- **Flaky 风险**：低。双 barrier 使交错确定性；5s 超时对开发机充足；CI 极端负载下可能紧（P2 见下）。不同 `thread_id`（`ses_a`/`ses_b`）避免 LangGraph InMemorySaver 内部串行化
+- **类级 monkey-patch 范围**：`GatherAdapter._execute` 修改影响所有实例。`finally` 保证恢复；pytest-xdist 并行可能干扰（当前 Makefile 不用 `-n`，不阻塞）
+
+### 回归核查
+
+- 冻结文件（contracts/gateway/bankcore/L3/pyproject/Makefile/CI/compose）零改动
+- `_route_evaluate_gw` / `_route_execute` / evaluate 节点内联 `reply_draft` — 无改动
+- 旧测试全保留：`test_gateway_read_bridge_no_shared_adapter_mutation`（mutation detector）、`test_concurrent_reads_no_cross_customer_leak`（旧并发）、`test_deny_path_sets_reply_draft_without_double_route_evaluate`（去重 spy）、`test_replan_agent_routes_to_gather_via_graph`（REPLAN→gather）— 全部通过
+- 75 routing tests 全绿 + 274 agent tests 全绿
+
+### 新发现问题
+
+**P2: Barrier 5s 超时在 CI 极限负载下可能不足**。`Barrier(2, timeout=5)` 在 GitHub Actions 共享 runner 上可能因 CPU 饥饿导致超时。建议：将 timeout 提升至 15s，或使用 `pytest-timeout` 标记替代硬编码（不阻塞合并，可后续调整）。
+
+**P2: `_execute` 类级 monkey-patch 与 pytest-xdist 不兼容**。`GatherAdapter._execute = _patched_execute` 影响全进程；若未来引入 `pytest -n auto`，并行 worker 可能互相干扰。建议：或改用 `unittest.mock.patch.object`（自动恢复 + per-test 隔离），或为此测试加 `@pytest.mark.skipif` 守卫（不阻塞合并）。
+
+**P2: `_ReadOneLLM._per_thread` 用 `threading.get_ident()` 作键**。线程 ID 可被 OS 回收重用，极端情况下两次 `invoke` 可能拿到相同 `thread_id`（旧线程退出后新线程复用 ID）。在并发测试中两线程并发执行不会回收，但若未来将此 LLM fake 复用于其他测试场景可能误判。建议：使用 `threading.local()` 或显式传入 `customer_id` 作为区分键（不阻塞合并）。
+
+### 结论
+
+Round 2 两条 P2 均已修复：`with_read_executor` 封装消除了 graph.py 对 `__dict__` 的直接操作；新并发测试真实执行 read、双 barrier 强制交错、协调者已亲证旧代码失败。无新增 P0/P1。三条新 P2 均不阻塞合并。**APPROVE。**
