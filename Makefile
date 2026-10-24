@@ -105,3 +105,7 @@ test-obligations:
 .PHONY: test-w3a
 test-w3a:
 	GATEWAY_DB_TESTS=1 OBLIGATIONS_DB_TESTS=1 .venv/bin/pytest tests/gateway/w3a -q
+
+.PHONY: test-w4b1
+test-w4b1:
+	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w4b1 -q
