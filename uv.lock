@@ -1043,6 +1043,9 @@ dependencies = [
     { name = "cryptography" },
     { name = "fastapi" },
     { name = "httpx", extra = ["socks"] },
+    { name = "langgraph" },
+    { name = "langgraph-checkpoint-postgres" },
+    { name = "psycopg", extra = ["binary", "pool"] },
     { name = "pydantic" },
     { name = "pyjwt" },
     { name = "pypinyin" },
@@ -1059,9 +1062,6 @@ dev = [
 ]
 poc = [
     { name = "langchain-deepseek" },
-    { name = "langgraph" },
-    { name = "langgraph-checkpoint-postgres" },
-    { name = "psycopg", extra = ["binary", "pool"] },
 ]
 
 [package.metadata]
@@ -1072,6 +1072,9 @@ requires-dist = [
     { name = "cryptography", specifier = "==50.0.2" },
     { name = "fastapi", specifier = "==0.161.1" },
     { name = "httpx", extras = ["socks"], specifier = "==0.28.1" },
+    { name = "langgraph", specifier = "==1.2.16" },
+    { name = "langgraph-checkpoint-postgres", specifier = "==3.2.0" },
+    { name = "psycopg", extras = ["binary", "pool"], specifier = "==3.3.3" },
     { name = "pydantic", specifier = "==2.14.1" },
     { name = "pyjwt", specifier = "==2.15.1" },
     { name = "pypinyin", specifier = "==0.55.0" },
@@ -1086,12 +1089,7 @@ dev = [
     { name = "pytest", specifier = "==9.1.1" },
     { name = "ruff", specifier = "==0.14.0" },
 ]
-poc = [
-    { name = "langchain-deepseek", specifier = "==1.1.1" },
-    { name = "langgraph", specifier = "==1.2.16" },
-    { name = "langgraph-checkpoint-postgres", specifier = "==3.2.0" },
-    { name = "psycopg", extras = ["binary", "pool"], specifier = "==3.3.3" },
-]
+poc = [{ name = "langchain-deepseek", specifier = "==1.1.1" }]
 
 [[package]]
 name = "sniffio"

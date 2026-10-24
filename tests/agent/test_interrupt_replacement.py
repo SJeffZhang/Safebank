@@ -45,22 +45,25 @@ def test_new_input_on_pending_interrupt_starts_from_beginning(agent_pg):
     Red observation (before E7 fix): LangGraph with PG checkpoint might or might not
     clear the old interrupt — this test determines the actual behavior.
     """
+
     async def _run():
         async with AsyncPostgresSaver.from_conn_string(agent_pg.runtime_url) as saver:
             await saver.setup()
 
             # Round 1: REQUIRE_APPROVAL — graph interrupts
             dec1 = Decision(
-                plan_id="pln_e7_1", decision=DecisionValue.REQUIRE_APPROVAL,
+                plan_id="pln_e7_1",
+                decision=DecisionValue.REQUIRE_APPROVAL,
                 approval_id="apv_e7_old",
             )
             graph = build_graph(_fake_ports(dec1), saver)
             cfg = config(session="ses_e7")
             c = ctx(session="ses_e7")
 
-            result1 = await graph.ainvoke(
+            _result1 = await graph.ainvoke(
                 {"utterances": [utterance(uid="utt_e7_1")]},
-                config=cfg, context=c,
+                config=cfg,
+                context=c,
             )
             # Verify interrupt is present
             state1 = await graph.aget_state(cfg)
@@ -72,20 +75,25 @@ def test_new_input_on_pending_interrupt_starts_from_beginning(agent_pg):
             # Round 2: new input on same thread — should start from beginning
             dec2 = Decision(plan_id="pln_e7_2", decision=DecisionValue.DENY)
             graph2 = build_graph(_fake_ports(dec2), saver)
-            result2 = await graph2.ainvoke(
+            _result2 = await graph2.ainvoke(
                 {"utterances": [utterance(uid="utt_e7_2")]},
-                config=cfg, context=c,
+                config=cfg,
+                context=c,
             )
             # After new input, old interrupt should be gone
             state2 = await graph2.aget_state(cfg)
             assert state2 is not None
             tasks2 = getattr(state2, "tasks", None)
             # New input should either have no tasks, or tasks from the new round
-            old_interrupt_still_present = any(
-                t.interrupts and t.interrupts[0].value.get("approval_id") == "apv_e7_old"
-                for t in (tasks2 or [])
-                if hasattr(t, 'interrupts') and t.interrupts
-            ) if tasks2 else False
+            old_interrupt_still_present = (
+                any(
+                    t.interrupts and t.interrupts[0].value.get("approval_id") == "apv_e7_old"
+                    for t in (tasks2 or [])
+                    if hasattr(t, "interrupts") and t.interrupts
+                )
+                if tasks2
+                else False
+            )
             assert not old_interrupt_still_present, (
                 "Old interrupt 'apv_e7_old' should not survive new input"
             )
@@ -96,13 +104,15 @@ def test_new_input_on_pending_interrupt_starts_from_beginning(agent_pg):
 def test_old_resume_does_not_execute_after_new_input(agent_pg):
     """After new input replaces old interrupt, resuming with old approval_id
     should not trigger execute — the old approval is void."""
+
     async def _run():
         async with AsyncPostgresSaver.from_conn_string(agent_pg.runtime_url) as saver:
             await saver.setup()
 
             # Round 1: REQUIRE_APPROVAL
             dec1 = Decision(
-                plan_id="pln_e7r_1", decision=DecisionValue.REQUIRE_APPROVAL,
+                plan_id="pln_e7r_1",
+                decision=DecisionValue.REQUIRE_APPROVAL,
                 approval_id="apv_e7r_old",
             )
             graph = build_graph(_fake_ports(dec1), saver)
@@ -111,7 +121,8 @@ def test_old_resume_does_not_execute_after_new_input(agent_pg):
 
             await graph.ainvoke(
                 {"utterances": [utterance(uid="utt_e7r_1")]},
-                config=cfg, context=c,
+                config=cfg,
+                context=c,
             )
 
             # Round 2: new input — DENY (no execute path)
@@ -119,7 +130,8 @@ def test_old_resume_does_not_execute_after_new_input(agent_pg):
             graph2 = build_graph(_fake_ports(dec2), saver)
             await graph2.ainvoke(
                 {"utterances": [utterance(uid="utt_e7r_2")]},
-                config=cfg, context=c,
+                config=cfg,
+                context=c,
             )
 
             # Now try to resume with old approval_id — should NOT trigger execute
@@ -128,7 +140,8 @@ def test_old_resume_does_not_execute_after_new_input(agent_pg):
             try:
                 result3 = await graph2.ainvoke(
                     Command(resume="apv_e7r_old"),
-                    config=cfg, context=c,
+                    config=cfg,
+                    context=c,
                 )
                 # If we get here, check that execute was NOT called
                 # (The DENY decision should still be present, or the resume

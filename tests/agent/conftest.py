@@ -100,7 +100,19 @@ def _provision() -> AgentPg:
         # Run schema grants against the agent database
         for _ in range(10):
             result = subprocess.run(
-                ["docker", "exec", "-i", name, "psql", "-U", "postgres", "-d", "agent", "-v", "ON_ERROR_STOP=1"],
+                [
+                    "docker",
+                    "exec",
+                    "-i",
+                    name,
+                    "psql",
+                    "-U",
+                    "postgres",
+                    "-d",
+                    "agent",
+                    "-v",
+                    "ON_ERROR_STOP=1",
+                ],
                 input=db_sql,
                 text=True,
                 capture_output=True,
