@@ -17,7 +17,7 @@ def test_list_empty(app_config):
     """G17 returns empty list when no approvals exist."""
 
     async def run():
-        app = await build_app(app_config, truncate=False)
+        app = await build_app(app_config)
         db = _runtime_db(app)
         async with db.begin() as conn:
             await _seed_auth(conn)
