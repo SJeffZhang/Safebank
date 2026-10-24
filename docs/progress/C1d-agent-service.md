@@ -244,6 +244,59 @@ wrapper that records every `service_token` argument.
 | actionlint | exit 0 |
 | make demo | exit 2 (expected) |
 
+## Fix Round 5: P2 fixes from independent review (2026-10-25)
+
+### P2-1: Concurrent lock test
+
+**Problem:** `test_concurrent_same_thread_returns_409` ran sequential requests, both
+expected 200 — no concurrency, no 409.
+
+**Fix:** Rewrote as `test_concurrent_same_thread_lock_rejects` using manual PG advisory
+lock.  A separate `psycopg.connect()` connection holds `pg_try_advisory_lock(hashtext('ses_conc'))`
+on the same database.  The stream handler's `_try_thread_lock` sees the lock held,
+returns 409, which Starlette wraps in `RuntimeError("Caught handled exception, but
+response already started.")` because the SSE response has already begun by the time
+the lock is checked inside the async generator.
+
+**Critical fix:** Set `AGENT_DATABASE_URL` via `monkeypatch.setenv()` — `_try_thread_lock`
+reads `os.environ.get("AGENT_DATABASE_URL", _DEFAULT_DB_URL)`, so the manual lock
+and stream handler were connecting to DIFFERENT databases in the original code.
+
+**Red-green verification:**
+- **Red** (lock removed): `pytest.raises(RuntimeError)` → `DID NOT RAISE` → FAIL (stream returns 200, lock acquired)
+- **Green** (lock held): `pytest.raises(RuntimeError, match="response already started")` → PASS
+
+### P2-2: Weak D9 assertion
+
+**Problem:** `test_production_app_refuses_without_gateway_config` asserted
+`status_code != 200` — could pass for unrelated 401 (missing auth).
+
+**Fix:** Changed to `pytest.raises(RuntimeError, match="AGENT_SERVICE_TOKEN is not configured")`.
+Also switched from `POST /threads` to `POST /threads/{id}/runs/stream` because
+`POST /threads` never calls `_resolve_ports()` (only checks saver), so it cannot
+observe the missing token.
+
+### P2-3/P2-4: Known issues (not fixed this round)
+
+- **P2-3:** `get_thread_state` compiles full graph for a read-only operation.
+  `aget_state` reads from saver and never invokes graph nodes — graph compilation
+  is harmless but indirect.
+- **P2-4:** First request triggers lazy `_build_production_ports()` even for
+  read-only operations. `ChatDeepSeek` construction is lazy (no I/O), so this
+  is currently harmless.
+
+### Fix Round 5 Exit Commands
+
+| Command | Result |
+|---|---|
+| make lint | 304 files, exit 0 |
+| make test | 2499 passed / 591 skipped |
+| .venv/bin/pytest tests/agent -q | 288 passed / 30 skipped |
+| make test-agent-db | 31 passed, zero skip (real tmpfs PG) |
+| make contracts-check | PASS |
+| actionlint | exit 0 |
+| make demo | exit 2 (expected) |
+
 ## Uncovered / Not Done
 - No `make up` / `test-p1*` / `test-integration` (D8: not allowed)
 - Production path: real DeepSeek, L2 G4/G8 unavailable — C1c2 routing templates

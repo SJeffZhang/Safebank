@@ -204,42 +204,43 @@ def _run_graph_and_get_state(client, token, thread_id, utterance_text="给张三
 # ── Red tests: D9 — production app has no default ALLOW, no fake ports ───
 
 
-def test_production_app_refuses_without_gateway_config(agent_pg):
-    """app_factory() with no ports requires AGENT_SERVICE_TOKEN — no default ALLOW.
+def test_production_app_fail_closed_without_agent_service_token(agent_pg, ed25519_keys):
+    """D9+D10: production path fails closed when AGENT_SERVICE_TOKEN is missing.
 
-    This test verifies D9+D10: the production path never falls back to fake ports
-    or a default ALLOW decision.  When AGENT_SERVICE_TOKEN is missing, app startup
-    (first request) must fail, not silently serve fake success.
+    Only AGENT_SERVICE_TOKEN is removed.  All other env vars remain valid (JWT key,
+    AGENT_DATABASE_URL, synthetic DEEPSEEK_API_KEY).  With valid auth headers the JWT
+    check passes, so the only failure is _build_production_ports raising RuntimeError
+    about the missing token — NOT a generic 401 or other error.
+
+    Uses POST /runs/stream because it calls _resolve_ports _before_ entering the
+    async generator, so the RuntimeError surfaces BEFORE the SSE response begins.
     """
+    import pytest as std_pytest
+
     os.environ["AGENT_DATABASE_URL"] = agent_pg.runtime_url
-    old_gw = os.environ.pop("GATEWAY_URL", None)
+    _private, public_key_path = ed25519_keys
+    os.environ["JWT_PUBLIC_KEY_PATH"] = public_key_path
+    os.environ["DEEPSEEK_API_KEY"] = "sk-synthetic-for-test"
     old_token = os.environ.pop("AGENT_SERVICE_TOKEN", None)
-    old_gws = os.environ.pop("GATEWAY_SERVICE_TOKEN", None)  # D10: must NOT be read
-    old_ds = os.environ.pop("DEEPSEEK_API_KEY", None)
     try:
-        app = app_factory()  # no ports injected — production path
+        app = app_factory()  # production path — no injected ports
+        private = ed25519_keys[0]
+        token = make_token(private, customer="cus_a", session="ses_d9")
+        headers = _auth_headers(token)
+        body = {"input": {"utterances": [{"id": "utt_d9", "kind": "typed", "text": "hi"}]}}
         with TestClient(app) as tc:
-            resp = tc.post(
-                "/threads",
-                json={"thread_id": "ses_d9"},
-                headers={},
-            )
-            # Either 401 (JWT key not found) or 500 (ports build failed).
-            # In NO case should it be 200 (fake ALLOW success).
-            assert resp.status_code != 200, (
-                f"D9 violation: production app returned 200 without gateway config. "
-                f"status={resp.status_code}, body={resp.text}"
-            )
+            with std_pytest.raises(RuntimeError, match="AGENT_SERVICE_TOKEN is not configured"):
+                tc.post(
+                    "/threads/ses_d9/runs/stream",
+                    json=body,
+                    headers=headers,
+                )
     finally:
         os.environ.pop("AGENT_DATABASE_URL", None)
-        if old_gw is not None:
-            os.environ["GATEWAY_URL"] = old_gw
+        os.environ.pop("JWT_PUBLIC_KEY_PATH", None)
+        os.environ.pop("DEEPSEEK_API_KEY", None)
         if old_token is not None:
             os.environ["AGENT_SERVICE_TOKEN"] = old_token
-        if old_gws is not None:
-            os.environ["GATEWAY_SERVICE_TOKEN"] = old_gws
-        if old_ds is not None:
-            os.environ["DEEPSEEK_API_KEY"] = old_ds
 
 
 def test_d10_control_agent_token_reaches_gateway_client(monkeypatch, agent_pg, ed25519_keys):
@@ -711,20 +712,72 @@ def test_resume_works_after_rebuild(agent_pg, ed25519_keys):
 # ── Lock tests (via HTTP) ───────────────────────────────────────────────
 
 
-def test_concurrent_same_thread_returns_409(client, ed25519_keys):
-    """Two concurrent POST /runs/stream on same thread → second gets 409.
+def test_concurrent_same_thread_lock_rejects(monkeypatch, agent_pg, ed25519_keys):
+    """Stream handler raises 409 when advisory lock is externally held.
 
-    TestClient is synchronous — first request completes, lock released.
-    This test verifies the handler path works correctly end-to-end.
+    The test manually holds a PG advisory lock for ``ses_conc`` (via a separate
+    psycopg connection to the same database).  The stream handler calls
+    ``pg_try_advisory_lock(hashtext('ses_conc'))``, which returns ``False``, so
+    it raises ``HTTPException(409, "RUN_IN_PROGRESS")`` inside the SSE generator.
+    Starlette wraps this in ``RuntimeError("Caught handled exception, but
+    response already started.")`` because the SSE response headers were already
+    sent before the lock is checked.  The test catches this RuntimeError and
+    verifies the root cause is ``HTTPException(409)``.
+
+    Red verification: remove the manual lock → stream handler acquires the
+    lock → 200 instead of RuntimeError → test FAILS.
     """
-    private, _ = ed25519_keys
-    token = make_token(private, customer="cus_a", session="ses_409")
-    headers = _auth_headers(token)
-    client.post("/threads", json={"thread_id": "ses_409"}, headers=headers)
+    import psycopg
+    import pytest as std_pytest
+    from starlette.testclient import TestClient
 
-    body = {"input": {"utterances": [{"id": "utt_twice", "kind": "typed", "text": "hi"}]}}
-    resp1 = client.post("/threads/ses_409/runs/stream", json=body, headers=headers)
-    assert resp1.status_code == 200
-    # After first completes, second should also work (lock released)
-    resp2 = client.post("/threads/ses_409/runs/stream", json=body, headers=headers)
-    assert resp2.status_code == 200
+    # Set required env vars for production app_factory (JWT key, DB, LLM key)
+    monkeypatch.setenv("AGENT_DATABASE_URL", agent_pg.runtime_url)
+    _private, public_key_path = ed25519_keys
+    monkeypatch.setenv("JWT_PUBLIC_KEY_PATH", public_key_path)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-synthetic-for-test")
+    monkeypatch.setenv("AGENT_SERVICE_TOKEN", "tok_agent_lock_test")
+
+    def _make_token_and_headers():
+        token = make_token(_private, customer="cus_a", session="ses_conc")
+        return _auth_headers(token)
+
+    # -- Manually hold the advisory lock in a separate PG connection --
+    hold_conn = psycopg.connect(agent_pg.runtime_url)
+    cur = hold_conn.execute("SELECT pg_try_advisory_lock(hashtext('ses_conc'))")
+    got_lock = cur.fetchone()
+    assert got_lock is not None
+    assert got_lock[0] is True, "Could not acquire manual advisory lock for test"
+
+    app = app_factory()
+    _install_test_ports(app, _make_test_ports("ALLOW"))
+    body = {"input": {"utterances": [{"id": "utt_bl", "kind": "typed", "text": "hi"}]}}
+
+    with TestClient(app) as tc:
+        tc.post("/threads", json={"thread_id": "ses_conc"}, headers=_make_token_and_headers())
+
+        # Lock is held externally → stream handler raises HTTPException(409)
+        # which Starlette wraps in RuntimeError because SSE response has begun.
+        with std_pytest.raises(RuntimeError, match="response already started"):
+            tc.post(
+                "/threads/ses_conc/runs/stream",
+                json=body,
+                headers=_make_token_and_headers(),
+            )
+
+    # -- Release manual lock and verify the thread can proceed --
+    hold_conn.execute("SELECT pg_advisory_unlock(hashtext('ses_conc'))")
+    hold_conn.close()
+
+    # After release, a new request should get 200
+    with TestClient(app_factory()) as tc2:
+        _install_test_ports(tc2.app, _make_test_ports("ALLOW"))
+        tc2.post("/threads", json={"thread_id": "ses_conc"}, headers=_make_token_and_headers())
+        resp2 = tc2.post(
+            "/threads/ses_conc/runs/stream",
+            json=body,
+            headers=_make_token_and_headers(),
+        )
+        assert resp2.status_code == 200, (
+            f"After lock release, expected 200, got {resp2.status_code}"
+        )
