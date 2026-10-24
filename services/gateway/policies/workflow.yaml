@@ -1,0 +1,7 @@
+# 跨步骤/跨会话工作流窗口（PRD §7.8）。
+# 业务窗口（RISKY_SEQUENCE、SPLIT_TRANSFER、CUMULATIVE_OUTFLOW、冷静期）按模拟时间；
+# 防重试窗口（DUPLICATE_PLAN、REJECTED_RETRY）按 wall_now，避免冻结时钟下永不过期。
+risky_sequence_window_hours: 24     # A3 危险序列：外转前 24h 内 PAYEE_ADD + 卡放松
+risky_sequence_cooldown_hours: 24   # 命中后对该指纹冷静 24h（模拟时间）
+duplicate_plan_wall_minutes: 10     # 相同 steps_hash 已执行计划的防重窗口（真实时间）
+rejected_retry_wall_minutes: 10     # 相同动作与目标被拒/DENY 后的重试窗口（真实时间）
