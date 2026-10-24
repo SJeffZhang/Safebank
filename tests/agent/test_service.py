@@ -242,62 +242,136 @@ def test_production_app_refuses_without_gateway_config(agent_pg):
             os.environ["DEEPSEEK_API_KEY"] = old_ds
 
 
-def test_production_app_refuses_without_agent_token_but_gateway_token_set(
-    monkeypatch, agent_pg, ed25519_keys
-):
-    """D10: only GATEWAY_SERVICE_TOKEN, no AGENT_SERVICE_TOKEN → fail-closed.
+def test_d10_control_agent_token_reaches_gateway_client(monkeypatch, agent_pg, ed25519_keys):
+    """D10 control: with AGENT_SERVICE_TOKEN set, GatewayClient gets the right token.
 
-    The agent MUST NOT read GATEWAY_SERVICE_TOKEN (PRD §3.2 — that token is
-    L2→L3 only).  This test sets EVERYTHING the old code needed
-    (GATEWAY_BASE_URL + GATEWAY_SERVICE_TOKEN) so the old code would
-    construct a GatewayClient and proceed — proving the violation.
-
-    On the fixed code, only AGENT_SERVICE_TOKEN is missing; the app must
-    fail-closed (not fall back to GATEWAY_SERVICE_TOKEN).
+    Replaces ``GatewayClient`` in its home module with a wrapper that records
+    every ``service_token`` argument.  Asserts the captured token equals
+    ``AGENT_SERVICE_TOKEN`` and is NOT ``GATEWAY_SERVICE_TOKEN``.
     """
-    # Provide everything the old code (249ca98) reads:
-    monkeypatch.setenv("GATEWAY_BASE_URL", "http://127.0.0.1:19999")  # old code reads this
-    monkeypatch.setenv("GATEWAY_URL", "http://127.0.0.1:19999")  # new code reads this
-    monkeypatch.setenv("GATEWAY_SERVICE_TOKEN", "tok_l2_to_l3_secret_do_not_use")
+    captured_tokens: list[str] = []
+
+    import services.agent.app.gateway.client as _gw_mod
+
+    _RealClient = _gw_mod.GatewayClient
+
+    class _CapturingClient:
+        """Wrapper that records service_token, then delegates to real client."""
+
+        _real: object
+
+        def __init__(self, base_url, service_token, **kwargs):
+            captured_tokens.append(service_token)
+            self._real = _RealClient(base_url, service_token, **kwargs)
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+    monkeypatch.setattr(_gw_mod, "GatewayClient", _CapturingClient)
+
+    # -- Set valid env including AGENT_SERVICE_TOKEN --
+    monkeypatch.setenv("GATEWAY_URL", "http://127.0.0.1:19999")
+    monkeypatch.setenv("AGENT_SERVICE_TOKEN", "tok_agent_correct")
+    monkeypatch.setenv("GATEWAY_SERVICE_TOKEN", "tok_l2_to_l3_should_not_be_used")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deadbeef-deadbeef-deadbeef-deadbeef")
     monkeypatch.setenv("AGENT_DATABASE_URL", agent_pg.runtime_url)
     _private, public_key_path = ed25519_keys
     monkeypatch.setenv("JWT_PUBLIC_KEY_PATH", public_key_path)
-    # Deliberately do NOT set AGENT_SERVICE_TOKEN — this is what must fail.
 
-    app = app_factory()  # no ports injected — production path
+    app = app_factory()  # production path
 
     private = ed25519_keys[0]
-    token = make_token(private, customer="cus_a", session="ses_d10r")
+    token = make_token(private, customer="cus_a", session="ses_d10_ctrl")
     headers = _auth_headers(token)
 
     with TestClient(app) as tc:
-        # POST /threads may succeed (it does not call _build_production_ports
-        # on the fixed code).  The stream request triggers port assembly.
-        tc.post("/threads", json={"thread_id": "ses_d10r"}, headers=headers)
-
-        # Fixed code: AGENT_SERVICE_TOKEN missing → RuntimeError during
-        # _build_production_ports.  This may raise directly (StreamingResponse
-        # body iteration) or return an error SSE event.
+        tc.post("/threads", json={"thread_id": "ses_d10_ctrl"}, headers=headers)
+        # Stream may fail after GatewayClient construction (DeepSeek call, etc.)
+        # but the critical assertion is what token GatewayClient received.
         try:
-            resp = tc.post(
-                "/threads/ses_d10r/runs/stream",
-                json={"input": {"utterances": [{"id": "utt_d10", "kind": "typed", "text": "hi"}]}},
+            tc.post(
+                "/threads/ses_d10_ctrl/runs/stream",
+                json={"input": {"utterances": [{"id": "utt_d10c", "kind": "typed", "text": "hi"}]}},
                 headers=headers,
             )
-            # If we get a response, it must NOT be 200 with a clean agent run.
-            body = resp.text
-            assert resp.status_code != 200 or "AGENT_SERVICE_TOKEN" in body or "error" in body, (
-                f"D10 violation: production app succeeded using only GATEWAY_SERVICE_TOKEN. "
-                f"status={resp.status_code}, body={body[:500]}"
+        except Exception:
+            pass
+
+    assert captured_tokens, "GatewayClient was never constructed"
+    for t in captured_tokens:
+        assert t == "tok_agent_correct", f"GatewayClient received wrong token: {t}"
+        assert t != "tok_l2_to_l3_should_not_be_used", (
+            f"D10 violation: GATEWAY_SERVICE_TOKEN leaked to GatewayClient: {t}"
+        )
+
+
+def test_d10_experiment_gateway_token_never_reaches_client(monkeypatch, agent_pg, ed25519_keys):
+    """D10 experiment: no AGENT_SERVICE_TOKEN → fail-closed, GatewayClient never built.
+
+    Sets GATEWAY_SERVICE_TOKEN + GATEWAY_BASE_URL (everything the OLD code reads)
+    but NOT AGENT_SERVICE_TOKEN.  Replaces ``GatewayClient`` in its module with a
+    wrapper that records constructions.
+
+    On old code (249ca98): ``_build_production_ports`` reads GATEWAY_SERVICE_TOKEN
+    → GatewayClient is constructed → ``captured_tokens`` is NOT empty → this test
+    MUST FAIL, proving the violation.
+    """
+    captured_tokens: list[str] = []
+
+    import services.agent.app.gateway.client as _gw_mod
+
+    _RealClient = _gw_mod.GatewayClient
+
+    class _CapturingClient:
+        """Wrapper that records service_token, then delegates to real client."""
+
+        _real: object
+
+        def __init__(self, base_url, service_token, **kwargs):
+            captured_tokens.append(service_token)
+            self._real = _RealClient(base_url, service_token, **kwargs)
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+    monkeypatch.setattr(_gw_mod, "GatewayClient", _CapturingClient)
+
+    # -- Set everything the old code reads, but NOT AGENT_SERVICE_TOKEN --
+    monkeypatch.setenv("GATEWAY_URL", "http://127.0.0.1:19999")
+    monkeypatch.setenv("GATEWAY_BASE_URL", "http://127.0.0.1:19999")  # old code
+    monkeypatch.setenv("GATEWAY_SERVICE_TOKEN", "tok_l2_to_l3_secret")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deadbeef-deadbeef-deadbeef-deadbeef")
+    monkeypatch.setenv("AGENT_DATABASE_URL", agent_pg.runtime_url)
+    _private, public_key_path = ed25519_keys
+    monkeypatch.setenv("JWT_PUBLIC_KEY_PATH", public_key_path)
+    # Deliberately no AGENT_SERVICE_TOKEN.
+
+    app = app_factory()  # production path
+
+    private = ed25519_keys[0]
+    token = make_token(private, customer="cus_a", session="ses_d10_exp")
+    headers = _auth_headers(token)
+
+    with TestClient(app) as tc:
+        tc.post("/threads", json={"thread_id": "ses_d10_exp"}, headers=headers)
+        try:
+            tc.post(
+                "/threads/ses_d10_exp/runs/stream",
+                json={"input": {"utterances": [{"id": "utt_d10e", "kind": "typed", "text": "hi"}]}},
+                headers=headers,
             )
         except RuntimeError as exc:
-            # Fixed code raises RuntimeError("AGENT_SERVICE_TOKEN is not configured")
-            # when StreamingResponse body is iterated.  This is the expected
-            # fail-closed behavior — verify the message mentions the right token.
-            assert "AGENT_SERVICE_TOKEN" in str(exc), (
-                f"D10 violation: RuntimeError did not mention AGENT_SERVICE_TOKEN: {exc}"
-            )
+            assert "AGENT_SERVICE_TOKEN" in str(exc), f"Unexpected RuntimeError: {exc}"
+        except Exception:
+            pass
+
+    # D10: GatewayClient must NOT have been constructed — the app must fail
+    # before reaching it.  On old code (249ca98), GATEWAY_SERVICE_TOKEN would
+    # be read and GatewayClient constructed → captured_tokens non-empty → FAIL.
+    assert not captured_tokens, (
+        f"D10 violation: GatewayClient was constructed when AGENT_SERVICE_TOKEN "
+        f"was missing.  service_token values: {captured_tokens}"
+    )
 
 
 def test_no_gateway_service_token_in_agent_source():

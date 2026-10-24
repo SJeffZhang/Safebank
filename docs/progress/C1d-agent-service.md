@@ -201,6 +201,49 @@ All licenses already listed in `docs/third-party.md`. The `openai` package is th
 | make demo | exit 2 (expected) |
 | actionlint | exit 0 |
 
+## Fix Round 4: D10 control/experiment group with GatewayClient wrapper (2026-10-25)
+
+### Why
+Coordinator review of 66cd2f9 found `test_production_app_refuses_without_agent_token_but_gateway_token_set`
+still passed on old code (249ca98) because `status != 200` is too broad — old code returns non-200
+for other reasons.  Also `main-py-fixed.bak` was committed by mistake.
+
+### Fix: Control/experiment group design
+
+Replaced the old `__init__` monkeypatch (which did not trigger) with a module-level
+`monkeypatch.setattr("services.agent.app.gateway.client", "GatewayClient", _CapturingClient)`
+wrapper that records every `service_token` argument.
+
+- **Control** (`test_d10_control_agent_token_reaches_gateway_client`):
+  AGENT_SERVICE_TOKEN + GATEWAY_URL + GATEWAY_SERVICE_TOKEN all set.
+  GatewayClient IS constructed with AGENT_SERVICE_TOKEN, NOT GATEWAY_SERVICE_TOKEN.
+- **Experiment** (`test_d10_experiment_gateway_token_never_reaches_client`):
+  Only GATEWAY_SERVICE_TOKEN + GATEWAY_BASE_URL. NO AGENT_SERVICE_TOKEN.
+  GatewayClient must NEVER be constructed.
+- **Grep scan** (`test_no_gateway_service_token_in_agent_source`):
+  `grep -r GATEWAY_SERVICE_TOKEN services/agent/` → 0 hits in source (only test file).
+
+### Red-green verification
+
+- **Old code (249ca98) red**: `git show 249ca98:services/agent/app/main.py > ...` then
+  experiment test → **FAILED** with `captured_tokens=['tok_l2_to_l3_secret']` — old code
+  constructed GatewayClient with GATEWAY_SERVICE_TOKEN, correctly caught.
+- **New code (66cd2f9) green**: Both control and experiment tests **PASSED**.
+  Control: GatewayClient receives `tok_agent_correct`.
+  Experiment: `RuntimeError("AGENT_SERVICE_TOKEN is not configured")` before GatewayClient construction.
+
+### Fix Round 4 Exit Commands
+
+| Command | Result |
+|---|---|
+| make lint | 304 files, exit 0 |
+| make test | 2499 passed / 591 skipped |
+| .venv/bin/pytest tests/agent -q | 288 passed / 30 skipped |
+| make test-agent-db | 31 passed, zero skip (real tmpfs PG) |
+| make contracts-check | PASS |
+| actionlint | exit 0 |
+| make demo | exit 2 (expected) |
+
 ## Uncovered / Not Done
 - No `make up` / `test-p1*` / `test-integration` (D8: not allowed)
 - Production path: real DeepSeek, L2 G4/G8 unavailable — C1c2 routing templates
