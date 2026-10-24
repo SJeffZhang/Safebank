@@ -43,7 +43,7 @@
 | PRD | **`PRD.md` = v2.1 定稿**（§0–§16；三轮多 agent 审核 + 两次修订复核，决议 D1–D47 见 §0.5；执行屏障增量约定见ADR-008）。v1.2 与作废的 v2.0 草稿在 `docs/archive/`；审核报告在 `docs/reviews/` |
 | 代码 | **P1 完成并逐组件验收**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116项单元+33项真实PG通过，契约v1已冻结。分支 feat/l3-core，P1代码已提交并推送私有仓库（功能提交7fd7a26）；CI权限修复70dcabe已推送，远端unit与p1-postgres均通过（run 39929405919） |
 | L2 网关 | main `26dea40`；W2b PR #18已精确head四CI成功合并（383cd6f），默认真实预留/来源接线246真PG/HTTP与独审通过。W3a438c035亲验/独审均通过，已同步最新main并亲验组合7951daa，PR #20已精确head四CI合入26dea40，main实际组合回归通过；W4b1 baa1efc独审阻断，原worker r1修复中；完整G4/审批/执行仍待W4b/W3b/W4c。 |
-| L1 Agent | C1a PR #17已精确head四CI成功合并（eea02a6），图骨架/状态/身份绑定22项通过。仅内存saver与fake端口；C1b de86830真实live7请求及83项/独审通过，已同步main并亲验组合，PR #19已精确head四CI合入main22aeb3f且组合回归通过；C1c1 1f51275亲验207项绿但独审发现真实transport P0，原worker r2修复中；真实gateway/PG saver仍待后续。 |
+| L1 Agent | C1a PR #17已精确head四CI成功合并（eea02a6），图骨架/状态/身份绑定22项通过。仅内存saver与fake端口；C1b de86830真实live7请求及83项/独审通过，已同步main并亲验组合，PR #19已精确head四CI合入main22aeb3f且组合回归通过；C1c1 9ebfa12亲验212项及原独审通过，已合main亲验组合9f192ad，准备组件PR；真实gateway/PG saver仍待后续。 |
 | 前端 | **暂停**，用户亲自下令才开工（§2 第 13 条） |
 | 协调状态 | **2026-10-24 Codex 同机接手**：实现与评审均由本机 Claude Code CLI（DeepSeek V4 Pro）无头 worker 完成，协调者只复跑、推送、开 PR、合并、记日志。接续计划 `docs/plans/L2-resume-2026-10-24.md`。本机 worktree 在 `../Fintech2026-wt/<名>`，`.secrets` 软链到与本机数据卷匹配的 W0 worktree 密钥；本会话已启用每5分钟worker定时跟进（safebank-worker），用户2026-10-24睡前新授权全自动推进P2→P3；跟进每次可有界核对待发PR的CI。 |
 | 下一步 | W3a已合且main回归→W4b1面板/绑定库→W4b2运行接线/确认OTP→W3b→W4c；C1b已合且回归，C1c1原worker r2修真实transport timeout类型及凭据trace反例（C1），冻结后亲验/原独审；之后C1c2路由；按P2-P3自主门禁真闭合才进入P3。 |
@@ -582,6 +582,8 @@
 | 2026-10-24 | Codex（协调者） | W4b1首次独审SID1f1c599c-1037-4abc-8862-87d62758e07a已结束REQUEST_CHANGES：三P1跨plan评估混插、同eval并发唯一索引500、同sid旧执行中CONFIRMED被SUPERSEDE；另四P2/未确认。协调者新独立tmpfs PG加确定性事件屏障亲复现同eval并发一str一IntegrityError、same-id=False，临时容器已清理，长期卷未动。已续原11b6cf9f的W4b1-fix-r1统一修所有发现及lint；旧39真测试通过不等验收完成，未发布。 |
 
 | 2026-10-24 | Codex（协调者） | 22:12 UTC启动R-C1c1-fix-r2及复验的请求被自动审批检查因账户usage limit拒绝，命令未执行（非判定操作不安全），故未产生该复审/测试结果；额度提示恢复时间后01:07 UTC重新获审批执行只读进程核查，开始恢复。期间原worker已返回C1c1 9ebfa12和W4b1 dd43c1b，现已完整读结果并核HEAD匹配/仅review WIP、原进程均结束；未重复派实现。此刻首次实际派R-C1c1-fix-r2与原R-W4b1-fix-r1并开始协调者退出复验，尚未发布，不能把此前自报绿当已亲验。 |
+
+| 2026-10-24 | Codex（协调者） | 恢复后C1c1 9ebfa12首次实际亲验五退出全绿：lint274、agent212零skip含3真实loopback transport（2.71s）、all2331/531skip（10.98s）、contracts/actionlint；原r2独审APPROVE212无残留。合入main26dea40为9f192ad，仅AGENTS文档冲突、逐行保留双方全部历史，agent代码/测试/依赖相对9ebfa12零diff；组合八退出绿：lint285、agent212（2.57s）、all2369/538skip（10.82s）、W3a45（3.50s）、W2246（10.93s）、义务30（4.62s）、contracts/actionlint。准备验收文档/敏感扫描后发布，不算真实G4/G8或P2闭合。W4b1 dd43c1b十退出也全部实际绿（52真PG、lint已修），原独审仍进行。 |
 
 ## 5. 下一步待办（按顺序）
 
