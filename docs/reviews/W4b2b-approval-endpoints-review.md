@@ -86,3 +86,50 @@ P0 无。P1 1 条（会话撤销竞态，不影响资金安全）。P2 3 条。
 | `.venv/bin/pytest tests/gateway/w4b2b/db/test_reject.py -q` | 12 skipped (同上) |
 | `.venv/bin/pytest tests/gateway/w4b2b/db/test_g9_get.py -q` | 9 skipped (同上) |
 | `.venv/bin/pytest tests/gateway/w4b2b/db/test_list.py -q` | 9 skipped (同上) |
+
+---
+
+## 修复轮 3–5 定点复审（2026-10-24，4aa690e..ef83931）
+
+**结论**：**APPROVE**（P0 无，P1 全部关闭，P2 全部关闭，新增 P2 1 条）
+
+### P1-1 修复 ✅
+
+- **变更**：`api/approvals.py:132-145` — session 行加 `.with_for_update()`，锁序 session → plan → evaluation，与 W4b1 的 `create_for_evaluation`（`service.py:350` session 先锁）语义对齐。
+- **G6 vs G7 覆盖**：两者共用 `_validate_confirmable`（`api/approvals.py:267-268` G6 调用；`api/approvals.py:372-373` G7 调用），一次修改同时覆盖。
+- **test_race.py 验证**（`tests/gateway/w4b2b/db/test_race.py:60-148`）：
+  - 调用**真实生产函数** `_lock_approval` 与 `_validate_confirmable`（`import services.gateway.app.api.approvals as mod`，70 行），**未重写 SQL**。
+  - connA 持 FOR UPDATE 锁 session 行；connB 独立连接 `UPDATE sessions SET revoked_at_wall` + `lock_timeout=500ms` → 被阻塞。确定性：两独立 `db.connect()` + `lock_timeout`，非概率等待。
+  - 协调者红验证实：删 `with_for_update` → 连跑 2 次均 `1 failed`（connB 未阻塞）；还原 → 连跑 2 次均 `1 passed`。
+
+### P2-1 ✅
+
+- `test_confirm.py:383-428`：`test_confirm_superseded_returns_409` + `test_confirm_used_returns_409`，均断言 409 + DB 仍 SUPERSEDED/USED。
+- `test_reject.py:276-325`：`test_reject_superseded_returns_409` + `test_reject_used_returns_409`。
+
+### P2-3 ✅
+
+- `api/approvals.py:242-245`：G9 交叉校验 `view.get("approval_id")` vs `approval_id`，不匹配 → 409 `VIEW_HASH_MISMATCH`。
+- `test_g9_get.py:170-189`：`test_g9_view_json_approval_id_mismatch_returns_409`。当 `approval_id == None` 时守卫 `is not None` 不触发（非 bug：W4b1 总是写入真实 `approval_id`，`None` 只可能来自被截断的旧行，不拦截更安全）。
+
+### test_list_empty 回归修复 ✅
+
+- `test_list.py:20`：`truncate=False` → 默认 `truncate=True`。根因是 session-scoped fixture 在 `test_race.py` 加入 `db/` 后改变执行序。`truncate=True` 是每测标准行为；新测试无耦合。
+
+### 新问题：P2-4 `_supersede_session` 与 G6/G7 的 ABBA 死锁
+
+- **Files**：`api/approvals.py:132-145`（G6/G7 锁序：approval → session → plan → eval）、`approval/service.py:251-304`（`_supersede_session` 锁序：session → P1 → E1 → approval `state.transition` on A2）
+- **Scenario**：同一 session 下两个不同 plan（P1、P2），P2 已有 PENDING 审批 A2。TX1（W4b1 为 P1 创审批）持有 S → 遍历 A2 → `state.transition(approvals, id_=A2, ...)` 阻塞于 TX2 持有的 A2。TX2（G6 确认 A2）持有 A2 → `_validate_confirmable` 阻塞于 S。ABBA 成立。
+- **Mitigation**：PostgreSQL 死锁检测（~1s）自动回滚一方；W4b1 的 `_supersede_session`（`service.py:298`）用 `state.transition` 无 `NOWAIT` 或 `SKIP LOCKED`。在典型并发度下触发概率低；G6 不回滚 DB 状态（`request_idempotent` 异常清理 dedup 行），可安全重试。
+- **Severity**：P2（不阻塞合并，建议后续在 `_supersede_session` 加 `SKIP LOCKED` 或统一锁序为 approval → session）。
+
+### 未确认
+
+- `test_race.py:123` 用裸 `except Exception` 捕获。红验证明确保无 FOR UPDATE 时 `blocked=False` → 断言失败，不会误报通过；但非 lock_timeout 异常（如连接断开）也会设 `blocked=True`，建议加 `assert "lock" in str(e).lower()` 或类似守卫。P3。
+
+### 专项测试
+
+| 命令 | 结果 |
+|---|---|
+| `.venv/bin/pytest tests/gateway/w4b2b/test_adapter.py -q` | 5 passed, 1 skipped |
+| `make test-w4b2b`（协调者亲验，ef83931） | 57 passed ×2, 0 failed |
