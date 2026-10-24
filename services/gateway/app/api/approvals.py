@@ -7,13 +7,14 @@ Instance keys come from ``request.app.state`` — no global ``configure()``.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 from safebank_contracts.codes import Code
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .. import state
@@ -22,10 +23,23 @@ from ..approval.adapter import (
     approval_hmac_key as _adapter_key,
 )
 from ..approval.adapter import (
+    otp_hmac_key as _adapter_otp_key,
+)
+from ..approval.adapter import (
     profile as _adapter_profile,
 )
 from ..approval.adapter import (
     wall_now as _adapter_wall,
+)
+from ..approval.otp import (
+    compute_code_digest,
+    derive_otp_keys,
+    encrypt_otp_code,
+    generate_otp_code,
+    otp_retry_after,
+)
+from ..approval.otp import (
+    verify_otp as _verify_otp,
 )
 from ..approval.service import (
     ApprovalBinding,
@@ -50,6 +64,7 @@ class ConfirmRejectRequest(BaseModel):
 
 class ConfirmRequest(ConfirmRejectRequest):
     risk_ack: bool = False
+    otp: str | None = None  # W4b2c: required for red-level confirm
 
 
 class ApprovalListItem(BaseModel):
@@ -286,11 +301,100 @@ async def confirm_approval(
 
         risk = evaluation["risk"]
 
-        # D6: red approvals are not confirmable yet (OTP not implemented).
+        # ── RED: OTP verification (W4b2c) ──────────────────────────────
         if risk == "RED":
-            raise GatewayError(
-                Code.DEPENDENCY_UNAVAILABLE, 503, "red approval requires OTP (not yet implemented)"
+            from sqlalchemy import delete as sqla_delete
+
+            # Lock the challenge row to satisfy R5: the approval lock serialises
+            # concurrent confirm requests, but FOR UPDATE here prevents lock-order
+            # inversion if a future code path locks otp_challenges first.
+            challenge = (
+                (
+                    await conn.execute(
+                        select(t.otp_challenges)
+                        .where(t.otp_challenges.c.approval_id == approval_id)
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
             )
+
+            # R2: no challenge or expired → OTP_EXPIRED.
+            if challenge is None or challenge["expires_at_wall"] <= now:
+                raise GatewayError(Code.OTP_EXPIRED, 409, "OTP challenge not found or expired")
+
+            # R1: attempt_count >= 5 (should be LOCKED, but double-check).
+            if challenge["attempt_count"] >= 5:
+                raise GatewayError(Code.OTP_LOCKED, 409, "OTP attempts exhausted")
+
+            # R2: otp field empty → OTP_EXPIRED (no valid code submitted).
+            if not body.otp or not body.otp.strip():
+                raise GatewayError(Code.OTP_EXPIRED, 409, "OTP code required")
+
+            # Derive OTP keys for verification.
+            otp_master = _adapter_otp_key(request)
+
+            _code_digest_key, _aead_key = derive_otp_keys(otp_master)
+
+            if not _verify_otp(
+                {"code_digest": challenge["code_digest"]},
+                body.otp.strip(),
+                approval_id,
+                _code_digest_key,
+            ):
+                new_attempt = challenge["attempt_count"] + 1
+                values = {"attempt_count": new_attempt}
+                if new_attempt >= 5:
+                    # Persist lock within the SAME transaction.  The
+                    # transaction commits normally so these survive.
+                    await state.transition(
+                        conn,
+                        t.approvals,
+                        id_=approval_id,
+                        from_statuses=[ApprovalStatus.PENDING.value],
+                        to=ApprovalStatus.LOCKED.value,
+                    )
+                    values["locked_at_wall"] = now
+                    await conn.execute(
+                        t.otp_challenges.update()
+                        .where(t.otp_challenges.c.approval_id == approval_id)
+                        .values(**values)
+                    )
+                    _result["otp_error"] = {
+                        "code": "OTP_LOCKED",
+                        "message": "OTP attempts exhausted",
+                        "status": 409,
+                    }
+                    return 409, {"code": "OTP_LOCKED", "message": "OTP attempts exhausted"}
+                else:
+                    await conn.execute(
+                        t.otp_challenges.update()
+                        .where(t.otp_challenges.c.approval_id == approval_id)
+                        .values(**values)
+                    )
+                    remaining = 5 - new_attempt
+                    _result["otp_error"] = {
+                        "code": "OTP_INVALID",
+                        "message": f"invalid OTP code ({remaining} attempts remaining)",
+                        "status": 409,
+                        "details": {"remaining_attempts": remaining},
+                    }
+                    return 409, {
+                        "code": "OTP_INVALID",
+                        "message": f"invalid OTP code ({remaining} attempts remaining)",
+                        "details": {"remaining_attempts": remaining},
+                    }
+
+            # OTP verified — delete the consumed challenge (same connection,
+            # this path commits normally).
+            await conn.execute(
+                sqla_delete(t.otp_challenges).where(t.otp_challenges.c.approval_id == approval_id)
+            )
+            # NOTE: fall through to the shared confirm path below.
+            _otp_verified = True
+        else:
+            _otp_verified = False
 
         # Read view_json for risk_ack_required.
         view_json = evaluation.get("view_json") or {}
@@ -329,6 +433,7 @@ async def confirm_approval(
             "plan_id": plan["id"],
             "view_hash": body.view_hash,
             "risk_ack": body.risk_ack,
+            "otp_verified": _otp_verified,
         }
         return 200, {
             "approval_id": approval_id,
@@ -344,6 +449,27 @@ async def confirm_approval(
             request_id=body.request_id,
             body=body.model_dump(mode="json"),
             produce=produce,
+        )
+
+    # If produce() stored an OTP error, the transaction has already
+    # committed the attempt_count / lock state — raise GatewayError
+    # so the caller gets the proper error response.
+    if not replayed and "otp_error" in _result:
+        err = _result["otp_error"]
+        raise GatewayError(
+            getattr(Code, err["code"], Code.CONTRACT_INVALID),
+            err["status"],
+            message=err.get("message", ""),
+            details=err.get("details"),
+        )
+
+    # Replayed error response: convert cached dict to proper error.
+    if status >= 400:
+        raise GatewayError(
+            getattr(Code, response.get("code", ""), Code.CONTRACT_INVALID),
+            status,
+            message=response.get("message", ""),
+            details=response.get("details"),
         )
 
     # Audit outside the main transaction, only for new (non-replayed) operations.
@@ -518,7 +644,183 @@ async def list_approvals(
 # ── G10 POST /approvals/{approval_id}/otp (W4b2c) ──────────────────────────
 
 
+class OtpSendRequest(BaseModel):
+    request_id: str
+    view_hash: str
+
+
+class OtpSendResponse(BaseModel):
+    sent: bool
+    expires_at_wall: str
+    retry_after_seconds: int | None
+
+
 @router.post("/approvals/{approval_id}/otp")
-async def otp_send(approval_id: str, request: Request):
-    """G10 OTP send — lands in W4b2c."""
-    raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503, "G10 otp lands in W4b2c")
+async def otp_send(
+    approval_id: str,
+    body: OtpSendRequest,
+    request: Request,
+):
+    """G10 — send a simulated OTP verification code for a RED approval.
+
+    Returns ``{sent: true, expires_at_wall, retry_after_seconds: null}`` on
+    success.  The plaintext code is never returned — it is only decryptable
+    via the D5 demo console (W5).
+    """
+    caller = getattr(request.state, "caller", None)
+    if caller is None or caller.customer_id is None:
+        raise GatewayError(Code.UNAUTHENTICATED, 401)
+
+    customer_id = caller.customer_id
+    db = request.app.state.db
+    now = _now(request)
+    route = f"/approvals/{approval_id}/otp"
+
+    _result: dict[str, Any] = {}
+
+    async def produce():
+        # Read approval with lock.
+        approval = await _lock_approval(conn, approval_id, customer_id)
+
+        # Validate: status must be PENDING.
+        if approval["status"] != ApprovalStatus.PENDING.value:
+            raise GatewayError(Code.STATE_CHANGED, 409, "approval is not pending")
+
+        # Validate: not expired.
+        if approval["expires_at_wall"] <= now:
+            raise GatewayError(Code.APPROVAL_EXPIRED, 409)
+
+        # Validate: view_hash match.
+        if approval["view_hash"] != body.view_hash:
+            raise GatewayError(Code.VIEW_HASH_MISMATCH, 409)
+
+        # Validate: session not revoked (same lock order as W4b2b: session first).
+        session = (
+            (
+                await conn.execute(
+                    select(t.sessions.c.revoked_at_wall)
+                    .where(t.sessions.c.id == approval["sid"])
+                    .with_for_update()
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if session is None or session["revoked_at_wall"] is not None:
+            raise GatewayError(Code.AUTHORIZATION_CANCELLED, 409, "session has been revoked")
+
+        # Read existing challenge (FOR UPDATE).
+        existing = (
+            (
+                await conn.execute(
+                    select(t.otp_challenges)
+                    .where(t.otp_challenges.c.approval_id == approval_id)
+                    .with_for_update()
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+        # Rate-limit checks (R1).
+        sent_before = existing["sent_count"] if existing is not None else 0
+        last_sent = existing["last_sent_at_wall"] if existing is not None else None
+
+        try:
+            retry = otp_retry_after(last_sent, sent_before, now)
+        except ValueError:
+            raise GatewayError(
+                Code.RATE_LIMITED,
+                429,
+                message="OTP send limit exhausted (max 3 sends)",
+            ) from None
+        if retry is not None:
+            raise GatewayError(
+                Code.RATE_LIMITED,
+                429,
+                message=f"OTP send too frequent, retry after {retry}s",
+                details={"retry_after_seconds": retry},
+            )
+
+        # Generate OTP code and derived keys.
+        otp_master = _adapter_otp_key(request)
+
+        _code_digest_key, _aead_key = derive_otp_keys(otp_master)
+        code = generate_otp_code()
+        new_digest = compute_code_digest(code, approval_id, _code_digest_key)
+        new_ciphertext = encrypt_otp_code(
+            code,
+            approval_id=approval_id,
+            plan_id=approval["plan_id"],
+            view_hash=body.view_hash,
+            wall_now=now,
+            key=_aead_key,
+        )
+        expiry = now + timedelta(minutes=2)
+
+        # R1: attempt_count is cumulative across resends — do NOT reset to 0.
+        prev_attempt = existing["attempt_count"] if existing is not None else 0
+
+        # Upsert the challenge row.
+        await conn.execute(
+            pg_insert(t.otp_challenges)
+            .values(
+                approval_id=approval_id,
+                code_digest=new_digest,
+                code_ciphertext=new_ciphertext,
+                view_hash=body.view_hash,
+                expires_at_wall=expiry,
+                attempt_count=prev_attempt,
+                sent_count=sent_before + 1,
+                last_sent_at_wall=now,
+            )
+            .on_conflict_do_update(
+                index_elements=["approval_id"],
+                set_={
+                    "code_digest": new_digest,
+                    "code_ciphertext": new_ciphertext,
+                    "view_hash": body.view_hash,
+                    "expires_at_wall": expiry,
+                    "attempt_count": prev_attempt,
+                    "sent_count": sent_before + 1,
+                    "last_sent_at_wall": now,
+                },
+            )
+        )
+
+        response = OtpSendResponse(
+            sent=True,
+            expires_at_wall=expiry.isoformat(),
+            retry_after_seconds=None,
+        )
+        _result["payload"] = {
+            "approval_id": approval_id,
+            "view_hash": body.view_hash,
+            "expires_at_wall": expiry.isoformat(),
+        }
+        _result["plan_id"] = approval["plan_id"]
+        return 200, response.model_dump(mode="json")
+
+    async with db.begin() as conn:
+        status, response, replayed = await request_idempotent(
+            conn,
+            customer_id=customer_id,
+            route=route,
+            request_id=body.request_id,
+            body=body.model_dump(mode="json"),
+            produce=produce,
+        )
+
+    # Audit outside the main transaction, only for new (non-replayed) operations.
+    if not replayed and "payload" in _result:
+        await append_tx(
+            db,
+            customer_id=customer_id,
+            event_type="APPROVAL_OTP_SENT",
+            payload=_result["payload"],
+            event_id=new_id("evt"),
+            plan_id=_result["plan_id"],
+            now_wall=now,
+        )
+
+    return response

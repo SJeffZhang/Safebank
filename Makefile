@@ -129,3 +129,7 @@ test-verify:
 .PHONY: test-cards
 test-cards:
 	.venv/bin/pytest tests/agent/test_cards.py -q
+
+.PHONY: test-w4b2c
+test-w4b2c:
+	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w4b2c -q
