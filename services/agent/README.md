@@ -1,10 +1,11 @@
-# agent（L1 Banking Agent，C1a 图骨架 + C1b DeepSeek 适配 + C1c1 gateway 协议客户端）
+# agent（L1 Banking Agent，C1a 图骨架 + C1b DeepSeek 适配 + C1c1 gateway 协议客户端 + C1d 真实 PG checkpoint 服务）
 
 L1 使用 LangGraph；已交付**图骨架**（`services/agent/app/graph/`）、**C1b DeepSeek 适配**
-（`services/agent/app/llm/`）与 **C1c1 gateway 协议客户端**（`services/agent/app/gateway/`）：
-`AgentState`、`AgentContext`、`Ports`、`build_graph`，understand/gather/plan 三个端口实现，以及
-G20/G21/G2/G4/G8 的严格 HTTP/wire 边界。生产 HTTP 入口仍是 P0 探针（`scripts/health_app.py`），
-本组件**未**开放业务入口、未接 L2/L3 真实联调，未跑真实 live。
+（`services/agent/app/llm/`）、**C1c1 gateway 协议客户端**（`services/agent/app/gateway/`）与
+**C1d agent 服务**（`services/agent/app/main.py`，Postgres checkpoint + HTTP/SSE）：
+`AgentState`、`AgentContext`、`Ports`、`build_graph`，understand/gather/plan/evaluate 端口，
+G20/G21/G2/G4/G8 严格 HTTP/wire 边界，以及 FastAPI app、`AsyncPostgresSaver`、线程 advisory
+lock、SSE 流式输出。
 
 ## 骨架可用范围（C1a）
 
@@ -38,7 +39,8 @@ G20/G21/G2/G4/G8 的严格 HTTP/wire 边界。生产 HTTP 入口仍是 P0 探针
   `<untrusted_data source=…>` 包裹并转义；输出完整 `ReadRecord`（tool/args/data/source_ref）供 plan 引用。
 - 自动测试全部走 `httpx.MockTransport` 检查最终 HTTP payload；`live.py` 是手动 live 入口（理解2+
   计划3不同场景+gather1，硬预算8请求，含 usage/token/请求计数与语义断言），任一失败 exit 非 0，
-  **尚未执行**；需 `DEEPSEEK_API_KEY`（由协调者安全注入环境，不要把 key 复制进 worktree）。
+  **已执行 7 次请求全部通过**（transfer 80000/target/span 正确、freeze/limits 来源语义成功、gather2轮成功）。
+  需 `DEEPSEEK_API_KEY`（由协调者安全注入环境，不要把 key 复制进 worktree）。
 - 本地模型：`needs_write`/`unclear` 用 `StrictBool`（拒字符串/数字宽松转型），`Slot` 非负
   `intent_index` + 合法 `span`。
 
@@ -46,27 +48,38 @@ G20/G21/G2/G4/G8 的严格 HTTP/wire 边界。生产 HTTP 入口仍是 P0 探针
 
 - `GatewayClient(base_url, service_token, *, http_client=None, timeout=10.0)`：A 服务令牌只进客户端
   配置，assistant JWT 每次调用从 `AgentContext` 取；每次调用经 `send(request, follow_redirects=False)`
-  + `request.extensions["timeout"] = httpx.Timeout(timeout).as_dict()` 强制有限正超时与禁重定向
-  （httpcore 以 dict 消费该扩展；不信任注入 client 默认，构造器拒 NaN/Inf/0/负数 timeout）；写/评估不
+  + `request.extensions["timeout"] = httpx.Timeout(timeout).as_dict()` 强制有限正超时与禁重定向；写/评估不
   自动重试、不轮询 `UNKNOWN`、不新建 plan 代替 UNKNOWN。真实 loopback 回归测试见
   `tests/agent/gateway/test_real_transport.py`（非 Mock）。
-- 只读：`get_utterances`（G20，ids 精确匹配无重复/漏项/跨请求）、`get_clarification`（G21，null→None）、
-  `read_tool`（G2，18 个 `READ_ARGS` 白名单，必填字段不补猜，结果经 `READ_RESULTS` 校验、原始 data 原样）。
-- 写：`evaluate`（G4，PlanDraft 原样 body，无 extra origin/auth，`session_id` 与 context 不符零 HTTP）、
-  `execute`（G8，body 仅 `{request_id}`，200 复用冻结 `ExecutionResult`、202 `UnknownExecution`，均须
-  `plan_id` 等于目标；409 `STATE_CHANGED`/`POLICY_CHANGED` 的 `details.decision` 完整保留且绑定原 plan）。
-- wire 严格：`decision`/`risk`/`parse_status`/clarification `kind`/finding `code` 闭集；`scope`/
-  `partial_scope`/replan-hint `scope` 为结构化 `NormalizedScope` mirror（transfer 金额严格 `Cents`，
-  `fields` free map）；`shadow_b1` 递归 `GatewayDecision | None`；`kind` 保持开放 `str`。
-- 错误三类 `GatewayResponseError`/`GatewayProtocolError`/`GatewayTransportError`（`category` 供 C1c2
-  路由；`__str__` 只含固定类别/状态/code，不回显凭证、原始 httpx 异常或服务端 message；`details` 只保留
-  wire 校验后的 `decision` 模型 dump，其余键丢弃；`trace_id` 只接受受限安全形状、且等于/嵌入当前
-  service/assistant 凭证即省略）。
-- 全部自动测试走 `httpx.MockTransport`（fake），**不构成真实 L1→L2→L3 联调**；G4/G8 当前仍是 L2 stub。
-  错误路由、REPLAN 定向补读、typed/hint/action 语义与 `GatherAdapter.ReadExecutor` 桥接留 C1c2。
+- 只读：`get_utterances`（G20）、`get_clarification`（G21）、`read_tool`（G2，18 个 `READ_ARGS` 白名单）。
+- 写：`evaluate`（G4）、`execute`（G8）。
+- 错误三类 `GatewayResponseError`/`GatewayProtocolError`/`GatewayTransportError`，不泄露凭证。
+
+## C1d Agent 服务（`services/agent/app/main.py`）
+
+- FastAPI app（`app_factory()`），三 HTTP 入口：`POST /threads`、`GET /threads/{id}/state`、
+  `POST /threads/{id}/runs/stream`（SSE）。
+- `AsyncPostgresSaver`：psycopg3 直接连接 postgres-agent / 临时 PG，启动时 `setup()` 建表。
+- `pg_try_advisory_lock(hashtext(thread_id))`：每 thread 最多一个运行实例，冲突返回 409。
+- JWT 鉴权：Ed25519/EdDSA，`verify_aud: False`，要求 `sub/sid/exp`；L1 只提取身份不做授权（D4）。
+- SSE 事件：`updates`（含 `__interrupt__`）、`values`、`messages`、`error`。
+- **生产路径（D9）**：`app_factory(ports=None)` 组装真实端口——C1b DeepSeek 适配器
+  （understand/gather/plan）+ C1c1 GatewayClient + C1c2 `make_gateway_ports` / `build_gateway_graph`。
+  L2 G4/G8 尚未实现时走 C1c2 路由模板，不伪造成功。fake ports 仅测试通过
+  `_install_test_ports()` 注入。
+- **凭证（D10）**：agent 以 `AGENT_SERVICE_TOKEN`（A 身份）调用 L2，**不持有或读取
+  `GATEWAY_SERVICE_TOKEN`**（该令牌仅 L2→L3）。L2 地址通过 `GATEWAY_URL` 配置（默认
+  `http://gateway:8200`）。
 
 ## 运行方式
 
-- 单元测试：`make test`（`tests/agent/`，内存 saver，零 skip；live 用 `python -m services.agent.app.llm.live` 手动跑）。
-- 本组件无 PostgreSQL；**不声称** Postgres saver 已验收（留 C1d）。
-- 启动：根目录 `make setup && make keys && make up`；端口 8100 只在容器网络内（仍为探针）。
+- 单元测试：`make test`（`tests/agent/`，266 passed zero skip；含 26 真实 tmpfs PG 检查点测试）。
+- Agent DB 测试：`make test-agent-db`（`AGENT_DB_TESTS=1`，零 skip，独立 tmpfs PG 容器）。
+- 全栈启动：根目录 `make setup && make keys && make up`；agent 服务监听 8100（容器网络内）。
+- live 测试：`python -m services.agent.app.llm.live`（需 `DEEPSEEK_API_KEY`，协调者手动跑）。
+
+### 未覆盖 / 后续组件
+
+- C1c2：完整图路由（已交付），L2 G4/G8 尚未实现时走固定模板。
+- C1e：输出校验、卡片适配、回放（replay）。
+- 生产路径已组装真实端口（D9），L2 G4/G8 联调待后续组件。

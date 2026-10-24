@@ -1641,6 +1641,7 @@ B2 的 shadow_b1 纯内存计算，仅比较决策，不创建审批、冷静期
 | DEMO_CONSOLE_TOKEN | gateway、可信评测 runner/操作员环境 | frontend 登录时短暂处理用户输入，部署环境不注入 agent |
 | JWT_PRIVATE_KEY、APPROVAL_HMAC_KEY、OTP_HMAC_KEY | gateway | 私钥不挂载 L1；OTP 使用随机数生成器 |
 | JWT_PUBLIC_KEY | gateway、agent | 令牌受众与 scope 仍必须核验；gateway 经 `JWT_PUBLIC_KEY_PATH`（默认 `/run/secrets/jwt-public.pem`）加载，缺失则拒绝启动 |
+| GATEWAY_URL | agent | L2 公共接口地址（默认 `http://gateway:8200`，仅 agent-net）；agent 以 `AGENT_SERVICE_TOKEN` 作 A 身份调用，绝不持有 `GATEWAY_SERVICE_TOKEN` |
 | BANK_BACKEND_URL | gateway | L3 地址（默认 `http://bank-backend:8300`，仅 bank-net） |
 | DEEPSEEK_API_KEY | agent | 只在 live/record 必需；不得写 replay 文件 |
 | BANK_DATABASE_URL / GATEWAY_DATABASE_URL / AGENT_DATABASE_URL | 对应服务 | 分库最小权限；bank_ro 仅 gateway demo/eval |
