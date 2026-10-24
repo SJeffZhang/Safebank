@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from safebank_contracts.codes import Code
 
@@ -35,6 +35,8 @@ class Settings:
     jwt_private_key_path: str = "/run/secrets/jwt-private.pem"
     demo_pins_file: str = "/run/secrets/demo_pins"
     gateway_service_token: str = ""
+    approval_hmac_key: str = field(default="", repr=False)
+    otp_hmac_key: str = field(default="", repr=False)
 
     def validate(self) -> None:
         """Refuse to start on configuration combinations that weaken isolation."""
@@ -96,4 +98,6 @@ def from_env(env: dict[str, str] | None = None) -> Settings:
         demo_pins_file=env.get("DEMO_PINS_FILE") or "/run/secrets/demo_pins",
         gateway_service_token=env.get("GATEWAY_SERVICE_TOKEN") or "",
         jwt_public_key_path=env.get("JWT_PUBLIC_KEY_PATH") or "/run/secrets/jwt-public.pem",
+        approval_hmac_key=env.get("APPROVAL_HMAC_KEY") or "",
+        otp_hmac_key=env.get("OTP_HMAC_KEY") or "",
     )

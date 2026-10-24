@@ -25,6 +25,8 @@ ENV = {
     "SCHEDULER_SERVICE_TOKEN": "s-test",
     "DEMO_CONSOLE_TOKEN": "d" * 32,
     "DEMO_MODE": "true",
+    "APPROVAL_HMAC_KEY": "approval-hmac-key-32-bytes-minimum!!",
+    "OTP_HMAC_KEY": "otp-hmac-key-32-bytes-minimum!!!!!",
 }
 
 
@@ -51,6 +53,8 @@ async def harness(gateway_db, monkeypatch):
         private,
         public,
         {"cus_zs": HASHER.hash("123456"), "cus_ls": HASHER.hash("234567")},
+        approval_hmac_key=b"approval-hmac-key-32-bytes-minimum!!",
+        otp_hmac_key=b"otp-hmac-key-32-bytes-minimum!!!!!",
     )
     app = build_public_app(settings, env=ENV, runtime=runtime)
 
