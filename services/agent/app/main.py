@@ -174,11 +174,12 @@ def _build_production_ports() -> tuple[Ports, object]:
     gather = GatherAdapter(llm, read_executor=_dummy_read_executor)
     plan = PlanAdapter(llm)
 
-    # -- respond / verify_output (respond: C1e RespondAdapter, verify: C1e later) --
+    # -- respond / verify_output (C1e: RespondAdapter + OutputVerifier) --
     from services.agent.app.llm.respond import RespondAdapter
+    from services.agent.app.llm.verify import OutputVerifier
 
     respond = RespondAdapter(llm)
-    verify_output = _make_production_verify()
+    verify_output = OutputVerifier(llm)
 
     # -- Wire gateway client into evaluate/execute slots --
     from services.agent.app.gateway.adapters import make_gateway_ports

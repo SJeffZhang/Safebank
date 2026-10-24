@@ -1,0 +1,468 @@
+"""C1e output verification and number masking (PRD §6.7.1, C1e Task 4).
+
+Extracts amounts/percentages/card-last4 from reply text, compares against
+facts from state (reads/decision/execution), optionally invokes LLM for a
+single repair attempt, and always masks ≥8-digit numbers at the end.
+"""
+
+from __future__ import annotations
+
+import re
+from enum import StrEnum
+
+from services.agent.app.graph.state import AgentContext, AgentState
+
+# ── Extraction patterns ─────────────────────────────────────────────────────
+
+# ¥ or ￥ followed by a numeric amount (with optional commas and decimals)
+_AMOUNT_CNY_RE = re.compile(r"(¥|￥)\s*([\d,]+(?:\.\d{1,2})?)")
+
+# Bare number + 元/块
+_AMOUNT_YUAN_RE = re.compile(r"([\d,]+(?:\.\d{1,2})?)\s*(元|块)")
+
+# Percentage
+_PCT_RE = re.compile(r"([\d]+(?:\.[\d]+)?)\s*%")
+
+# Card last-4: 尾号 + 4 digits
+_CARD_LAST4_RE = re.compile(r"尾号\s*(\d{4})")
+
+# Amount string that should be preserved during masking (contains ¥/元/块/)
+_AMOUNT_TEXT_RE = re.compile(r"(?:¥|￥)[\d,.]+|[\d,]+\s*(?:元|块)")
+
+# Masks ≥8 consecutive digits, unless it looks like a date or is part of an amount
+_LONG_NUMBER_RE = re.compile(r"\b\d{8,}\b")
+
+# Date pattern: YYYY-MM-DD or 8-digit YYYYMMDD (2020-2099)
+_DATE_RE = re.compile(r"(?:19|20)\d{2}[-/]?(?:0[1-9]|1[0-2])[-/]?(?:0[1-9]|[12]\d|3[01])")
+
+
+class ExtractedKind(StrEnum):
+    AMOUNT = "amount"
+    PERCENTAGE = "percentage"
+    CARD_LAST4 = "card_last4"
+
+
+# ── Extraction ──────────────────────────────────────────────────────────────
+
+
+def extract_amounts(text: str) -> list[dict]:
+    """Extract amount references from *text*, converting to cents.
+
+    Returns ``[{span, raw, cents, kind}, ...]`` where *span* is (start, end).
+    """
+    results: list[dict] = []
+    for m in _AMOUNT_CNY_RE.finditer(text):
+        raw = m.group(0)
+        num_str = m.group(2).replace(",", "")
+        cents = _yuan_str_to_cents(num_str)
+        if cents is not None:
+            results.append(
+                {"span": m.span(), "raw": raw, "cents": cents, "kind": ExtractedKind.AMOUNT}
+            )
+    for m in _AMOUNT_YUAN_RE.finditer(text):
+        raw = m.group(0)
+        num_str = m.group(1).replace(",", "")
+        cents = _yuan_str_to_cents(num_str)
+        if cents is not None:
+            results.append(
+                {"span": m.span(), "raw": raw, "cents": cents, "kind": ExtractedKind.AMOUNT}
+            )
+    return results
+
+
+def extract_percentages(text: str) -> list[dict]:
+    """Extract percentage values from *text*.
+
+    Returns ``[{span, raw, value, kind}, ...]``.
+    """
+    results: list[dict] = []
+    for m in _PCT_RE.finditer(text):
+        raw = m.group(0)
+        try:
+            value = float(m.group(1))
+        except ValueError:
+            continue
+        results.append(
+            {"span": m.span(), "raw": raw, "value": value, "kind": ExtractedKind.PERCENTAGE}
+        )
+    return results
+
+
+def extract_card_last4(text: str) -> list[dict]:
+    """Extract card last-4 references from *text*.
+
+    Returns ``[{span, raw, last4, kind}, ...]``.
+    """
+    results: list[dict] = []
+    for m in _CARD_LAST4_RE.finditer(text):
+        raw = m.group(0)
+        last4 = m.group(1)
+        results.append(
+            {"span": m.span(), "raw": raw, "last4": last4, "kind": ExtractedKind.CARD_LAST4}
+        )
+    return results
+
+
+def _yuan_str_to_cents(raw: str) -> int | None:
+    """Parse a yuan-decimal string to cents (integer)."""
+    try:
+        yuan = float(raw)
+        cents = int(round(yuan * 100))
+        # Reject negative or unreasonable amounts
+        if cents < 0:
+            return None
+        return cents
+    except (ValueError, OverflowError):
+        return None
+
+
+# ── Fact set builder ────────────────────────────────────────────────────────
+
+
+def build_fact_set(state: AgentState) -> dict:
+    """Build a fact set from state for output verification.
+
+    Returns ``{kind: [...values...], raw_amounts: [...str...], last4s: [...str...]}``.
+    """
+    amounts: list[int] = []
+    percentages: list[float] = []
+    last4s: list[str] = []
+
+    # Walk reads
+    for r in state.get("reads") or ():
+        data = _obj_attr(r, "data")
+        if data is None:
+            continue
+        _collect_from_data(data, amounts, percentages, last4s)
+
+    # Walk decision preflight balances
+    decision = state.get("decision")
+    if decision is not None:
+        pref = _obj_attr(decision, "preflight")
+        if pref is not None:
+            balances = _obj_attr(pref, "balances")
+            if isinstance(balances, list):
+                for b in balances:
+                    bc = _obj_attr(b, "balance_cents")
+                    if bc is not None:
+                        try:
+                            amounts.append(int(bc))
+                        except (TypeError, ValueError):
+                            pass
+
+    # Walk execution steps
+    execution = state.get("execution")
+    if execution is not None:
+        steps = _obj_attr(execution, "steps")
+        if steps:
+            for s in steps:
+                result = _obj_attr(s, "result")
+                if result is not None:
+                    _collect_from_data(result, amounts, percentages, last4s)
+
+    return {
+        "amounts": sorted(set(amounts)),
+        "percentages": sorted(set(percentages)),
+        "last4s": sorted(set(last4s)),
+    }
+
+
+def _collect_from_data(
+    data: object, amounts: list[int], percentages: list[float], last4s: list[str]
+) -> None:
+    """Walk *data* (dict or object) and collect numeric facts."""
+    if isinstance(data, dict):
+        items = data.items()
+    elif hasattr(data, "model_dump"):
+        items = data.model_dump(mode="json").items()
+    elif hasattr(data, "__dict__"):
+        items = data.__dict__.items()
+    else:
+        return
+
+    for key, value in items:
+        if not isinstance(key, str):
+            continue
+        # Amount-related fields
+        if key.endswith("_cents") and isinstance(value, (int, float)):
+            try:
+                amounts.append(int(value))
+            except (TypeError, ValueError):
+                pass
+        # Percentage fields (basis points → percent)
+        if key.endswith("_bp") and isinstance(value, (int, float)):
+            try:
+                percentages.append(round(float(value) / 100, 4))
+            except (TypeError, ValueError):
+                pass
+        # Card last4
+        if key == "last4" and isinstance(value, str) and len(value) == 4:
+            last4s.append(value)
+        # Walk nested lists/dicts
+        if isinstance(value, (dict, list)):
+            _collect_from_data(value, amounts, percentages, last4s)
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, (dict, list)) or (
+                    hasattr(item, "model_dump") or hasattr(item, "__dict__")
+                ):
+                    _collect_from_data(item, amounts, percentages, last4s)
+
+
+def _obj_attr(obj: object, name: str, default: object = None) -> object:
+    """Read *name* from a dict or object attribute."""
+    if hasattr(obj, name):
+        return getattr(obj, name, default)
+    if isinstance(obj, dict):
+        return obj.get(name, default)
+    return default
+
+
+# ── Fact checking ───────────────────────────────────────────────────────────
+
+
+def check_against_facts(extracted: list[dict], fact_set: dict) -> list[dict]:
+    """Compare extracted values against fact_set, return unverified items.
+
+    Each unverified item is ``{span, raw, kind, reason}``.
+    """
+    unverified: list[dict] = []
+    for item in extracted:
+        kind = item.get("kind")
+        if kind == ExtractedKind.AMOUNT:
+            cents = item.get("cents")
+            if not _amount_in_facts(cents, fact_set.get("amounts", [])):
+                unverified.append(
+                    {
+                        "span": item["span"],
+                        "raw": item["raw"],
+                        "kind": kind,
+                        "reason": "amount_not_found",
+                    }
+                )
+        elif kind == ExtractedKind.PERCENTAGE:
+            value = item.get("value")
+            if not _pct_in_facts(value, fact_set.get("percentages", [])):
+                unverified.append(
+                    {
+                        "span": item["span"],
+                        "raw": item["raw"],
+                        "kind": kind,
+                        "reason": "percentage_not_found",
+                    }
+                )
+        elif kind == ExtractedKind.CARD_LAST4:
+            last4 = item.get("last4")
+            if last4 not in fact_set.get("last4s", []):
+                unverified.append(
+                    {
+                        "span": item["span"],
+                        "raw": item["raw"],
+                        "kind": kind,
+                        "reason": "card_not_found",
+                    }
+                )
+    return unverified
+
+
+def _amount_in_facts(cents: int, facts: list[int]) -> bool:
+    """Check if *cents* matches any fact (±1 cent rounding tolerance)."""
+    if not facts:
+        return False
+    for f in facts:
+        if abs(cents - f) <= 1:
+            return True
+    return False
+
+
+def _pct_in_facts(value: float, facts: list[float]) -> bool:
+    """Check if *value* matches any fact (±0.1% tolerance)."""
+    if not facts:
+        return False
+    for f in facts:
+        if abs(value - f) <= 0.1:
+            return True
+    return False
+
+
+# ── Number masking ──────────────────────────────────────────────────────────
+
+
+def mask_long_numbers(text: str) -> str:
+    """Mask ≥8-digit sequences, preserving dates and amounts.
+
+    - Dates (YYYY-MM-DD, YYYYMMDD) are preserved.
+    - Amount strings (¥…, …元) are preserved.
+    - Other digit sequences ≥8 → ``****`` + last 4 digits.
+    """
+    if not text:
+        return text
+
+    # Phase 1: identify spans to protect (dates and amounts)
+    protected: set[tuple[int, int]] = set()
+
+    for m in _DATE_RE.finditer(text):
+        # Only protect if the span looks like a pure date (not embedded in longer text)
+        span = m.span()
+        if (span[1] - span[0]) in (8, 10):
+            protected.add(span)
+
+    for m in _AMOUNT_TEXT_RE.finditer(text):
+        protected.add(m.span())
+
+    # Phase 2: find long number spans, exclude protected ones, build replacement
+    long_spans: list[tuple[int, int]] = []
+    for m in _LONG_NUMBER_RE.finditer(text):
+        span = m.span()
+        if any(_overlaps(span, p) for p in protected):
+            continue
+        long_spans.append(span)
+
+    if not long_spans:
+        return text
+
+    # Build result (process spans in reverse to preserve indices)
+    result = list(text)
+    for start, end in reversed(long_spans):
+        digits = text[start:end]
+        masked = "****" + digits[-4:]
+        result[start:end] = masked
+
+    return "".join(result)
+
+
+def _overlaps(a: tuple[int, int], b: tuple[int, int]) -> bool:
+    return not (a[1] <= b[0] or b[1] <= a[0])
+
+
+# ── Semantic checks ─────────────────────────────────────────────────────────
+
+
+def check_semantic_consistency(text: str, state: AgentState) -> list[dict]:
+    """Return consistency violations for the reply text.
+
+    E.g. UNKNOWN execution + "已转账" is a violation.
+    """
+    violations: list[dict] = []
+    execution = state.get("execution")
+    if execution is None:
+        return violations
+
+    exec_status = _obj_attr(execution, "status")
+    if exec_status == "UNKNOWN":
+        if _contains_any(text, _UNKNOWN_FORBIDDEN):
+            violations.append({"kind": "semantic", "reason": "unknown_claims_certainty"})
+
+    if exec_status == "FAILED":
+        if _contains_any(text, _FAILED_FORBIDDEN):
+            violations.append({"kind": "semantic", "reason": "failed_masquerading_as_success"})
+
+    return violations
+
+
+# Forbidden phrases when execution status is UNKNOWN
+_UNKNOWN_FORBIDDEN = ["已转账", "已扣款", "转账成功", "已完成", "已到账", "交易成功"]
+
+# Forbidden phrases when execution status is FAILED (reply should reflect failure)
+_FAILED_FORBIDDEN = ["转账成功", "操作完成", "已到账"]
+
+
+def _contains_any(text: str, phrases: list[str]) -> bool:
+    return any(p in text for p in phrases)
+
+
+# ── OutputVerifier ──────────────────────────────────────────────────────────
+
+
+class OutputVerifier:
+    """Verify and mask LLM-generated reply text against state facts.
+
+    ``llm`` is optional; when provided, a single repair attempt is made for
+    unverified items before fallback.
+    """
+
+    def __init__(self, llm: object | None = None) -> None:
+        self._llm = llm
+
+    def __call__(self, state: AgentState, _context: AgentContext) -> str:
+        draft: str = state.get("reply_draft") or ""
+        if not draft:
+            return "您的请求已收到。"
+
+        # Step 1: extract
+        extracted = extract_amounts(draft) + extract_percentages(draft) + extract_card_last4(draft)
+
+        # Step 2: fact set + comparison
+        fact_set = build_fact_set(state)
+        unverified = check_against_facts(extracted, fact_set)
+
+        # Step 3: semantic consistency
+        violations = check_semantic_consistency(draft, state)
+
+        # Step 4: LLM repair if unverified items exist and LLM is available
+        text = draft
+        if (unverified or violations) and self._llm is not None:
+            repaired = self._repair(text, unverified, violations, fact_set)
+            if repaired:
+                # Re-verify repaired text
+                re_extracted = (
+                    extract_amounts(repaired)
+                    + extract_percentages(repaired)
+                    + extract_card_last4(repaired)
+                )
+                re_unverified = check_against_facts(re_extracted, fact_set)
+                if not re_unverified:
+                    text = repaired
+                # else: fall through → use original text (will be masked below)
+
+        # Step 5: always mask long numbers
+        masked = mask_long_numbers(text)
+
+        return masked
+
+    def _repair(
+        self,
+        text: str,
+        unverified: list[dict],
+        violations: list[dict],
+        fact_set: dict,
+    ) -> str | None:
+        """Ask LLM to repair unverified items — one attempt only."""
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        issues: list[str] = []
+        for uv in unverified:
+            issues.append(f"- {uv['kind']} {uv['raw']}: {uv['reason']}")
+        for v in violations:
+            issues.append(f"- {v['kind']}: {v['reason']}")
+
+        fact_lines: list[str] = []
+        if fact_set.get("amounts"):
+            fact_lines.append(f"金额(分): {fact_set['amounts']}")
+        if fact_set.get("percentages"):
+            fact_lines.append(f"百分比: {fact_set['percentages']}")
+        if fact_set.get("last4s"):
+            fact_lines.append(f"卡号尾号: {fact_set['last4s']}")
+
+        system = _REPAIR_SYSTEM
+        user = (
+            f"原始回复:\n{text}\n\n"
+            f"问题:\n{chr(10).join(issues)}\n\n"
+            f"已知事实:\n{chr(10).join(fact_lines)}\n\n"
+            "请修正回复，只输出修正后的文本。"
+        )
+
+        try:
+            result = self._llm.invoke([SystemMessage(content=system), HumanMessage(content=user)])
+            repaired: str = getattr(result, "content", "") or ""
+            repaired = repaired.strip()
+            return repaired if repaired else None
+        except Exception:
+            return None
+
+
+_REPAIR_SYSTEM = (
+    "你是一个银行AI助手的输出校验器。你收到一个包含不准确数字的回复。"
+    "请根据已知事实修正回复，只修改有问题的部分，保持格式不变。"
+    "只输出修正后的文本，不要加任何解释。"
+)
