@@ -29,8 +29,10 @@ _CARD_LAST4_RE = re.compile(r"尾号\s*(\d{4})")
 # Amount string that should be preserved during masking (contains ¥/元/块/)
 _AMOUNT_TEXT_RE = re.compile(r"(?:¥|￥)[\d,.]+|[\d,]+\s*(?:元|块)")
 
-# Masks ≥8 consecutive digits, unless it looks like a date or is part of an amount
-_LONG_NUMBER_RE = re.compile(r"\b\d{8,}\b")
+# Digit run: one or more digit groups separated by at most one space or hyphen.
+# Does NOT rely on \b — CJK characters are \w in Python 3, so \b fails at
+# Chinese-digit boundaries.  Total digit count is checked post-match.
+_DIGIT_RUN_RE = re.compile(r"\d+(?:[ -]\d+)*")
 
 # Date pattern: YYYY-MM-DD or 8-digit YYYYMMDD (2020-2099)
 _DATE_RE = re.compile(r"(?:19|20)\d{2}[-/]?(?:0[1-9]|1[0-2])[-/]?(?:0[1-9]|[12]\d|3[01])")
@@ -289,11 +291,13 @@ def _pct_in_facts(value: float, facts: list[float]) -> bool:
 
 
 def mask_long_numbers(text: str) -> str:
-    """Mask ≥8-digit sequences, preserving dates and amounts.
+    """Mask ≥8-digit sequences (with optional single space/hyphen separators).
 
-    - Dates (YYYY-MM-DD, YYYYMMDD) are preserved.
-    - Amount strings (¥…, …元) are preserved.
-    - Other digit sequences ≥8 → ``****`` + last 4 digits.
+    - ISO dates (YYYY-MM-DD, YYYYMMDD) are preserved.
+    - Amount strings with explicit currency markers (¥/￥ prefix or 元 suffix)
+      are preserved.  This is a deviation from PRD §6.7 "一律" — see ADR-004.
+    - All other digit runs ≥8 total digits → ``****`` + last 4 digits.
+    - CJK-adjacent and punctuation-adjacent numbers are masked (no \\b dependency).
     """
     if not text:
         return text
@@ -302,7 +306,6 @@ def mask_long_numbers(text: str) -> str:
     protected: set[tuple[int, int]] = set()
 
     for m in _DATE_RE.finditer(text):
-        # Only protect if the span looks like a pure date (not embedded in longer text)
         span = m.span()
         if (span[1] - span[0]) in (8, 10):
             protected.add(span)
@@ -310,22 +313,24 @@ def mask_long_numbers(text: str) -> str:
     for m in _AMOUNT_TEXT_RE.finditer(text):
         protected.add(m.span())
 
-    # Phase 2: find long number spans, exclude protected ones, build replacement
-    long_spans: list[tuple[int, int]] = []
-    for m in _LONG_NUMBER_RE.finditer(text):
+    # Phase 2: find digit runs with ≥8 total digits
+    spans: list[tuple[int, int]] = []
+    for m in _DIGIT_RUN_RE.finditer(text):
         span = m.span()
         if any(_overlaps(span, p) for p in protected):
             continue
-        long_spans.append(span)
+        digit_count = sum(1 for c in m.group() if c.isdigit())
+        if digit_count >= 8:
+            spans.append(span)
 
-    if not long_spans:
+    if not spans:
         return text
 
-    # Build result (process spans in reverse to preserve indices)
+    # Phase 3: replace spans from right to left (preserve indices)
     result = list(text)
-    for start, end in reversed(long_spans):
-        digits = text[start:end]
-        masked = "****" + digits[-4:]
+    for start, end in reversed(spans):
+        digits_only = "".join(c for c in text[start:end] if c.isdigit())
+        masked = "****" + digits_only[-4:]
         result[start:end] = masked
 
     return "".join(result)

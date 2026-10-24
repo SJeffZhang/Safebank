@@ -252,6 +252,49 @@ class TestMaskLongNumbers:
         text = "short 1234 numbers only"
         assert mask_long_numbers(text) == text
 
+    # ── E3 supplement (2026-10-25): CJK-adjacent, separated, and boundary cases ─
+
+    def test_e3_no_space_cjk_adjacent(self):
+        """卡号6222021234567890 — digits immediately after Chinese → masked."""
+        result = mask_long_numbers("卡号6222021234567890")
+        assert "622202" not in result
+        assert "****7890" in result
+
+    def test_e3_spaces_between_digit_groups(self):
+        """6222 0212 3456 7890 — space-separated digit groups → masked."""
+        result = mask_long_numbers("账号 6222 0212 3456 7890")
+        assert "6222" not in result
+        assert "0212" not in result
+        assert "****7890" in result
+
+    def test_e3_hyphens_between_digit_groups(self):
+        """6222-0212-3456-7890 — hyphen-separated digit groups → masked."""
+        result = mask_long_numbers("账号6222-0212-3456-7890")
+        assert "6222" not in result
+        assert "****7890" in result
+
+    def test_e3_chinese_both_sides(self):
+        """转账给62220212345678的账户 — digits between Chinese chars → masked."""
+        result = mask_long_numbers("转账给62220212345678的账户")
+        assert "622202" not in result
+        assert "****5678" in result
+
+    def test_e3_cjk_punctuation(self):
+        """卡号：6222021234567890。 — punctuation adjacent → masked."""
+        result = mask_long_numbers("卡号：6222021234567890。")
+        assert "622202" not in result
+        assert "****7890" in result
+
+    def test_e3_line_start(self):
+        """6222021234567890 at line start → masked."""
+        result = mask_long_numbers("6222021234567890")
+        assert "****7890" in result
+
+    def test_e3_line_end(self):
+        """text ending with 6222021234567890 → masked."""
+        result = mask_long_numbers("尾号6222021234567890")
+        assert "****7890" in result
+
 
 # ── semantic checks ─────────────────────────────────────────────────────
 
