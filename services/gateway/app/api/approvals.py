@@ -107,9 +107,43 @@ async def _validate_confirmable(
 
     Returns (plan_row, evaluation_row, binding). Raises GatewayError on any
     validation failure.
+
+    Lock order: session → plan → evaluation (matches W4b1 create_for_evaluation,
+    avoiding ABBA deadlock with W1 cancel_session).  The caller already holds
+    the approval row FOR UPDATE via :func:`_lock_approval`.
     """
     plan_id = approval["plan_id"]
     customer_id = approval["customer_id"]
+
+    # 1. Status must be PENDING.
+    if approval["status"] != ApprovalStatus.PENDING.value:
+        raise GatewayError(Code.STATE_CHANGED, 409, "approval is not pending")
+
+    # 2. Not expired.
+    if approval["expires_at_wall"] <= now:
+        raise GatewayError(Code.APPROVAL_EXPIRED, 409)
+
+    # 3. view_hash must match byte-for-byte.
+    if approval["view_hash"] != view_hash:
+        raise GatewayError(Code.VIEW_HASH_MISMATCH, 409)
+
+    # 4. Session not revoked. Locked BEFORE the plan row to match W4b1
+    #    lock order (session → plan → evaluation); locking plan first
+    #    would form an ABBA deadlock with W1 cancel_session which holds
+    #    the session row lock first.
+    session = (
+        (
+            await conn.execute(
+                select(t.sessions.c.revoked_at_wall)
+                .where(t.sessions.c.id == approval["sid"])
+                .with_for_update()
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if session is None or session["revoked_at_wall"] is not None:
+        raise GatewayError(Code.AUTHORIZATION_CANCELLED, 409, "session has been revoked")
 
     # Lock plan row.
     plan = (
@@ -143,31 +177,6 @@ async def _validate_confirmable(
     )
     if evaluation is None:
         raise GatewayError(Code.OWNERSHIP_MISMATCH, 404, "evaluation not found")
-
-    # 1. Status must be PENDING.
-    if approval["status"] != ApprovalStatus.PENDING.value:
-        raise GatewayError(Code.STATE_CHANGED, 409, "approval is not pending")
-
-    # 2. Not expired.
-    if approval["expires_at_wall"] <= now:
-        raise GatewayError(Code.APPROVAL_EXPIRED, 409)
-
-    # 3. view_hash must match byte-for-byte.
-    if approval["view_hash"] != view_hash:
-        raise GatewayError(Code.VIEW_HASH_MISMATCH, 409)
-
-    # 4. Session not revoked.
-    session = (
-        (
-            await conn.execute(
-                select(t.sessions.c.revoked_at_wall).where(t.sessions.c.id == approval["sid"])
-            )
-        )
-        .mappings()
-        .one_or_none()
-    )
-    if session is None or session["revoked_at_wall"] is not None:
-        raise GatewayError(Code.AUTHORIZATION_CANCELLED, 409, "session has been revoked")
 
     # 5. Plan in PENDING_APPROVAL.
     if plan["status"] != PlanStatus.PENDING_APPROVAL.value:
@@ -229,6 +238,13 @@ async def get_approval_panel(approval_id: str, request: Request):
             raise GatewayError(Code.NOT_FOUND, 404, "panel not found")
 
     view = evaluation["view_json"]
+
+    # Cross-check: view_json identity must match the approval being fetched.
+    # A view that claims a different approval_id than the path parameter is a
+    # tampered or misrouted panel.
+    view_approval_id = view.get("approval_id")
+    if view_approval_id is not None and view_approval_id != approval_id:
+        raise GatewayError(Code.VIEW_HASH_MISMATCH, 409, "view does not match approval")
 
     # D2: status and expires_at_wall are envelope fields (NOT in content hash
     # domain). Override them from the current approvals row so the panel always

@@ -380,3 +380,53 @@ def test_confirm_binding_mac_tampered_returns_409(app_config):
         await db.dispose()
 
     asyncio.run(run())
+
+
+def test_confirm_superseded_returns_409(app_config):
+    """Confirm on a SUPERSEDED approval returns 409, DB unchanged."""
+
+    async def run():
+        app = await build_app(app_config)
+        db = _runtime_db(app)
+        async with db.begin() as conn:
+            await _seed_full(conn, approval_status=ApprovalStatus.SUPERSEDED.value)
+
+        resp = await app.client.post(CONFIRM_URL, json=_body(), headers=app.auth_headers())
+        assert resp.status_code == 409
+
+        # DB unchanged — approval still SUPERSEDED.
+        async with db.connect() as conn:
+            approval = (
+                (await conn.execute(select(t.approvals).where(t.approvals.c.id == "apv_1")))
+                .mappings()
+                .one()
+            )
+        assert approval["status"] == ApprovalStatus.SUPERSEDED.value
+        await db.dispose()
+
+    asyncio.run(run())
+
+
+def test_confirm_used_returns_409(app_config):
+    """Confirm on a USED approval returns 409, DB unchanged."""
+
+    async def run():
+        app = await build_app(app_config)
+        db = _runtime_db(app)
+        async with db.begin() as conn:
+            await _seed_full(conn, approval_status=ApprovalStatus.USED.value)
+
+        resp = await app.client.post(CONFIRM_URL, json=_body(), headers=app.auth_headers())
+        assert resp.status_code == 409
+
+        # DB unchanged — approval still USED.
+        async with db.connect() as conn:
+            approval = (
+                (await conn.execute(select(t.approvals).where(t.approvals.c.id == "apv_1")))
+                .mappings()
+                .one()
+            )
+        assert approval["status"] == ApprovalStatus.USED.value
+        await db.dispose()
+
+    asyncio.run(run())

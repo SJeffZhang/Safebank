@@ -167,3 +167,23 @@ def test_g9_requires_approve_scope(app_config):
         assert resp.status_code == 403
 
     asyncio.run(run())
+
+
+def test_g9_view_json_approval_id_mismatch_returns_409(app_config):
+    """G9 returns 409 when view_json.approval_id does not match the path
+    approval_id. A misrouted or tampered panel must be rejected fail-closed."""
+
+    async def run():
+        app = await build_app(app_config)
+        db = _runtime_db(app)
+        # Seed with view_json whose approval_id differs from the *actual*
+        # approval row id.
+        view_json = {"plan_id": "pln_1", "risk": "YELLOW", "approval_id": "apv_other"}
+        async with db.begin() as conn:
+            await _seed_full(conn, view_json=view_json)
+
+        resp = await app.client.get("/approvals/apv_1", headers=app.auth_headers())
+        assert resp.status_code == 409
+        await db.dispose()
+
+    asyncio.run(run())

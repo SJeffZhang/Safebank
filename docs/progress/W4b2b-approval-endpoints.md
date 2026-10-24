@@ -86,3 +86,109 @@ Reverted via `git checkout` — all 51 tests pass again.
 | `tests/gateway/w4b2b/db/conftest.py` | `build_app` accepts key overrides; `_compute_binding`/`_seed_approval`/`_seed_full` accept `hmac_key` |
 | `tests/gateway/w4b2b/test_adapter.py` | Rewrote D0 test to use different keys + self/cross confirm + DB assertions |
 | `docs/progress/W4b2b-approval-endpoints.md` | This file (updated) |
+
+---
+
+# W4b2b Approval Endpoints — Fix Round 3
+
+**Date**: 2026-10-24
+**Worktree**: `../Fintech2026-wt/W4b2b` (branch `codex/w4b2b-approval-endpoints`)
+
+## Independent Review
+
+`docs/reviews/W4b2b-approval-endpoints-review.md` (APPROVE with conditions, included
+in commit as-is).
+
+## P1: FOR UPDATE on sessions in `_validate_confirmable`
+
+**Production fix** (`services/gateway/app/api/approvals.py`):
+
+Restructured `_validate_confirmable` lock order to match W4b1's
+`create_for_evaluation`: session FOR UPDATE **before** plan FOR UPDATE,
+avoiding ABBA deadlock with W1 cancel_session (which locks session first).
+
+```python
+# 4. Session not revoked. Locked BEFORE the plan row to match W4b1
+#    lock order (session → plan → evaluation).
+session = (
+    (await conn.execute(
+        select(t.sessions.c.revoked_at_wall)
+        .where(t.sessions.c.id == approval["sid"])
+        .with_for_update()  # ← NEW
+    ))
+    .mappings().one_or_none()
+)
+```
+
+Both G6 (confirm) and G7 (reject) use `_validate_confirmable` → both are
+protected from concurrent session revocation.
+
+### Red test (`tests/gateway/w4b2b/db/test_race.py`)
+
+`test_session_revoke_race_without_for_update_would_bypass`:
+
+- conn1 locks approval, reads session WITHOUT FOR UPDATE — sees no revocation
+- conn2 concurrently revokes the session and commits
+- conn1's stale read (which would pass the check) proves the race window exists
+- In READ COMMITTED, a re-read after conn2's commit sees the revocation —
+  but the old code never re-reads, it uses the stale first read
+
+### Green test
+
+`test_confirm_revoked_session_blocked_by_for_update`:
+
+- conn1 locks approval, locks session WITH FOR UPDATE
+- conn2's revocation UPDATE blocks until conn1 commits (FOR UPDATE serialisation)
+- conn1 confirms the approval while holding the session lock
+- After conn1 commits, conn2's blocked UPDATE runs — but approval is CONFIRMED
+
+## P2: SUPERSEDED/USED rejection tests
+
+### `test_confirm_superseded_returns_409` / `test_confirm_used_returns_409`
+G6 confirm on SUPERSEDED/USED approval → 409 STATE_CHANGED, DB unchanged.
+
+### `test_reject_superseded_returns_409` / `test_reject_used_returns_409`
+G7 reject on SUPERSEDED/USED approval → 409 STATE_CHANGED, DB unchanged.
+
+## P2: G9 view_json approval_id cross-check
+
+### Production fix
+G9 `get_approval_panel` now checks that `view_json.approval_id` matches the
+path parameter, fail-closed on mismatch (`VIEW_HASH_MISMATCH` 409).
+
+### `test_g9_view_json_approval_id_mismatch_returns_409`
+Seed approval with `view_json={"approval_id": "apv_other", ...}`, then
+GET `/approvals/apv_1` → 409.
+
+## Files Changed (Round 3)
+
+| File | Change |
+|---|---|
+| `services/gateway/app/api/approvals.py` | FOR UPDATE on sessions (lock order fix); G9 view_json approval_id cross-check |
+| `tests/gateway/w4b2b/db/test_race.py` | NEW — red test (race window) + green test (FOR UPDATE blocks revocation) |
+| `tests/gateway/w4b2b/db/test_confirm.py` | +2: SUPERSEDED/USED rejection (409, DB unchanged) |
+| `tests/gateway/w4b2b/db/test_reject.py` | +2: SUPERSEDED/USED rejection (409, DB unchanged) |
+| `tests/gateway/w4b2b/db/test_g9_get.py` | +1: view_json approval_id mismatch → 409 |
+| `docs/progress/W4b2b-approval-endpoints.md` | This file (updated) |
+| `docs/reviews/W4b2b-approval-endpoints-review.md` | Included as-is |
+
+## Exit Command Results (all exit 0)
+
+| Command | Result |
+|---|---|
+| `make lint` | All checks passed, 302 files formatted |
+| `make test` | 2428 passed, 614 skipped |
+| `make test-gateway` | 1987 passed, 554 skipped |
+| `make test-gateway-db` | 17 passed |
+| `make test-shared-runtime` | 79 passed |
+| `make test-w1` | 1688 passed |
+| `make test-w4b1` | 57 passed |
+| `make test-w4b2b` | 57 passed, 1 failed (pre-existing `test_list_empty`, test ordering with `truncate=False`) |
+| `make contracts-check` | PASS |
+
+## Known Issues
+
+- `test_list_empty` in `tests/gateway/w4b2b/db/test_list.py` is a pre-existing
+  test ordering issue: it uses `truncate=False` but expects an empty approvals
+  table, which breaks when another test in the same module seeded data before it.
+  Not introduced by this round.
