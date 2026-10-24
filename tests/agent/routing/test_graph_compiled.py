@@ -912,3 +912,188 @@ def test_concurrent_reads_no_cross_customer_leak():
             f"thread {tid} used multiple customer contexts: {unique} — "
             f"executor leaked across invocations"
         )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 修复轮 3: 真实执行 read 的并发凭据隔离测试
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_concurrent_reads_token_isolation_with_real_tool_calls():
+    """Two concurrent invocations on a **shared GatherAdapter** must not leak tokens.
+
+    Unlike the shallow-copy test above, this test uses a fake LLM that actually
+    emits ``get_accounts`` tool calls, so the read bridge is really exercised.
+    Both threads share the **same** ``GatherAdapter`` instance — the
+    monkey-patch version would cause one invocation's ``_read_executor`` to be
+    overwritten by the other, leaking the token/customer identity.
+
+    A shared ``_RecordingReadClient`` records ``(thread_id, token, customer_id)``
+    for every ``read_tool`` call.
+
+    **FAKE BOUNDARY**: the LLM and gateway read backend are fully scripted; no
+    real model or network is used.  The assertion is on the token/customer
+    attached to each recorded call, not on the response content.
+    """
+    import concurrent.futures
+    import threading
+
+    from services.agent.app.llm.gather import GatherAdapter
+    from services.agent.app.llm.gather import ReadResult as GatherReadResult
+
+    _ACCOUNTS_RESULT = {
+        "data": {
+            "accounts": [],
+            "daily_outflow_cents": 0,
+            "daily_outflow_limit_cents": 0,
+            "remaining_daily_outflow_cents": 0,
+            "balance_history": [],
+        },
+        "source_ref": "src_1",
+        "untrusted_paths": (),
+        "versions": {},
+        "observed_at": "2026-10-24T12:00:00Z",
+    }
+
+    # ── Shared recording client ──────────────────────────────────────────
+
+    call_records: list[tuple[int, str, str]] = []  # (thread_id, token, customer_id)
+    _rlock = threading.Lock()
+
+    class _RecordingReadClient(GatewayClient):
+        """GatewayClient that records every ``read_tool`` caller identity."""
+
+        def read_tool(self, tool, args, context):
+            with _rlock:
+                call_records.append(
+                    (threading.get_ident(), context.assistant_token, context.customer_id)
+                )
+            return super().read_tool(tool, args, context)
+
+    recording_client = _RecordingReadClient(
+        "http://gw",
+        "token_read",
+        http_client=ScriptedGateway(
+            [
+                json_response(200, _ACCOUNTS_RESULT),
+                json_response(200, _ACCOUNTS_RESULT),
+                _NOOP,
+                _NOOP,
+            ]
+        ).client,
+    )
+
+    # ── Shared fake LLM (per-thread tracking) ── emits one tool_call per thread ──
+
+    _llm_lock = threading.Lock()
+
+    class _ReadOneLLM:
+        """Per-thread: first ``invoke`` in each thread → tool_calls, rest → stop."""
+
+        def __init__(self):
+            self._per_thread: dict[int, int] = {}  # thread_id → call_count
+
+        def bind_tools(self, tools):
+            return self
+
+        def invoke(self, messages):
+            from langchain_core.messages import AIMessage
+
+            tid = threading.get_ident()
+            with _llm_lock:
+                count = self._per_thread.get(tid, 0) + 1
+                self._per_thread[tid] = count
+            if count == 1:
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "get_accounts",
+                            "args": {"history_days": 30},
+                            "id": f"call_{tid}",
+                        }
+                    ],
+                )
+            return AIMessage(content="", tool_calls=[])
+
+    # ── Shared adapter — the key fixture ────────────────────────────────
+
+    shared_adapter = GatherAdapter(
+        llm=_ReadOneLLM(),
+        read_executor=lambda t, a: GatherReadResult(
+            data={}, source_ref="s", untrusted_paths=(), versions={}, observed_at=""
+        ),
+    )
+
+    # ── Build and invoke helpers (per-thread graph, shared adapter) ──────
+
+    def _build_and_invoke(customer_id: str, session_id: str, token: str) -> dict:
+        """Each thread gets its own graph + main client, but SHARES the adapter."""
+        main_client = GatewayClient(
+            "http://gw",
+            SERVICE_TOKEN,
+            http_client=ScriptedGateway(
+                [
+                    *_g20_ok(_g20_item("utt_a")),
+                    json_response(200, _g4_allow("pln_a")),
+                    json_response(200, _g8_executed("pln_a")),
+                    _NOOP,
+                ]
+            ).client,
+        )
+        ports = make_gateway_ports(
+            main_client,
+            understand=_fake_understand,
+            gather=shared_adapter,  # ← SHARED across threads
+            plan=_fake_plan,
+            respond=_fake_respond,
+            verify_output=_fake_verify,
+        )
+        graph = build_gateway_graph(
+            ports,
+            InMemorySaver(),
+            main_client,
+            gateway_read_client=recording_client,
+        )
+        return graph.invoke(
+            {"utterances": [UtteranceRef(id="utt_a", kind="typed", text="")]},
+            config={"configurable": {"thread_id": session_id}},
+            context=ctx(customer_id, session_id, token=token),
+        )
+
+    # ── Concurrent execution ─────────────────────────────────────────────
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        future_a = pool.submit(_build_and_invoke, "cus_a", "ses_a", "tok_read_a")
+        future_b = pool.submit(_build_and_invoke, "cus_b", "ses_b", "tok_read_b")
+        result_a = future_a.result()
+        result_b = future_b.result()
+
+    assert result_a["execution"]["status"] == "EXECUTED"
+    assert result_b["execution"]["status"] == "EXECUTED"
+
+    # ── Assertions: one token per thread ────────────────────────────────
+
+    # Each invocation's gather should have made one read_tool call
+    assert len(call_records) == 2, (
+        f"expected 2 read_tool calls (one per invocation), got {len(call_records)}"
+    )
+
+    # Group by thread — each thread must use only its own token and customer
+    threads_seen = set(tid for tid, _, _ in call_records)
+    for tid in threads_seen:
+        records = [(t, c) for r_tid, t, c in call_records if r_tid == tid]
+        tokens = {t for t, _ in records}
+        customers = {c for _, c in records}
+        assert len(tokens) == 1, (
+            f"thread {tid} used multiple tokens: {tokens} — executor leaked across invocations"
+        )
+        assert len(customers) == 1, (
+            f"thread {tid} used multiple customers: {customers} — "
+            f"executor leaked across invocations"
+        )
+
+    # The two threads must have used different tokens (proof they are
+    # distinct invocations, not the same one accidentally serialised).
+    all_tokens = {t for _, t, _ in call_records}
+    assert all_tokens == {"tok_read_a", "tok_read_b"}, f"expected both tokens, got {all_tokens}"

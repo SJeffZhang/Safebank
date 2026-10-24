@@ -656,9 +656,7 @@ def build_gateway_graph(
             executor_for_call = _read_factory(context)
 
             # Shallow copy: no shared mutation, no monkey-patching.
-            adapter = object.__new__(type(ports.gather))
-            adapter.__dict__.update(ports.gather.__dict__)
-            adapter.__dict__["_read_executor"] = executor_for_call
+            adapter = ports.gather.with_read_executor(executor_for_call)
             reads = adapter(state, context)
 
             if reads is None:

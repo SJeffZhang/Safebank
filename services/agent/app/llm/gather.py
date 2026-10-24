@@ -52,6 +52,19 @@ class GatherAdapter:
         self._max_rounds = max_rounds
         self._observer = observer
 
+    def with_read_executor(self, read_executor: ReadExecutor) -> GatherAdapter:
+        """Return a new adapter sharing the same model/observer but with a different
+        ``read_executor``.
+
+        The returned adapter is a shallow copy — it shares ``_model`` and ``_observer``
+        (read-only during inference) with the original, so concurrent invocations of
+        different adapters derived from the same parent are safe.
+        """
+        new = object.__new__(type(self))
+        new.__dict__.update(self.__dict__)
+        new.__dict__["_read_executor"] = read_executor
+        return new
+
     def __call__(self, state: AgentState, context: AgentContext) -> list[ReadRecord]:
         reads: list[ReadRecord] = []
         messages = [SystemMessage(content=_SYSTEM), HumanMessage(content=self._prompt(state))]

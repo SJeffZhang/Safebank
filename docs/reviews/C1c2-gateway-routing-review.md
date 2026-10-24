@@ -201,3 +201,50 @@ Annotated as `Decision | None` but gateway graph stores `dict` (from `model_dump
 ### 结论
 
 所有 6 条 P0/P1 已修复并经验证。两处新 P2 不阻塞合并（C1d 可自然解决：双调用属去重优化，线程安全属 PG 服务层职责）。APPROVE。
+
+## 修复轮 2 定点复审（2026-10-24，1e303e7..786949d）
+
+**Reviewer:** DeepSeek V4 Pro (read-only, headless CLI)  
+**Verdict:** APPROVE — both coordinator-mandated fixes verified, no new P0/P1.
+
+### 逐条核对
+
+| # | 修复要求 | 修复方式 | 证据 | |
+|---|---|---|---|---|
+| (1) | 读桥接不得修改共享可变状态 | monkey-patch 替换为 `object.__new__` 浅拷贝：`adapter = object.__new__(type(ports.gather)); adapter.__dict__.update(ports.gather.__dict__); adapter.__dict__["_read_executor"] = executor_for_call` | `graph.py:658-661`；新增 `_MutationDetector` 测试验证共享 adapter 的 `_read_executor` 从未被写入（`test_gateway_read_bridge_no_shared_adapter_mutation`）；新增两线程并发测试验证不同 customer 的 executor 不泄漏（`test_concurrent_reads_no_cross_customer_leak`） | ✅ |
+| (2) | 去掉 evaluate 中 route_evaluate 重复调用 | evaluate 节点改为内联计算 `reply_draft`：DENY → `respond_template("DENY")`，REPLAN → 按 resolver 类型与 replan_count 判断（agent+<2 → 空/gather，否则 REAPLAN_USER 或 REPLAN_AGENT_EXHAUSTED），其余 → 空 | `graph.py:430-455`；`_route_evaluate_gw` 仍调用 `route_evaluate` 一次（`graph.py:623`），evaluate 节点不再调用；`git show 1e303e7:...` 确认旧码两处调用（行434+602），新码仅一处（行623）；`test_deny_path_sets_reply_draft_without_double_route_evaluate` 用 spy 断言 `call_count == 1` | ✅ |
+
+### 浅拷贝并发安全分析
+
+- `GatherAdapter` 四个字段：`_read_executor`（每次调用替换）、`_model`（`llm.bind_tools()` 返回的 LangChain Runnable，`invoke` 只读不写）、`_max_rounds`（int，只读）、`_observer`（callable，`__call__` 内只调用不赋值）
+- 浅拷贝共享 `_model`/`_observer`/`_max_rounds`，三者均只读；`_read_executor` 通过 `adapter.__dict__["_read_executor"]` 逐调用替换，绕过 `__setattr__`
+- 凭据只来自 `runtime.context`（`graph.py:655-656`），`_read_factory(context)` 返回绑定该 invocation context 的 executor（`adapters.py:175-185`）；不进 state/checkpoint
+- `_MutationDetector` 测试：共享 adapter 的 `_read_executor` 未被写入（`__dict__["_read_executor"]` 绕过 `__setattr__`，只作用于拷贝实例）；拷贝实例的 `__setattr__` 未被触发（`__call__` 内无属性写）
+- 并发测试（`test_concurrent_reads_no_cross_customer_leak`）：两线程各建 graph、共享 spy client；`_NoopLLM` 不产生 tool_calls（gather 立即返回），验证无崩溃/交叉污染。注意：该测试未实际执行 read（无 tool_calls），端到端读隔离在 C1d 真实 PG 后再补
+
+### 内联 reply_draft 行为等价性
+
+- `_route_evaluate_gw` 函数体与 1e303e7 逐行相同（仅行号偏移），仍调用 `route_evaluate` 一次
+- evaluate 节点内联逻辑与 `route_evaluate` 的 `fixed_reply` 分支等价：
+  - DENY：新旧均用 `respond_template("DENY")`
+  - REPLAN + agent + count<2：新旧均 `reply = ""`（route 到 gather）
+  - REPLAN + user / exhausted：新旧均用对应模板
+  - ALLOW / REQUIRE_APPROVAL：新旧均 `reply = ""`
+  - **P2 边界**：`route_evaluate` 对未识别 decision 值返回 `REINITIATE` 固定模板，内联代码对该值会留空 → 走 LLM 生成。该路径仅在 L2 返回 `{ALLOW,DENY,REQUIRE_APPROVAL,REPLAN}` 外值时触发，生产不可能出现；行为差异是 LLM 生成优于固定模板，不构成安全或正确性问题
+
+### 回归核查
+
+- 冻结文件（contracts/gateway/bankcore/L3/pyproject/Makefile/CI/compose）零改动
+- JWT 不进 AgentState/checkpoint — diff 无新增 token 写入
+- `_route_evaluate_gw` / `_route_execute` / `_route_understand_gw` / clarify 节点 — 与 1e303e7 相同，无改动
+- 全部 74 routing 测试通过（20 编译图 + 54 原）+ 273 agent 测试通过
+
+### 新发现问题
+
+**P2: 浅拷贝依赖 `__init__` 不产生副作用**。当前 `GatherAdapter.__init__` 仅做属性赋值，`object.__new__ + __dict__.update` 可安全绕过。若未来 `__init__` 增加副作用（注册回调、打开连接），浅拷贝会遗漏。建议：在 `GatherAdapter` 上增加 `with_read_executor(executor)` 工厂方法，内部用 `copy.copy(self)` + 设置 `_read_executor`，把拷贝逻辑封装在类内（不阻塞合并，C1d 可做）。
+
+**P2: 并发测试未实际执行 read**。`test_concurrent_reads_no_cross_customer_leak` 使用 `_NoopLLM`（零 tool_calls），gather 立即返回，`_read_executor` 从未被调用。并发场景下的真实读隔离（不同客户拿不同 JWT 调 G2）在 C1d 补真实 PG 后再验证（不阻塞合并）。
+
+### 结论
+
+两条协调者裁定的修复均已正确实施并经验证。浅拷贝安全、无共享可变状态、凭据仅来自 runtime.context。`route_evaluate` 从两次调用减为一次，`_route_evaluate_gw` 行为不变。无新增 P0/P1。两处新 P2 均不阻塞合并。**APPROVE。**

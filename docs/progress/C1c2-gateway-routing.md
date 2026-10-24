@@ -182,4 +182,46 @@ Final SHA + workspace state reported after freeze.
 - P2-2: 2 tests (`test_deny_path_sets_reply_draft_without_double_route_evaluate`, `test_replan_agent_routes_to_gather_via_graph`)
 - P2-1: 2 tests (`test_gateway_read_bridge_no_shared_adapter_mutation`, `test_concurrent_reads_no_cross_customer_leak`)
 
+## 修复轮 3 (786949d..)
+
+**原由:** 修复轮 2 复审 APPROVE，两条 P2 需本轮处理：
+1. 浅拷贝逻辑在 graph.py 中用 `object.__new__` + `__dict__.update` 暴露实现细节 — 封装为 `GatherAdapter.with_read_executor(executor)` 方法
+2. 并发测试 `test_concurrent_reads_no_cross_customer_leak` 的 `_NoopLLM` 不产生 tool_calls，读桥接从未被真正执行 — 补真实 tool_calls + 共享 adapter 的并发凭据隔离测试
+
+同时：在 `1e303e7` 旧代码上证明测试 RED，在当前代码上证明 GREEN。
+
+### with_read_executor 封装
+
+- **修复:** `GatherAdapter` 新增 `with_read_executor(executor)` 工厂方法 (`services/agent/app/llm/gather.py:55-66`)，内部用 `object.__new__` + `__dict__.update` 返回浅拷贝
+- **graph.py 变更:** gather 节点中 `object.__new__(type(ports.gather))` + `__dict__` 直接操作替换为 `ports.gather.with_read_executor(executor_for_call)`（`graph.py:659`）
+- **旧代码 `1e303e7` 验证 RED:** 使用 monkey-patch（`adapter._read_executor = executor_for_call`），共享 adapter + `time.sleep(0)` × 200 GIL 让渡 + barrier 同步 → 两个并发线程仅记录到 `tok_read_b`（漏掉 `tok_read_a`）→ 测试 **FAIL**（`AssertionError: expected both tokens, got {'tok_read_b'}`）
+- **当前代码验证 GREEN:** `with_read_executor` 为每次调用创建独立实例，两个线程各自记录自身 token → 测试 **PASS**（`all_tokens == {"tok_read_a", "tok_read_b"}`）
+
+### 增强版并发测试
+
+- **新增测试:** `test_concurrent_reads_token_isolation_with_real_tool_calls`（`tests/agent/routing/test_graph_compiled.py`）
+  - 共享 `GatherAdapter`（两个线程的图 closure 引用同一适配器对象）
+  - `_ReadOneLLM`：逐线程跟踪（每个线程的首次 `invoke` → `get_accounts` tool_call，随后 → 空）
+  - `_RecordingReadClient`：记录每次 `read_tool` 的 `(thread_id, assistant_token, customer_id)`
+  - 两个 `ThreadPoolExecutor` 工作线程并发 `invoke`
+  - 断言：两个调用均记录（`len(call_records) == 2`），各自仅使用自身 token/customer，`all_tokens == {"tok_read_a", "tok_read_b"}`
+- **FAKE 边界:** LLM 及网关读后端均脚本化；仅断言身份凭据，不检查响应内容
+
+### Exit commands (修复轮 3)
+
+| Command | Result |
+|---|---|
+| `make lint` | ✅ All checks passed |
+| `.venv/bin/pytest tests/agent -q` | ✅ 287 passed, 0 skip, 0 xfail |
+| `make test` | ✅ 2478 passed, 561 skipped |
+| `make contracts-check` | ✅ PASS: contracts v1 match frozen schemas |
+| `make demo` | ❌ exit 2 (not implemented, not faked — expected) |
+
+### 变更文件
+
+- `services/agent/app/llm/gather.py` — `with_read_executor` 方法 (+13 行)
+- `services/agent/app/graph/graph.py` — 使用 `with_read_executor` 替换 `object.__new__` (4→2 行)
+- `tests/agent/routing/test_graph_compiled.py` — 新增增强版并发测试 (+130 行)
+- `docs/reviews/C1c2-gateway-routing-review.md` — 修复轮 2 复审报告，`Co-Authored-By: DeepSeek V4 Pro`
+
 总计编译图测试: 20 passed (原始 16 + 修复轮 2 新增 4)。
