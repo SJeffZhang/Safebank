@@ -101,3 +101,97 @@
 
 - 全角数字（U+FF10–U+FF19 如 `６２２`）、零宽字符（U+200B）分隔数字、中文数字账号（「六二二二零二」）可绕过掩码——当前均未处理，建议在已知缺口文档中显式列出，不阻塞本次合并。
 - `ADR-005-frontend-choice.md` 中「Python Fastify」应为「Python FastAPI」或 Node.js Fastify（typo，非 blocker）。
+
+
+## 修复轮 2 定点复审（2026-10-25，17204bd..5d1c4de）
+
+**结论: APPROVE**（P0 无，P1 无，P2×2 新发现，均不阻塞）
+
+### 上轮缺陷逐条验证
+
+| 编号 | 缺陷 | 状态 | 证据 |
+|---|---|---|---|
+| P1-1 | 中文数字提取未实现 | **已修复** | 新增 `_chinese_to_value()`（verify.py:48–119），支持零–九、十百千万亿、缩写（三万五→35000）、十二等 leading-unit 形式。`extract_amounts` 新增 `_CHINESE_AMOUNT_RE` 匹配 `[零〇一二两三四五六七八九十百千万亿]+\s*[元块]`。8 项中文测试通过（八百→80000 分、十二→1200 分、一百零五→10500 分、三十万→3000000 分、两百万→20000000 分、三万五→350000 分、非金额中文→不提取、一千200→后续讨论）。 |
+| P1-2 | 多连续分隔符绕过 | **已修复** | `_DIGIT_RUN_RE` 从 `[ -]` 改为 `[ \t\-]+`（支持连续空格/tab/连字符）。新增 `_FULLWIDTH_DIGIT_TABLE`（U+FF10–U+FF19→ASCII）与 `_ZERO_WIDTH_RE`（U+200B–U+200D/U+2060/U+FEFF 删除）。`mask_long_numbers` 先 NFKC 归一化→删零宽字符→全角转 ASCII→再匹配。5 项 bypass 测试通过（双空格/双连字符/tab/全角数字/零宽字符），所有均正确掩码。 |
+| P1-3 | 卡片无 5 张上限 | **已修复** | `generate_cards()` 末尾 `return tuple(cards[:5])`（cards.py:329）。`test_card_cap_at_5`（8 reads→5 cards）通过。 |
+| P2-1 | `test_with_llm_repair` 断言空洞 | **已修复** | 新增 `"800.00" in result`（修复后值出现）与 `"900.00" not in result`（错误值不出现）。换回旧 verify.py（17204bd）后 `-k test_with_llm` 为 1 passed（只跑旧版弱断言），新版该测试单独运行 1 passed 且断言更严格。 |
+| P2-2 | `scrub` 误清 token_usage | **已修复** | `_SENSITIVE_KEYS` frozenset 删除 `"token"`（replay.py:421）。新增 `test_preserves_token_usage`：`completion_tokens`/`prompt_tokens`/`total_tokens` 均保留。 |
+| P2-3 | `_AMOUNT_TEXT_RE` 不保护 `.00元` | **已修复** | `[\d,]+` → `[\d,.]+`。新增 `test_p23_decimal_yuan_preserved`（`10000000.00元` 保留不掩码）与 `test_p23_plain_10m_not_protected`（纯数字仍掩码）。 |
+
+### 协调者指定的核验项
+
+#### 1.「两千元五角」部分提取风险评估
+
+**复现**（`/tmp/verify_edge.py`）：
+
+```
+两千元五角 → [{'raw': '两千元', 'cents': 200000}]   ← 「五角」丢失（50 分）
+两万元五角 → [{'raw': '两万元', 'cents': 2000000}]  ← 「五角」丢失（50 分）
+```
+
+**根因**: `_CHINESE_AMOUNT_RE` 模式 `[零〇一二两三四五六七八九十百千万亿]+\s*(元|块)`。中文「角」「分」不在匹配字符集中。当前实现覆盖了「元」「块」两个主单位，子单位「角」「分」属未实现范围（任务书未要求、设计笔记未提及、现有依赖无支持）。不依赖 `cn2an`（协调者裁定：自行实现、不新增依赖）。
+
+**风险评估: P2，不阻塞**。理由：
+- 角/分子单位最大误差为 90 分（9 角）= 0.9 元，不具备有意义的金融风险
+- 银行金额以分为最小单位，实际交易极少出现「五角」这种子单位口语表述
+- L2 是真正的授权关卡，extract 仅用于校验 LLM 回复的事实性（非资金授权）
+- 若需修复：在 `_CHINESE_AMOUNT_RE` 增补 `([零一二三四五六七八九]\s*角)?([零一二三四五六七八九]\s*分)?`，但此扩展在当前的 cn2an-less 自实现下需手动构建角/分映射。建议在 P3 做（不阻塞 P2 验收）
+
+#### 2. NFKC 后 span 偏移是否导致掩码替换错位
+
+**验证结论: 安全，无偏移风险。** 代码逻辑：
+
+1. `_AMOUNT_TEXT_RE` / `_AMOUNT_RE` 在 `working`（已 NFKC + 删零宽 + 全角转 ASCII）上检测
+2. 检测命中后记录保护区间（`protected_spans`）
+3. `_DIGIT_RUN_RE` 在同一个 `working` 上匹配数字 run
+4. 替换在同一个 `working` 上执行，保护区间按位置跳过
+
+**所有操作共享同一份 `working` 字符串**——没有跨原始/归一化文本的位置引用，因此 NFKC/全角转换不产生 span 偏移。亲跑验证：全角数字「６２２２０２１２３４５６７８９０」→ 正确掩码为 `****7890`，零宽字符插入「6222​0212​3456​7890」→ 正确掩码为 `****7890`。
+
+#### 3. 中文数字与阿拉伯数字混写边界
+
+**复现**：
+
+```
+一千200元 → [{'raw': '200元', 'cents': 20000}]    ← 「一千」（100000 分）被忽略
+```
+
+**根因**: `_CHINESE_AMOUNT_RE` 模式 `[零〇一二两三四五六七八九十百千万亿]+\s*(元|块)` 匹配到「一千」后期望 `\s*(元|块)`，但下一字符是 `2`（数字），匹配失败。随后 `_AMOUNT_YUAN_RE` 捕获「200元」→ 20000 分。最终只提取了 200 元而非 1200 元。
+
+**风险评估: P2，不阻塞**。理由：
+- 「一千200元」是非自然的中文表述（应写「一千二百元」或「1200元」）
+- LLM 在正常生成中产生此类混写的概率极低
+- 即使发生，`extract_amounts` 提取的是「事实对比」用的候选值，L2 才是真正的授权关卡
+- 修复成本高（需处理中文数字→阿拉伯数字→中文数字的歧义边界），收益低
+
+**建议**: 在 ADR-004 已知缺口中明文记录此边界，P3 考虑引入 `cn2an` 做完整中文数字解析。
+
+### 测试覆盖
+
+```
+.venv/bin/pytest tests/agent/test_verify.py   →  70 passed
+.venv/bin/pytest tests/agent/test_replay.py   →  47 passed
+.venv/bin/pytest tests/agent/test_cards.py    →  19 passed
+.venv/bin/pytest tests/agent/test_respond.py  →  31 passed
+────────────────────────────────────────────────
+  Total                                        167 passed in 0.73s
+```
+
+新增中文数字测试 8 项、bypass 修复测试 5 项、小数点元测试 2 项、卡片上限 1 项、token usage 保留 1 项——共计 17 项回归/边界测试，全部通过。
+
+### 回归核验
+
+换回 17204bd 的 `verify.py` 后：
+- `-k "chinese or p12 or p23"` → **13 failed / 2 passed**（中文数字 8 + bypass 5 全部失败；小数点元 2 项中 P2-3 修复项失败、原保护项通过）
+- 还原 5d1c4de 后 13 failed 全部消除
+
+### 冻结区检查
+
+`packages/`、`services/gateway/`、`docker-compose.yml`、`AGENTS.md`、`PRD.md` 本轮 0 diff。仅改动 `services/agent/app/llm/` 和 `tests/agent/`，在白名单范围内。
+
+### 新发现
+
+无 P0/P1。P2×2：
+
+- **P2-4「两千元五角」丢失「五角」（50 分）** — 角/分子单位不在当前 `_CHINESE_AMOUNT_RE` 匹配范围。最大误差 90 分（0.9 元），不构成金融风险。建议 P3 处理，不阻塞合并。
+- **P2-5「一千200元」中阿混写只提取「200元」** — 混写格式 `中文数字 + 阿拉伯数字 + 元` 为非自然中文，LLM 正常生成概率极低。即使发生，仅影响回复的事实性校验（非授权）。建议 ADR-004 记录此已知边界，不阻塞合并。
