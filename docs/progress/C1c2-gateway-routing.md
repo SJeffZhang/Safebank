@@ -226,26 +226,38 @@ Final SHA + workspace state reported after freeze.
 
 总计编译图测试: 20 passed (原始 16 + 修复轮 2 新增 4)。
 
-## 修复轮 4 (a19fdf7..)
+## 修复轮 5 (1287437..)
 
-**原由:** 修复轮 3 的并发测试 `test_concurrent_reads_token_isolation_with_real_tool_calls` 在旧 monkey-patch 代码上也通过（协调者实测 `1e303e7` + `786949d` 均 1 passed），两个线程的实际 `_read_executor` 调用未在同一适配器对象上真正交错 → 抓不住全局 monkey-patch 的串用缺陷。
+**原由:** 修复轮 4 的单 barrier 测试在 1e303e7 上也稳定通过（协调者实测 3/3）。根因：barrier 只同步了两线程进入 invoke() 的时刻，但 1e303e7 的 `try/finally` 按 GIL 顺序执行 — 后进入者捕获的 `original_executor` 恰好是先进入者的 `executor_for_a`，其 finally 恢复此值时让先进入者拿回了自己的 executor，恰好逃过了漏 token 判定。单 barrier 无法消除此复原效应。
 
-### 重写并发测试 — `threading.Barrier(2, timeout=5)` 强制交错
+### 双 barrier 方案
 
-- **关键改动:** 将 `ThreadPoolExecutor` + `_NoopLLM`（不产生 read 调用）替换为 `threading.Thread` + `_ReadOneLLM`（barrier 同步 + 真实 `tool_calls`）
+- **barrier_invoke**（`_ReadOneLLM.invoke()` 内）：两线程都在设置完共享 adapter 的 `_read_executor` 后汇集（last-write-wins）
+- **barrier_execute**（`GatherAdapter._execute` 内，临时 monkey-patch）：两线程都在读取 `self._read_executor` **之后**、调用它**之前**汇集 — 此时尚无任何 `finally` 块执行过恢复
+- **关键：** patched `_execute` 使用**捕获的** executor 引用（而非后续可能已被恢复的 `self._read_executor`），确保双 barrier 间捕获的值被用于实际 read 调用
+- **测试结束后 `finally` 恢复原始 `_execute`** 方法，保证测试隔离
 
-- **同步点:** `_ReadOneLLM.invoke()` 首次调用时在 `threading.Barrier(2, timeout=5)` 等待，确保两个线程都已完成各自的 `_read_executor` 安装后才各自执行 `_execute` → 读到 `self._read_executor`
+### RED/GREEN 验证（协调者在同一 worktree 亲自执行）
 
-- **旧代码 RED 验证（协调者亲自执行）:**
-  - 临时将 graph.py 改为 monkey-patch: `adapter = ports.gather; adapter._read_executor = executor_for_call`
-  - 测试 **FAIL** — `AssertionError: expected both tokens, got {'tok_read_b'}`
-  - 两个线程都使用 T2 的 token（last-write-wins on `_read_executor`）
+**1e303e7（monkey-patch）：3/3 稳定 FAIL**
 
-- **当前代码 GREEN:** `with_read_executor` 每次调用返回独立浅拷贝 → token 隔离 → 测试 PASS（`all_tokens == {"tok_read_a", "tok_read_b"}`）
+```
+Run 1: AssertionError: expected both tokens, got {'tok_read_a'}
+Run 2: AssertionError: expected both tokens, got {'tok_read_b'}
+Run 3: AssertionError: expected both tokens, got {'tok_read_a'}
+```
 
-- **死锁防护:** Barrier 5s timeout → `BrokenBarrierError` → `raise RuntimeError(...) from err`；thread join 10s timeout → `pytest.fail` 附死活信息
+两线程通过 barrier_execute 同步后都读到同一 executor 引用（last-write-wins），分别记录同一 token → `all_tokens` 只有 1 个元素。
 
-### Exit commands (修复轮 4)
+**HEAD（with_read_executor）：3/3 稳定 PASS**
+
+```
+Run 1-3: 2 passed, 19 deselected
+```
+
+每线程独立 adapter 副本 → `self._read_executor` 不同 → 凭据隔离。
+
+### Exit commands (修复轮 5)
 
 | Command | Result |
 |---|---|
@@ -256,4 +268,4 @@ Final SHA + workspace state reported after freeze.
 
 ### 变更文件
 
-- `tests/agent/routing/test_graph_compiled.py` — 重写并发测试（旧约 130 行 → 新约 179 行，使用 barrier + 真实线程 + 真实 tool_calls）
+- `tests/agent/routing/test_graph_compiled.py` — 双 barrier 重写：`barrier_invoke` + 临时 monkey-patched `_execute` 内的 `barrier_execute`（旧约 233 行 → 新约 305 行，拆出 `_run_barrier_test` 辅助函数确保 finally 恢复原始 `_execute`）
