@@ -34,6 +34,7 @@ from services.agent.app.graph import (
     build_gateway_graph,
     build_graph,
 )
+from services.agent.app.llm.cards import generate_cards
 
 # ── Environment defaults ─────────────────────────────────────────────────
 
@@ -462,6 +463,16 @@ def app_factory(
                         + json.dumps(final_state.values, default=str)
                         + "\n\n"
                     )
+
+                    # Push deterministic UICards (C1e Task 6)
+                    cards = generate_cards(final_state.values)
+                    if cards:
+                        card_dicts = [c.model_dump(mode="json") for c in cards]
+                        yield (
+                            "event: custom\ndata: "
+                            + json.dumps({"type": "cards", "cards": card_dicts})
+                            + "\n\n"
+                        )
 
                 reply_text = (
                     final_state.values.get("reply_draft", "")

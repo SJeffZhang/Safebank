@@ -7,14 +7,11 @@ events and never enter AgentState.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from safebank_contracts.base import Contract
-from pydantic import Field
-from typing import Annotated, Literal
 
 from services.agent.app.graph.state import AgentState
-
 
 # ── CardAction / UICard L1-local models ─────────────────────────────────────
 
@@ -112,10 +109,7 @@ def _filter_untrusted(data: dict[str, Any]) -> dict[str, Any]:
         if isinstance(v, dict):
             clean[k] = _filter_untrusted(v)
         elif isinstance(v, list):
-            clean[k] = [
-                _filter_untrusted(item) if isinstance(item, dict) else item
-                for item in v
-            ]
+            clean[k] = [_filter_untrusted(item) if isinstance(item, dict) else item for item in v]
         else:
             clean[k] = v
     return clean
@@ -306,9 +300,7 @@ def generate_cards(state: AgentState) -> tuple[UICard, ...]:
                 type="PLAN_STATUS",
                 source_ref=None,
                 data={"plan_id": plan_id, "status": "PENDING_APPROVAL"},
-                actions=(
-                    CardAction(kind="OPEN_APPROVAL", ref=approval_id),
-                ),
+                actions=(CardAction(kind="OPEN_APPROVAL", ref=approval_id),),
             )
         )
 

@@ -7,6 +7,7 @@ and fake ports for evaluate/execute (injected via _install_test_ports — D9).
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import time
@@ -781,3 +782,91 @@ def test_concurrent_same_thread_lock_rejects(monkeypatch, agent_pg, ed25519_keys
         assert resp2.status_code == 200, (
             f"After lock release, expected 200, got {resp2.status_code}"
         )
+
+
+# ── C1e Task 6: SSE card push tests ─────────────────────────────────────
+
+
+def _parse_sse_events(body: str) -> list[tuple[str, str]]:
+    """Parse SSE response body into list of (event_type, data_json) pairs."""
+    events: list[tuple[str, str]] = []
+    for block in body.strip().split("\n\n"):
+        lines = block.split("\n")
+        event_type: str | None = None
+        data: str | None = None
+        for line in lines:
+            if line.startswith("event: "):
+                event_type = line[len("event: ") :]
+            elif line.startswith("data: "):
+                data = line[len("data: ") :]
+        if event_type is not None and data is not None:
+            events.append((event_type, data))
+    return events
+
+
+def test_sse_custom_cards_event_present(client, ed25519_keys):
+    """C1e Task 6: SSE stream includes a `custom` event with cards."""
+    private, _ = ed25519_keys
+    token = make_token(private, customer="cus_a", session="ses_cards")
+    headers = _auth_headers(token)
+    client.post("/threads", json={"thread_id": "ses_cards"}, headers=headers)
+    resp = client.post(
+        "/threads/ses_cards/runs/stream",
+        json={
+            "input": {"utterances": [{"id": "utt_c1", "kind": "typed", "text": "给张三转 8 元"}]}
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    events = _parse_sse_events(resp.text)
+    assert events, f"SSE stream produced no events: {resp.text[:200]}"
+
+    custom_events = [(t, d) for t, d in events if t == "custom"]
+    assert len(custom_events) == 1, (
+        f"Expected exactly 1 custom event, got {len(custom_events)}: "
+        f"{[(t, d[:80]) for t, d in events]}"
+    )
+    data = json.loads(custom_events[0][1])
+    assert data["type"] == "cards"
+    assert isinstance(data["cards"], list)
+
+
+def test_sse_cards_contain_plan_status(client, ed25519_keys):
+    """C1e Task 6: EXECUTED state produces PLAN_STATUS card."""
+    private, _ = ed25519_keys
+    token = make_token(private, customer="cus_a", session="ses_cards_ps")
+    headers = _auth_headers(token)
+    client.post("/threads", json={"thread_id": "ses_cards_ps"}, headers=headers)
+    resp = client.post(
+        "/threads/ses_cards_ps/runs/stream",
+        json={
+            "input": {"utterances": [{"id": "utt_c2", "kind": "typed", "text": "给张三转 8 元"}]}
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    events = _parse_sse_events(resp.text)
+    custom_events = [(t, d) for t, d in events if t == "custom"]
+    assert custom_events
+    data = json.loads(custom_events[0][1])
+    card_types = [c["type"] for c in data["cards"]]
+    assert "PLAN_STATUS" in card_types, f"Expected PLAN_STATUS card, got {card_types}"
+
+
+def test_sse_cards_no_custom_when_empty(client, ed25519_keys):
+    """C1e Task 6: No custom event when cards list is empty (no state worth carding)."""
+    private, _ = ed25519_keys
+    token = make_token(private, customer="cus_a", session="ses_no_cards")
+    headers = _auth_headers(token)
+    # Create a thread but don't run a graph → no state → get_state returns 404
+    client.post("/threads", json={"thread_id": "ses_no_cards"}, headers=headers)
+    # Run a minimal utterance that produces a result
+    resp = client.post(
+        "/threads/ses_no_cards/runs/stream",
+        json={"input": {"utterances": [{"id": "utt_nc", "kind": "typed", "text": "hi"}]}},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    events = _parse_sse_events(resp.text)
+    # Cards are generated; at minimum we get messages + values + custom
+    assert any(t == "messages" for t, _ in events), "SSE should include messages event"

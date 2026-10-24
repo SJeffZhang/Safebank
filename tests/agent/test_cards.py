@@ -5,24 +5,12 @@ No real LLM, no PG — card generation from fake state.
 
 from __future__ import annotations
 
-import pytest
-
-from services.agent.app.graph.state import (
-    Decision,
-    DecisionValue,
-    Finding,
-    ReadRecord,
-    Understanding,
-    UtteranceRef,
-)
+from services.agent.app.graph.state import ReadRecord
 from services.agent.app.llm.cards import (
-    UICard,
-    CardAction,
-    _safe_data,
     _filter_untrusted,
+    _safe_data,
     generate_cards,
 )
-
 
 # ── _safe_data / _filter_untrusted ─────────────────────────────────────
 
@@ -110,9 +98,7 @@ class TestGenerateCards:
         assert len(cards[0].data["steps"]) == 1
 
     def test_unknown_generates_plan_status(self):
-        state = {
-            "execution": {"plan_id": "pln_1", "status": "UNKNOWN", "steps": []}
-        }
+        state = {"execution": {"plan_id": "pln_1", "status": "UNKNOWN", "steps": []}}
         cards = generate_cards(state)
         assert len(cards) == 1
         assert cards[0].type == "PLAN_STATUS"
