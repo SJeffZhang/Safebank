@@ -16,45 +16,16 @@ from dataclasses import dataclass, field
 
 from services.agent.app.gateway.wire import GatewayDecision, UnknownExecution
 
-# ── Fixed respond templates (PRD §6.1.1) ──────────────────────────────────
+# ── Fixed respond templates (delegated to llm/fixed_templates.py) ────────
+from services.agent.app.llm.fixed_templates import respond_template as _respond_template
 
-_RESPOND_TEMPLATES: dict[str, str] = {
-    "DENY": "该操作未被授权，无法执行。",
-    "REPLAN_AGENT_EXHAUSTED": "当前请求暂时无法处理，请调整后重试。",
-    "REPLAN_USER": "需要您确认以下信息：",
-    "UTTERANCE_EXPIRED": "请求已过期，请重新发起。",
-    "AUTHORIZATION_EXPIRED": "授权已过期，请重新发起。",
-    "AUTHORIZATION_REVOKED": "请求已被撤销，请重新发起。",
-    "AUTHORIZATION_INSUFFICIENT": "权限不足，无法执行此操作。",
-    "RATE_LIMITED": "请求过于频繁，请稍后重试。本次未执行任何操作。",
-    "DEPENDENCY_UNAVAILABLE": "服务暂不可用，未执行任何操作。",
-    "UNKNOWN": "请求已提交，正在确认中…",
-    "REINITIATE": "请求无法处理，请重新发起。未执行任何操作。",
-    "APPROVAL_REJECTED": "审批已被拒绝。",
-    "APPROVAL_EXPIRED": "审批已过期。",
-    "APPROVAL_SUPERSEDED": "审批已被后续请求替代。",
-    "APPROVAL_USED": "审批已被使用。",
-    "OTP_LOCKED": "验证码已锁定，请稍后重试。",
-    "EXECUTION_CANCELLED": "执行已被取消。",
-    "EXECUTION_DEADLINE_EXPIRED": "执行已超时。",
-    "EXECUTION_IN_PROGRESS": "该计划正在执行中，请稍后查看。",
-    "EXECUTION_FAILED": "执行失败：",
-    "GENERIC_ERROR": "请求无法处理，请重新发起。未执行任何操作。",
-}
-
-_MISSING_MESSAGE = "请求无法处理，请重新发起。未执行任何操作。"
+# Re-export for callers that already reference routing.respond_template
+respond_template = _respond_template
 
 
-def respond_template(template_key: str, *, detail: str = "") -> str:
-    """Return the fixed template text for a given key.
-
-    This is the ONLY place where L1 selects user-facing text for routing errors,
-    unknowns and template responses.  It never echoes raw server text.
-    """
-    base = _RESPOND_TEMPLATES.get(template_key, _MISSING_MESSAGE)
-    if detail:
-        return f"{base}（{detail}）"
-    return base
+def _rt(key: str) -> str:
+    """Shorthand used within this module."""
+    return _respond_template(key)
 
 
 # ── Route result ---------------------------------------------------------
