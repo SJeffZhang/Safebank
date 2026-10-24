@@ -95,13 +95,8 @@ class _GatewayExecute:
         plan_id = state.get("plan_id")
         if plan_id is None:
             raise ValueError("missing plan_id before execute")
-        request_id = (
-            state.get("plan_draft", {}).request_id
-            if hasattr(state.get("plan_draft", {}), "request_id")
-            else "req_unknown"
-        )
-        if hasattr(state.get("plan_draft", {}), "request_id"):
-            request_id = state["plan_draft"].request_id  # type: ignore[union-attr]
+        draft = state.get("plan_draft")
+        request_id = draft.request_id if draft is not None else "req_unknown"
         return self._client.execute(plan_id, request_id, context)
 
 

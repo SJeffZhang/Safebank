@@ -155,14 +155,23 @@ def route_evaluate_error(
 
 def route_execute_success(
     result_or_unknown: UnknownExecution | None = None,
+    *,
+    exec_status: str | None = None,
 ) -> RouteResult:
-    """Route after a 200 ExecutionResult or 202 UNKNOWN acknowledgement."""
+    """Route after a 200 ExecutionResult or 202 UNKNOWN acknowledgement.
+
+    ``exec_status`` is the ``ExecutionResult.status`` (EXECUTED, FAILED, etc.).
+    When FAILED, a fixed template is used (P1-4).
+    """
     if result_or_unknown is not None:
         # 202 UNKNOWN
         return RouteResult(
             "respond", {"execution_status": "UNKNOWN"}, True, respond_template("UNKNOWN")
         )
-    # 200 success
+    # 200 success — distinguish EXECUTED from FAILED
+    if exec_status == "FAILED":
+        return RouteResult("respond", {}, True, respond_template("EXECUTION_FAILED"))
+    # EXECUTED or other success → LLM respond
     return RouteResult("respond")
 
 

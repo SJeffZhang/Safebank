@@ -89,3 +89,63 @@
 
 Each task as a small atomic commit, Co-Authored-By: DeepSeek V4 Pro via Claude Code <noreply@anthropic.com>.
 Final SHA + workspace state reported after freeze.
+
+## 修复轮 1 (2026-10-24)
+
+**评审报告:** `docs/reviews/C1c2-gateway-routing-review.md` (REQUEST_CHANGES, P0×2 P1×4)
+
+### P0-1: 422 CONTRACT_INVALID → gather 被 `_route_evaluate` 拦截
+
+- **红测:** `test_p01_422_contract_invalid_routes_to_gather_via_compiled_graph` 经编译图确认 422 后 `plan_id == None`（路由到 respond 而非 gather）
+- **修复:** `route_error` 增加 `target` 字段记录错误处理器的目标节点；`_route_evaluate_gw` 检查 `target=="gather"` 时返回 `"gather"` 而非无条件 `"respond"`
+- **绿:** 编译图测试已通过（422→gather→plan→evaluate→ALLOW→execute）
+
+### P0-2: execute→respond 静态边阻止 STATE_CHANGED 重入
+
+- **红测:** `test_p02_state_changed_allow_reenters_execute_via_compiled_graph` 确认 STATE_CHANGED 后 `execution is None`（静态边到 respond）
+- **修复:** `builder.add_edge("execute", "respond")` 替换为 `add_conditional_edges("execute", _route_execute, {"execute":"execute","await_approval":"await_approval","respond":"respond"})`；`_route_execute` 检查 `route_error.target`
+- **绿:** 编译图测试已通过（STATE_CHANGED+ALLOW→execute, STATE_CHANGED+REQUIRE_APPROVAL→await_approval, 二次 STATE_CHANGED→respond）
+
+### P1-1: 缺 clarify 节点
+
+- **红测:** `test_p11_open_clarification_routes_to_clarify` 确认 G21 澄清数据无路由
+- **修复:** 新增 `clarify` 节点（生成含候选人标签的固定草稿）+ `_route_understand_gw` 增加 `clarify` 路由（unclear+needs_write+clarification 或 CLARIFYING+clarification）+ `clarify→respond` 边
+- **绿:** 编译图测试已通过（`clarification.id=="clr_1"`, reply 含 "王五"）
+
+### P1-2: `_GatewayExecute.request_id` 死代码
+
+- **红测:** 静态审查确认（adapters.py:99-105）
+- **修复:** 简化为 `draft = state.get("plan_draft"); request_id = draft.request_id if draft is not None else "req_unknown"`
+- **绿:** 编译图测试通过，`client.execute` 调用正确传入 `request_id`
+
+### P1-3: 读桥接已定义但未接入图
+
+- **红测:** `test_p13_gateway_read_bridge_wired_into_gather` 验证 `make_gateway_read_executor` 通过 GatewayClient 桥接读并保留元数据
+- **修复:** `build_gateway_graph` 新增 `gateway_read_client` 参数；当提供时 gather 节点注入 gateway-backed executor（monkey-patch `_read_executor` 每次调用后恢复）；适配器单元测试使用 `READ_CASES` 已验证契约
+- **绿:** 单元测试通过（source_ref/src_read_1, versions/observed_at 保留, 契约匹配）
+
+### P1-4: ExecutionResult FAILED 与 EXECUTED 未区分
+
+- **红测:** `test_p14_execution_failed_uses_fixed_template_not_llm` 确认 FAILED 调用了 LLM respond（`calls["respond"]==1`）
+- **修复:** `route_execute_success` 增加 `exec_status` 参数，FAILED 返回 `use_fixed_reply=True`；graph execute 节点在 FAILED 时设置 `route_error` 使 respond 节点使用固定模板
+- **绿:** `calls["respond"]==0`, reply 含 "执行失败"
+
+### Exit commands (修复轮 1)
+
+| Command | Result |
+|---|---|
+| `make lint` | ✅ All checks passed |
+| `.venv/bin/pytest tests/agent -q -k "not test_llm_live"` | ✅ 269 passed (+16 from 253), 13 deselected |
+| `make test` | ✅ 2473 passed (+16), 561 skipped |
+| `make contracts-check` | ✅ PASS |
+| `make demo` | ❌ exit 2 (not implemented, not faked) |
+
+### 新增测试
+
+16 项编译图集成测试 (`tests/agent/routing/test_graph_compiled.py`):
+- P0-1: 2 tests (422→gather, 422 twice→block)
+- P0-2: 3 tests (STATE_CHANGED re-entry, await_approval, double block)
+- P1-4: 1 test (FAILED vs EXECUTED)
+- P1-1: 1 test (clarification→clarify node)
+- P1-3: 1 test (gateway read bridge)
+- Regression: 8 tests (UNKNOWN, APPROVAL_EXPIRED, 503, ALLOW, DENY, REQUIRE_APPROVAL interrupt, REPLAN, INTENT_UNCLEAR)
