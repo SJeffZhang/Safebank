@@ -141,9 +141,7 @@ def test_f_path_no_jwt_returns_401(app_config):
 # ── Basic evaluate tests ────────────────────────────────────────────────────
 
 
-async def _seed_provenance_data(
-    conn, sid: str, *, amount_cents: int = 80000
-) -> tuple[str, str]:
+async def _seed_provenance_data(conn, sid: str, *, amount_cents: int = 80000) -> tuple[str, str]:
     """Seed read records for get_accounts + list_payees, return (rid_acc, rid_pay).
 
     Also patches the default utterance (utt_{sid}_1) text and scope so the
@@ -211,9 +209,7 @@ async def _seed_provenance_data(
     return rid_acc, rid_pay
 
 
-def _step_with_sources(
-    sid: str, rid_acc: str, rid_pay: str, amount_cents: int = 80000
-) -> dict:
+def _step_with_sources(sid: str, rid_acc: str, rid_pay: str, amount_cents: int = 80000) -> dict:
     """Build a transfer step with proper arg_sources for provenance stage.
 
     Amount span computed from ``amount_cents``: text "转账 7000 元 备注" has
@@ -228,7 +224,11 @@ def _step_with_sources(
     step["arg_sources"] = [
         {
             "param": "amount_cents",
-            "source": {"kind": "utterance", "ref": f"utt_{sid}_1", "span": [amount_start, amount_end]},
+            "source": {
+                "kind": "utterance",
+                "ref": f"utt_{sid}_1",
+                "span": [amount_start, amount_end],
+            },
         },
         {
             "param": "from_account_id",
@@ -754,8 +754,12 @@ def test_risky_sequence_deny_with_cooldown(app_config):
         data = resp.json()
 
         # RISKY_SEQUENCE → DENY (not REQUIRE_APPROVAL).
+        # Risk is YELLOW (step base_risk) — the RISKY_SEQUENCE finding has DENY
+        # effect (not RISK_RED), and the transfer amount (¥800) is below the
+        # AMOUNT_ABOVE_YELLOW_CAP threshold (¥5,000) which would produce a
+        # RISK_RED finding.
         assert data["decision"] == "DENY", f"Expected DENY, got {data['decision']}"
-        assert data["risk"] == "RED"
+        assert data["risk"] == "YELLOW"
         assert data["plan_id"].startswith("pln_")
         assert data["evaluation_id"].startswith("evl_")
         findings = data.get("findings", [])
@@ -824,10 +828,12 @@ def test_risky_sequence_idempotency_no_duplicate_cooldown(app_config):
         # Count cooldowns after first success.
         async with db.connect() as conn:
             count1 = await conn.scalar(
-                select(t.cooldowns).where(
+                select(t.cooldowns)
+                .where(
                     t.cooldowns.c.customer_id == "cus_a",
                     t.cooldowns.c.payee_fingerprint == "fp_ext",
-                ).limit(1)
+                )
+                .limit(1)
             )
         assert count1 is not None, "first call should persist cooldown"
 
@@ -846,7 +852,9 @@ def test_risky_sequence_idempotency_no_duplicate_cooldown(app_config):
         # B1 red: no duplicate/extra cooldown from the failed second call.
         async with db.connect() as conn:
             count2 = await conn.scalar(
-                select(func.count()).select_from(t.cooldowns).where(
+                select(func.count())
+                .select_from(t.cooldowns)
+                .where(
                     t.cooldowns.c.customer_id == "cus_a",
                     t.cooldowns.c.payee_fingerprint == "fp_ext",
                 )
@@ -938,7 +946,9 @@ def test_g6_vs_evaluate_concurrent_no_deadlock(app_config):
         r = await app.client.post(EVALUATE_URL, json=body, headers=hdrs_a)
         assert r.status_code == 200, r.text
         data = r.json()
-        assert data["decision"] == "REQUIRE_APPROVAL", f"Got {data['decision']}: {data.get('findings')}"
+        assert data["decision"] == "REQUIRE_APPROVAL", (
+            f"Got {data['decision']}: {data.get('findings')}"
+        )
         approval_id = data["approval_id"]
         view = data.get("preflight", {})
         view_hash = digest(view)
@@ -971,9 +981,7 @@ def test_g6_vs_evaluate_concurrent_no_deadlock(app_config):
                 resp = await app.client.post(
                     EVALUATE_URL,
                     json=_body("req_lockrace2", sid, [f"utt_{sid}_1"], steps=[step2]),
-                    headers=app.auth_headers(
-                        sid=sid, jti=jti_e2, utts=[f"utt_{sid}_1"]
-                    ),
+                    headers=app.auth_headers(sid=sid, jti=jti_e2, utts=[f"utt_{sid}_1"]),
                 )
                 # Evaluate may succeed or return 409 STATE_CHANGED (session
                 # change under lock) — neither is a deadlock.

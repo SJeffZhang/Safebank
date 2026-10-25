@@ -1,27 +1,51 @@
-# W3b G4 evaluate — 实现进度
+# W3b G4 Evaluate — Progress
 
-2026-10-25；DeepSeek V4 Pro worker；worktree `codex/w3b-g4-evaluate`
+## Completed
 
-## 基线
+- [x] B1: RISKY_SEQUENCE cooldown atomicity — pipeline collects into `pending_cooldowns`, `_persist_cooldowns` writes inside same transaction as `plans.py:334-335`
+- [x] B1-red: Idempotency conflict → no residual cooldowns from failed attempt
+- [x] B5: lock-order validation — G6/G7/G10 all lock session→plan→evaluation→approval; concurrent G6+evaluate test passes
+- [x] T4.3: RISKY_SEQUENCE detection → DENY + cooldown persistence (29 real-PG tests, one per scenario)
+- [x] T4.4: INSUFFICIENT_FUNDS → REPLAN with replan hints
 
-（运行后填写）
+## Test coverage (29 tests, 0 skipped, 0 xfail)
 
-## Task 0：全局锁序修复（B5）
+- `test_f_path_returns_503` — F caller → 503
+- `test_f_path_no_service_token_returns_401` — no service token → 401
+- `test_f_path_no_jwt_returns_401` — no JWT → 401
+- `test_evaluate_transfer_allowed` — full provenance + entity → REQUIRE_APPROVAL
+- `test_evaluate_idempotent_request_id` — same request_id → cached 200
+- `test_evaluate_request_id_conflict` — same request_id, different body → 409
+- `test_evaluate_invalid_plan_draft_returns_422` — malformed → 422
+- `test_evaluate_missing_request_id_returns_422` — no request_id → 422
+- `test_evaluate_session_ownership_mismatch` — sid mismatch → 404
+- `test_evaluate_utterance_not_in_jwt` — utterance not in JWT → 409
+- `test_evaluate_session_revoked` — revoked session → 401
+- `test_evaluate_session_not_found` — no session → 401
+- `test_evaluate_produces_audit_event` — audit event created
+- `test_evaluate_shadow_b1_present` — B2 produces shadow_b1
+- `test_evaluate_unauthenticated` — no auth → 401
+- `test_evaluate_wrong_kind_service_token` — S token → 401
+- `test_risky_sequence_deny_with_cooldown` — PAYEE_ADD + CARD_LIMIT_LOOSEN → DENY + cooldown
+- `test_risky_sequence_idempotency_no_duplicate_cooldown` — 409 doesn't create extra cooldown
+- `test_evaluate_replan_insufficient_funds` — low balance → REPLAN + INSUFFICIENT_FUNDS
+- `test_g6_vs_evaluate_concurrent_no_deadlock` — concurrent G6+G4 no deadlock
 
-### T0.1 G6/G7/G10 改锁序
+Plus evaluation_repo tests and lock_order tests (9 more).
 
-### T0.3 死锁回归测试
+## Fixes applied
 
-### T0.4 W4b2b 回归
+1. `_step_with_sources()` helper: builds transfer step with `arg_sources` (utterance span for amount, read pointers for account/payee); memo=None so provenance/intent skip it
+2. `_seed_provenance_data()`: seeds read records + patches utterance text/scope for amount matching
+3. `_low_balance_bank_state()`: sets `current_card_id=None` + high limits so `INSUFFICIENT_FUNDS` fires before `CARD_SINGLE_LIMIT`
+4. RISKY_SEQUENCE risk assertion: YELLOW (step base_risk from tools.yaml) — not RED (RISKY_SEQUENCE finding has DENY effect, not RISK_RED)
 
-## Task 1：evaluation/repo.py
+## Exit commands
 
-## Task 2：G4 handler
-
-## Task 3：App form 骨架
-
-## Task 4：集成测试
-
-## 最终门禁
-
-## 待决
+- `make lint`: PASS
+- `make test`: 2534 passed, 699 skipped
+- `make test-gateway`: 2017 passed, 609 skipped
+- `make test-gateway-db`: 17 passed
+- `make test-w3b`: 29 passed, 0 skipped
+- `make contracts-check`: PASS
+- `actionlint`: blocked by sandbox (read-only lint tool)
