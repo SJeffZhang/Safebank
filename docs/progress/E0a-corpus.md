@@ -2,7 +2,7 @@
 
 ## 状态
 
-完成。确定性生成器产出 L3 可加载评测种子 + 309 条语料，全部退出命令通过。
+完成（含修复轮 1）。确定性生成器产出 L3 可加载评测种子 + 405 条语料，全部退出命令通过。
 
 ## 交付物
 
@@ -89,3 +89,24 @@ colloquial / cn_amount / arabic_amount，各 3 条。全部 `session_break=true`
   `FINGERPRINT_KEY` 重算；本种子不含任何密钥。
 - 未实现场景（账单分析/订阅/理财/AA）只有 NO_PLAN 占位，`pending_tools=true`，
   不生成计划参数。
+
+## 修复轮 1（2026-10-26）
+
+评审 `docs/reviews/E0a-corpus-review.md` 的结论是 REQUEST_CHANGES，下面逐项说明处理情况。
+
+- **P1-1 金额单位**：约定「裸数字 = 元」，修正了所有把阿拉伯数字当成分的样本。新增 `test_amounts.py`，用来逐条校验原话中解析出的元 × 100 与 `params.amount_cents` 一致。
+- **P1-2 非工具参数**：`split_count` 等字段从 `params` 中移出，改放到 `expected.plan_shape`。schema 测试会校验 `params` 的键都属于工具参数。
+- **P1-3 风险等级**：405 条样本全部补上 `expected.risk`（GREEN/YELLOW/RED），并修正了「解冻 GREEN→ALLOW」与 PRD 矛盾的说明。
+- **P2 近似去重**：新增 `test_dedup.py`，在同一 (category, variant) 组内用 SequenceMatcher 判断，相似度 ≥ 0.95 视为近似重复。
+- **P2 可执行样本扩充**：语料从 309 条增加到 405 条。期望分布为 REQUIRE_APPROVAL 171、ALLOW 21、NO_PLAN 135、CLARIFY 42、DENY 30、REPLAN 6；其中可执行样本 192 条（目标 ≥ 180）。
+
+执行情况：实现由 worker 完成（E0a-fix-r1，用满轮数时尚未提交，现场快照在 `refs/wip/E0a-fix-r1`）；E0a-fix-fin-r1 提交了 92d17aa；本节由协调者补写。
+
+协调者亲自复跑：
+
+| 命令 | 结果 |
+|---|---|
+| `make lint` | 347 files |
+| `pytest tests/evaluation/corpus` | 25 passed |
+| `make test` | 2727 passed / 705 skipped |
+| 重新运行生成器 | 语料无 diff，可确定性复现 |
