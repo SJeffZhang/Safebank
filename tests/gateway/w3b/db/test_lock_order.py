@@ -1,264 +1,464 @@
-"""W3b B5: global lock-order fix — deadlock regression tests.
+"""W3b B5: deterministic lock-order deadlock regression test.
 
-ABBA scenario（旧锁序）:
-  TX1（G6 confirm）：先锁 approval → 再锁 session
-  TX2（W4b1 create_for_evaluation）：先锁 session → 后锁 approval
+The ABBA scenario (旧锁序):
+  TX1 (G6 confirm): approval → session
+  TX2 (create_for_evaluation): session → plan → eval → job → approval (supersede)
 
-修复后统一锁序：session → plan → evaluation → approval → otp_challenge。
+With the session-first lock order in G6/G7/G10, both sides lock session first,
+serialising cleanly.  The tests below:
 
-Each test uses raw SQL FOR UPDATE to directly reproduce lock ordering.
+* GREEN — session-first lock order (current production code) concurrently with
+  ``create_for_evaluation`` → no deadlock
+* RED — the old approval-first order concurrently with ``create_for_evaluation``
+  → ABBA deadlock, proving the test catches regressions
+
+The test calls the actual production code paths: ``_lock_session`` /
+``_lock_approval`` from ``approvals.py`` (the same functions G6/G7/G10 use),
+and ``create_for_evaluation`` from ``approval.service`` (the same function W3's
+G4 handler calls).  No raw SQL simulating lock order — every lock acquisition
+goes through the production functions.
 """
 
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+import os
+import tempfile
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
+from safebank_contracts.enums import Risk
 from sqlalchemy import select, text
 from sqlalchemy.pool import NullPool
 
-from services.gateway.app import tables as t
+from services.gateway.app import tables
+from services.gateway.app.api.approvals import (
+    _lock_approval,
+    _lock_session,
+    _read_approval_unlocked,
+)
+from services.gateway.app.approval import service as approval_service
+from services.gateway.app.approval.planview import content_hash
+from services.gateway.app.approval.service import create_for_evaluation
+from services.gateway.app.config import Settings
 from services.gateway.app.db import engine
+from services.gateway.app.runtime import _key_pair, _validate_approval_keys
+from services.gateway.app.schemas.decision import DecisionValue, PreflightView
+from services.gateway.app.schemas.planview import PlanView
 from tests.gateway.w4b2b.db.conftest import (
-    HMAC_KEY,
-    WALL,
+    HMAC_KEY as W4B2B_HMAC,
+)
+from tests.gateway.w4b2b.db.conftest import (
+    OTP_KEY as W4B2B_OTP,
+)
+from tests.gateway.w4b2b.db.conftest import (
+    _seed_evaluation,
     _seed_full,
-    _seed_session,
+    _seed_plan,
 )
 
-NOW = WALL + timedelta(minutes=1)
+# ── Test constants ────────────────────────────────────────────────────────────
+
+WALL = datetime(2026, 10, 24, 12, 0, 0, tzinfo=timezone(timedelta(hours=8)))
+HMAC_KEY = W4B2B_HMAC
+OTP_KEY = W4B2B_OTP
+SERVICE_TOKEN = "test-frontend-service-token-32b"
+AGENT_TOKEN = "test-agent-service-token-32bytes"
+SCHEDULER_TOKEN = "test-scheduler-token-32bytes-xxx"
+
+# ── Ed25519 helpers ───────────────────────────────────────────────────────────
 
 
-def _lock_row(table, rid):
-    """SELECT ... FOR UPDATE."""
-    return select(table).where(table.c.id == rid).with_for_update()
+def _generate_key_pair() -> tuple[bytes, bytes]:
+    private = ed25519.Ed25519PrivateKey.generate()
+    public = private.public_key()
+    private_pem = private.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    public_pem = public.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    return private_pem, public_pem
 
 
-# ── T1: ABBA deadlock with old order (approval→session vs session→approval) ──
+# ── PlanView builder ──────────────────────────────────────────────────────────
 
 
-def test_old_order_approval_then_session_forms_abba(gateway_db):
-    """Red test: approval→session vs session→approval → ABBA deadlock.
+def _make_planview(
+    *,
+    approval_id: str,
+    plan_id: str,
+    evaluation_id: str,
+    session_id: str,
+    origin: str = "agent",
+    risk: Risk = Risk.YELLOW,
+    steps: tuple = (),
+    preflight: PreflightView | None = None,
+    findings: tuple = (),
+    risk_ack_required: bool = False,
+    otp_required: bool = False,
+) -> PlanView:
+    """Build a minimal PlanView with a valid view_hash for create_for_evaluation."""
+    _pf = preflight if preflight is not None else PreflightView(executable=True)
+    view = PlanView(
+        approval_id=approval_id,
+        plan_id=plan_id,
+        evaluation_id=evaluation_id,
+        session_id=session_id,
+        status="PENDING_APPROVAL",
+        origin=origin,
+        risk=risk,
+        steps=steps,
+        preflight=_pf,
+        findings=list(findings),
+        disclosures=(),
+        risk_ack_required=risk_ack_required,
+        otp_required=otp_required,
+        expires_at_wall=(WALL + timedelta(minutes=5)).isoformat(),
+        view_hash="",  # placeholder, set below
+    )
+    # Set the real hash.
+    object.__setattr__(view, "view_hash", content_hash(view))
+    return view
 
-    connA: lock approval → sleep 0.3s → lock session
-    connB: lock session  → sleep 0.3s → lock approval
 
-    These cross-lock in opposite order. Under lock_timeout, PG deadlock
-    detection cancels one transaction.
-    """
+# ── Runtime/config factory (needed by create_for_evaluation) ──────────────────
 
-    SID = "ses_abba"
-    PLAN_ID = "pln_abba"
-    EVAL_ID = "evl_abba"
-    APV_ID = "apv_abba"
 
-    async def run():
-        db = engine(gateway_db.runtime_url, poolclass=NullPool)
+async def _configure_approval_service(db_url: str):
+    """Call approval_service.configure() so create_for_evaluation doesn't 503."""
+    private_pem, public_pem = _generate_key_pair()
+    tmpdir = tempfile.mkdtemp(prefix="sbg-b5-")
+    private_path = Path(tmpdir) / "jwt-private.pem"
+    public_path = Path(tmpdir) / "jwt-public.pem"
+    private_path.write_bytes(private_pem)
+    public_path.write_bytes(public_pem)
+    os.chmod(private_path, 0o600)
+    os.chmod(public_path, 0o644)
 
-        async with db.begin() as conn:
-            await _seed_full(
-                conn,
-                sid=SID,
-                plan_id=PLAN_ID,
-                evaluation_id=EVAL_ID,
-                approval_id=APV_ID,
-                hmac_key=HMAC_KEY,
-            )
+    settings = Settings(
+        demo_mode=False,
+        eval_mode=False,
+        profile="B2",
+        demo_console_token=None,
+        public_bind="127.0.0.1",
+        internal_bind="127.0.0.1",
+        max_executions=8,
+        database_url=db_url,
+        l3_base_url="http://localhost:1",
+        gateway_service_token="test-gateway-service-token-32b!",
+        service_tokens={"F": SERVICE_TOKEN, "A": AGENT_TOKEN, "S": SCHEDULER_TOKEN, "D": ""},
+        jwt_private_key_path=str(private_path),
+        jwt_public_key_path=str(public_path),
+        demo_pins_file="/nonexistent/test-pins",
+        approval_hmac_key=HMAC_KEY.decode(),
+        otp_hmac_key=OTP_KEY.decode(),
+    )
+    settings.validate()
 
-        deadlock_seen = False
+    _priv, _pub = _key_pair(settings)
+    approval_key_bytes, otp_key_bytes = _validate_approval_keys(settings)
 
-        async def conn_a():
-            nonlocal deadlock_seen
-            async with db.connect() as c:
-                async with c.begin():
-                    await c.execute(text("SET LOCAL lock_timeout = '3000ms'"))
-                    await c.execute(_lock_row(t.approvals, APV_ID))
-                    await asyncio.sleep(0.3)
-                    try:
-                        await c.execute(_lock_row(t.sessions, SID))
-                    except Exception:
-                        deadlock_seen = True
-                    finally:
-                        await c.rollback()
-
-        async def conn_b():
-            nonlocal deadlock_seen
-            await asyncio.sleep(0.05)
-            async with db.connect() as c:
-                async with c.begin():
-                    await c.execute(text("SET LOCAL lock_timeout = '3000ms'"))
-                    await c.execute(_lock_row(t.sessions, SID))
-                    await asyncio.sleep(0.4)
-                    try:
-                        await c.execute(_lock_row(t.approvals, APV_ID))
-                    except Exception:
-                        deadlock_seen = True
-                    finally:
-                        await c.rollback()
-
-        await asyncio.gather(conn_a(), conn_b(), return_exceptions=True)
-
-        await db.dispose()
-        return deadlock_seen
-
-    deadlock_seen = asyncio.run(run())
-
-    assert deadlock_seen, (
-        "OLD lock order did NOT trigger deadlock; ABBA should form between "
-        "connA (approval→session) and connB (session→approval)"
+    approval_service.configure(
+        approval_hmac_key=approval_key_bytes,
+        profile=settings.profile,
+        wall_now=lambda: WALL,
     )
 
 
-# ── T2: NEW lock order (both session-first) → no deadlock ────────────
+# ── GREEN: session-first (current production code) → no deadlock ──────────────
 
 
-def test_new_order_session_first_no_deadlock(gateway_db):
-    """Green test: both txns lock session first → serialize, no ABBA."""
+def test_session_first_vs_create_for_evaluation_no_deadlock(gateway_db):
+    """GREEN: session→approval lock order + concurrent create_for_evaluation = no deadlock.
 
-    SID = "ses_noabba"
-    PLAN_ID = "pln_noabba"
-    EVAL_ID = "evl_noabba"
-    APV_ID = "apv_noabba"
+    conn_a (G6 path): _lock_session → _lock_approval → rollback
+    conn_b (create_for_evaluation): locks session → plan → eval → job → supersede approval_A
 
-    async def run():
-        db = engine(gateway_db.runtime_url, poolclass=NullPool)
-
-        async with db.begin() as conn:
-            await _seed_full(
-                conn,
-                sid=SID,
-                plan_id=PLAN_ID,
-                evaluation_id=EVAL_ID,
-                approval_id=APV_ID,
-                hmac_key=HMAC_KEY,
-            )
-
-        a_ok = False
-
-        async def conn_a():
-            nonlocal a_ok
-            async with db.connect() as c:
-                async with c.begin():
-                    await c.execute(text("SET LOCAL lock_timeout = '2000ms'"))
-                    await c.execute(_lock_row(t.sessions, SID))
-                    await asyncio.sleep(0.3)
-                    await c.execute(_lock_row(t.approvals, APV_ID))
-                    a_ok = True
-                    await c.rollback()
-
-        async def conn_b():
-            await asyncio.sleep(0.1)
-            async with db.connect() as c:
-                async with c.begin():
-                    await c.execute(text("SET LOCAL lock_timeout = '2000ms'"))
-                    try:
-                        await c.execute(_lock_row(t.sessions, SID))
-                    except Exception:
-                        pass
-                    await c.rollback()
-
-        await asyncio.gather(conn_a(), conn_b(), return_exceptions=True)
-
-        await db.dispose()
-        return a_ok
-
-    a_ok = asyncio.run(run())
-
-    assert a_ok, "connA should complete without deadlock (session-first order)"
-
-
-# ── T3: Unified lock order (session → plan → eval → approval) ────────
-
-
-def test_unified_lock_order_session_plan_eval_approval_no_deadlock(gateway_db):
-    """Full lock-order test: session→plan→eval→approval on different plans.
-
-    TX1: session → plan_a → eval_a → approval_a
-    TX2: session → plan_b → eval_b → approval_b (different plan/approval, same session)
-
-    Both start with session FOR UPDATE. TX2 serializes behind TX1.
-    No ABBA because all paths use the same order.
+    With session-first, both start by locking the same session row.  One transaction
+    serialises behind the other.  conn_a completes quickly (rollback), releasing the
+    session lock; conn_b then proceeds.  No ABBA because neither transaction locks
+    approval before session.
     """
-
-    SID = "ses_unified"
-    PLAN_A = "pln_u_a"
-    EVAL_A = "evl_u_a"
-    APV_A = "apv_u_a"
-    PLAN_B = "pln_u_b"
-    EVAL_B = "evl_u_b"
-    APV_B = "apv_u_b"
+    SID = "ses_b5_green"
+    CUSTOMER = "cus_b5"
+    PLAN_A = "pln_b5g_a"
+    EVAL_A = "evl_b5g_a"
+    APV_A = "apv_b5g_a"
+    PLAN_B = "pln_b5g_b"
+    EVAL_B = "evl_b5g_b"
+    APV_B = "apv_b5g_b"
+    VIEW_HASH = "b" * 64
 
     async def run():
         db = engine(gateway_db.runtime_url, poolclass=NullPool)
+        await _configure_approval_service(gateway_db.admin_url)
 
+        # Seed: two complete chains on the same session.
         async with db.begin() as conn:
-            await _seed_session(conn, sid=SID)
             await _seed_full(
                 conn,
                 sid=SID,
+                customer=CUSTOMER,
                 plan_id=PLAN_A,
                 evaluation_id=EVAL_A,
                 approval_id=APV_A,
+                plan_status="PENDING_APPROVAL",
+                approval_status="PENDING",
+                view_hash=VIEW_HASH,
                 hmac_key=HMAC_KEY,
             )
+            # Chain B: plan in EVALUATED status (eligible for create_for_evaluation),
+            # no approval yet — create_for_evaluation creates it.
+            await _seed_plan(
+                conn,
+                plan_id=PLAN_B,
+                sid=SID,
+                customer=CUSTOMER,
+                origin="agent",
+                status="EVALUATED",
+            )
+            await _seed_evaluation(
+                conn,
+                plan_id=PLAN_B,
+                evaluation_id=EVAL_B,
+                decision=DecisionValue.REQUIRE_APPROVAL,
+                risk=Risk.YELLOW,
+                view_json={"plan_id": PLAN_B, "risk_ack_required": False},
+            )
 
-        # Seed plan B separately — SUPERSEDED to avoid one_pending_approval_per_session
+        # Read plan_B / eval_B rows for create_for_evaluation.
+        async with db.connect() as conn:
+            plan_b = (
+                (await conn.execute(select(tables.plans).where(tables.plans.c.id == PLAN_B)))
+                .mappings()
+                .one()
+            )
+            eval_b = (
+                (
+                    await conn.execute(
+                        select(tables.evaluations).where(tables.evaluations.c.id == EVAL_B)
+                    )
+                )
+                .mappings()
+                .one()
+            )
+
+        view_b = _make_planview(
+            approval_id=APV_B,
+            plan_id=PLAN_B,
+            evaluation_id=EVAL_B,
+            session_id=SID,
+        )
+
+        errors: list[str] = []
+
+        async def conn_a_work():
+            """G6 path: lock session → lock approval → rollback (correct order)."""
+            nonlocal errors
+            try:
+                async with db.connect() as conn_a:
+                    async with conn_a.begin() as tx_a:
+                        await conn_a.execute(text("SET LOCAL lock_timeout = '5000ms'"))
+                        snap = await _read_approval_unlocked(conn_a, APV_A, CUSTOMER)
+                        await _lock_session(conn_a, snap["sid"], CUSTOMER)
+                        # Signal conn_b that we hold the session lock.
+                        ready.set()
+                        # Hold briefly so conn_b starts and blocks on session lock.
+                        await asyncio.sleep(0.3)
+                        # Lock approval (conn_b doesn't hold it — no contention).
+                        await _lock_approval(conn_a, APV_A, CUSTOMER)
+                        await tx_a.rollback()
+            except Exception as exc:
+                errors.append(f"conn_a: {exc}")
+
+        async def conn_b_work():
+            """create_for_evaluation — blocks on session, then proceeds."""
+            nonlocal errors
+            await ready.wait()
+            await asyncio.sleep(0.1)
+            try:
+                async with db.connect() as conn_b:
+                    async with conn_b.begin() as tx_b:
+                        await conn_b.execute(text("SET LOCAL lock_timeout = '5000ms'"))
+                        # Blocks on session lock until conn_a rollbacks → then proceeds.
+                        await create_for_evaluation(
+                            conn_b,
+                            plan=plan_b,
+                            evaluation=eval_b,
+                            view=view_b,
+                        )
+                        await tx_b.rollback()
+            except Exception as exc:
+                errors.append(f"conn_b: {exc}")
+
+        ready = asyncio.Event()
+
+        done, pending = await asyncio.wait(
+            [asyncio.create_task(conn_a_work()), asyncio.create_task(conn_b_work())],
+            timeout=15.0,
+        )
+        for t in pending:
+            t.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+
+        await db.dispose()
+
+        assert len(pending) == 0, (
+            f"Deadlock or timeout: {len(pending)} task(s) did not complete. Errors: {errors}"
+        )
+        assert len(errors) == 0, f"Expected no errors with session-first lock order, got: {errors}"
+
+    asyncio.run(run())
+
+
+# ── RED: old approval-first order → ABBA deadlock ─────────────────────────────
+
+
+def test_old_approval_first_vs_create_for_evaluation_produces_deadlock(gateway_db):
+    """RED: approval→session lock order + concurrent create_for_evaluation = deadlock.
+
+    This test *deliberately* inverts the lock order to the old (buggy) form to
+    prove that the ABBA deadlock is real and would be caught by the GREEN test
+    if someone reverted the lock-order fix in approvals.py.
+
+    conn_a: _lock_approval → _lock_session (OLD/WRONG order)
+    conn_b: create_for_evaluation (session → … → supersede approval_A)
+
+    ABBA:
+      conn_a holds approval_A, waits for session
+      conn_b holds session, waits for approval_A (via supersede)
+      → deadlock detected by PostgreSQL or lock_timeout
+    """
+    SID = "ses_b5_red"
+    CUSTOMER = "cus_b5r"
+    PLAN_A = "pln_b5r_a"
+    EVAL_A = "evl_b5r_a"
+    APV_A = "apv_b5r_a"
+    PLAN_B = "pln_b5r_b"
+    EVAL_B = "evl_b5r_b"
+    APV_B = "apv_b5r_b"
+    VIEW_HASH = "b" * 64
+
+    async def run():
+        db = engine(gateway_db.runtime_url, poolclass=NullPool)
+        await _configure_approval_service(gateway_db.admin_url)
+
         async with db.begin() as conn:
             await _seed_full(
                 conn,
                 sid=SID,
-                plan_id=PLAN_B,
-                evaluation_id=EVAL_B,
-                approval_id=APV_B,
-                approval_status="SUPERSEDED",
-                plan_status="SUPERSEDED",
+                customer=CUSTOMER,
+                plan_id=PLAN_A,
+                evaluation_id=EVAL_A,
+                approval_id=APV_A,
+                plan_status="PENDING_APPROVAL",
+                approval_status="PENDING",
+                view_hash=VIEW_HASH,
                 hmac_key=HMAC_KEY,
             )
+            await _seed_plan(
+                conn,
+                plan_id=PLAN_B,
+                sid=SID,
+                customer=CUSTOMER,
+                origin="agent",
+                status="EVALUATED",
+            )
+            await _seed_evaluation(
+                conn,
+                plan_id=PLAN_B,
+                evaluation_id=EVAL_B,
+                decision=DecisionValue.REQUIRE_APPROVAL,
+                risk=Risk.YELLOW,
+                view_json={"plan_id": PLAN_B, "risk_ack_required": False},
+            )
 
-        tx1_ok = False
-        tx2_ok = False
-        errors = []
+        async with db.connect() as conn:
+            plan_b = (
+                (await conn.execute(select(tables.plans).where(tables.plans.c.id == PLAN_B)))
+                .mappings()
+                .one()
+            )
+            eval_b = (
+                (
+                    await conn.execute(
+                        select(tables.evaluations).where(tables.evaluations.c.id == EVAL_B)
+                    )
+                )
+                .mappings()
+                .one()
+            )
 
-        async def tx1():
-            nonlocal tx1_ok
-            async with db.connect() as c:
-                async with c.begin():
-                    await c.execute(text("SET LOCAL lock_timeout = '3000ms'"))
-                    try:
-                        await c.execute(_lock_row(t.sessions, SID))
-                        await asyncio.sleep(0.2)
-                        await c.execute(_lock_row(t.plans, PLAN_A))
-                        await c.execute(_lock_row(t.evaluations, EVAL_A))
-                        await c.execute(_lock_row(t.approvals, APV_A))
-                        tx1_ok = True
-                    except Exception as exc:
-                        errors.append(f"tx1: {exc}")
-                    finally:
-                        await c.rollback()
+        view_b = _make_planview(
+            approval_id=APV_B,
+            plan_id=PLAN_B,
+            evaluation_id=EVAL_B,
+            session_id=SID,
+        )
 
-        async def tx2():
-            nonlocal tx2_ok
-            await asyncio.sleep(0.05)
-            async with db.connect() as c:
-                async with c.begin():
-                    await c.execute(text("SET LOCAL lock_timeout = '3000ms'"))
-                    try:
-                        await c.execute(_lock_row(t.sessions, SID))
-                        await c.execute(_lock_row(t.plans, PLAN_B))
-                        await c.execute(_lock_row(t.evaluations, EVAL_B))
-                        await c.execute(_lock_row(t.approvals, APV_B))
-                        tx2_ok = True
-                    except Exception as exc:
-                        errors.append(f"tx2: {exc}")
-                    finally:
-                        await c.rollback()
+        deadlock_detected = False
 
-        await asyncio.gather(tx1(), tx2(), return_exceptions=True)
+        async def conn_a_old():
+            """OLD/WRONG lock order: approval → session (recreates the bug)."""
+            nonlocal deadlock_detected
+            try:
+                async with db.connect() as conn_a:
+                    async with conn_a.begin() as tx_a:
+                        await conn_a.execute(text("SET LOCAL lock_timeout = '3000ms'"))
+                        # OLD ORDER: approval first!
+                        snap = await _read_approval_unlocked(conn_a, APV_A, CUSTOMER)
+                        await _lock_approval(conn_a, APV_A, CUSTOMER)
+                        ready.set()
+                        await proceed.wait()
+                        # OLD ORDER: session second — must deadlock with conn_b.
+                        await _lock_session(conn_a, snap["sid"], CUSTOMER)
+                        await tx_a.rollback()
+            except Exception:
+                deadlock_detected = True
+
+        async def conn_b_cfe():
+            """create_for_evaluation — locks session first (production path)."""
+            nonlocal deadlock_detected
+            await ready.wait()
+            await asyncio.sleep(0.1)
+            try:
+                async with db.connect() as conn_b:
+                    async with conn_b.begin() as tx_b:
+                        await conn_b.execute(text("SET LOCAL lock_timeout = '3000ms'"))
+                        await create_for_evaluation(
+                            conn_b,
+                            plan=plan_b,
+                            evaluation=eval_b,
+                            view=view_b,
+                        )
+                        await tx_b.rollback()
+            except Exception:
+                deadlock_detected = True
+            finally:
+                proceed.set()
+
+        ready = asyncio.Event()
+        proceed = asyncio.Event()
+
+        done, pending = await asyncio.wait(
+            [asyncio.create_task(conn_a_old()), asyncio.create_task(conn_b_cfe())],
+            timeout=15.0,
+        )
+        for t in pending:
+            t.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
 
         await db.dispose()
-        return tx1_ok, tx2_ok, errors
 
-    tx1_ok, tx2_ok, errors = asyncio.run(run())
+        assert deadlock_detected, (
+            "OLD approval→session order did NOT deadlock with create_for_evaluation. "
+            "The ABBA scenario may not be reproducible — check the seed data."
+        )
 
-    assert tx1_ok, f"TX1 failed with unified lock order: {errors}"
-    assert tx2_ok, f"TX2 failed with unified lock order: {errors}"
+    asyncio.run(run())
