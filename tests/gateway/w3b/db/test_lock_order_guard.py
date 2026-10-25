@@ -64,14 +64,12 @@ def _collect_lock_order(target: ast.AST, path: str) -> list[str]:
             continue
         if sess_line is None:
             errors.append(
-                f"{path}:{node.lineno} ({name}): _lock_approval called but "
-                f"_lock_session missing"
+                f"{path}:{node.lineno} ({name}): _lock_approval called but _lock_session missing"
             )
             continue
         if appr_line is None:
             errors.append(
-                f"{path}:{node.lineno} ({name}): _lock_session called but "
-                f"_lock_approval missing"
+                f"{path}:{node.lineno} ({name}): _lock_session called but _lock_approval missing"
             )
             continue
         if sess_line >= appr_line:
@@ -97,6 +95,6 @@ def test_all_endpoints_lock_session_before_approval():
             if top.name in ENDPOINTS:
                 errors.extend(_collect_lock_order(top, APPROVALS_PY.name))
 
-    assert not errors, (
-        "Lock-order violation in endpoint(s):\n" + "\n".join(f"  - {e}" for e in errors)
+    assert not errors, "Lock-order violation in endpoint(s):\n" + "\n".join(
+        f"  - {e}" for e in errors
     )

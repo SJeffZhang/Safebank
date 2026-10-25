@@ -47,11 +47,21 @@ def _make_planview(
     *, approval_id: str, plan_id: str, evaluation_id: str, session_id: str
 ) -> PlanView:
     view = PlanView(
-        approval_id=approval_id, plan_id=plan_id, evaluation_id=evaluation_id,
-        session_id=session_id, status="PENDING_APPROVAL", origin="agent",
-        risk=Risk.YELLOW, steps=(), preflight=PreflightView(executable=True),
-        findings=[], disclosures=(), risk_ack_required=False, otp_required=False,
-        expires_at_wall=(WALL + timedelta(minutes=5)).isoformat(), view_hash="",
+        approval_id=approval_id,
+        plan_id=plan_id,
+        evaluation_id=evaluation_id,
+        session_id=session_id,
+        status="PENDING_APPROVAL",
+        origin="agent",
+        risk=Risk.YELLOW,
+        steps=(),
+        preflight=PreflightView(executable=True),
+        findings=[],
+        disclosures=(),
+        risk_ack_required=False,
+        otp_required=False,
+        expires_at_wall=(WALL + timedelta(minutes=5)).isoformat(),
+        view_hash="",
     )
     object.__setattr__(view, "view_hash", content_hash(view))
     return view
@@ -64,26 +74,50 @@ async def _seed_two_plans(conn, *, sid: str, customer: str) -> dict:
     VIEW_HASH = "b" * 64
 
     await _seed_full(
-        conn, sid=sid, customer=customer,
-        plan_id=PLAN_A, evaluation_id=EVAL_A, approval_id=APV_A,
-        plan_status="PENDING_APPROVAL", approval_status="PENDING",
-        view_hash=VIEW_HASH, hmac_key=HMAC_KEY,
+        conn,
+        sid=sid,
+        customer=customer,
+        plan_id=PLAN_A,
+        evaluation_id=EVAL_A,
+        approval_id=APV_A,
+        plan_status="PENDING_APPROVAL",
+        approval_status="PENDING",
+        view_hash=VIEW_HASH,
+        hmac_key=HMAC_KEY,
     )
     await _seed_plan(
-        conn, plan_id=PLAN_B, sid=sid, customer=customer,
-        origin="agent", status="EVALUATED",
+        conn,
+        plan_id=PLAN_B,
+        sid=sid,
+        customer=customer,
+        origin="agent",
+        status="EVALUATED",
     )
     await _seed_evaluation(
-        conn, plan_id=PLAN_B, evaluation_id=EVAL_B,
-        decision=DecisionValue.REQUIRE_APPROVAL, risk=Risk.YELLOW,
+        conn,
+        plan_id=PLAN_B,
+        evaluation_id=EVAL_B,
+        decision=DecisionValue.REQUIRE_APPROVAL,
+        risk=Risk.YELLOW,
         view_json={"plan_id": PLAN_B, "risk_ack_required": False},
     )
-    return {"PLAN_A": PLAN_A, "APV_A": APV_A, "PLAN_B": PLAN_B,
-            "EVAL_B": EVAL_B, "APV_B": APV_B, "VIEW_HASH": VIEW_HASH}
+    return {
+        "PLAN_A": PLAN_A,
+        "APV_A": APV_A,
+        "PLAN_B": PLAN_B,
+        "EVAL_B": EVAL_B,
+        "APV_B": APV_B,
+        "VIEW_HASH": VIEW_HASH,
+    }
 
 
 async def _test_no_deadlock(
-    app_config, *, sid: str, customer: str, endpoint_path: str, request_body: dict,
+    app_config,
+    *,
+    sid: str,
+    customer: str,
+    endpoint_path: str,
+    request_body: dict,
 ) -> None:
     """GREEN: cfe holds session lock → endpoint serialises, no deadlock."""
     tapp = await build_app(app_config, truncate=True)
@@ -96,9 +130,7 @@ async def _test_no_deadlock(
     PLAN_B, EVAL_B, APV_B = ids["PLAN_B"], ids["EVAL_B"], ids["APV_B"]
 
     async with admin_engine.connect() as conn:
-        plan_row = await conn.execute(
-            select(tables.plans).where(tables.plans.c.id == PLAN_B)
-        )
+        plan_row = await conn.execute(select(tables.plans).where(tables.plans.c.id == PLAN_B))
         plan_b = plan_row.mappings().one()
         eval_row = await conn.execute(
             select(tables.evaluations).where(tables.evaluations.c.id == EVAL_B)
@@ -156,24 +188,36 @@ async def _test_no_deadlock(
 
 
 def test_g6_confirm_serializes_no_deadlock(app_config):
-    asyncio.run(_test_no_deadlock(
-        app_config, sid="ses_b5e_cfm", customer="cus_b5e1",
-        endpoint_path="/approvals/{approval_id}/confirm",
-        request_body={"request_id": "req_cfm", "view_hash": "b" * 64},
-    ))
+    asyncio.run(
+        _test_no_deadlock(
+            app_config,
+            sid="ses_b5e_cfm",
+            customer="cus_b5e1",
+            endpoint_path="/approvals/{approval_id}/confirm",
+            request_body={"request_id": "req_cfm", "view_hash": "b" * 64},
+        )
+    )
 
 
 def test_g7_reject_serializes_no_deadlock(app_config):
-    asyncio.run(_test_no_deadlock(
-        app_config, sid="ses_b5e_rej", customer="cus_b5e2",
-        endpoint_path="/approvals/{approval_id}/reject",
-        request_body={"request_id": "req_rej", "view_hash": "b" * 64},
-    ))
+    asyncio.run(
+        _test_no_deadlock(
+            app_config,
+            sid="ses_b5e_rej",
+            customer="cus_b5e2",
+            endpoint_path="/approvals/{approval_id}/reject",
+            request_body={"request_id": "req_rej", "view_hash": "b" * 64},
+        )
+    )
 
 
 def test_g10_otp_send_serializes_no_deadlock(app_config):
-    asyncio.run(_test_no_deadlock(
-        app_config, sid="ses_b5e_otp", customer="cus_b5e3",
-        endpoint_path="/approvals/{approval_id}/otp",
-        request_body={"request_id": "req_otp", "view_hash": "b" * 64},
-    ))
+    asyncio.run(
+        _test_no_deadlock(
+            app_config,
+            sid="ses_b5e_otp",
+            customer="cus_b5e3",
+            endpoint_path="/approvals/{approval_id}/otp",
+            request_body={"request_id": "req_otp", "view_hash": "b" * 64},
+        )
+    )

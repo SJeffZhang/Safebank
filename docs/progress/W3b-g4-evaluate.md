@@ -54,3 +54,44 @@ Plus evaluation_repo tests and lock_order tests (9 more).
 - `make test-gateway-db`: 17 passed
 - `make test-w3b`: 28 passed, 0 skipped (8.97s)
 - `make contracts-check`: PASS
+
+## Fix round 3 — B5 AST guard (afdc7da)
+
+- Added `tests/gateway/w3b/db/test_lock_order_guard.py`: AST-based source-level guard asserts
+  `_lock_session` < `_lock_approval` in G6/G7/G10 (and nested closures).
+- RED verified: swapping each endpoint's lock calls made guard fail with endpoint name; reverted.
+- Deadlock semantics proven by `test_lock_order.py` helper-function-level RED/GREEN.
+
+Exit commands (afdc7da):
+- `make lint`: PASS
+- `make test`: 2534 passed, 701 skipped
+- `make test-gateway`: 2017 passed, 611 skipped
+- `make test-gateway-db`: 17 passed
+- `make test-w3a`: 45 passed
+- `make test-w3b`: 33 passed
+- `make test-w4b2b`: 58 passed
+- `make test-w4b2c`: 56 passed
+- `make contracts-check`: PASS
+
+## Fix round 4 — B1 cooldown rollback RED test
+
+- Added `tests/gateway/w3b/db/test_b1_cooldown_rollback.py`: proves cooldowns vanish when write
+  transaction fails (monkeypatches `append_evaluation` to raise after `_persist_cooldowns`).
+- RED verified: temporarily changed `_persist_cooldowns` to use separate `create_async_engine` +
+  `AUTOCOMMIT` connection → test FAILED (cooldown leaked: after=1 vs before=0); reverted.
+- Also broke `test_risky_sequence_deny_with_cooldown` and
+  `test_risky_sequence_idempotency_no_duplicate_cooldown` during RED (separate engine can't
+  participate in outer transaction read — expected).
+- Fixed 3 lint errors: unused `mock`/`Code` imports, `plan_id` → `plan_id_from_resp` typo.
+- ruff format clean up.
+
+Exit commands (HEAD):
+- `make lint`: PASS (329 files)
+- `make test`: 2535 passed, 702 skipped
+- `make test-gateway`: 2018 passed, 612 skipped
+- `make test-gateway-db`: 17 passed
+- `make test-w3a`: 45 passed
+- `make test-w3b`: 33 passed
+- `make test-w4b2b`: 58 passed
+- `make test-w4b2c`: 56 passed
+- `make contracts-check`: PASS
