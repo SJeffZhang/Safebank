@@ -41,6 +41,24 @@
 
 - 无（C6 前提已通过，无需调整屏障设计）。
 
+## T1a 红测（`replay()` 契约）——已提交，红
+
+### 交付
+
+- 新增 `tests/gateway/w4c/db/test_replay.py`（245 行，3 条红测），只改 `tests/gateway/w4c/**`，未动生产代码。
+- 复用 w3a `_serve_l3` 模式拉起真实 L3（`install_core`/`install_obligations` + `create_app` + uvicorn 线程 + 真实 `L3Client`）；余额变更走 `post_transfer` + `persist`（与 fixture 同一持久化路径）。
+
+### 3 条红测
+
+1. `test_replay_uses_execute_replay_mode`：monkeypatch `pipeline.evaluate`，断言 `replay` 以 `mode=EvalMode.EXECUTE_REPLAY` 调用并返回其产出的 `Decision`。
+2. `test_replay_fetches_fresh_snapshot`：先让 `ctx` 缓存一份快照（`ctx.bank_state()`），再经真实 L3 把 `acc_zs_chk` 余额从 600000 改为 555000（改后经 `l3.snapshot` 探针确认），断言 `replay` 内部给 `evaluate` 的 ctx 取到的是**新**余额（证明不复用 `_lazy_state` 缓存）。
+3. `test_replay_uses_fresh_context`：把 `ctx` 的 provenance/snapshot/preflight/workflow/decision 填成旧值，断言 `evaluate` 收到的 ctx 这五个槽位全部为 `None`（新对象或已清空）。
+
+### 运行结果（`make test-w4c`）
+
+- **3 failed, 1 passed**（3.95s）：三条新测均因 `replay()` 抛 `NotImplementedError` 失败（预期红）；既有 `test_c6_fence_prepare_premise` 通过。
+- 三条新测在到达 `await replay(ctx)` 前的前置（真实 L3 启动、`bank_state()`=600000、余额变更与 555000 探针、旧槽位填充）均真实执行通过，失败点唯一是未实现的 `replay`。
+
 ## 下一步
 
-- T1：实现 `replay()`（EXECUTE_REPLAY 复演，新 EvalContext + L3 snapshot + `pipeline.evaluate(mode=EXECUTE_REPLAY)`），红测先行。
+- T1：实现 `replay()`（EXECUTE_REPLAY 复演，新 EvalContext + L3 snapshot + `pipeline.evaluate(mode=EXECUTE_REPLAY)`），使 3 条红测转绿。
