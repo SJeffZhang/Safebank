@@ -240,4 +240,5 @@ def test_shadow_b1_computed_only_for_b2_evaluate():
 def test_policy_version_covers_all_policy_files():
     ctx = decision_ctx()
     run(ctx)
-    assert ctx.decision.policy_version.startswith("sha256:")
+    pv = ctx.decision.policy_version
+    assert len(pv) == 64 and all(c in "0123456789abcdef" for c in pv)

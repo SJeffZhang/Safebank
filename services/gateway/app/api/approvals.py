@@ -175,16 +175,13 @@ async def _validate_confirmable(
     if approval["view_hash"] != view_hash:
         raise GatewayError(Code.VIEW_HASH_MISMATCH, 409)
 
-    # 4. Session not revoked. Locked BEFORE the plan row to match W4b1
-    #    lock order (session → plan → evaluation); locking plan first
-    #    would form an ABBA deadlock with W1 cancel_session which holds
-    #    the session row lock first.
+    # 4. Session not revoked. The caller already holds the session row FOR
+    #    UPDATE via _lock_session().  Re-locking is a no-op; we read without
+    #    FOR UPDATE to avoid signalling a redundant lock point.
     session = (
         (
             await conn.execute(
-                select(t.sessions.c.revoked_at_wall)
-                .where(t.sessions.c.id == approval["sid"])
-                .with_for_update()
+                select(t.sessions.c.revoked_at_wall).where(t.sessions.c.id == approval["sid"])
             )
         )
         .mappings()

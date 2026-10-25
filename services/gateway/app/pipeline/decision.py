@@ -61,7 +61,7 @@ def _policy_version() -> str:
     digest = hashlib.sha256()
     for path in _POLICY_FILES:
         digest.update(path.read_bytes())
-    return "sha256:" + digest.hexdigest()
+    return digest.hexdigest()
 
 
 def _format_cents(cents: int) -> str:

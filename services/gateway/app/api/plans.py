@@ -328,7 +328,7 @@ async def evaluate_plan(request: Request) -> JSONResponse:
         preflight_json = decision.preflight.model_dump(mode="json")
         versions_json = dict(ctx.snapshot.versions) if ctx.snapshot else {}
         clock_version_num = ctx.snapshot.clock_version if ctx.snapshot else 0
-        policy_version_str: str = "sha256:test"  # TODO: real policy version
+        policy_version_str: str = decision.policy_version
 
         # B1: persist cooldowns before the evaluation row.
         if ctx.workflow is not None and ctx.workflow.pending_cooldowns:

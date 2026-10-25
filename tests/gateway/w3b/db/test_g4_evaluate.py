@@ -242,12 +242,11 @@ def _step_with_sources(sid: str, rid_acc: str, rid_pay: str, amount_cents: int =
     return step
 
 
-def test_evaluate_transfer_allowed(app_config):
-    """Transfer with complete arg_sources + read records → ALLOW.
+def test_evaluate_transfer_requires_approval(app_config):
+    """Transfer with complete arg_sources + read records → REQUIRE_APPROVAL.
 
-    Seeds read records for get_accounts and list_payees, then provides
-    arg_sources with utterance spans and read references so the provenance
-    and entity stages can verify every parameter.
+    800 分对外转账命中 FIRST_TRANSFER + AMOUNT_ABOVE_YELLOW，
+    决策为 REQUIRE_APPROVAL（非 ALLOW）。
     """
 
     async def run():
@@ -343,6 +342,10 @@ def test_evaluate_transfer_allowed(app_config):
             )
             assert eval_row["decision"] == {"decision": "REQUIRE_APPROVAL"}
             assert eval_row["risk"] == "YELLOW"
+            # P1: policy_version is real (not hardcoded).
+            pv = eval_row["policy_version"]
+            assert len(pv) == 64, f"expected 64-char hex, got {pv!r}"
+            assert pv != "a" * 64, f"policy_version still hardcoded: {pv!r}"
 
             # Approval row created.
             approval_row = (

@@ -58,13 +58,13 @@ class _MockRequest:
 
 
 def test_for_update_blocks_concurrent_session_revoke(app_config):
-    """Session FOR UPDATE in ``_validate_confirmable`` blocks concurrent revoke.
+    """Session FOR UPDATE via ``_lock_session`` blocks concurrent revoke.
 
-    Calls the **real** production functions ``_lock_approval`` and
-    ``_validate_confirmable`` (imported from ``api/approvals.py``) on a raw
-    DB connection so the test exercises the actual FOR UPDATE that protects
-    G6/G7.  No monkey-patching, no HTTP — just two independent PostgreSQL
-    connections inside the same asyncio loop.
+    Calls the **real** production functions ``_lock_session``,
+    ``_lock_approval`` and ``_validate_confirmable`` (imported from
+    ``api/approvals.py``) on a raw DB connection matching the actual
+    G6/G7/G10 endpoint lock order.  No monkey-patching, no HTTP — just
+    two independent PostgreSQL connections inside the same asyncio loop.
     """
 
     import services.gateway.app.api.approvals as mod
@@ -91,12 +91,16 @@ def test_for_update_blocks_concurrent_session_revoke(app_config):
         # ── Mock request (provides key + profile to _validate_confirmable) ─
         mock_req = _MockRequest(KEY)
 
-        # ── connA: lock approval + validate → holds FOR UPDATE on session ─
+        # ── connA: lock session → lock approval → validate ─
+        #    Matches the real G6/G7/G10 endpoint flow (lock_order_endpoint tests).
         async with db.connect() as conn_a:
             async with conn_a.begin():
+                # Session lock — same order as _lock_order_endpoint
+                await mod._lock_session(conn_a, "ses_race", "cus_zs")
                 approval = await mod._lock_approval(conn_a, "apv_race", "cus_zs")
 
-                # This acquires FOR UPDATE on session, plan, evaluation rows.
+                # _validate_confirmable locks plan + evaluation FOR UPDATE;
+                # session is already locked by the caller.
                 plan, evaluation, binding = await mod._validate_confirmable(
                     conn_a,
                     approval,
