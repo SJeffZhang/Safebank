@@ -95,3 +95,33 @@ Exit commands (HEAD):
 - `make test-w4b2b`: 58 passed
 - `make test-w4b2c`: 56 passed
 - `make contracts-check`: PASS
+
+## Fix round 5 — W1 test adaptation for G4 implementation
+
+- **Problem**: `test_logout_revokes_before_unrelated_customer_handlers` expected
+  `POST /plans/evaluate` to return 503 "lands in" (W0 placeholder). W3b implemented
+  G4, so the real handler now runs and returns 422 (invalid plan_draft), not 503.
+  `make test-w1` had 1 failed / 1687 passed — the coordinator caught this.
+- **Fix**: Split `/plans/evaluate` out of the uniform probe list. Before logout:
+  send `{"request_id": ..., "plan_draft": {}}` and assert status not in (401, 403)
+  — proves auth middleware passed the request to the real handler. After logout:
+  assert 401 UNAUTHENTICATED (unchanged). `/audit` stays in the placeholder probe
+  list (still W5 stub, 503 expected).
+- **No other W1 files changed.**
+
+Exit commands (fix round 5):
+- `make setup`: 78 packages
+- `make lint`: PASS (329 files)
+- `make test`: 2535 passed, 702 skipped
+- `make test-gateway`: 2018 passed, 612 skipped
+- `make test-gateway-db`: 17 passed
+- `make test-shared-runtime`: 79 passed
+- `make test-w1`: 1688 passed
+- `make test-w2`: 246 passed
+- `make test-w3a`: 45 passed
+- `make test-w4b1`: 57 passed
+- `make test-w4b2b`: 58 passed
+- `make test-w4b2c`: 56 passed
+- `make test-w3b`: 33 passed
+- `make test-obligations`: 30 passed, 1 warning
+- `make contracts-check`: PASS
