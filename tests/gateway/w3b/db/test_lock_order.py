@@ -1,5 +1,11 @@
 """W3b B5: deterministic lock-order deadlock regression test.
 
+IMPORTANT: This test validates the HELPER-FUNCTION lock order —
+``_lock_session`` / ``_lock_approval`` are called directly, not via HTTP
+endpoints.  For endpoint-level regression evidence (proving the production
+session-first order serialises cleanly under ASGI HTTP), see
+``test_lock_order_endpoint.py``.
+
 The ABBA scenario (旧锁序):
   TX1 (G6 confirm): approval → session
   TX2 (create_for_evaluation): session → plan → eval → job → approval (supersede)

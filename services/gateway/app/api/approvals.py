@@ -7,7 +7,6 @@ Instance keys come from ``request.app.state`` — no global ``configure()``.
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -53,15 +52,6 @@ from ..schemas.enums import ApprovalStatus, PlanStatus
 from ..utterance.service import new_id
 
 router = APIRouter()
-
-# B5 lock-order regression test hooks (set by tests only; None in production).
-# After a session row is locked in G6/G7/G10, ``_test_after_session_lock`` is
-# set() so the test can start a concurrent ``create_for_evaluation``.
-# ``_test_before_approval_lock`` is then awaited so the test can control when
-# the approval lock is attempted — the concurrent transaction holds the session
-# lock at that point, exposing any ABBA deadlock.
-_test_after_session_lock: asyncio.Event | None = None
-_test_before_approval_lock: asyncio.Event | None = None
 
 
 # ── Models ────────────────────────────────────────────────────────────────
@@ -335,17 +325,10 @@ async def confirm_approval(
     _result: dict[str, Any] = {}
 
     async def produce():
-        # B5 unified lock order: session → plan → evaluation → approval.
-        # 1. Read approval WITHOUT lock to get sid.
         approval_snap = await _read_approval_unlocked(conn, approval_id, customer_id)
-        # 2. Lock session first (before approval).
+        # Lock session first, then approval — prevents ABBA with create_for_evaluation.
         await _lock_session(conn, approval_snap["sid"], customer_id)
-        # B5 test hooks (no-op in production).
-        if _test_after_session_lock is not None:
-            _test_after_session_lock.set()
-        if _test_before_approval_lock is not None:
-            await _test_before_approval_lock.wait()
-        # 3. Lock approval + recheck nothing changed.
+        # Lock approval + recheck nothing changed.
         approval = await _lock_approval(conn, approval_id, customer_id)
         if (
             approval["sid"] != approval_snap["sid"]
@@ -572,11 +555,6 @@ async def reject_approval(
         approval_snap = await _read_approval_unlocked(conn, approval_id, customer_id)
         # 2. Lock session first (before approval).
         await _lock_session(conn, approval_snap["sid"], customer_id)
-        # B5 test hooks (no-op in production).
-        if _test_after_session_lock is not None:
-            _test_after_session_lock.set()
-        if _test_before_approval_lock is not None:
-            await _test_before_approval_lock.wait()
         # 3. Lock approval + recheck nothing changed.
         approval = await _lock_approval(conn, approval_id, customer_id)
         if (
@@ -767,11 +745,6 @@ async def otp_send(
 
         # 2. Lock session first (before approval).
         await _lock_session(conn, approval_snap["sid"], customer_id)
-        # B5 test hooks (no-op in production).
-        if _test_after_session_lock is not None:
-            _test_after_session_lock.set()
-        if _test_before_approval_lock is not None:
-            await _test_before_approval_lock.wait()
 
         # 3. Lock approval + recheck nothing changed.
         approval = await _lock_approval(conn, approval_id, customer_id)

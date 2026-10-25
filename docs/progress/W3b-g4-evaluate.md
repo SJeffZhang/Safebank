@@ -5,6 +5,9 @@
 - [x] B1: RISKY_SEQUENCE cooldown atomicity — pipeline collects into `pending_cooldowns`, `_persist_cooldowns` writes inside same transaction as `plans.py:334-335`
 - [x] B1-red: Idempotency conflict → no residual cooldowns from failed attempt
 - [x] B5: lock-order validation — G6/G7/G10 all lock session→plan→evaluation→approval; concurrent G6+evaluate test passes
+- [x] B5-green: `test_lock_order_endpoint.py` — 3 ASGI HTTP-level GREEN tests (G6 confirm, G7 reject, G10 otp_send) prove session-first serialises cleanly with concurrent create_for_evaluation
+- [x] B5-red: `test_lock_order.py` — helper-function-level RED test proves approval-first ordering produces ABBA deadlock (GREEN test catches the regression)
+- [x] B5-cleanup: Removed unused test hooks (`_test_after_first_lock`, `_test_resume`, `_b5_wait_threading_event`) from approvals.py; G6 reverted from approval-first to session-first
 - [x] T4.3: RISKY_SEQUENCE detection → DENY + cooldown persistence (29 real-PG tests, one per scenario)
 - [x] T4.4: INSUFFICIENT_FUNDS → REPLAN with replan hints
 
