@@ -59,6 +59,24 @@
 - **3 failed, 1 passed**（3.95s）：三条新测均因 `replay()` 抛 `NotImplementedError` 失败（预期红）；既有 `test_c6_fence_prepare_premise` 通过。
 - 三条新测在到达 `await replay(ctx)` 前的前置（真实 L3 启动、`bank_state()`=600000、余额变更与 555000 探针、旧槽位填充）均真实执行通过，失败点唯一是未实现的 `replay`。
 
-## 下一步
+## T1b 实现 `replay()`——完成，绿
 
-- T1：实现 `replay()`（EXECUTE_REPLAY 复演，新 EvalContext + L3 snapshot + `pipeline.evaluate(mode=EXECUTE_REPLAY)`），使 3 条红测转绿。
+### 交付
+
+- 只改 `services/gateway/app/execution/replay.py`（生产文件仅此一个）。
+- `replay(ctx)`：新建 `EvalContext`，只沿用身份与输入字段（`request`、`identity`、`authorization`、`plan_draft`、`plan_id`、`origin`、`customer_id`、`session_id`、`profile`、`wall_now`、`conn`、`l3`、`audit`）；不复制任何阶段结果（`provenance`/`intent`/`snapshot`/`preflight`/`workflow`/`decision`）、`findings`/`stage_status`/`short_circuit` 及 `_lazy_state` 快照缓存。
+- 以 `pipeline.evaluate(fresh, mode=EvalMode.EXECUTE_REPLAY)` 调用（经模块属性 `pipeline.evaluate`，保证 monkeypatch 与真实调用一致），返回其产出的 `Decision`；若未产出 `Decision` 则抛 `RuntimeError`，不伪造。
+- 未改动 `pipeline/*` 与其他生产文件；未改测试断言。
+
+### 运行结果
+
+| 命令 | 结果 |
+|---|---|
+| `make lint` | exit 0（341 files formatted） |
+| `make test-w4c` | **4 passed**（3.69s，3 条红测转绿 + 既有 C6 前提验证） |
+| `make test-w3b` | 33 passed |
+| `make test-gateway` | 2018 passed / 616 skipped |
+
+### 下一步
+
+- T2：G5 计划状态（/plans/{id}/execute 状态前置校验）与 G8 执行，待 T1 合入后继续。
