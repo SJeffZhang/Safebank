@@ -125,3 +125,60 @@ Exit commands (fix round 5):
 - `make test-w3b`: 33 passed
 - `make test-obligations`: 30 passed, 1 warning
 - `make contracts-check`: PASS
+
+## Fix round 6 — review item closures (P1, P2-1/2/3)
+
+Independent review `docs/reviews/W3b-g4-evaluate-review.md` (REQUEST_CHANGES) — four items closed:
+
+- **P1 — real policy_version**: `plans.py:331` no longer hardcodes `"sha256:test"`; now
+  persists `decision.policy_version`. To fit the `evaluations.policy_version String(64)`
+  column, `decision._policy_version()` returns the bare 64-char hexdigest (was
+  `"sha256:" + hexdigest`, 71 chars). `tests/gateway/w3a/test_decision.py`
+  `test_policy_version_covers_all_policy_files` assertion updated to match: 64-char
+  lowercase hex (was `startswith("sha256:")`). No assertion relaxed — the old assertion
+  was simply checking the wrong wire format.
+- **P2-1 — drop redundant session FOR UPDATE**: `approvals._validate_confirmable` now
+  reads the session row without `FOR UPDATE`; the caller (`_lock_session`) already holds
+  the session row. Lock order unchanged (session → plan → evaluation). The AST-based
+  lock-order guard still passes.
+- **P2-2 — test name matches assertion**: `test_evaluate_transfer_allowed` renamed to
+  `test_evaluate_transfer_requires_approval` (it asserts `REQUIRE_APPROVAL`).
+- **P2-3 — endpoint lock-order tests use app's real key + reach business logic**:
+  `test_lock_order_endpoint.py` now uses `F_APPROVE` auth (`SERVICE_TOKEN` +
+  `sign_jwt(scope=["approve"], aud="gateway-app")`) for G6/G7/G10, seeds the session with
+  the W3b app's `WALL` clock (W4b2b conftest's `WALL` is Oct 15 → token expired), and
+  each test asserts the endpoint *reached* its business path (approval CONFIRMED /
+  REJECTED / one OTP challenge) rather than only "no deadlock". Added
+  `_seed_two_plans` (plan A PENDING_APPROVAL + plan B EVALUATED on same session) so
+  `create_for_evaluation` has a real plan B to hold the session lock on.
+
+Additional minimal fixes required by the closures (no assertion relaxed):
+
+- **`tests/gateway/w4b2b/db/conftest.py`**: `_seed_approval` now passes `customer_id=customer`
+  into `_compute_binding` — previously the MAC was always computed for the default
+  `cus_zs`, so any test with a non-default customer hit 409 APPROVAL_BINDING_MISMATCH.
+- **`tests/gateway/w4b2b/db/test_race.py`** `test_for_update_blocks_concurrent_session_revoke`:
+  this W4b2b test called only `_lock_approval` + `_validate_confirmable`, so after P2-1 it
+  no longer held a session lock and the concurrent revoke slipped through. Updated to
+  match the real endpoint flow: `_lock_session` → `_lock_approval` →
+  `_validate_confirmable`. The assertion is unchanged — the test was asserting the
+  endpoint-flow session lock, which was being provided by `_validate_confirmable` before
+  P2-1 and is now correctly provided by the caller.
+- **`test_lock_order_endpoint.py`** E501 line-too-long on the `sign_jwt` call split; `ruff
+  format` applied.
+
+Exit commands (HEAD `82001b6`):
+- `make lint`: PASS (329 files)
+- `make test`: 2535 passed, 702 skipped
+- `make test-gateway`: 2018 passed, 612 skipped
+- `make test-gateway-db`: 17 passed
+- `make test-shared-runtime`: 79 passed
+- `make test-w1`: 1688 passed
+- `make test-w2`: 246 passed
+- `make test-w3a`: 45 passed
+- `make test-w4b1`: 57 passed
+- `make test-w4b2b`: 58 passed
+- `make test-w4b2c`: 56 passed
+- `make test-w3b`: 33 passed
+- `make test-obligations`: 30 passed, 1 warning
+- `make contracts-check`: PASS
