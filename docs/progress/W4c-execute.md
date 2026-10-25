@@ -80,3 +80,9 @@
 ### 下一步
 
 - T2：G5 计划状态（/plans/{id}/execute 状态前置校验）与 G8 执行，待 T1 合入后继续。
+
+### T2a：真实 L3 + 真实 G4 的 ALLOW 夹具（2026-10-26）
+
+- 新增 `tests/gateway/w4c/db/support.py`（`allow_plan` 夹具：w3b `build_app` 后把 `app.state.l3` 换成真实 `L3Client`，obligations 种子 `cus_zs`/`acc_zs_chk`/`crd_zs_1`，GREEN `freeze_card` 计划）与 `tests/gateway/w4c/db/test_allow_fixture.py`（`test_real_l3_allow_plan`：断言 decision==ALLOW、`app.state.l3` 为 L3Client 且非 FakeL3Client、plans 表该 plan status==EVALUATED）；`conftest.py` 补 `app_config` 导入。
+- 命令：`make test-w4c` → **5 passed**（0 skipped，6.73s）。
+- 未改生产代码 / w3a / w3b 测试；不写 G8。
