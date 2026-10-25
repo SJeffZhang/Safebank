@@ -76,3 +76,38 @@
 - `test_schema.py` 确实用 `safebank_contracts.codes.Code` 校验 reason codes 为真实 Code；金额整数分/无 float；case_id 唯一。
 - `test_entities.py` 校验 params 引用的账户/卡/收款人/账号都在种子里，且新增收款人账号/姓名不在种子中；`test_distribution.py` 校验 ≥300/≥60 攻击/每 variant ≥3/每场景 ≥5。
 - **缺口**：测试不校验「金额文本 vs amount_cents 的一致性」（P1-1 因此漏网）、不校验「params 键必须是该 tool 的合法 arg」（P1-2 漏网）、不校验 risk 层级（P1-3）。建议生成器或测试增加「逐条核对 turn 中的金额表达式与 amount_cents」与「params 键 ∈ 该 tool args」两条断言。
+
+## 修复轮 1 定点复审（2026-10-26）
+
+- 评审对象：`git diff f4206db 78a5010`（E0a 修复轮 1）。
+- 核对方式：语料 JSONL 全量 grep（risk 取值分布、`split_count`、`plan_shape`）+ 逐类抽样读原文 + 生成器/spec 源码 + PRD §9.4 基础等级与 1013/1514 行。**未独立复跑 pytest**（本机 `.venv/bin/pytest` 需审批；「25 passed」引自协调者复跑记录 E0a-corpus.md:110），此点列入未确认。
+
+### 三条 P1 复核
+
+**P1-1 金额单位 — 已修复。** a2：`a2-injection-002`「转 500 过去」→50_000、`a2-multi_turn-002`「再转500」→50_000、`a2-arabic_amount-001/002/003`「金额 500／转 1000／转 200」→50_000/100_000/20_000（原为「转50000/100000/20000」当成分）；中文 `a2-cn_amount-001/002/003`「五千元／三百元／一万元」→500_000/30_000/1_000_000。a3：`a3-arabic_amount-001/002/003` 文本均改「转1000给钱八」→100_000（原「转100000」）；`a3-cn_amount`「一千元」→100_000。均符合「裸数字=元」。新增 `test_amounts.py`（`amount_cents%100==0` 且 `amount_cents//100 ∈ parse_amounts_yuan`）。成立。
+
+**P1-2 非工具参数 — 已修复。** 全语料 grep `split_count` = 0 命中；`plan_shape` 现为 `{"steps":3,"tool":"transfer"}`，存在于 a1 全部 30 条非 over_limit 用例（如 `a1-colloquial-001`，params 只剩 `payee_name`/`amount_cents`）。新增 `test_params_keys_are_valid_tool_args`。成立。
+
+**P1-3 风险等级 — 已修复。** 405 条全部含 `risk` 字段：非空 192（=可执行 RA+ALLOW）、null 213（不可执行），新增 `test_executable_cases_have_risk_and_others_none` 强制一一对应。取值分布与 PRD §9.4 逐项一致：GREEN 21（仅 `card_freeze`，W8 绿→ALLOW）；YELLOW 82（transfer 33=W1 黄、add_payee 21=W2 黄、card_limit 16=TIGHTEN 黄、card_channel 12=TIGHTEN 黄）；RED 89（a1 30=SPLIT_TRANSFER 红、a2 3=INJECTION_SUSPECTED 红、card_limit 5=LOOSEN 红、card_unfreeze 21=W9 红、card_report_lost 21=W10 红、card_channel 9=LOOSEN 红）。`a2-reference-*` 的 add_payee 标 RED 成立：PRD 1013 行「由它授权的计划加 INJECTION_SUSPECTED（升红）」、1514 行「| INJECTION_SUSPECTED | R | 启发式命中，仅升级 |」，黄级被升红。成立。
+
+### 可执行样本扩充 — 说法成立
+
+405 条（transfer 57 / add_payee 42 / 卡 5 类各 42 / a1 33 / a2 21 / a3 18 / oos 24）；RA 171 + ALLOW 21 = 192 可执行（≥180），DENY 30（a2 12 + a3 18）、NO_PLAN 135、CLARIFY 42、REPLAN 6；与 risk 非空 192、null 213 完全吻合。新增 `test_executable_cases_at_least_180` 与 polite/long_sentence/context_ref 三变体。P2-2（近似去重）已由 `spec.py` 的 `near_duplicate_groups`（SequenceMatcher≥0.95）+ `test_dedup.py` 处理；P2-5（out_of_scope variant）已由共享 schema 修订第 78 行登记 `billing|subscription|wealth|aa` 处理。
+
+### 新问题
+
+无 P0、无 P1。
+
+- **P2-1（文档，旧 P2-1 未修、修文失实）**：`docs/progress/E0a-corpus.md:99` 声称「修正了『解冻 GREEN→ALLOW』与 PRD 矛盾的说明」，但 71 行仍是「冻结/解冻 GREEN→ALLOW」。解冻是 W9 红（PRD §9.4），此「期望判定基准」参照行仍会误导 E0b。应改为「冻结 GREEN→ALLOW、解冻 RED→REQUIRE_APPROVAL」。
+- **P2-2（文档，分布表陈旧）**：`docs/progress/E0a-corpus.md` 第 12 行「309 条」、15 行「18 项校验测试」、17–32 行分布表（合计 309、变体 15/10/7 各 3）、39–43 行变体明细均未更新，与 93–101 行「修复轮 1」的 405 条/25 测试自相矛盾。应按上节逐类数字更新。
+- **P2-3（契约文档）**：`spec.py` TOOL_PARAMS 白名单允许 transfer/schedule_transfer 的 params 出现 `payee_name`/`account_no` 作为「实体简写」，但任务书共享 schema 修订（73–78 行）未登记该约定，也未定义 E0b 逐值比对时如何把 `payee_name`/`account_no` 解析到 `payee_id`/`to_account_id`。E0b 只读任务书无法得知。应补登。
+- **P2-4（测试充分性，非数据缺陷）**：`test_amounts.py` 用存在性断言 `yuan ∈ parse_amounts_yuan(turns)`，多金额语句无法区分。a1 拆分原话同时含 1000（本人互转）与 2000（每笔转出），若 amount_cents 误写 100_000，`1000 ∈ {1000,2000}` 仍通过。当前数据正确（200_000），但断言对「取错句中另一金额」漏判。
+
+### 未确认
+
+- 未独立复跑 pytest（需审批）；以语料全量 grep + 源码核对替代，25 passed 引自协调者记录。
+- `parse_amounts_yuan` 对「两千元五角」等角/分精度的解析边界未测。
+
+### 结论
+
+**APPROVE**。三条 P1 均真实修复，风险标注与 PRD §9.4 一致，可执行扩充说法成立。新 4 条 P2 均为文档/测试充分性问题，不阻塞 E0a 合入，建议随 E0b 一并修订。
