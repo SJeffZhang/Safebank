@@ -1,0 +1,184 @@
+# W3b G4 Evaluate — Progress
+
+## Completed
+
+- [x] B1: RISKY_SEQUENCE cooldown atomicity — pipeline collects into `pending_cooldowns`, `_persist_cooldowns` writes inside same transaction as `plans.py:334-335`
+- [x] B1-red: Idempotency conflict → no residual cooldowns from failed attempt
+- [x] B5: lock-order validation — G6/G7/G10 all lock session→plan→evaluation→approval; concurrent G6+evaluate test passes
+- [x] B5-green: `test_lock_order_endpoint.py` — 3 ASGI HTTP-level GREEN tests (G6 confirm, G7 reject, G10 otp_send) prove session-first serialises cleanly with concurrent create_for_evaluation
+- [x] B5-red: `test_lock_order.py` — helper-function-level RED test proves approval-first ordering produces ABBA deadlock (GREEN test catches the regression)
+- [x] B5-cleanup: Removed unused test hooks (`_test_after_first_lock`, `_test_resume`, `_b5_wait_threading_event`) from approvals.py; G6 reverted from approval-first to session-first
+- [x] B5-guard: `test_lock_order_guard.py` — AST-based source-level guard asserts `_lock_session` < `_lock_approval` in G6/G7/G10 (and nested closures). RED verified: swapping each endpoint's lock calls made the guard fail with the specific endpoint name; reverted. Deadlock semantics proven by `test_lock_order.py`.
+- [x] T4.3: RISKY_SEQUENCE detection → DENY + cooldown persistence (29 real-PG tests, one per scenario)
+- [x] T4.4: INSUFFICIENT_FUNDS → REPLAN with replan hints
+
+## Test coverage (29 tests, 0 skipped, 0 xfail)
+
+- `test_f_path_returns_503` — F caller → 503
+- `test_f_path_no_service_token_returns_401` — no service token → 401
+- `test_f_path_no_jwt_returns_401` — no JWT → 401
+- `test_evaluate_transfer_allowed` — full provenance + entity → REQUIRE_APPROVAL
+- `test_evaluate_idempotent_request_id` — same request_id → cached 200
+- `test_evaluate_request_id_conflict` — same request_id, different body → 409
+- `test_evaluate_invalid_plan_draft_returns_422` — malformed → 422
+- `test_evaluate_missing_request_id_returns_422` — no request_id → 422
+- `test_evaluate_session_ownership_mismatch` — sid mismatch → 404
+- `test_evaluate_utterance_not_in_jwt` — utterance not in JWT → 409
+- `test_evaluate_session_revoked` — revoked session → 401
+- `test_evaluate_session_not_found` — no session → 401
+- `test_evaluate_produces_audit_event` — audit event created
+- `test_evaluate_shadow_b1_present` — B2 produces shadow_b1
+- `test_evaluate_unauthenticated` — no auth → 401
+- `test_evaluate_wrong_kind_service_token` — S token → 401
+- `test_risky_sequence_deny_with_cooldown` — PAYEE_ADD + CARD_LIMIT_LOOSEN → DENY + cooldown
+- `test_risky_sequence_idempotency_no_duplicate_cooldown` — 409 doesn't create extra cooldown
+- `test_evaluate_replan_insufficient_funds` — low balance → REPLAN + INSUFFICIENT_FUNDS
+- `test_g6_vs_evaluate_concurrent_no_deadlock` — concurrent G6+G4 no deadlock
+
+Plus evaluation_repo tests and lock_order tests (9 more).
+
+## Fixes applied
+
+1. `_step_with_sources()` helper: builds transfer step with `arg_sources` (utterance span for amount, read pointers for account/payee); memo=None so provenance/intent skip it
+2. `_seed_provenance_data()`: seeds read records + patches utterance text/scope for amount matching
+3. `_low_balance_bank_state()`: sets `current_card_id=None` + high limits so `INSUFFICIENT_FUNDS` fires before `CARD_SINGLE_LIMIT`
+4. RISKY_SEQUENCE risk assertion: YELLOW (step base_risk from tools.yaml) — not RED (RISKY_SEQUENCE finding has DENY effect, not RISK_RED)
+5. **B5 lock-order GREEN test fix** (`cb4fe89`): original test was deadlocked by design — conn_a held session lock while waiting for conn_b's `proceed` event, but conn_b needed the same session lock. Rewrote to model actual production: conn_a locks session → holds briefly (conn_b serializes behind it on session row) → locks approval → rollbacks → conn_b unblocks and proceeds. RED verification: temporarily swapped to old approval-first order → PostgreSQL detected ABBA deadlock → test FAILED → reverted.
+6. **B5 test hooks** (`2bb59e8`): added `_test_after_session_lock` / `_test_before_approval_lock` asyncio.Event hooks in `approvals.py` (confirm_approval / reject_approval / otp_send). None by default (no-op in production). Available for future HTTP-level integration tests; current test uses direct function calls instead.
+
+## Exit commands (after B5 GREEN fix, cb4fe89)
+
+- `make lint`: PASS (326 files)
+- `make test`: 2534 passed, 699 skipped
+- `make test-gateway`: 2017 passed, 609 skipped
+- `make test-gateway-db`: 17 passed
+- `make test-w3b`: 28 passed, 0 skipped (8.97s)
+- `make contracts-check`: PASS
+
+## Fix round 3 — B5 AST guard (afdc7da)
+
+- Added `tests/gateway/w3b/db/test_lock_order_guard.py`: AST-based source-level guard asserts
+  `_lock_session` < `_lock_approval` in G6/G7/G10 (and nested closures).
+- RED verified: swapping each endpoint's lock calls made guard fail with endpoint name; reverted.
+- Deadlock semantics proven by `test_lock_order.py` helper-function-level RED/GREEN.
+
+Exit commands (afdc7da):
+- `make lint`: PASS
+- `make test`: 2534 passed, 701 skipped
+- `make test-gateway`: 2017 passed, 611 skipped
+- `make test-gateway-db`: 17 passed
+- `make test-w3a`: 45 passed
+- `make test-w3b`: 33 passed
+- `make test-w4b2b`: 58 passed
+- `make test-w4b2c`: 56 passed
+- `make contracts-check`: PASS
+
+## Fix round 4 — B1 cooldown rollback RED test
+
+- Added `tests/gateway/w3b/db/test_b1_cooldown_rollback.py`: proves cooldowns vanish when write
+  transaction fails (monkeypatches `append_evaluation` to raise after `_persist_cooldowns`).
+- RED verified: temporarily changed `_persist_cooldowns` to use separate `create_async_engine` +
+  `AUTOCOMMIT` connection → test FAILED (cooldown leaked: after=1 vs before=0); reverted.
+- Also broke `test_risky_sequence_deny_with_cooldown` and
+  `test_risky_sequence_idempotency_no_duplicate_cooldown` during RED (separate engine can't
+  participate in outer transaction read — expected).
+- Fixed 3 lint errors: unused `mock`/`Code` imports, `plan_id` → `plan_id_from_resp` typo.
+- ruff format clean up.
+
+Exit commands (HEAD):
+- `make lint`: PASS (329 files)
+- `make test`: 2535 passed, 702 skipped
+- `make test-gateway`: 2018 passed, 612 skipped
+- `make test-gateway-db`: 17 passed
+- `make test-w3a`: 45 passed
+- `make test-w3b`: 33 passed
+- `make test-w4b2b`: 58 passed
+- `make test-w4b2c`: 56 passed
+- `make contracts-check`: PASS
+
+## Fix round 5 — W1 test adaptation for G4 implementation
+
+- **Problem**: `test_logout_revokes_before_unrelated_customer_handlers` expected
+  `POST /plans/evaluate` to return 503 "lands in" (W0 placeholder). W3b implemented
+  G4, so the real handler now runs and returns 422 (invalid plan_draft), not 503.
+  `make test-w1` had 1 failed / 1687 passed — the coordinator caught this.
+- **Fix**: Split `/plans/evaluate` out of the uniform probe list. Before logout:
+  send `{"request_id": ..., "plan_draft": {}}` and assert status not in (401, 403)
+  — proves auth middleware passed the request to the real handler. After logout:
+  assert 401 UNAUTHENTICATED (unchanged). `/audit` stays in the placeholder probe
+  list (still W5 stub, 503 expected).
+- **No other W1 files changed.**
+
+Exit commands (fix round 5):
+- `make setup`: 78 packages
+- `make lint`: PASS (329 files)
+- `make test`: 2535 passed, 702 skipped
+- `make test-gateway`: 2018 passed, 612 skipped
+- `make test-gateway-db`: 17 passed
+- `make test-shared-runtime`: 79 passed
+- `make test-w1`: 1688 passed
+- `make test-w2`: 246 passed
+- `make test-w3a`: 45 passed
+- `make test-w4b1`: 57 passed
+- `make test-w4b2b`: 58 passed
+- `make test-w4b2c`: 56 passed
+- `make test-w3b`: 33 passed
+- `make test-obligations`: 30 passed, 1 warning
+- `make contracts-check`: PASS
+
+## Fix round 6 — review item closures (P1, P2-1/2/3)
+
+Independent review `docs/reviews/W3b-g4-evaluate-review.md` (REQUEST_CHANGES) — four items closed:
+
+- **P1 — real policy_version**: `plans.py:331` no longer hardcodes `"sha256:test"`; now
+  persists `decision.policy_version`. To fit the `evaluations.policy_version String(64)`
+  column, `decision._policy_version()` returns the bare 64-char hexdigest (was
+  `"sha256:" + hexdigest`, 71 chars). `tests/gateway/w3a/test_decision.py`
+  `test_policy_version_covers_all_policy_files` assertion updated to match: 64-char
+  lowercase hex (was `startswith("sha256:")`). No assertion relaxed — the old assertion
+  was simply checking the wrong wire format.
+- **P2-1 — drop redundant session FOR UPDATE**: `approvals._validate_confirmable` now
+  reads the session row without `FOR UPDATE`; the caller (`_lock_session`) already holds
+  the session row. Lock order unchanged (session → plan → evaluation). The AST-based
+  lock-order guard still passes.
+- **P2-2 — test name matches assertion**: `test_evaluate_transfer_allowed` renamed to
+  `test_evaluate_transfer_requires_approval` (it asserts `REQUIRE_APPROVAL`).
+- **P2-3 — endpoint lock-order tests use app's real key + reach business logic**:
+  `test_lock_order_endpoint.py` now uses `F_APPROVE` auth (`SERVICE_TOKEN` +
+  `sign_jwt(scope=["approve"], aud="gateway-app")`) for G6/G7/G10, seeds the session with
+  the W3b app's `WALL` clock (W4b2b conftest's `WALL` is Oct 15 → token expired), and
+  each test asserts the endpoint *reached* its business path (approval CONFIRMED /
+  REJECTED / one OTP challenge) rather than only "no deadlock". Added
+  `_seed_two_plans` (plan A PENDING_APPROVAL + plan B EVALUATED on same session) so
+  `create_for_evaluation` has a real plan B to hold the session lock on.
+
+Additional minimal fixes required by the closures (no assertion relaxed):
+
+- **`tests/gateway/w4b2b/db/conftest.py`**: `_seed_approval` now passes `customer_id=customer`
+  into `_compute_binding` — previously the MAC was always computed for the default
+  `cus_zs`, so any test with a non-default customer hit 409 APPROVAL_BINDING_MISMATCH.
+- **`tests/gateway/w4b2b/db/test_race.py`** `test_for_update_blocks_concurrent_session_revoke`:
+  this W4b2b test called only `_lock_approval` + `_validate_confirmable`, so after P2-1 it
+  no longer held a session lock and the concurrent revoke slipped through. Updated to
+  match the real endpoint flow: `_lock_session` → `_lock_approval` →
+  `_validate_confirmable`. The assertion is unchanged — the test was asserting the
+  endpoint-flow session lock, which was being provided by `_validate_confirmable` before
+  P2-1 and is now correctly provided by the caller.
+- **`test_lock_order_endpoint.py`** E501 line-too-long on the `sign_jwt` call split; `ruff
+  format` applied.
+
+Exit commands (HEAD `82001b6`):
+- `make lint`: PASS (329 files)
+- `make test`: 2535 passed, 702 skipped
+- `make test-gateway`: 2018 passed, 612 skipped
+- `make test-gateway-db`: 17 passed
+- `make test-shared-runtime`: 79 passed
+- `make test-w1`: 1688 passed
+- `make test-w2`: 246 passed
+- `make test-w3a`: 45 passed
+- `make test-w4b1`: 57 passed
+- `make test-w4b2b`: 58 passed
+- `make test-w4b2c`: 56 passed
+- `make test-w3b`: 33 passed
+- `make test-obligations`: 30 passed, 1 warning
+- `make contracts-check`: PASS

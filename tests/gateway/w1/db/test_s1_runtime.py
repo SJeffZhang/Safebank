@@ -54,24 +54,47 @@ def test_logout_revokes_before_unrelated_customer_handlers(gateway_db, monkeypat
             sid = await create(client, app_token, new_id("req"))
             registered = (await utter(client, app_token, sid, "给王五800")).json()
             assistant = registered["assistant_token"]
-            # These handlers are still W3/W5 stubs. Their 503 message proves
+
+            # These handlers are still W5 stubs. Their 503 message proves
             # authentication reached that boundary, never business success.
             probes = [
                 ("GET", "/audit", app_token, "f-test"),
-                ("POST", "/plans/evaluate", assistant, "a-test"),
             ]
             for method, path, token, service in probes:
                 response = await client.request(method, path, headers=headers(token, service))
                 assert response.status_code == 503, response.text
                 assert "lands in" in response.json()["error"]["message"]
+
+            # /plans/evaluate is now implemented (W3b). Before logout, prove
+            # auth passed (not 401/403) — even 422 from the handler confirms
+            # the middleware let the request through.
+            evaluate_resp = await client.post(
+                "/plans/evaluate",
+                headers=headers(assistant, "a-test"),
+                json={"request_id": new_id("req"), "plan_draft": {}},
+            )
+            assert evaluate_resp.status_code not in (401, 403), (
+                f"auth should pass before logout, got {evaluate_resp.status_code}"
+            )
+
             result = await client.post(
                 "/auth/logout", headers=headers(app_token), json={"request_id": new_id("req")}
             )
             assert result.status_code == 200, result.text
+
+            # After logout: every endpoint (stub or real) must return 401.
             for method, path, token, service in probes:
                 response = await client.request(method, path, headers=headers(token, service))
                 assert response.status_code == 401, response.text
                 assert response.json()["error"]["code"] == "UNAUTHENTICATED"
+
+            evaluate_after = await client.post(
+                "/plans/evaluate",
+                headers=headers(assistant, "a-test"),
+                json={"request_id": new_id("req"), "plan_draft": {}},
+            )
+            assert evaluate_after.status_code == 401, evaluate_after.text
+            assert evaluate_after.json()["error"]["code"] == "UNAUTHENTICATED"
 
     asyncio.run(run())
 

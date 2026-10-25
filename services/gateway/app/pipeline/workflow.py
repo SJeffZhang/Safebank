@@ -23,7 +23,6 @@ from safebank_bankcore.ids import derive
 from safebank_bankcore.references import request_digest
 from safebank_contracts.codes import Code
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from .. import tables as t
 from ..schemas.enums import FindingEffect
@@ -183,20 +182,11 @@ async def _load_history(ctx: EvalContext) -> WorkflowHistory:
 
 
 async def _write_cooldown(ctx: EvalContext, fingerprint: str, until_at: datetime) -> None:
-    if ctx.mode is EvalMode.SHADOW_B1 or ctx.conn is None:
+    """Collect cooldowns for G4 persist step; DB write happens atomically later (B1)."""
+    if ctx.mode is EvalMode.SHADOW_B1 or ctx.workflow is None:
         return
-    await ctx.conn.execute(
-        pg_insert(t.cooldowns)
-        .values(
-            customer_id=ctx.customer_id,
-            payee_fingerprint=fingerprint,
-            until_at=until_at,
-            reason=Code.RISKY_SEQUENCE.value,
-        )
-        .on_conflict_do_update(
-            index_elements=[t.cooldowns.c.customer_id, t.cooldowns.c.payee_fingerprint],
-            set_={"until_at": until_at, "reason": Code.RISKY_SEQUENCE.value},
-        )
+    ctx.workflow.pending_cooldowns = ctx.workflow.pending_cooldowns + (
+        (fingerprint, until_at.isoformat()),
     )
 
 

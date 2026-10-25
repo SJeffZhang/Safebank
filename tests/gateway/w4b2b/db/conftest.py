@@ -462,6 +462,7 @@ async def _seed_approval(
 
     expiry = expires_at_wall if expires_at_wall is not None else WALL + timedelta(minutes=5)
     mac = _compute_binding(
+        customer_id=customer,
         plan_id=plan_id,
         evaluation_id=evaluation_id,
         sid=sid,
