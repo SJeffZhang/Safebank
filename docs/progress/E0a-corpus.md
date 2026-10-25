@@ -110,3 +110,7 @@ colloquial / cn_amount / arabic_amount，各 3 条。全部 `session_break=true`
 | `pytest tests/evaluation/corpus` | 25 passed |
 | `make test` | 2727 passed / 705 skipped |
 | 重新运行生成器 | 语料无 diff，可确定性复现 |
+
+## 复审（2026-10-26）
+
+独立复审 R-E0a-r2b：APPROVE，无 P0/P1（报告追加于 `docs/reviews/E0a-corpus-review.md`）。P2 处理：计数与解冻说明已更正（本文件）；`payee_name`/`account_no` 简写已登记到任务书共享 schema 修订；`test_amounts.py` 对一句多金额只校验存在性，列为待决，由 E0b 逐值比对兜底。

@@ -76,3 +76,4 @@
 - `expected.plan_shape`（可选）：多步计划的形状描述，例如 `{"steps": 3, "tool": "transfer"}`；**不得**把非工具参数（如 `split_count`）放进 `params`。E0b 对 `params` 只做工具参数逐值比对。
 - 金额约定：语料中阿拉伯数字不带单位即为「元」（例「转3000」= 300000 分），`params.amount_cents` 一律整数分。
 - `variant` 允许 `out_of_scope` 场景值：`billing | subscription | wealth | aa`（登记于此）。
+- `params` 中允许的非工具字段简写（仅语料比对用，E0b 映射后再比对）：`payee_name`（收款人名称，映射到解析出的 `payee_id`）、`account_no`（新收款人账号，对应 `add_payee` 的账号参数）。其余键必须是工具参数。
