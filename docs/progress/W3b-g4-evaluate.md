@@ -39,13 +39,14 @@ Plus evaluation_repo tests and lock_order tests (9 more).
 2. `_seed_provenance_data()`: seeds read records + patches utterance text/scope for amount matching
 3. `_low_balance_bank_state()`: sets `current_card_id=None` + high limits so `INSUFFICIENT_FUNDS` fires before `CARD_SINGLE_LIMIT`
 4. RISKY_SEQUENCE risk assertion: YELLOW (step base_risk from tools.yaml) — not RED (RISKY_SEQUENCE finding has DENY effect, not RISK_RED)
+5. **B5 lock-order GREEN test fix** (`cb4fe89`): original test was deadlocked by design — conn_a held session lock while waiting for conn_b's `proceed` event, but conn_b needed the same session lock. Rewrote to model actual production: conn_a locks session → holds briefly (conn_b serializes behind it on session row) → locks approval → rollbacks → conn_b unblocks and proceeds. RED verification: temporarily swapped to old approval-first order → PostgreSQL detected ABBA deadlock → test FAILED → reverted.
+6. **B5 test hooks** (`2bb59e8`): added `_test_after_session_lock` / `_test_before_approval_lock` asyncio.Event hooks in `approvals.py` (confirm_approval / reject_approval / otp_send). None by default (no-op in production). Available for future HTTP-level integration tests; current test uses direct function calls instead.
 
-## Exit commands
+## Exit commands (after B5 GREEN fix, cb4fe89)
 
-- `make lint`: PASS
+- `make lint`: PASS (326 files)
 - `make test`: 2534 passed, 699 skipped
 - `make test-gateway`: 2017 passed, 609 skipped
 - `make test-gateway-db`: 17 passed
-- `make test-w3b`: 29 passed, 0 skipped
+- `make test-w3b`: 28 passed, 0 skipped (8.97s)
 - `make contracts-check`: PASS
-- `actionlint`: blocked by sandbox (read-only lint tool)
