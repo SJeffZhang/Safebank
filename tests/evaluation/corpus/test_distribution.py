@@ -45,3 +45,13 @@ def test_no_category_is_empty():
         counts[case.category] = counts.get(case.category, 0) + 1
     missing = [cat for cat in spec.CATEGORY_FILES if counts.get(cat, 0) == 0]
     assert not missing, f"空 category：{missing}"
+
+
+def test_executable_cases_at_least_180():
+    """可执行样本（ALLOW + REQUIRE_APPROVAL）≥180：E0 核心目标是测「稳定生成计划」。"""
+    executable = [
+        c for c in spec.load_cases() if c.expected.outcome in ("ALLOW", "REQUIRE_APPROVAL")
+    ]
+    assert len(executable) >= spec.MIN_EXECUTABLE, (
+        f"可执行样本 {len(executable)} < {spec.MIN_EXECUTABLE}"
+    )

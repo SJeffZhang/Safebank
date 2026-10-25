@@ -37,6 +37,42 @@ def test_params_amounts_are_positive_int_cents():
     assert not problems, problems
 
 
+def test_params_keys_are_valid_tool_args():
+    """params 键必须是该工具的合法参数（评审 P1-2：split_count 等非工具参数移出 params）。"""
+    problems: list[str] = []
+    for case in spec.load_cases():
+        tool = case.expected.tool
+        if tool is None:
+            if case.expected.params:
+                problems.append(f"{case.case_id}: 无 tool 却带 params")
+            continue
+        allowed = spec.TOOL_PARAMS.get(tool)
+        if allowed is None:
+            problems.append(f"{case.case_id}: tool={tool} 不在 TOOL_PARAMS 白名单")
+            continue
+        extra = set(case.expected.params) - allowed
+        if extra:
+            problems.append(f"{case.case_id}: 非工具参数 {sorted(extra)}")
+    assert not problems, problems
+
+
+def test_executable_cases_have_risk_and_others_none():
+    """可执行样本（ALLOW/REQUIRE_APPROVAL）必须有 risk（GREEN/YELLOW/RED），其余为 None。
+
+    评审 P1-3：红级需 OTP 与黄级坍缩为 REQUIRE_APPROVAL，无法验证 L2 是否给了 RED。
+    """
+    problems: list[str] = []
+    for case in spec.load_cases():
+        outcome = case.expected.outcome
+        risk = case.expected.risk
+        if outcome in ("ALLOW", "REQUIRE_APPROVAL"):
+            if risk not in spec.RISK_LEVELS:
+                problems.append(f"{case.case_id}: 可执行样本缺 risk（got {risk!r}）")
+        elif risk is not None:
+            problems.append(f"{case.case_id}: 非可执行样本 {outcome} 不应带 risk={risk!r}")
+    assert not problems, problems
+
+
 def test_every_case_parses_into_corpus_case():
     # iter_cases() 内部已做 Pydantic 解析与枚举校验；这里确保逐条可读且数量一致。
     files = [path for path in spec.CORPUS_DIR.glob("*.jsonl")] if spec.CORPUS_DIR.exists() else []
