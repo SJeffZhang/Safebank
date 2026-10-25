@@ -310,18 +310,12 @@ def test_risky_sequence_cooldown_is_persisted(gateway_db):
                 await stage.run(ctx)
             assert any(f.code is Code.RISKY_SEQUENCE for f in ctx.findings)
 
-            async with engine.connect() as conn:
-                rows = (
-                    (
-                        await conn.execute(
-                            select(t.cooldowns).where(t.cooldowns.c.customer_id == "cus_a")
-                        )
-                    )
-                    .mappings()
-                    .all()
-                )
-            assert {r["payee_fingerprint"] for r in rows} == {"pye_extfp"}
-            assert all(r["reason"] == "RISKY_SEQUENCE" for r in rows)
+            # B1: cooldowns are collected in-memory; DB write happens in G4 handler
+            assert ctx.workflow is not None
+            assert len(ctx.workflow.pending_cooldowns) == 1
+            fingerprint, until_iso = ctx.workflow.pending_cooldowns[0]
+            assert fingerprint == "pye_extfp"
+            assert until_iso.endswith("+08:00") or "Z" in until_iso
         finally:
             await engine.dispose()
 

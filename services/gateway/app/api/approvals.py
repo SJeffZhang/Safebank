@@ -92,6 +92,39 @@ def _now(request: Request) -> datetime:
     return now
 
 
+async def _read_approval_unlocked(
+    conn: AsyncConnection, approval_id: str, customer_id: str
+) -> dict[str, Any]:
+    """Read approval WITHOUT locking — for lock-order fix (B5)."""
+    row = (
+        (await conn.execute(select(t.approvals).where(t.approvals.c.id == approval_id)))
+        .mappings()
+        .one_or_none()
+    )
+    if row is None or row["customer_id"] != customer_id:
+        raise GatewayError(Code.OWNERSHIP_MISMATCH, 404, "approval not found")
+    return row
+
+
+async def _lock_session(conn: AsyncConnection, sid: str, customer_id: str) -> None:
+    """Lock the session row FOR UPDATE, verifying it exists and is not revoked."""
+    row = (
+        (
+            await conn.execute(
+                select(t.sessions.c.revoked_at_wall, t.sessions.c.customer_id)
+                .where(t.sessions.c.id == sid)
+                .with_for_update()
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if row is None or row["customer_id"] != customer_id:
+        raise GatewayError(Code.OWNERSHIP_MISMATCH, 404, "session not found")
+    if row["revoked_at_wall"] is not None:
+        raise GatewayError(Code.AUTHORIZATION_CANCELLED, 409, "session has been revoked")
+
+
 async def _lock_approval(
     conn: AsyncConnection, approval_id: str, customer_id: str
 ) -> dict[str, Any]:
@@ -292,9 +325,19 @@ async def confirm_approval(
     _result: dict[str, Any] = {}
 
     async def produce():
-        # All DB work on the SAME connection as request_idempotent, so a failure
-        # rolls back both the dedup row and the state transitions together.
+        # B5 unified lock order: session → plan → evaluation → approval.
+        # 1. Read approval WITHOUT lock to get sid.
+        approval_snap = await _read_approval_unlocked(conn, approval_id, customer_id)
+        # 2. Lock session first (before approval).
+        await _lock_session(conn, approval_snap["sid"], customer_id)
+        # 3. Lock approval + recheck nothing changed.
         approval = await _lock_approval(conn, approval_id, customer_id)
+        if (
+            approval["sid"] != approval_snap["sid"]
+            or approval["plan_id"] != approval_snap["plan_id"]
+            or approval["status"] != approval_snap["status"]
+        ):
+            raise GatewayError(Code.STATE_CHANGED, 409, "approval changed under session lock")
         plan, evaluation, _binding = await _validate_confirmable(
             conn, approval, view_hash=body.view_hash, now=now, request=request
         )
@@ -509,8 +552,19 @@ async def reject_approval(
     _result: dict[str, Any] = {}
 
     async def produce():
-        # All DB work on the SAME connection as request_idempotent.
+        # B5 unified lock order: session → plan → evaluation → approval.
+        # 1. Read approval WITHOUT lock to get sid.
+        approval_snap = await _read_approval_unlocked(conn, approval_id, customer_id)
+        # 2. Lock session first (before approval).
+        await _lock_session(conn, approval_snap["sid"], customer_id)
+        # 3. Lock approval + recheck nothing changed.
         approval = await _lock_approval(conn, approval_id, customer_id)
+        if (
+            approval["sid"] != approval_snap["sid"]
+            or approval["plan_id"] != approval_snap["plan_id"]
+            or approval["status"] != approval_snap["status"]
+        ):
+            raise GatewayError(Code.STATE_CHANGED, 409, "approval changed under session lock")
         plan, evaluation, _binding = await _validate_confirmable(
             conn, approval, view_hash=body.view_hash, now=now, request=request
         )
@@ -679,35 +733,37 @@ async def otp_send(
     _result: dict[str, Any] = {}
 
     async def produce():
-        # Read approval with lock.
-        approval = await _lock_approval(conn, approval_id, customer_id)
+        # B5 unified lock order: session → plan → evaluation → approval.
+        # 1. Read approval WITHOUT lock to get sid.
+        approval_snap = await _read_approval_unlocked(conn, approval_id, customer_id)
 
-        # Validate: status must be PENDING.
-        if approval["status"] != ApprovalStatus.PENDING.value:
+        # Validate read-only checks (no lock needed).
+        if approval_snap["status"] != ApprovalStatus.PENDING.value:
             raise GatewayError(Code.STATE_CHANGED, 409, "approval is not pending")
+        if approval_snap["expires_at_wall"] <= now:
+            raise GatewayError(Code.APPROVAL_EXPIRED, 409)
+        if approval_snap["view_hash"] != body.view_hash:
+            raise GatewayError(Code.VIEW_HASH_MISMATCH, 409)
 
-        # Validate: not expired.
+        # 2. Lock session first (before approval).
+        await _lock_session(conn, approval_snap["sid"], customer_id)
+
+        # 3. Lock approval + recheck nothing changed.
+        approval = await _lock_approval(conn, approval_id, customer_id)
+        if (
+            approval["sid"] != approval_snap["sid"]
+            or approval["plan_id"] != approval_snap["plan_id"]
+            or approval["status"] != approval_snap["status"]
+        ):
+            raise GatewayError(Code.STATE_CHANGED, 409, "approval changed under session lock")
+
+        # Validate: not expired (recheck under lock).
         if approval["expires_at_wall"] <= now:
             raise GatewayError(Code.APPROVAL_EXPIRED, 409)
 
-        # Validate: view_hash match.
+        # Validate: view_hash match (recheck under lock).
         if approval["view_hash"] != body.view_hash:
             raise GatewayError(Code.VIEW_HASH_MISMATCH, 409)
-
-        # Validate: session not revoked (same lock order as W4b2b: session first).
-        session = (
-            (
-                await conn.execute(
-                    select(t.sessions.c.revoked_at_wall)
-                    .where(t.sessions.c.id == approval["sid"])
-                    .with_for_update()
-                )
-            )
-            .mappings()
-            .one_or_none()
-        )
-        if session is None or session["revoked_at_wall"] is not None:
-            raise GatewayError(Code.AUTHORIZATION_CANCELLED, 409, "session has been revoked")
 
         # Read existing challenge (FOR UPDATE).
         existing = (

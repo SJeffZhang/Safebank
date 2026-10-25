@@ -126,6 +126,8 @@ class WorkflowResult:
     """⑦ writes (owned by W3). W3 may add fields; existing fields stay."""
 
     findings: tuple[dict[str, Any], ...] = ()
+    pending_cooldowns: tuple[tuple[str, str], ...] = ()
+    """(fingerprint, until_at_iso) tuples collected by workflow; G4 persists them atomically."""
 
 
 @dataclass

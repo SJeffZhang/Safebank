@@ -121,3 +121,7 @@ test-w4b2b:
 .PHONY: test-w4b2c
 test-w4b2c:
 	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w4b2c -q
+
+.PHONY: test-w3b
+test-w3b:
+	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w3b -q
