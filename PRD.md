@@ -1432,7 +1432,7 @@ UtteranceRef 为 `{id,kind,text,scope,parse_status:SCOPED/NO_WRITE/INTENT_UNCLEA
   "findings": [], "replan_hints": [],
   "preflight": {"executable": true, "steps": [], "balances": [], "holdings": [], "scheduled_reserve_cents": 4500},
   "versions": {"cus_zs": 1, "cus_ww": 1}, "clock_version": 1,
-  "policy_version": "sha256:…", "shadow_b1": null
+  "policy_version": "<64 位小写 hex>", "shadow_b1": null
 }
 ```
 
