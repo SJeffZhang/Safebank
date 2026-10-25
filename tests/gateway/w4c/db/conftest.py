@@ -5,3 +5,4 @@ from tests.obligations_data.conftest import (
     obligations_0002_db,  # noqa: F401
     obligations_db,  # noqa: F401
 )
+from tests.gateway.w3b.db.conftest import app_config  # noqa: F401
