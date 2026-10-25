@@ -34,6 +34,7 @@ from services.agent.app.graph import (
     build_gateway_graph,
     build_graph,
 )
+from services.agent.app.llm.cards import generate_cards
 
 # ── Environment defaults ─────────────────────────────────────────────────
 
@@ -174,9 +175,12 @@ def _build_production_ports() -> tuple[Ports, object]:
     gather = GatherAdapter(llm, read_executor=_dummy_read_executor)
     plan = PlanAdapter(llm)
 
-    # -- respond / verify_output (simple: pass through reply_draft; C1e replaces) --
-    respond = _make_production_respond()
-    verify_output = _make_production_verify()
+    # -- respond / verify_output (C1e: RespondAdapter + OutputVerifier) --
+    from services.agent.app.llm.respond import RespondAdapter
+    from services.agent.app.llm.verify import OutputVerifier
+
+    respond = RespondAdapter(llm)
+    verify_output = OutputVerifier(llm)
 
     # -- Wire gateway client into evaluate/execute slots --
     from services.agent.app.gateway.adapters import make_gateway_ports
@@ -459,6 +463,16 @@ def app_factory(
                         + json.dumps(final_state.values, default=str)
                         + "\n\n"
                     )
+
+                    # Push deterministic UICards (C1e Task 6)
+                    cards = generate_cards(final_state.values)
+                    if cards:
+                        card_dicts = [c.model_dump(mode="json") for c in cards]
+                        yield (
+                            "event: custom\ndata: "
+                            + json.dumps({"type": "cards", "cards": card_dicts})
+                            + "\n\n"
+                        )
 
                 reply_text = (
                     final_state.values.get("reply_draft", "")
