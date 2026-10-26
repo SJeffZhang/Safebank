@@ -19,6 +19,17 @@ async def replay(ctx: EvalContext) -> Decision:
     stage results, findings or the lazy snapshot cache — so the pipeline
     re-runs ①–⑧ against the current L3 state.
     """
+    decision, _fresh = await replay_with_context(ctx)
+    return decision
+
+
+async def replay_with_context(ctx: EvalContext) -> tuple[Decision, EvalContext]:
+    """Same as :func:`replay`, but also returns the fresh context.
+
+    The fresh context includes :attr:`EvalContext.steps` (resolved steps from
+    the re-evaluation), which callers can use to recompute plan_hash in the
+    same way G4 does.
+    """
     fresh = EvalContext(
         request=ctx.request,
         identity=ctx.identity,
@@ -37,4 +48,4 @@ async def replay(ctx: EvalContext) -> Decision:
     result = await pipeline.evaluate(fresh, mode=EvalMode.EXECUTE_REPLAY)
     if result.decision is None:
         raise RuntimeError("replay pipeline produced no Decision")
-    return result.decision
+    return result.decision, fresh

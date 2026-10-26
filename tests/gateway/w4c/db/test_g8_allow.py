@@ -1,8 +1,6 @@
-"""W4c T2b: red tests for G8 ``POST /plans/{plan_id}/execute`` ALLOW path.
+"""W4c T2: G8 ``POST /plans/{plan_id}/execute`` ALLOW path against a real L3.
 
-All three tests are expected to **fail** because G8 is currently a stub
-returning 503 ``DEPENDENCY_UNAVAILABLE``.  Once G8 is implemented these
-tests should go green without changing a single assertion.
+Written red in T2b (G8 was a stub returning 503); green since T2e/T2f.
 """
 
 from __future__ import annotations
@@ -42,7 +40,7 @@ def test_g8_allow_executes_once(app_config, obligations_db):
             # 2. Check real L3: card crd_zs_1 is now frozen.
             async with ctx.l3_admin.connect() as conn:
                 row = (
-                    await conn.execute(select(t.cards.c.status).where(t.cards.c.id == "crd_zs_1"))
+                    await conn.execute(select(m.cards.c.status).where(m.cards.c.id == "crd_zs_1"))
                 ).one()
             assert row[0] == "FROZEN", f"expected FROZEN, got {row[0]}"
 

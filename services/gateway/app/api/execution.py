@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from safebank_bankcore.ids import digest
 from safebank_contracts.codes import Code
@@ -25,14 +26,15 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .. import state
 from .. import tables as t
-from ..audit.chain import append_tx
+from ..audit.chain import append as audit_append
 from ..errors import GatewayError
 from ..evaluation.repo import append_evaluation
-from ..execution.replay import replay
+from ..execution.replay import replay_with_context
 from ..l3.client import L3BusinessError, L3NotDelivered, L3OutcomeUnknown
 from ..locks import customer_lock
 from ..pipeline.context import EvalContext
 from ..schemas.enums import ExecutionJobStatus, PlanStatus, ServiceKind
+from ..schemas.execution import ExecutionAccepted
 from ..utterance.service import new_id
 
 router = APIRouter()
@@ -60,11 +62,7 @@ router.get("/plans/{plan_id}")(_stub_g5)
 
 async def _load_plan(conn: AsyncConnection, plan_id: str, customer_id: str) -> dict[str, Any]:
     plan = (
-        (
-            await conn.execute(
-                select(t.plans).where(t.plans.c.id == plan_id).with_for_update()
-            )
-        )
+        (await conn.execute(select(t.plans).where(t.plans.c.id == plan_id).with_for_update()))
         .mappings()
         .one_or_none()
     )
@@ -93,9 +91,7 @@ async def _load_session(conn: AsyncConnection, sid: str) -> dict[str, Any]:
     return row
 
 
-async def _compute_deadline_cap(
-    conn: AsyncConnection, utterance_ids: list[str]
-) -> datetime:
+async def _compute_deadline_cap(conn: AsyncConnection, utterance_ids: list[str]) -> datetime:
     """Return the earliest expires_at_wall across all utterance_ids.
 
     The seed data may use historical timestamps; L3 owns the actual
@@ -105,24 +101,18 @@ async def _compute_deadline_cap(
     rows = (
         (
             await conn.execute(
-                select(t.utterances.c.expires_at_wall).where(
-                    t.utterances.c.id.in_(utterance_ids)
-                )
+                select(t.utterances.c.expires_at_wall).where(t.utterances.c.id.in_(utterance_ids))
             )
         )
         .mappings()
         .all()
     )
     if len(rows) != len(utterance_ids):
-        raise GatewayError(
-            Code.STATE_CHANGED, 409, "one or more utterance_ids not found"
-        )
+        raise GatewayError(Code.STATE_CHANGED, 409, "one or more utterance_ids not found")
     expires: list[datetime] = []
     for r in rows:
         if r["expires_at_wall"] is None:
-            raise GatewayError(
-                Code.STATE_CHANGED, 409, "utterance has no expires_at_wall"
-            )
+            raise GatewayError(Code.STATE_CHANGED, 409, "utterance has no expires_at_wall")
         expires.append(r["expires_at_wall"])
     return min(expires)
 
@@ -166,9 +156,9 @@ async def execute_plan(plan_id: str, request: Request):
 
     body = await request.json()
     try:
-        exe_req = ExecuteRequest.model_validate(body)
+        ExecuteRequest.model_validate(body)
     except Exception:
-        raise GatewayError(Code.INVALID_REQUEST, 422, "expected {request_id: str}")
+        raise GatewayError(Code.INVALID_REQUEST, 422, "expected {request_id: str}") from None
 
     app_state = request.app.state
     l3 = app_state.l3
@@ -178,7 +168,6 @@ async def execute_plan(plan_id: str, request: Request):
     now = wall_now()
 
     async with customer_lock([caller.customer_id]) as conn:
-
         # ── 5.1 load + validate ──────────────────────────────────────────
 
         plan = await _load_plan(conn, plan_id, caller.customer_id)
@@ -268,26 +257,27 @@ async def execute_plan(plan_id: str, request: Request):
             wall_now=wall_now,
             conn=conn,
             l3=l3,
-            audit=append_tx,
+            audit=None,
         )
 
-        new_decision = await replay(ctx)
+        new_decision, fresh = await replay_with_context(ctx)
 
         # ALLOW equivalence: decision must still be ALLOW
         if new_decision.decision.value != "ALLOW":
-            raise GatewayError(
-                Code.STATE_CHANGED, 409, "replay decision no longer ALLOW"
-            )
+            raise GatewayError(Code.STATE_CHANGED, 409, "replay decision no longer ALLOW")
 
-        # plan_hash equivalence: re-compute from contract steps
-        resolved_steps = [s.model_dump(mode="json") for s in plan_draft.steps]
-        replay_plan_hash = digest(resolved_steps)
-        if replay_plan_hash != plan["plan_hash"]:
-            raise GatewayError(
-                Code.STATE_CHANGED, 409, "replay plan_hash differs from stored plan"
-            )
+        # plan_hash equivalence: same expression as G4 (plans.py:289-291)
+        replayed_hash = digest(
+            [{"tool": s.tool, "args": s.args, "step_id": s.step_id} for s in fresh.steps]
+        )
+        if replayed_hash != plan["plan_hash"]:
+            raise GatewayError(Code.STATE_CHANGED, 409, "replay plan_hash differs from stored plan")
 
         # ── 5.2 write transaction ────────────────────────────────────────
+
+        # Close any implicit transaction from reads/pipeline before opening
+        # the explicit persistence transaction.
+        await conn.rollback()
 
         new_revision = eval_row["revision"] + 1
         new_eval_id = new_id("evl")
@@ -317,6 +307,38 @@ async def execute_plan(plan_id: str, request: Request):
                 equivalent_to=eval_row["id"],
                 created_at_wall=now_wall,
             )
+            # The plan must leave EVALUATED before its live job exists:
+            # _protect_transition refuses plan transitions while a job is live.
+            await state.transition(
+                conn,
+                t.plans,
+                id_=plan_id,
+                from_statuses=[PlanStatus.EVALUATED.value],
+                to=PlanStatus.EXECUTING.value,
+            )
+            # Claim every authorizing scope in this same transaction (PRD §7.4):
+            # scope_id is the primary key, so a scope can feed only one plan.
+            for scope_id in plan["scope_ids"]:
+                held = (
+                    (
+                        await conn.execute(
+                            select(t.authorization_claims)
+                            .where(t.authorization_claims.c.scope_id == scope_id)
+                            .with_for_update()
+                        )
+                    )
+                    .mappings()
+                    .one_or_none()
+                )
+                if held is not None:
+                    if held["plan_id"] != plan_id and held["status"] == "CLAIMED":
+                        raise GatewayError(Code.EXECUTION_IN_PROGRESS, 409)
+                    raise GatewayError(Code.STATE_CHANGED, 409, "authorization scope already used")
+                await conn.execute(
+                    t.authorization_claims.insert().values(
+                        scope_id=scope_id, plan_id=plan_id, status="CLAIMED"
+                    )
+                )
             await conn.execute(
                 t.execution_jobs.insert().values(
                     plan_id=plan_id,
@@ -330,22 +352,44 @@ async def execute_plan(plan_id: str, request: Request):
                     updated_at_wall=now_wall,
                 )
             )
-            await state.transition(
+            await audit_append(
                 conn,
-                t.plans,
-                id_=plan_id,
-                from_statuses=[PlanStatus.EVALUATED.value],
-                to=PlanStatus.EXECUTING.value,
-            )
-            await append_tx(
-                conn,
-                "execute",
-                {
+                customer_id=caller.customer_id,
+                event_type="EXECUTION_STARTED",
+                payload={
                     "plan_id": plan_id,
                     "origin": plan["origin"],
                     "decision": "ALLOW",
                     "evaluation_id": new_eval_id,
                 },
+                event_id=new_id("evt"),
+                trace_id=getattr(request.state, "trace_id", None),
+                plan_id=plan_id,
+                now_wall=now_wall,
+            )
+
+        exec_identity = state.ExecutionIdentity(
+            customer_id=caller.customer_id,
+            plan_id=plan_id,
+            origin=plan["origin"],
+            attempt=1,
+            revision=new_revision,
+        )
+
+        async def _unknown(reason: str):
+            # The job is already committed EXECUTING: never leave it there and
+            # never resubmit. Record UNKNOWN (claims retained) and let
+            # reconciliation decide the real L3 outcome.
+            async with conn.begin():
+                await state.mark_execution_unknown(
+                    conn,
+                    expected=exec_identity,
+                    from_status=ExecutionJobStatus.EXECUTING,
+                    reason={"reason": reason},
+                )
+            return JSONResponse(
+                status_code=202,
+                content=ExecutionAccepted(plan_id=plan_id).model_dump(mode="json"),
             )
 
         # ── 5.3 L3 prepare ────────────────────────────────────────────────
@@ -362,10 +406,8 @@ async def execute_plan(plan_id: str, request: Request):
         )
         try:
             await l3.prepare(prepare_body.model_dump(mode="json"))
-        except (L3NotDelivered, L3OutcomeUnknown):
-            raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503, "L3 prepare failed")
-        except L3BusinessError as exc:
-            raise GatewayError(Code.STATE_CHANGED, 409, str(exc.code))
+        except (L3NotDelivered, L3OutcomeUnknown, L3BusinessError) as exc:
+            return await _unknown(f"prepare: {type(exc).__name__}")
 
         # ── 5.4 L3 execute ────────────────────────────────────────────────
 
@@ -381,22 +423,17 @@ async def execute_plan(plan_id: str, request: Request):
         )
         try:
             exec_resp = await l3.execute(execute_body.model_dump(mode="json"))
-        except (L3NotDelivered, L3OutcomeUnknown):
-            raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503, "L3 execute failed")
-        except L3BusinessError as exc:
-            raise GatewayError(Code.STATE_CHANGED, 409, str(exc.code))
+        except (L3NotDelivered, L3OutcomeUnknown, L3BusinessError) as exc:
+            # STATE_CHANGED after a successful prepare needs the ADR-008 fence
+            # (T4); until then it is reconciled like any other unclear outcome.
+            return await _unknown(f"execute: {type(exc).__name__}")
 
         result = ExecutionResult.model_validate(exec_resp)
+        if result.status != "EXECUTED":
+            return await _unknown(f"execute returned {result.status}")
 
         # ── 5.5 archive terminal ──────────────────────────────────────────
 
-        exec_identity = state.ExecutionIdentity(
-            customer_id=caller.customer_id,
-            plan_id=plan_id,
-            origin=plan["origin"],
-            attempt=1,
-            revision=new_revision,
-        )
         async with conn.begin():
             await state.archive_execution_terminal(
                 conn,

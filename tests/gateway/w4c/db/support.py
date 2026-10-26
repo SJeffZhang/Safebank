@@ -135,6 +135,16 @@ async def allow_plan_ctx(app_config, obligations_db):
             conn, utt_id=utt_id, sid=sid, text="冻结我的卡", scope=_freeze_scope()
         )
         rid_card = await _seed_card_read(conn, rid="rec_w4c_card", sid=sid)
+        # The w3b gateway clock is pinned to a fixed WALL, but the real L3 checks
+        # execution deadlines against real time; anchor the authorization window
+        # (deadline_cap_wall source) to real now so G8 is not born expired.
+        await conn.execute(
+            text(
+                "UPDATE utterances SET expires_at_wall = now() + interval '30 minutes' "
+                "WHERE id = :id"
+            ),
+            {"id": utt_id},
+        )
     await db.dispose()
 
     pd = make_plan_draft_dict(

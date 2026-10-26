@@ -99,3 +99,18 @@
 - 新测试 test_plan_draft.py 2 passed（G4 持久化原始计划且 arg_sources 一致；0002 库升级后旧行保留、plan_draft 为 NULL）。
 - worker W4c-T2d-r2 提交 2c3057d/4f6985b/d63f427/9b801d0 后用满 51 轮；协调者收尾 ruff（import 排序、超长行、格式）并复跑：lint 346；test-gateway-db 17；test-wave1-state 231；test-w3b 33；test-gateway 2018/622 skip；make test 见提交；test-w4c 仅 G8 三条红测失败（预期，T2e 实现）。
 - 注意：长期栈 gateway 库当前为 0002，合入后需协调者在全栈阶段 `make up`（引导迁移至 0003）再验收。
+
+## T2e/T2f + 协调者收尾（2026-10-26）：G8 ALLOW 路径转绿
+
+- worker T2e（W4c-T2e-r1）与 T2f（W4c-T2f-r1）均用满轮数；T2f 已加 `replay_with_context`，并按 G4 同一表达式比对 plan_hash。
+- 协调者逐层定位并修复剩余问题（execution.py / support.py / 测试，每处原因已核实）：
+  1. `plans → EXECUTING` 必须先于插入 live job：`_protect_transition` 在 live job 存在时拒绝 plan 迁移，原顺序导致 409。
+  2. 审计改用连接内 `audit.append`（关键字参数，同 G4）；原 `append_tx(conn, ...)` 签名错误。
+  3. 5.2 写事务内按 `plans.scope_ids` 插入 `authorization_claims(CLAIMED)`（PRD §7.4；主键 scope_id 保证一个作用域只喂一个 plan；被他人 CLAIMED → 409 EXECUTION_IN_PROGRESS，已用过 → 409 STATE_CHANGED）。任务书原文只写「校验 claims」，未写由谁创建，属协调者疏漏。
+  4. prepare/execute 回包不明、业务错误或结果非 EXECUTED 时，job 已持久 EXECUTING：一律 `mark_execution_unknown`（claim 保留）并返回 202，不再返回 503/409 把 job 滞留在 EXECUTING；STATE_CHANGED 屏障留 T4，对账留 T5。
+  5. 夹具：w3b 的 gateway 时钟固定为 2026-10-24，而真实 L3 用真实时间核 deadline，导致 EXECUTION_DEADLINE_EXPIRED；在 allow_plan_ctx 中把种入原话的 expires_at_wall 锚定到 now()+30min。
+  6. 红测本身的错：查卡状态误用 gateway `tables.cards`，改为 L3 `models.cards`。
+- 新增 test_g8_unknown.py：L3 execute 回包丢失 → 202 UNKNOWN、job/plan UNKNOWN、claim 仍 CLAIMED、原话未消费、L3 plan_executions 为 0。
+- 变异核验：去掉 claims 插入 → test_g8_allow 3 failed；去掉 EXECUTED 幂等返回 → 1 failed；UNKNOWN 分支改回 503 → test_g8_unknown 1 failed；均还原。
+- 协调者复跑全部 exit 0：lint 347；test 2702/716 skip；test-gateway 2018/623 skip；gateway-db 17；wave1-state 231；w1 1688；w3b 33；w4b1 57；w4b2b 58；w4b2c 56；**test-w4c 11**；shared-runtime 79；contracts PASS；actionlint。
+- 已知未覆盖（后续任务）：复演不等价导致 409 的路径尚无测试（T3/T4 会构造状态变化）；CONFIRMED（T3）；STATE_CHANGED 屏障（T4）；UNKNOWN 对账（T5）；并发/迟到/撤销（T6）；G5 与 request_id 终态重放（T7）。
