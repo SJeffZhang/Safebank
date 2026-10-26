@@ -68,6 +68,18 @@
 ## 已知问题与未覆盖
 
 - 进程崩溃后重建 gateway 的真实恢复测试（裁定 C5 的第二项）未做；当前恢复只经 G5/G8 内联触发，启动扫描与后台恢复归 W5。
-- 长期栈 gateway 库仍为 0002，合入后全栈阶段需协调者 `make up` 迁移到 0003 并做 P2 真实三层验收。
+- 长期栈已在合并后迁移到 `0003_plan_draft`，六服务 healthy、网络/HTTP集成通过（见下节）。完整 live P2 三层黄级转账仍未验收。
 - W4b2b 已知 P2-4（supersede 与 G6/G7 锁序）按 W3b 统一锁序处理，本组件未新增反向锁。
 - app_form（F 发起）计划的创建尚未实现，F 执行路径只验证了「不能执行/读取 agent 计划」。
+
+
+## 合并后交接核对（2026-10-26，Codex）
+
+- [PR #31](https://github.com/SJeffZhang/Safebank/pull/31) 于北京时间 21:23:28 合并，merge `00aca15b7928ccfa222b85a6757d941a7b68425e`；root 与 main-baseline 均在该提交，接手时工作区干净。
+- 精确候选 `79229ae2864066623ca7046458a642880ffdd433` 的 [push CI](https://github.com/SJeffZhang/Safebank/actions/runs/40328430495) 与 [pull_request CI](https://github.com/SJeffZhang/Safebank/actions/runs/40328499146) 均 completed/success，各自 unit、p1-postgres 全成功；PR CI 的 test-w4c 及其他门禁步骤实际执行成功。
+- **前任协调者实测，本次读取原始日志核对**：`../Fintech2026-wt/.ds-logs/main-00aca15-regression/` 含合并后组合回归、`make-up.log` 与 `test-integration.log`。全量 2727 passed/743 skipped、Gateway 2018/650 skipped、W4c 38；真实网络/凭证/DB角色、HTTP→PG/prepare/transfer/outbox及实际 L3 重启幂等恢复均 PASS。各套件重叠，不能相加；这些不是本次重跑所得。
+- **Codex 本次亲跑**：主 checkout 的 `perl -e 'alarm 300; exec @ARGV' make test-w4c` → **38 passed，26.53s，exit 0**。首次收集因 root 旧虚拟环境缺 PyJWT 失败；离线按锁文件同步四个缺失依赖后重跑通过。第一次直接 uv sync 触及默认受限缓存而退出，随后指定 Makefile 同款 `UV_CACHE_DIR=/private/tmp/sbg-uv-cache` 离线同步成功；未改锁文件。
+- **Codex 只读部署复核**：`postgres-bank` 中 `gateway.alembic_version` 为 `0003_plan_draft`；六服务 running/healthy；`safebank_pg-bank`、`safebank_pg-agent` 的 CreatedAt 均仍为 `2026-10-23T11:29:55Z`。未重建/删除卷、未重新启动长期栈。最初误向 postgres-agent 的不存在 gateway 库查询，后按 `scripts/gateway_database.py` 确认位置并查询正确库，无数据写入。
+- **进度页**：前任已推送 `7bd1ccc`（W4c #31/main 回归）及 `77064c4`（E0b 暂停）；本次 curl 读取[线上 JSON](https://sjeffzhang.github.io/safebank-progress/data/progress.json)确认 W4c=done、PR=31、回归=00aca15、E0b 仍暂停，因此不重复发布。
+- 更新 AGENTS §3/§5/文件地图与本验收文档，消除仍称 W4c 待开 PR、L1 C1c2/PG/输出未完成的旧状态。未变更业务代码或接口，无设计变更。
+- E0b 收尾/live、try-agent、前端/BFF与定时任务继续暂停；完整 P2、W5/W6不在本次收尾中启动。
