@@ -15,8 +15,17 @@ import asyncio
 import time
 from typing import Any
 
+import httpx
+
 from evaluation.metrics.compute import CaseRun
-from evaluation.runner.l1 import build_graph_with_ports
+from evaluation.runner.l1 import (
+    A_SERVICE_TOKEN,
+    EvaluationComplete,
+    RecordingBridgeTransport,
+    build_evaluate_only_graph,
+    build_graph_with_ports,
+)
+from services.agent.app.gateway.client import GatewayClient
 from services.agent.app.graph import AgentContext, UtteranceRef
 
 _STOP_CODES = ("402", "403", "429")
@@ -102,6 +111,12 @@ async def run_corpus(
     compiled L1 graph is invoked once (same sid / thread_id).  Only the
     **last** turn's outcome becomes the CaseRun.
 
+    **Always evaluate-only**: the execute port raises ``EvaluationComplete``
+    so the graph stops at G4.  ``run_corpus`` catches this and classifies
+    the outcome from the transport's recorded ``/plans/evaluate`` response.
+    There is no code path that reaches L3 — the transport also rejects G8
+    calls as a belt-and-suspenders guard.
+
     Raises ``StopRun`` (with partial ``.runs``) when a port raises an
     exception whose text contains ``402`` / ``403`` / ``429``, or when the
     exception is a ``ConnectionError`` / ``httpx.ConnectError``.
@@ -130,8 +145,19 @@ async def run_corpus(
                 t0 = time.monotonic()
                 sid = await h.new_session(customer_id)
 
-                graph, transport = build_graph_with_ports(
-                    h, loop=asyncio.get_running_loop(), ports_kwargs=ports_kwargs
+                loop = asyncio.get_running_loop()
+
+                transport = RecordingBridgeTransport(
+                    h.client, loop, evaluate_only=True
+                )
+                http_client = httpx.Client(
+                    transport=transport, base_url="http://gateway"
+                )
+                client = GatewayClient(
+                    "http://gateway", A_SERVICE_TOKEN, http_client=http_client
+                )
+                graph, _eval_exec = build_evaluate_only_graph(
+                    h, loop=loop, client=client, ports_kwargs=ports_kwargs
                 )
 
                 last_state = None
@@ -164,6 +190,10 @@ async def run_corpus(
 
                     try:
                         last_state = await asyncio.to_thread(_invoke)
+                        last_error = None
+                    except EvaluationComplete:
+                        # evaluate-only success: G4 decision already recorded in transport.requests
+                        last_state = None
                         last_error = None
                     except Exception as exc:
                         last_error = exc

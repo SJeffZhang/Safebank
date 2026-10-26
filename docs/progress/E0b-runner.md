@@ -35,3 +35,10 @@
 - `evaluation/runner/loop.py`：`run_corpus`（每 case × repeat 新会话，逐轮登记原话并调用 L1 graph，取最后一轮结果）、纯函数 `classify_outcome`、`StopRun`（402/403/429/连接错误立即停止并保留已完成 runs）；l1.py 泛化为 `build_graph_with_ports`。
 - 事实：L2 在 G3 登记「hello」「hi」「查询余额」这类无写意图原话时会创建 `FORM_REQUIRED` 澄清，L1 经 G21 取回，故结果记为 CLARIFY；这是系统真实行为，测试据实断言，并以 gateway 库新增 4 条 FORM_REQUIRED 记录为证。语料中期望 NO_PLAN 的样本在 live 下可能同样得到 CLARIFY，届时作为 E0 发现报告，不改 L2。
 - worker E0b-T4-r1、E0b-T4b-r1 均用满轮数未提交；协调者补 L2 证据断言（计数取前后差值，因同一测试库被多个测试共用）、ruff 格式化，复跑 make lint、make test-e0b 29 passed、make test 通过后代为提交。
+
+
+## T5 G4-only边界检查点（2026-10-26，协调者）
+
+- 多轮DS产物已将run_corpus改为固定evaluate-only，execute发明确EvaluationComplete终止信号，不伪造执行结果；transport另阻断G8。真实get_cards使用items与/items/0/id，G4 request_id每次唯一。
+- 协调者最新亲验32项中31 passed/1 failed；ALLOW冻结及实际run_corpus正例证明卡/账本不变。黄级失败为真实生产503 approval HMAC is not configured，已独立建立P2-approval-runtime修复，不在harness注入global伪造绿。
+- T5未完成验收/变异/独审，不运行live。后续可并行做不依赖该生产缺陷的纯证据/报告功能。

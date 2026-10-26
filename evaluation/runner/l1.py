@@ -1,4 +1,4 @@
-"""E0b T2b: drive the real L1 graph (fake LLM ports) through the real gateway G4.
+"""E0b T5: drive the real L1 graph (fake LLM ports) through the real gateway G4.
 
 ``GatewayClient`` is a *sync* httpx client while ``EvalHarness.client`` is an
 in-process *async* ASGI client.  ``RecordingBridgeTransport`` bridges the two:
@@ -7,10 +7,12 @@ each sync request is forwarded onto the harness's event loop via
 ``httpx.Response``.  The test then runs ``graph.invoke`` with
 ``asyncio.to_thread`` so the main loop stays free to serve the forwarded calls.
 
-The sample is the typed utterance 「冻结我的卡」 against seed customer ``cus_zs``
-(single card ``crd_zs_1``).  The fake plan proposes a one-step ``freeze_card``
-with ``card_id`` sourced from the utterance span; whether G4 ALLOWs it or not,
-the /plans/evaluate decision and plan row are what the test asserts on.
+Evaluate-only mode (``evaluate_only=True`` on the transport and
+``build_evaluate_only_graph``) replaces the execute port with one that raises
+``EvaluationComplete``.  The transport also rejects G8 requests as a
+belt-and-suspenders guard.  ``run_corpus`` catches ``EvaluationComplete`` and
+classifies the outcome from the recorded G4 response — the graph never reaches
+L3.
 """
 
 from __future__ import annotations
@@ -29,6 +31,17 @@ from services.agent.app.graph import Understanding, build_gateway_graph
 A_SERVICE_TOKEN = "a-test"
 
 
+class EvaluationComplete(Exception):
+    """Raised by the evaluate-only execute port to signal completion at G4.
+
+    ``run_corpus`` catches this and classifies the outcome from the transport's
+    recorded ``/plans/evaluate`` response — the graph never reaches L3.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("evaluate-only: execution blocked at G4 boundary")
+
+
 def _try_json(content: bytes):
     if not content:
         return None
@@ -41,17 +54,36 @@ def _try_json(content: bytes):
 class RecordingBridgeTransport(httpx.BaseTransport):
     """Sync transport forwarding to an async ASGI client on another loop.
 
-    Records every (method, url, status, json) pair so the test can assert on
-    the real G4 /plans/evaluate exchange.
+    Records every (method, url, status, json) pair.  When *evaluate_only* is
+    true, any POST to a ``/plans/*/execute`` URL raises ``EvaluationComplete``
+    — a belt-and-suspenders guard that prevents G8 calls even if the graph
+    somehow routes past the evaluate-only execute port.
     """
 
-    def __init__(self, async_client: httpx.AsyncClient, loop: asyncio.AbstractEventLoop):
+    def __init__(
+        self,
+        async_client: httpx.AsyncClient,
+        loop: asyncio.AbstractEventLoop,
+        *,
+        evaluate_only: bool = False,
+    ):
         self._client = async_client
         self._loop = loop
         self.requests: list[dict] = []
+        self._evaluate_only = evaluate_only
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         body = request.read()
+
+        # Belt-and-suspenders: transport layer rejects G8 in evaluate-only mode
+        if self._evaluate_only:
+            if (
+                request.method == "POST"
+                and "/plans/" in str(request.url)
+                and "/execute" in str(request.url)
+            ):
+                raise EvaluationComplete()
+
         # GatewayClient.evaluate sends the PlanDraft directly, while the real
         # gateway G4 handler expects ``{"plan_draft": ..., "request_id": ...}``.
         # Adapt that wire shape here (transport only, no services/** change).
@@ -162,3 +194,53 @@ def build_real_gateway_graph(harness, *, loop, utterance_id: str):
             verify_output=_verify,
         ),
     )
+
+
+# ── evaluate-only mode (E0b T5) ─────────────────────────────────────────
+
+
+class _EvaluateOnlyExecute:
+    """Execute port that raises ``EvaluationComplete`` to stop the graph at G4.
+
+    Never contacts L2 or L3.  The graph's execute node propagates the exception
+    up through ``graph.invoke``, where ``run_corpus`` catches it and classifies
+    the outcome from the transport's recorded G4 response.
+    """
+
+    def __init__(self) -> None:
+        self.called = False
+        self.call_count = 0
+
+    def __call__(self, state, context):
+        self.called = True
+        self.call_count += 1
+        raise EvaluationComplete()
+
+
+def build_evaluate_only_graph(harness, *, loop, client, ports_kwargs):
+    """Build a compiled L1 graph whose execute port raises ``EvaluationComplete``.
+
+    ``client`` is a ``GatewayClient`` sharing a ``RecordingBridgeTransport``
+    with the caller (so transport logs capture both gather reads and the G4
+    evaluate exchange).  The graph's evaluate port is the real gateway client;
+    only the execute port is replaced.
+
+    Returns ``(graph, eval_only_execute)`` where ``eval_only_execute`` is the
+    ``_EvaluateOnlyExecute`` instance (for call-count assertions).
+    """
+    from services.agent.app.graph.ports import Ports
+
+    gateway_ports = make_gateway_ports(client, **ports_kwargs)
+    eval_only_exec = _EvaluateOnlyExecute()
+
+    ports = Ports(
+        understand=gateway_ports.understand,
+        gather=gateway_ports.gather,
+        plan=gateway_ports.plan,
+        evaluate=gateway_ports.evaluate,
+        execute=eval_only_exec,
+        respond=gateway_ports.respond,
+        verify_output=gateway_ports.verify_output,
+    )
+    graph = build_gateway_graph(ports, InMemorySaver(), client)
+    return graph, eval_only_exec
