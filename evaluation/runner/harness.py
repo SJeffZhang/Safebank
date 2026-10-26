@@ -59,6 +59,34 @@ FINGERPRINT_KEY = "test-fingerprint-key"
 PIN = "123456"
 
 
+class GatewayRateLimited(Exception):
+    """Raised when the L2 gateway returns HTTP 429 RATE_LIMITED."""
+
+    def __init__(self, status_code: int = 429, code: str = "", detail: str = "") -> None:
+        self.status_code = status_code
+        self.code = code
+        self.detail = detail
+        msg = "L2 RATE_LIMITED"
+        if code:
+            msg += f" ({code})"
+        if detail:
+            msg += f": {detail}"
+        super().__init__(msg)
+
+
+def _check_rate_limited(response: httpx.Response) -> None:
+    """Raise GatewayRateLimited if the response is HTTP 429."""
+    if response.status_code == 429:
+        try:
+            body: dict = response.json()
+        except Exception:
+            body = {}
+        raise GatewayRateLimited(
+            code=str(body.get("code", "")),
+            detail=str(body.get("detail", response.text)),
+        )
+
+
 def _free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -114,6 +142,7 @@ async def _login(client: httpx.AsyncClient, customer_id: str) -> str:
     response = await client.post(
         "/auth/login", headers=_headers(), json={"customer_id": customer_id, "pin": PIN}
     )
+    _check_rate_limited(response)
     assert response.status_code == 200, response.text
     return response.json()["app_token"]
 
@@ -122,6 +151,7 @@ async def _create_session(client: httpx.AsyncClient, token: str) -> str:
     response = await client.post(
         "/sessions", headers=_headers(token), json={"request_id": "req-" + secrets.token_hex(8)}
     )
+    _check_rate_limited(response)
     assert response.status_code == 201, response.text
     return response.json()["session_id"]
 
@@ -138,9 +168,24 @@ class EvalHarness:
     _runtime: AsyncEngine
     _clock: list[datetime]
     _tokens: dict[str, str] = field(default_factory=dict)
+    _login_cache: dict[str, str] = field(default_factory=dict)
 
     async def new_session(self, customer_id: str) -> str:
+        # Try cached app token first — one login per customer per run.
+        if customer_id in self._login_cache:
+            try:
+                sid = await _create_session(self.client, self._login_cache[customer_id])
+                self._tokens[sid] = self._login_cache[customer_id]
+                return sid
+            except GatewayRateLimited:
+                raise
+            except Exception:
+                # Token likely expired (401 etc.) — clear cache and re-login below.
+                del self._login_cache[customer_id]
+
+        # Fresh login (first time or after cache eviction).
         token = await _login(self.client, customer_id)
+        self._login_cache[customer_id] = token
         sid = await _create_session(self.client, token)
         self._tokens[sid] = token
         return sid
@@ -152,6 +197,7 @@ class EvalHarness:
             headers=_headers(token),
             json={"request_id": "req-" + secrets.token_hex(8), "kind": "typed", "text": text},
         )
+        _check_rate_limited(response)
         assert response.status_code == 201, response.text
         body = response.json()
         utterance = body.get("utterance", {})

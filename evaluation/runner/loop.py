@@ -18,6 +18,7 @@ from typing import Any
 import httpx
 
 from evaluation.metrics.compute import CaseRun, extract_g4_evidence
+from evaluation.runner.harness import GatewayRateLimited
 from evaluation.runner.l1 import (
     A_SERVICE_TOKEN,
     EvaluationComplete,
@@ -339,6 +340,8 @@ async def run_corpus(
                 )
     except StopRun:
         raise
+    except GatewayRateLimited as exc:
+        raise StopRun(str(exc), runs) from exc
     except Exception as exc:
         msg = str(exc)
         if any(code in msg for code in _STOP_CODES):

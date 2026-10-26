@@ -102,3 +102,28 @@
   - Docker：`-k "fake_limit_1 or anti_spoofing"` **2 passed**（11.31s，真实 PG/G4）。
   - `make test-e0b` 全量 **81 passed**（20.44s）。
 - **提交**：`d791832`。
+
+## T10 登录复用与 L2 429 处理（2026-10-27）
+
+- **工作目录**：`../Fintech2026-wt/e0b-l1-runner`，HEAD `4bf66ec`。
+- **实现**：协调者亲自编写，不调用 DeepSeek。
+- **目标**：解决 live 20 条运行时每条样本都登录触发 L2 频控 429 的问题。
+- **改动**：
+  - `evaluation/runner/harness.py`：
+    - 新增 `GatewayRateLimited` 异常（含 `status_code`、`code`、`detail`）。
+    - 新增 `_check_rate_limited(response)` 辅助函数，在 HTTP 429 时抛出 `GatewayRateLimited`。
+    - `_login`、`_create_session`、`register_utterance` 均在断言前调用 `_check_rate_limited`。
+    - `EvalHarness` 新增 `_login_cache: dict[str, str]` 字段，按 `customer_id` 缓存 `app_token`。
+    - `new_session` 改为先查缓存 → 用缓存令牌调 `/sessions` → 成功则返回；遇 `GatewayRateLimited` 直抛；遇其他异常（如 401）清缓存并降至条件重登。
+  - `evaluation/runner/loop.py`：
+    - 导入 `GatewayRateLimited`。
+    - 在 `run_corpus` 最外层 `except` 链中新增 `except GatewayRateLimited`，转为 `StopRun`（含已完成 runs）。
+  - `tests/evaluation/runner/test_t10_harness.py`（新增）：
+    - `TestLoginCaching.test_same_customer_logs_in_once`：同一客户 5 次 `new_session` → 仅 1 次登录。
+    - `TestRateLimitedStopRun.test_429_on_create_session_stops_with_runs`：第二次 `/sessions` 返回 429 → `StopRun` 含已完成 runs。
+    - `TestTokenExpiryRelogin.test_401_on_cached_session_triggers_relogin`：缓存令牌遇 401 → 清缓存重登 → 成功。
+- **协调者亲自复跑**：
+  - `make test-e0b` 全量 **93 passed**（15.13s，含真实 PG）。
+  - `.venv/bin/ruff check` 通过。
+  - `.venv/bin/ruff format` 通过（test_t10_harness.py 被格式化）。
+- **提交**：见下。
