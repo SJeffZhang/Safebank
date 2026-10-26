@@ -2,13 +2,61 @@
 
 from __future__ import annotations
 
-__all__ = ["CaseRun", "compute_metrics", "render_report", "write_outputs"]
+__all__ = [
+    "CaseRun",
+    "compute_metrics",
+    "extract_g4_evidence",
+    "render_report",
+    "write_outputs",
+    "_strip_secrets",
+]
 
 import json
 import math
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+# ── secret stripping ─────────────────────────────────────────────────────────
+
+_SECRET_KEY_RE = re.compile(
+    r"(?:^|_)("
+    r"token|key|secret|password|pin|bearer|jwt|auth(?:orization)?|credential"
+    r")(?:_|$)",
+    re.IGNORECASE,
+)
+
+_JWT_RE = re.compile(r"^[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+$")
+
+_MAX_STRIP_DEPTH = 10
+
+
+def _strip_secrets(obj: Any, *, _depth: int = 0) -> Any:
+    """Recursively redact keys containing auth/key/PIN tokens and Bearer/JWT values.
+
+    Returns a *copy*; never mutates the original.
+    """
+    if _depth > _MAX_STRIP_DEPTH:
+        return obj
+    if isinstance(obj, dict):
+        result: dict = {}
+        for k, v in obj.items():
+            if isinstance(k, str) and _SECRET_KEY_RE.search(k):
+                result[k] = "[REDACTED]"
+            else:
+                result[k] = _strip_secrets(v, _depth=_depth + 1)
+        return result
+    if isinstance(obj, list):
+        return [_strip_secrets(v, _depth=_depth + 1) for v in obj]
+    if isinstance(obj, str):
+        if obj.startswith("Bearer "):
+            return "[REDACTED]"
+        if len(obj) > 50 and _JWT_RE.match(obj):
+            return "[REDACTED]"
+        return obj
+    return obj
+
 
 # ── data model ──────────────────────────────────────────────────────────────
 
@@ -34,8 +82,78 @@ class CaseRun:
     latency_ms: int = 0
     tokens: int = 0
 
+    # ── T6 evidence fields (all default-empty for backward compat) ──────────
+    utterances: list[str] = field(default_factory=list)
+    plan_draft: dict[str, Any] | None = None
+    g4_attempts: list[dict[str, Any]] = field(default_factory=list)
+    usage_known: bool = False
+    usage: dict[str, int] | None = None
+
 
 # ── helper ───────────────────────────────────────────────────────────────────
+
+
+def extract_g4_evidence(transport_requests: list[dict[str, Any]]) -> dict[str, Any]:
+    """Extract per-sample evidence from recorded transport requests.
+
+    Returns a dict with keys ``plan_draft``, ``g4_decision``, ``g4_findings``,
+    ``g4_attempts`` — ready to stash into a ``CaseRun``.
+
+    *Every* POST to ``/plans/evaluate`` becomes a ``g4_attempts`` entry (even
+    503 errors), so diagnosis is not lost when G4 is unavailable.
+    *plan_draft* is taken from the last evaluate request's body.
+    *g4_decision* and *g4_findings* come from the last *successful* (200)
+    evaluate response, or are ``None`` if no attempt succeeded.
+    """
+    evaluates = [
+        r
+        for r in transport_requests
+        if r.get("method") == "POST" and "/plans/evaluate" in r.get("url", "")
+    ]
+
+    plan_draft: dict[str, Any] | None = None
+    g4_decision: str | None = None
+    g4_findings: list[dict[str, Any]] | None = None
+    g4_attempts: list[dict[str, Any]] = []
+
+    for e in evaluates:
+        status: int = e.get("status", 0)
+        req_body: dict[str, Any] | None = e.get("request")
+        resp_body: dict[str, Any] | None = e.get("json")
+
+        # Last request's plan_draft wins (most recent attempt)
+        if isinstance(req_body, dict):
+            pd = req_body.get("plan_draft", req_body) if "plan_draft" in req_body else req_body
+            if isinstance(pd, dict) and "steps" in pd:
+                plan_draft = pd
+
+        attempt: dict[str, Any] = {
+            "status": status,
+            "decision": None,
+            "risk": None,
+            "error_code": None,
+        }
+
+        if status == 200 and isinstance(resp_body, dict):
+            attempt["decision"] = resp_body.get("decision")
+            attempt["risk"] = resp_body.get("risk")
+            g4_decision = attempt["decision"]
+            g4_findings = resp_body.get("findings")
+        elif isinstance(resp_body, dict):
+            err = resp_body.get("error") or resp_body.get("detail") or {}
+            if isinstance(err, dict):
+                attempt["error_code"] = err.get("code")
+            elif isinstance(err, str):
+                attempt["error_code"] = err
+
+        g4_attempts.append(attempt)
+
+    return {
+        "plan_draft": plan_draft,
+        "g4_decision": g4_decision,
+        "g4_findings": g4_findings,
+        "g4_attempts": g4_attempts,
+    }
 
 
 def _safe_div(num: int | float, den: int | float) -> float | None:
@@ -271,10 +389,10 @@ def write_outputs(
     # report.md
     (out_dir / "report.md").write_text(render_report(metrics, meta=meta), encoding="utf-8")
 
-    # cases.jsonl — one line per CaseRun
+    # cases.jsonl — one line per CaseRun (with T6 evidence, secrets stripped)
     with (out_dir / "cases.jsonl").open("w", encoding="utf-8") as fh:
         for r in runs:
-            obj = {
+            obj: dict[str, Any] = {
                 "case_id": r.case_id,
                 "category": r.category,
                 "variant": r.variant,
@@ -290,5 +408,11 @@ def write_outputs(
                 "is_attack": r.is_attack,
                 "latency_ms": r.latency_ms,
                 "tokens": r.tokens,
+                # ── T6 evidence ──
+                "utterances": r.utterances,
+                "plan_draft": _strip_secrets(r.plan_draft) if r.plan_draft is not None else None,
+                "g4_attempts": _strip_secrets(r.g4_attempts),
+                "usage_known": r.usage_known,
+                "usage": r.usage,
             }
             fh.write(json.dumps(obj, ensure_ascii=False) + "\n")

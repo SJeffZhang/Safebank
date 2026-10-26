@@ -42,3 +42,25 @@
 - 多轮DS产物已将run_corpus改为固定evaluate-only，execute发明确EvaluationComplete终止信号，不伪造执行结果；transport另阻断G8。真实get_cards使用items与/items/0/id，G4 request_id每次唯一。
 - 协调者最新亲验32项中31 passed/1 failed；ALLOW冻结及实际run_corpus正例证明卡/账本不变。黄级失败为真实生产503 approval HMAC is not configured，已独立建立P2-approval-runtime修复，不在harness注入global伪造绿。
 - T5未完成验收/变异/独审，不运行live。后续可并行做不依赖该生产缺陷的纯证据/报告功能。
+
+## T6 逐样本证据完整归档（2026-10-26，协调者实现）
+
+- **范围**：为 `CaseRun` 新增向后兼容的原始证据字段（默认空），`run_corpus` 每轮收集原话/plan_draft/G4 尝试/决策/findings，`write_outputs` 完整写到 cases.jsonl 并递归脱敏。
+- **文件**：
+  - `evaluation/metrics/compute.py`：
+    - 新增 `_strip_secrets()`：递归清除键名含 token/key/secret/password/pin/bearer/jwt/authorization/credential 的字段（值写 `[REDACTED]`），清除 Bearer 前缀字符串和 JWT 形字符串。
+    - 新增 `extract_g4_evidence()`：纯函数，从 recorded transport requests 提取 `plan_draft`（最后一次请求体）、`g4_decision`、`g4_findings`（最后一次成功响应）、`g4_attempts`（**每次** POST /plans/evaluate，含 503 等失败，不丢诊断）。
+    - `CaseRun` 新增字段：`utterances: list[str]`、`plan_draft: dict | None`、`g4_attempts: list[dict]`、`usage_known: bool`、`usage: dict | None`。全部默认空，旧构造不破坏。
+    - `write_outputs`：cases.jsonl 追加 evidence 字段，plan_draft/g4_attempts 写入前经 `_strip_secrets`。
+  - `evaluation/runner/loop.py`：
+    - `run_corpus`：逐 repeat 收集 `utt_texts`，轮回结束后调用 `extract_g4_evidence(transport.requests)` 并传入 CaseRun。
+  - `tests/evaluation/runner/test_case_evidence.py`（新文件，28 项）：
+    - TestStripSecrets：11 项（含 token/key/bearer/JWT/PIN/secret/嵌套列表/业务字段保留/原语/深度上限）。
+    - TestExtractG4Evidence：7 项（单次 200、多步 arg_sources 全部保留、多次尝试含 422+200、503 不丢、无 evaluate、非 evaluate 忽略）。
+    - TestCaseRunBackwardCompat：3 项（空默认、旧字段构造无异常、旧字段仍可访问）。
+    - TestWriteOutputsWithEvidence：7 项（evidence 写入 JSONL、多轮原话、脱敏生效、旧字段保留、usage_known/usage、旧 17 项指标测试稳定）。
+- **协调者亲自复跑**：
+  - `make lint` 通过（ruff check + format）。
+  - `pytest tests/evaluation/runner/test_metrics.py tests/evaluation/runner/test_case_evidence.py -q --tb=short`：**45 passed 零 skip**（17 旧 + 28 新）。
+  - `pytest tests/evaluation/runner/ -q --tb=short -k "not (gateway_db or obligations_db or monkeypatch)"`：74 passed / 11 skipped（无回归）。
+- **已知未覆盖**：不依赖真实 HMAC 修复（生产 G4 审批 503 继续不影响本组件）；未接 live 模型端口（usage_known=False、usage=None、tokens=0，后续 live 时填充）；T5 的 1 条真实失败保持原样未动。

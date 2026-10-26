@@ -17,13 +17,12 @@ from typing import Any
 
 import httpx
 
-from evaluation.metrics.compute import CaseRun
+from evaluation.metrics.compute import CaseRun, extract_g4_evidence
 from evaluation.runner.l1 import (
     A_SERVICE_TOKEN,
     EvaluationComplete,
     RecordingBridgeTransport,
     build_evaluate_only_graph,
-    build_graph_with_ports,
 )
 from services.agent.app.gateway.client import GatewayClient
 from services.agent.app.graph import AgentContext, UtteranceRef
@@ -147,15 +146,9 @@ async def run_corpus(
 
                 loop = asyncio.get_running_loop()
 
-                transport = RecordingBridgeTransport(
-                    h.client, loop, evaluate_only=True
-                )
-                http_client = httpx.Client(
-                    transport=transport, base_url="http://gateway"
-                )
-                client = GatewayClient(
-                    "http://gateway", A_SERVICE_TOKEN, http_client=http_client
-                )
+                transport = RecordingBridgeTransport(h.client, loop, evaluate_only=True)
+                http_client = httpx.Client(transport=transport, base_url="http://gateway")
+                client = GatewayClient("http://gateway", A_SERVICE_TOKEN, http_client=http_client)
                 graph, _eval_exec = build_evaluate_only_graph(
                     h, loop=loop, client=client, ports_kwargs=ports_kwargs
                 )
@@ -163,11 +156,13 @@ async def run_corpus(
                 last_state = None
                 last_error: Exception | None = None
 
+                utt_texts: list[str] = []
                 for turn_idx, turn in enumerate(turns):
                     if turn_idx in session_boundaries:
                         sid = await h.new_session(customer_id)
 
                     text: str = turn["text"] if isinstance(turn, dict) else str(turn)
+                    utt_texts.append(text)
                     utt_id, assistant_jwt = await h.register_utterance(sid, text)
 
                     def _invoke(
@@ -212,6 +207,8 @@ async def run_corpus(
                     classify_outcome(transport.requests, last_state, last_error)
                 )
 
+                evidence = extract_g4_evidence(transport.requests)
+
                 runs.append(
                     CaseRun(
                         case_id=case_id,
@@ -229,6 +226,9 @@ async def run_corpus(
                         is_attack=is_attack,
                         latency_ms=latency_ms,
                         tokens=0,
+                        utterances=utt_texts,
+                        plan_draft=evidence["plan_draft"],
+                        g4_attempts=evidence["g4_attempts"],
                     )
                 )
     except StopRun:
