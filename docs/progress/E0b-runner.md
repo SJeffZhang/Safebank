@@ -86,3 +86,19 @@
   - `.venv/bin/pytest tests/evaluation/runner/test_metrics.py tests/evaluation/runner/test_case_evidence.py -q --tb=short`：**56 passed 零 skip**（17 旧指标 + 39 evidence）。
 - **未覆盖**：P2-5「utterances 中嵌入 JWT」仅标注为已知限制（短原话文本长度 < 50 不触发 JWT 检测，且攻击者无法通过此路径注入 token）；P1-2/P1-3 旧代码 RED 验证为静态分析（stash→还原太危险）。
 - **评审报告**：`docs/reviews/E0b-T6-review.md` 由 DeepSeek V4 Pro 全新会话独立审出，本次一并提交入分支。
+
+## T8b 恢复测试 + 哨兵泄漏守卫（2026-10-27）
+
+- **工作目录**：`../Fintech2026-wt/e0b-l1-runner`，HEAD `2b3b011`。
+- **实现**：协调者亲自编写，不调用 DeepSeek。
+- **问题**：T8 重写 `test_cli.py` 时删掉了 c73082f 中的两条 Docker 测试。
+- **修复**：
+  - 恢复 `test_fake_limit_1_creates_output_through_real_g4`：适配自提供 CLI（移除 `_require_real_pg()` 与 `_ENV_REAL_PG`，保留 `_require_docker()`，其余断言不变）。
+  - 恢复 `test_anti_spoofing_tweaked_expected_does_not_change_actual`：同上适配，`cli.main()` 内部自己提供 PG。
+  - 新增 `test_live_402_sentinel_not_leaked_to_output`：设置 `DEEPSEEK_API_KEY="sk-test-SENTINEL-0123456789"`，mock `run_corpus` 抛出 `StopRun("402 ...")`，mock 全部提供函数与 harness；通过 `mock.patch("sys.stderr", StringIO())` 捕获 stderr；断言退出码 3，且输出文件与 stderr 中均不含该哨兵大小写。
+- **协调者亲自复跑**：
+  - `.venv/bin/ruff check/format` 通过。
+  - 非 Docker：`-k "not fake_limit and not anti_spoofing"` **8 passed**。
+  - Docker：`-k "fake_limit_1 or anti_spoofing"` **2 passed**（11.31s，真实 PG/G4）。
+  - `make test-e0b` 全量 **81 passed**（20.44s）。
+- **提交**：`d791832`。
