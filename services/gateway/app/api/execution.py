@@ -945,6 +945,10 @@ async def execute_plan(plan_id: str, request: Request):
         # ── 5.1 load + validate ──────────────────────────────────────────
 
         plan = await _load_plan(conn, plan_id, caller.customer_id)
+        # origin must match before anything else, including terminal replays
+        # (PRD §7.1: origin comes from the credential, never the request body).
+        if plan["origin"] != caller.origin:
+            raise GatewayError(Code.OWNERSHIP_MISMATCH, 403)
         sid = plan["sid"]
         session = await _load_session(conn, sid)
 

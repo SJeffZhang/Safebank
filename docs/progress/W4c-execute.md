@@ -214,3 +214,12 @@
 - `c76d301`：`test(W4c): T6 G8 concurrency, revocation, late and origin tests`（1 新文件，4 条测试）
 - `d1e3a61`：`fix(W4c): T6 origin, revocation, replayed and attempt fixes`（1 文件，+59/−7）
 - （本文档提交）：进度日志 T6
+
+## T6 + 协调者收尾（2026-10-26）：并发、迟到、撤销与 origin
+
+- worker W4c-T6-r1 提交 d1e3a61（origin 规则替代「仅 A」硬编码、写事务内复核撤销/epoch、终态重放 replayed=true、恢复分支 attempt 改读 job 行）、c76d301（4 条测试）、4b47053（进度），但自报 `make test-w4c`「超时」——实为新撤销测试死锁，worker 未实际跑通测试。
+- 协调者修正：
+  1. **撤销竞态测试死锁**：G8 读事务（含复演快照）持有 session 行锁，测试在快照钩子里同步等待另一连接的 `UPDATE sessions` → 互等。改为钩子内只启动该 UPDATE（后台任务，排队在行锁上），G8 结束读事务后它先提交，G8 写事务复核必须看到撤销。连跑 3 次稳定通过。变异：去掉写事务内的 revoked 复核 → 该测试失败。
+  2. F 调用方测试误用 FastAPI 对象取私钥；`_seed_auth` 用固定 WALL 时间，已重锚到 now。
+  3. **origin 检查顺序缺陷**：终态重放在 origin 检查之前返回，F 调用方可读取已执行的 agent 计划结果（同客户内）。已把 origin 检查移到加载计划后第一步，新增 `test_frontend_caller_cannot_read_executed_agent_plan`（去掉前移即失败）。
+- 复跑：test-w4c 28 passed（含 alarm 防挂死）；lint、test、test-gateway、wave1-state、w4b2b、w3b 均通过（汇总见提交前输出）。

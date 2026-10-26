@@ -82,10 +82,14 @@ def test_concurrent_g8_executes_once(app_config, obligations_db):
 
 
 def test_revocation_during_execution_aborts(app_config, obligations_db):
-    """Revoke the session inside l3.snapshot (mid-replay, before write tx).
+    """A logout racing an in-flight G8 must win before anything reaches L3.
 
-    The gateway write transaction must re-check revoked_at_wall and abort.
-    G8 must not reach L3 prepare; L3 has zero execution rows.
+    G8 holds the session row lock during its read transaction (which includes
+    the replay snapshot), so a concurrent revocation queues on that lock. The
+    snapshot hook therefore *starts* the revoking UPDATE without awaiting it
+    (awaiting would deadlock the test against G8's own lock): it is queued
+    before G8 ends its read transaction, commits first, and G8's write
+    transaction re-check must then see the revocation and abort.
     """
 
     async def run():
@@ -93,8 +97,9 @@ def test_revocation_during_execution_aborts(app_config, obligations_db):
             fastapi_app = ctx.test_app.client._transport.app
             original_snapshot = fastapi_app.state.l3.snapshot
 
-            async def revoking_snapshot(payload):
-                # Revoke the session from a separate connection mid-replay.
+            revoke_tasks: list[asyncio.Task] = []
+
+            async def revoke() -> None:
                 gw_db = gw_engine(ctx.db_url, poolclass=NullPool)
                 async with gw_db.begin() as conn:
                     await conn.execute(
@@ -102,6 +107,11 @@ def test_revocation_during_execution_aborts(app_config, obligations_db):
                         {"sid": "ses_w4c_allow"},
                     )
                 await gw_db.dispose()
+
+            async def revoking_snapshot(payload):
+                revoke_tasks.append(asyncio.create_task(revoke()))
+                # Let the UPDATE reach the server and queue on the row lock.
+                await asyncio.sleep(0.3)
                 return await original_snapshot(payload)
 
             fastapi_app.state.l3.snapshot = revoking_snapshot
@@ -143,6 +153,8 @@ def test_revocation_during_execution_aborts(app_config, obligations_db):
                 await gw_db.dispose()
             finally:
                 fastapi_app.state.l3.snapshot = original_snapshot
+                await asyncio.gather(*revoke_tasks)
+            assert revoke_tasks, "replay never took a snapshot"
 
     asyncio.run(run())
 
@@ -199,17 +211,23 @@ def test_frontend_caller_cannot_execute_agent_plan(app_config, obligations_db):
 
     async def run():
         async with allow_plan_ctx(app_config, obligations_db) as ctx:
-            fastapi_app = ctx.test_app.client._transport.app
-
             # Build F headers with jti seeded into auth_sessions.
             f_jti = "jti-w4c-f10-f"
             gw_db = gw_engine(ctx.db_url, poolclass=NullPool)
             async with gw_db.begin() as conn:
                 await _seed_auth(conn, jti=f_jti, customer="cus_zs")
+                # The fixture gateway runs on real time; _seed_auth stamps WALL.
+                await conn.execute(
+                    text(
+                        "UPDATE auth_sessions SET expires_at_wall = now() + interval '60 minutes'"
+                        " WHERE jti = :jti"
+                    ),
+                    {"jti": f_jti},
+                )
             await gw_db.dispose()
 
             f_jwt = sign_jwt(
-                fastapi_app.private_key_pem,
+                ctx.test_app.private_key_pem,
                 sub="cus_zs",
                 aud=APP_AUDIENCE,
                 scope=["app", "approve"],
@@ -238,5 +256,67 @@ def test_frontend_caller_cannot_execute_agent_plan(app_config, obligations_db):
                     .where(m.plan_executions.c.plan_id == ctx.plan_id)
                 )
             assert count == 0, f"L3 plan_executions count={count}, expected 0"
+
+    asyncio.run(run())
+
+
+def test_frontend_caller_cannot_read_executed_agent_plan(app_config, obligations_db):
+    """After the agent executed its plan, an F caller cannot read the result.
+
+    The terminal replay path must apply the origin rule too.
+    """
+
+    async def run():
+        async with allow_plan_ctx(app_config, obligations_db) as ctx:
+            # Build F headers with jti seeded into auth_sessions.
+            f_jti = "jti-w4c-f11-f"
+            gw_db = gw_engine(ctx.db_url, poolclass=NullPool)
+            async with gw_db.begin() as conn:
+                await _seed_auth(conn, jti=f_jti, customer="cus_zs")
+                # The fixture gateway runs on real time; _seed_auth stamps WALL.
+                await conn.execute(
+                    text(
+                        "UPDATE auth_sessions SET expires_at_wall = now() + interval '60 minutes'"
+                        " WHERE jti = :jti"
+                    ),
+                    {"jti": f_jti},
+                )
+            await gw_db.dispose()
+
+            f_jwt = sign_jwt(
+                ctx.test_app.private_key_pem,
+                sub="cus_zs",
+                aud=APP_AUDIENCE,
+                scope=["app", "approve"],
+                sid=None,
+                utts=None,
+                jti=f_jti,
+            )
+            f_headers = {
+                "X-Service-Token": SERVICE_TOKEN,
+                "Authorization": f"Bearer {f_jwt}",
+            }
+
+            url = EXECUTE_PATH.format(plan_id=ctx.plan_id)
+            done = await ctx.test_app.client.post(
+                url, json={"request_id": "req_w4c_f11_a"}, headers=ctx.headers
+            )
+            assert done.status_code == 200, done.text
+            body = {"request_id": "req_w4c_f11_f"}
+            resp = await ctx.test_app.client.post(url, json=body, headers=f_headers)
+
+            assert resp.status_code in (403, 404), (
+                f"expected 403/404, got {resp.status_code}: {resp.text}"
+            )
+
+            assert "steps" not in resp.text
+            # Exactly the agent's one execution in L3.
+            async with ctx.l3_admin.connect() as conn:
+                count = await conn.scalar(
+                    select(func.count())
+                    .select_from(m.plan_executions)
+                    .where(m.plan_executions.c.plan_id == ctx.plan_id)
+                )
+            assert count == 1, f"L3 plan_executions count={count}, expected 1"
 
     asyncio.run(run())
