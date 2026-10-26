@@ -1345,7 +1345,7 @@ def _make_gather_state(intents=("transfer",), needs_write=True, text="给王五�
 
 
 def test_gather_supplements_get_accounts_for_transfer_intent():
-    """Transfer intent, LLM only reads list_payees → result includes get_accounts record."""
+    """Transfer intent, LLM reads nothing → result includes get_accounts record."""
     executed = []
 
     def executor(name, args):
@@ -1358,15 +1358,14 @@ def test_gather_supplements_get_accounts_for_transfer_intent():
             data = {}
         return ReadResult(data=data, source_ref=f"src_{name}")
 
-    scripted = ScriptedLLM(
-        [tool_response("list_payees", {}), text_response("done")]
-    )
+    scripted = ScriptedLLM([text_response("done")])
     llm = build(scripted)
     result = GatherAdapter(llm, executor)(_make_gather_state(), ctx())
     tools = [r.tool for r in result]
-    assert "list_payees" in tools
     assert "get_accounts" in tools
+    assert "list_payees" in tools
     assert ("get_accounts", {}) in executed
+    assert ("list_payees", {}) in executed
 
 
 def test_gather_no_supplement_for_non_transfer():
