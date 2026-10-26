@@ -50,15 +50,20 @@ def classify_outcome(
     requests: list[dict[str, Any]],
     last_state: dict[str, Any] | None,
     last_error: Exception | None,
+    g3_responses: list[dict[str, Any]] | None = None,
 ) -> tuple[
     str,  # outcome
     str | None,  # risk
     dict[str, Any],  # params
     list[str],  # finding_codes
     str | None,  # failure_class
+    str | None,  # clarify_source
+    dict[str, Any] | None,  # clarification
+    dict[str, Any] | None,  # understanding
 ]:
     """Pure function: map recorded transport requests + final graph state + error
-    to an (outcome, risk, params, finding_codes, failure_class) tuple.
+    to an (outcome, risk, params, finding_codes, failure_class, clarify_source,
+    clarification, understanding) tuple.
 
     Rules (first match wins):
 
@@ -66,10 +71,61 @@ def classify_outcome(
     2. ``last_error`` is not None → ``ERROR``
     3. ``last_state.clarification`` is non-empty → ``CLARIFY``
     4. Otherwise → ``NO_PLAN``
+
+    *clarify_source* is determined from the transport and G3 responses:
+
+    - ``"L2_G21"``: any GET /clarifications returned clarification data
+    - ``"L2_G3"``: any G3 response has ``parse_status == "FORM_REQUIRED"``
+    - ``"L1"``: state.clarification exists but no L2 evidence above
+    - ``None``: no clarification path was taken
+
+    *understanding* is ``last_state["understanding"]`` serialised (if present).
+
+    *clarification* is ``last_state["clarification"]`` (the raw dict, if any).
     """
+    g3s: list[dict[str, Any]] = g3_responses or []
     evaluates = [
         r for r in requests if r.get("method") == "POST" and "/plans/evaluate" in r.get("url", "")
     ]
+
+    # Derive clarify_source from transport and G3 evidence
+    clarify_source: str | None = None
+    clarification: dict[str, Any] | None = None
+    understanding: dict[str, Any] | None = None
+
+    # L2_G21: GET /clarifications with 200 + clarification data
+    clar_gets = [
+        r for r in requests if r.get("method") == "GET" and "/clarifications" in r.get("url", "")
+    ]
+    for cg in clar_gets:
+        if cg.get("status") == 200 and cg.get("json"):
+            body = cg["json"]
+            if isinstance(body, dict) and body.get("clarification") is not None:
+                clarify_source = "L2_G21"
+                break
+
+    # L2_G3: utterance registration had FORM_REQUIRED
+    if clarify_source is None:
+        for g3 in g3s:
+            if g3.get("parse_status") == "FORM_REQUIRED":
+                clarify_source = "L2_G3"
+                break
+
+    # L1: state.clarification without L2 evidence
+    if last_state and last_state.get("clarification"):
+        clarification = last_state["clarification"]
+        if clarify_source is None:
+            clarify_source = "L1"
+
+    # understanding from last_state
+    if last_state and last_state.get("understanding") is not None:
+        u = last_state["understanding"]
+        if hasattr(u, "model_dump"):
+            understanding = u.model_dump(mode="json")
+        elif isinstance(u, dict):
+            understanding = u
+        else:
+            understanding = {"raw": str(u)}
 
     if evaluates:
         last_eval = evaluates[-1]
@@ -85,15 +141,33 @@ def classify_outcome(
                 steps = []
             params: dict[str, Any] = steps[0].get("args", {}) if steps else {}
             finding_codes: list[str] = [f.get("code", "") for f in (body.get("findings") or [])]
-            return (outcome, risk, params, finding_codes, None)
+            return (
+                outcome,
+                risk,
+                params,
+                finding_codes,
+                None,
+                clarify_source,
+                clarification,
+                understanding,
+            )
         else:
-            return ("NO_PLAN", None, {}, [], None)
+            return ("NO_PLAN", None, {}, [], None, clarify_source, clarification, understanding)
     elif last_error is not None:
-        return ("ERROR", None, {}, [], type(last_error).__name__)
+        return (
+            "ERROR",
+            None,
+            {},
+            [],
+            type(last_error).__name__,
+            clarify_source,
+            clarification,
+            understanding,
+        )
     elif last_state and last_state.get("clarification"):
-        return ("CLARIFY", None, {}, [], None)
+        return ("CLARIFY", None, {}, [], None, clarify_source, clarification, understanding)
     else:
-        return ("NO_PLAN", None, {}, [], None)
+        return ("NO_PLAN", None, {}, [], None, clarify_source, clarification, understanding)
 
 
 async def run_corpus(
@@ -166,13 +240,15 @@ async def run_corpus(
                 last_error: Exception | None = None
 
                 utt_texts: list[str] = []
+                g3s: list[dict[str, Any]] = []
                 for turn_idx, turn in enumerate(turns):
                     if turn_idx in session_boundaries:
                         sid = await h.new_session(customer_id)
 
                     text: str = turn["text"] if isinstance(turn, dict) else str(turn)
                     utt_texts.append(text)
-                    utt_id, assistant_jwt = await h.register_utterance(sid, text)
+                    utt_id, assistant_jwt, g3 = await h.register_utterance(sid, text)
+                    g3s.append(g3)
 
                     def _invoke(
                         _utt_id: str = utt_id,
@@ -220,9 +296,16 @@ async def run_corpus(
                 t1 = time.monotonic()
                 latency_ms = int((t1 - t0) * 1000)
 
-                actual_outcome, actual_risk, actual_params, finding_codes, failure_class = (
-                    classify_outcome(transport.requests, last_state, last_error)
-                )
+                (
+                    actual_outcome,
+                    actual_risk,
+                    actual_params,
+                    finding_codes,
+                    failure_class,
+                    clarify_source,
+                    clarification,
+                    understanding,
+                ) = classify_outcome(transport.requests, last_state, last_error, g3s)
 
                 evidence = extract_g4_evidence(transport.requests)
 
@@ -248,6 +331,10 @@ async def run_corpus(
                         g4_decision=evidence["g4_decision"],
                         g4_findings=evidence["g4_findings"],
                         g4_attempts=evidence["g4_attempts"],
+                        clarify_source=clarify_source,
+                        clarification=clarification,
+                        understanding=understanding,
+                        l2_g3_response=g3s,
                     )
                 )
     except StopRun:

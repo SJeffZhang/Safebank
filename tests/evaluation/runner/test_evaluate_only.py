@@ -260,7 +260,7 @@ def test_evaluate_only_allows_freeze_no_execute(gateway_db, obligations_db, monk
         async with eval_harness(gateway_db, obligations_db, FIXTURE, monkeypatch) as h:
             loop = asyncio.get_running_loop()
             sid = await h.new_session("cus_zs")
-            utt_id, assistant_jwt = await h.register_utterance(sid, "冻结我的卡")
+            utt_id, assistant_jwt, _g3 = await h.register_utterance(sid, "冻结我的卡")
 
             # snapshot L3 before
             before = await _snapshot_l3(h)
@@ -337,7 +337,9 @@ def test_yellow_plan_stops_at_approval_no_execute(gateway_db, obligations_db, mo
         async with eval_harness(gateway_db, obligations_db, FIXTURE, monkeypatch) as h:
             loop = asyncio.get_running_loop()
             sid = await h.new_session("cus_zs")
-            utt_id, assistant_jwt = await h.register_utterance(sid, "把我的卡单笔限额调到1000元")
+            utt_id, assistant_jwt, _g3 = await h.register_utterance(
+                sid, "把我的卡单笔限额调到1000元"
+            )
 
             before = await _snapshot_l3(h)
 

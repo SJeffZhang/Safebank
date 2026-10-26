@@ -26,7 +26,7 @@ def test_harness_session_and_utterance(gateway_db, obligations_db, monkeypatch):
             assert isinstance(h.app.state.l3, L3Client)
             assert not isinstance(h.app.state.l3, FakeL3)
             sid = await h.new_session("cus_zs")
-            utterance_id, assistant_jwt = await h.register_utterance(sid, "查询余额")
+            utterance_id, assistant_jwt, _g3 = await h.register_utterance(sid, "查询余额")
             assert assistant_jwt
             async with h.database.connect() as conn:
                 count = await conn.scalar(

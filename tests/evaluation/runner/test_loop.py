@@ -87,44 +87,56 @@ def test_classify_evaluate_200_uses_decision():
             "request": {"plan_draft": {"steps": [{"args": {"card_id": "crd_a"}}]}},
         },
     ]
-    outcome, risk, params, codes, fc = classify_outcome(requests, None, None)
+    outcome, risk, params, codes, fc, cs, cl, un = classify_outcome(requests, None, None)
     assert outcome == "REQUIRE_APPROVAL"
     assert risk == "YELLOW"
     assert params == {"card_id": "crd_a"}
     assert codes == ["X1"]
     assert fc is None
+    assert cs is None
+    assert cl is None
+    assert un is None
 
 
 def test_classify_error_yields_error():
     """last_error non-None → ERROR with failure_class."""
     exc = ValueError("bad")
-    outcome, risk, params, codes, fc = classify_outcome([], None, exc)
+    outcome, risk, params, codes, fc, cs, cl, un = classify_outcome([], None, exc)
     assert outcome == "ERROR"
     assert risk is None
     assert params == {}
     assert codes == []
     assert fc == "ValueError"
+    assert cs is None
+    assert cl is None
+    assert un is None
 
 
 def test_classify_clarify_from_state():
-    """No evaluate, no error, but state.clarification → CLARIFY."""
+    """No evaluate, no error, but state.clarification → CLARIFY, source L1."""
     state = {"clarification": {"question": "What amount?"}}
-    outcome, risk, params, codes, fc = classify_outcome([], state, None)
+    outcome, risk, params, codes, fc, cs, cl, un = classify_outcome([], state, None)
     assert outcome == "CLARIFY"
     assert risk is None
     assert params == {}
     assert codes == []
     assert fc is None
+    assert cs == "L1"
+    assert cl == {"question": "What amount?"}
+    assert un is None
 
 
 def test_classify_no_plan_default():
     """No evaluate, no error, no clarification → NO_PLAN."""
-    outcome, risk, params, codes, fc = classify_outcome([], {}, None)
+    outcome, risk, params, codes, fc, cs, cl, un = classify_outcome([], {}, None)
     assert outcome == "NO_PLAN"
     assert risk is None
     assert params == {}
     assert codes == []
     assert fc is None
+    assert cs is None
+    assert cl is None
+    assert un is None
 
 
 # ── run_corpus integration tests ───────────────────────────────────────────────
@@ -292,3 +304,119 @@ def test_stop_run_on_402(gateway_db, obligations_db, monkeypatch):
             pytest.fail("expected StopRun but run_corpus returned normally")
 
     asyncio.run(run())
+
+
+# ── T9 clarify_source unit tests ───────────────────────────────────────────────
+
+
+def test_clarify_source_l1_from_understand():
+    """L1 clarify node set state.clarification; no G21/G3 evidence → clarify_source="L1"."""
+    state = {"clarification": {"question": "What amount?", "required_fields": ["amount"]}}
+    outcome, risk, params, codes, fc, cs, cl, un = classify_outcome([], state, None, [])
+    assert outcome == "CLARIFY"
+    assert cs == "L1"
+    assert cl == {"question": "What amount?", "required_fields": ["amount"]}
+    assert un is None
+
+
+def test_clarify_source_l2_g3_from_form_required():
+    """G3 response had FORM_REQUIRED → clarify_source="L2_G3"."""
+    state = {"clarification": {"question": "Which card?"}}
+    g3s = [
+        {
+            "status": 201,
+            "parse_status": "FORM_REQUIRED",
+            "clarification_id": "clr_1",
+            "kind": "typed",
+        }
+    ]
+    outcome, risk, params, codes, fc, cs, cl, un = classify_outcome([], state, None, g3s)
+    assert outcome == "CLARIFY"
+    assert cs == "L2_G3"
+    assert cl == {"question": "Which card?"}
+
+
+def test_clarify_source_l2_g21_from_clarifications():
+    """GET /clarifications returned clarification → clarify_source="L2_G21"."""
+    requests = [
+        {
+            "method": "GET",
+            "url": "/sessions/ses_a/clarifications/current",
+            "status": 200,
+            "json": {"clarification": {"question": "Which card?", "required_fields": ["card_id"]}},
+        },
+    ]
+    state = {"clarification": {"question": "Which card?", "required_fields": ["card_id"]}}
+    outcome, risk, params, codes, fc, cs, cl, un = classify_outcome(requests, state, None, [])
+    assert outcome == "CLARIFY"
+    assert cs == "L2_G21"
+
+
+def test_clarify_source_g21_beats_g3():
+    """Both G21 and G3 evidence → G21 wins (more specific sink)."""
+    requests = [
+        {
+            "method": "GET",
+            "url": "/sessions/ses_a/clarifications/current",
+            "status": 200,
+            "json": {"clarification": {"question": "Which card?"}},
+        },
+    ]
+    g3s = [{"status": 201, "parse_status": "FORM_REQUIRED", "clarification_id": "clr_1"}]
+    state = {"clarification": {"question": "Which card?"}}
+    outcome, risk, params, codes, fc, cs, cl, un = classify_outcome(requests, state, None, g3s)
+    assert outcome == "CLARIFY"
+    assert cs == "L2_G21"
+
+
+def test_clarify_source_none_when_no_clarification():
+    """No clarification anywhere → clarify_source=None."""
+    outcome, risk, params, codes, fc, cs, cl, un = classify_outcome(
+        [], {"understanding": {}}, None, []
+    )
+    assert outcome == "NO_PLAN"
+    assert cs is None
+    assert cl is None
+
+
+def test_understanding_from_state():
+    """state.understanding → serialised in understanding field."""
+    from services.agent.app.graph.state import Understanding as U
+
+    state = {
+        "understanding": U(intents=("freeze_card",), needs_write=True, unclear=False, slots=()),
+        "clarification": None,
+    }
+    outcome, risk, params, codes, fc, cs, cl, un = classify_outcome([], state, None, [])
+    assert outcome == "NO_PLAN"
+    assert un is not None
+    assert un.get("intents") == ["freeze_card"]
+    assert un.get("needs_write") is True
+
+
+def test_understanding_dict_state():
+    """state.understanding as plain dict → still works."""
+    state = {
+        "understanding": {"intents": ["transfer"], "needs_write": True},
+        "clarification": None,
+    }
+    outcome, risk, params, codes, fc, cs, cl, un = classify_outcome([], state, None, [])
+    assert outcome == "NO_PLAN"
+    assert un == {"intents": ["transfer"], "needs_write": True}
+
+
+def test_g3_response_without_form_required_is_not_l2_g3():
+    """G3 with NO_WRITE parse_status does NOT trigger L2_G3."""
+    state = {"clarification": {"question": "What?"}}
+    g3s = [{"status": 201, "parse_status": "NO_WRITE", "clarification_id": None, "kind": "typed"}]
+    outcome, risk, params, codes, fc, cs, cl, un = classify_outcome([], state, None, g3s)
+    assert outcome == "CLARIFY"
+    assert cs == "L1"  # G3 response was not FORM_REQUIRED, so L1 only
+
+
+def test_l2_g3_response_fields_no_tokens():
+    """l2_g3_response dicts contain only safe fields (no assistant_token)."""
+    g3 = {"status": 201, "parse_status": "SCOPED", "clarification_id": None, "kind": "typed"}
+    assert "token" not in g3
+    assert "assistant_token" not in g3
+    assert "bearer" not in str(g3).lower()

@@ -97,6 +97,14 @@ class CaseRun:
     usage_known: bool = False
     usage: dict[str, int] | None = None
 
+    # ── T9 clarify-source evidence (all default-empty for backward compat) ──
+    clarify_source: str | None = None  # "L1" | "L2_G3" | "L2_G21" | None
+    clarification: dict[str, Any] | None = None  # from state.clarification
+    understanding: dict[str, Any] | None = None  # from state.understanding (model_dump)
+    l2_g3_response: list[dict[str, Any]] = field(
+        default_factory=list
+    )  # utterance registration responses
+
 
 # ── helper ───────────────────────────────────────────────────────────────────
 
@@ -424,5 +432,14 @@ def write_outputs(
                 "g4_findings": r.g4_findings,
                 "usage_known": r.usage_known,
                 "usage": r.usage,
+                # ── T9 clarify-source evidence ──
+                "clarify_source": r.clarify_source,
+                "clarification": _strip_secrets(r.clarification)
+                if r.clarification is not None
+                else None,
+                "understanding": _strip_secrets(r.understanding)
+                if r.understanding is not None
+                else None,
+                "l2_g3_response": _strip_secrets(r.l2_g3_response),
             }
             fh.write(json.dumps(obj, ensure_ascii=False) + "\n")

@@ -144,7 +144,7 @@ class EvalHarness:
         self._tokens[sid] = token
         return sid
 
-    async def register_utterance(self, sid: str, text: str) -> tuple[str, str]:
+    async def register_utterance(self, sid: str, text: str) -> tuple[str, str, dict[str, Any]]:
         token = self._tokens[sid]
         response = await self.client.post(
             f"/sessions/{sid}/utterances",
@@ -153,7 +153,15 @@ class EvalHarness:
         )
         assert response.status_code == 201, response.text
         body = response.json()
-        return body["utterance"]["id"], body["assistant_token"]
+        utterance = body.get("utterance", {})
+        g3: dict[str, Any] = {
+            "status": response.status_code,
+            "parse_status": utterance.get("parse_status"),
+            "clarification_id": utterance.get("clarification_id"),
+        }
+        if isinstance(utterance, dict) and utterance.get("kind"):
+            g3["kind"] = utterance["kind"]
+        return body["utterance"]["id"], body["assistant_token"], g3
 
 
 @asynccontextmanager

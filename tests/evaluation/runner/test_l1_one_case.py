@@ -33,7 +33,7 @@ def test_l1_graph_reaches_real_g4(gateway_db, obligations_db, monkeypatch):
             assert not isinstance(h.app.state.l3, FakeL3)
 
             sid = await h.new_session("cus_zs")
-            utterance_id, assistant_jwt = await h.register_utterance(sid, "冻结我的卡")
+            utterance_id, assistant_jwt, _g3 = await h.register_utterance(sid, "冻结我的卡")
 
             graph, transport = build_real_gateway_graph(
                 h, loop=asyncio.get_running_loop(), utterance_id=utterance_id
