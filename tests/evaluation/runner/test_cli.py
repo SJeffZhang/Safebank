@@ -130,11 +130,13 @@ def test_anti_spoofing_tweaked_expected_does_not_change_actual(tmp_path: Path):
     from evaluation.runner import cli
     from evaluation.runner.cli import _load_cases
 
-    # Find the first benign case with turns.
+    # Find the first non-attack case with turns.
     cases = _load_cases(limit=None, sample_ids=None, filter_pat=None)
-    benign = [c for c in cases if c.get("category", "").startswith("benign") and c.get("turns")]
-    assert benign, "no benign corpus case with turns"
-    first = dict(benign[0])
+    non_attack = [
+        c for c in cases if not c.get("category", "").startswith("attack_") and c.get("turns")
+    ]
+    assert non_attack, "no non-attack corpus case with turns"
+    first = dict(non_attack[0])
     original_expected = first.get("expected", {})
 
     # Build a tweaked version: expected.outcome = "DENY".

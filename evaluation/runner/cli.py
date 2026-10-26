@@ -40,7 +40,7 @@ from services.agent.app.graph import Understanding  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 CORPUS_DIR = PROJECT_ROOT / "evaluation" / "corpus" / "l1_stability"
-SEED_PATH = PROJECT_ROOT / "evaluation" / "fixtures" / "l1_seed_v1.json"
+SEED_PATH = PROJECT_ROOT / "tests" / "evaluation" / "runner" / "fixtures" / "mini_seed.json"
 
 IMAGE = (
     "postgres:16.10-alpine@sha256:029660641a0cfc575b14f336ba448fb8a75fd595d42e1fa316b9fb4378742297"
