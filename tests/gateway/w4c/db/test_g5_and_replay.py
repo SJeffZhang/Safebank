@@ -204,6 +204,25 @@ def test_g8_same_request_id_replays_terminal(app_config, obligations_db):
                 )
             assert count == 1, f"L3 plan_executions={count}, expected 1"
 
+            # The dedup key is scoped to this plan's concrete path, so the same
+            # request_id on another plan of this customer cannot replay this one.
+            gw = engine(ctx.db_url, poolclass=NullPool)
+            async with gw.connect() as conn:
+                routes = (
+                    (
+                        await conn.execute(
+                            select(t.request_dedup.c.route).where(
+                                t.request_dedup.c.customer_id == "cus_zs",
+                                t.request_dedup.c.route.like("POST /plans/%/execute"),
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+            await gw.dispose()
+            assert routes == [f"POST /plans/{ctx.plan_id}/execute"], routes
+
     asyncio.run(run())
 
 
@@ -226,7 +245,7 @@ def test_g8_request_id_body_mismatch_conflicts(app_config, obligations_db):
                 await conn.execute(
                     t.request_dedup.insert().values(
                         customer_id="cus_zs",
-                        route=ROUTE_EXECUTE,
+                        route=ROUTE_EXECUTE.format(plan_id=ctx.plan_id),
                         request_id="req_w4c_t7_mismatch",
                         request_hash=wrong_hash,
                         status_code=0,

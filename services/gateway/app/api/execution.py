@@ -24,6 +24,7 @@ from safebank_contracts.plan import (
 )
 from safebank_contracts.protocol import PrepareResult
 from sqlalchemy import select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .. import state
@@ -45,6 +46,13 @@ from ..utterance.service import new_id
 router = APIRouter()
 
 ROUTE_EXECUTE = "POST /plans/{plan_id}/execute"
+
+
+def _execute_route(plan_id: str) -> str:
+    """request_dedup route key: the concrete path, so a request_id is scoped
+    to one plan (the body is only ``{request_id}`` and cannot tell plans apart)."""
+    return ROUTE_EXECUTE.format(plan_id=plan_id)
+
 
 router = APIRouter()
 
@@ -68,6 +76,7 @@ def _exec_now() -> datetime:
 async def _write_request_dedup_row(
     conn: AsyncConnection,
     *,
+    plan_id: str,
     customer_id: str,
     request_id: str,
     request_hash: str,
@@ -77,15 +86,23 @@ async def _write_request_dedup_row(
     """Persist a request_dedup row (C4).  Caller owns the customer_lock conn."""
     await conn.rollback()
     async with conn.begin():
+        stmt = pg_insert(t.request_dedup).values(
+            customer_id=customer_id,
+            route=_execute_route(plan_id),
+            request_id=request_id,
+            request_hash=request_hash,
+            status_code=status_code,
+            response=response,
+            created_at_wall=text("now()"),
+        )
+        # A request_id first marked non-terminal (202/409) may later finish
+        # terminally (e.g. via reconciliation); only then is the row upgraded.
+        # A stored terminal response is never overwritten.
         await conn.execute(
-            t.request_dedup.insert().values(
-                customer_id=customer_id,
-                route=ROUTE_EXECUTE,
-                request_id=request_id,
-                request_hash=request_hash,
-                status_code=status_code,
-                response=response,
-                created_at_wall=text("now()"),
+            stmt.on_conflict_do_update(
+                index_elements=["customer_id", "route", "request_id"],
+                set_={"status_code": stmt.excluded.status_code, "response": stmt.excluded.response},
+                where=t.request_dedup.c.status_code != 200,
             )
         )
 
@@ -93,6 +110,7 @@ async def _write_request_dedup_row(
 async def _check_request_dedup(
     conn: AsyncConnection,
     *,
+    plan_id: str,
     customer_id: str,
     request_id: str,
     request_hash: str,
@@ -112,7 +130,7 @@ async def _check_request_dedup(
                     t.request_dedup.c.response,
                 ).where(
                     t.request_dedup.c.customer_id == customer_id,
-                    t.request_dedup.c.route == ROUTE_EXECUTE,
+                    t.request_dedup.c.route == _execute_route(plan_id),
                     t.request_dedup.c.request_id == request_id,
                 )
             )
@@ -1121,6 +1139,7 @@ async def execute_plan(plan_id: str, request: Request):
         request_hash = digest_hex(request_body_bytes)
         replay_response, is_non_terminal = await _check_request_dedup(
             conn,
+            plan_id=plan_id,
             customer_id=caller.customer_id,
             request_id=body["request_id"],
             request_hash=request_hash,
@@ -1544,15 +1563,17 @@ async def execute_plan(plan_id: str, request: Request):
                 )
                 # Write non-terminal dedup so the same request_id can't be reused.
                 await conn.execute(
-                    t.request_dedup.insert().values(
+                    pg_insert(t.request_dedup)
+                    .values(
                         customer_id=caller.customer_id,
-                        route=ROUTE_EXECUTE,
+                        route=_execute_route(plan_id),
                         request_id=body["request_id"],
                         request_hash=request_hash,
                         status_code=202,
                         response={"non_terminal": True},
                         created_at_wall=text("now()"),
                     )
+                    .on_conflict_do_nothing()
                 )
             return JSONResponse(
                 status_code=202,
@@ -1597,15 +1618,17 @@ async def execute_plan(plan_id: str, request: Request):
                 await conn.rollback()
                 async with conn.begin():
                     await conn.execute(
-                        t.request_dedup.insert().values(
+                        pg_insert(t.request_dedup)
+                        .values(
                             customer_id=caller.customer_id,
-                            route=ROUTE_EXECUTE,
+                            route=_execute_route(plan_id),
                             request_id=body["request_id"],
                             request_hash=request_hash,
                             status_code=409,
                             response={"non_terminal": True},
                             created_at_wall=text("now()"),
                         )
+                        .on_conflict_do_nothing()
                     )
                 return await _handle_state_changed(
                     conn=conn,
@@ -1644,15 +1667,17 @@ async def execute_plan(plan_id: str, request: Request):
 
             # Write terminal request_dedup in the same tx (C4).
             await conn.execute(
-                t.request_dedup.insert().values(
+                pg_insert(t.request_dedup)
+                .values(
                     customer_id=caller.customer_id,
-                    route=ROUTE_EXECUTE,
+                    route=_execute_route(plan_id),
                     request_id=body["request_id"],
                     request_hash=request_hash,
                     status_code=200,
                     response=result.model_dump(mode="json"),
                     created_at_wall=text("now()"),
                 )
+                .on_conflict_do_nothing()
             )
 
     return result.model_dump(mode="json")

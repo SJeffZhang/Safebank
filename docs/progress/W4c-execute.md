@@ -255,3 +255,12 @@
 
 ### 提交
 （本条）
+
+## T7 + 协调者收尾（2026-10-26）：G5 与 G8 request_id 重放
+
+- W4c-T7-r1 中途停止（WIP 检查点 a347afe），W4c-T7b-r1 按协调者给出的 5 条失败原因修复，提交 970f0d2：`_reconcile_job` 供 G5/G8 共用；G5（A 限本 sid、F 限本客户，UNKNOWN 时在客户锁内只对账）；request_dedup 终态原样重放、非终态仅作「已用」标记，旧 request_id 进入 PAUSED 恢复分支时 409。
+- 协调者审阅发现并修复两处缺陷：
+  1. **去重键跨计划串用**：route 用的是字面模板 `POST /plans/{plan_id}/execute`，请求体只有 `{request_id}`，同一客户在另一个计划上复用 request_id 会重放前一个计划的结果。改为按具体路径 `POST /plans/<plan_id>/execute` 作 route；新增断言钉住键值，变异（改回模板）→ 2 failed。
+  2. **非终态行无法升级**：写入是普通 INSERT，request_id 先得 409/202、后经对账得终态时会主键冲突。终态写入改为 upsert（仅当已存行非 200 时覆盖，终态永不被覆盖），非终态标记改为 ON CONFLICT DO NOTHING。
+- 变异：去掉旧 request_id 恢复守卫 → 1 failed。
+- 复跑全部 exit 0：lint 354；test 2702/740 skip；test-gateway 2018/647 skip；gateway-db 17；wave1-state 231；w1 1688；w3b 33；w4b1 57；w4b2b 58；w4b2c 56；**test-w4c 35**；shared-runtime 79；contracts PASS。
