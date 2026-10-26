@@ -51,6 +51,8 @@ class GatherAdapter:
         read_executor: ReadExecutor,
         max_rounds: int = 3,
         observer: Callable[[AIMessage], None] | None = None,
+        *,
+        supplement_transfer_reads: bool = False,
     ) -> None:
         if not 1 <= max_rounds <= _MAX_ROUNDS:
             raise ValueError(f"max_rounds must be between 1 and {_MAX_ROUNDS}")
@@ -58,6 +60,7 @@ class GatherAdapter:
         self._model = llm.bind_tools(read_tools())
         self._max_rounds = max_rounds
         self._observer = observer
+        self.supplement_transfer_reads = supplement_transfer_reads
 
     def with_read_executor(self, read_executor: ReadExecutor) -> GatherAdapter:
         """Return a new adapter sharing the same model/observer but with a different
@@ -88,7 +91,9 @@ class GatherAdapter:
                 if name:
                     tools_attempted.add(name)
             if not calls:
-                return self._supplement_reads(reads, state, tools_attempted)
+                if self.supplement_transfer_reads:
+                    return self._supplement_reads(reads, state, tools_attempted)
+                return reads
             messages.append(message)
             prepared, rejected = self._validate_calls(calls)
             if rejected:
@@ -157,15 +162,10 @@ class GatherAdapter:
     ) -> list[ReadRecord]:
         """Deterministic supplemental reads for transfer-like intents.
 
-        Only triggers when the LLM made at least one read tool attempt during
-        the gather loop — this proves it was in "read mode" and the supplement
-        fills gaps for tools it genuinely forgot.  When the LLM made zero
-        tool calls (fake LLM in tests, or the model chose not to read), we
-        don't second-guess it.
+        Only called when ``supplement_transfer_reads`` is True.
+        Adds get_accounts / list_payees reads for transfer-like intents
+        when the LLM didn't already read or attempt them.
         """
-        if not tools_attempted:
-            return reads
-
         understanding = state.get("understanding")
         if understanding is None:
             return reads

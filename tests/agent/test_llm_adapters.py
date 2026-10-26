@@ -1360,12 +1360,14 @@ def test_gather_supplements_get_accounts_for_transfer_intent():
 
     scripted = ScriptedLLM([text_response("done")])
     llm = build(scripted)
-    result = GatherAdapter(llm, executor)(_make_gather_state(), ctx())
+    result = GatherAdapter(llm, executor, supplement_transfer_reads=True)(
+        _make_gather_state(), ctx()
+    )
     tools = [r.tool for r in result]
     assert "get_accounts" in tools
     assert "list_payees" in tools
-    assert ("get_accounts", {}) in executed
-    assert ("list_payees", {}) in executed
+    assert ("get_accounts", {"history_days": 0}) in executed
+    assert ("list_payees", {"query": None}) in executed
 
 
 def test_gather_no_supplement_for_non_transfer():
@@ -1378,7 +1380,7 @@ def test_gather_no_supplement_for_non_transfer():
 
     scripted = ScriptedLLM([text_response("done")])
     llm = build(scripted)
-    result = GatherAdapter(llm, executor)(
+    result = GatherAdapter(llm, executor, supplement_transfer_reads=True)(
         _make_gather_state(intents=["card"], text="冻结卡"), ctx()
     )
     assert len(executed) == 0
@@ -1397,12 +1399,14 @@ def test_gather_no_duplicate_get_accounts():
         [tool_response("get_accounts", {"history_days": 7}), text_response("done")]
     )
     llm = build(scripted)
-    result = GatherAdapter(llm, executor)(
+    result = GatherAdapter(llm, executor, supplement_transfer_reads=True)(
         _make_gather_state(text="转800元到主意账户"), ctx()
     )
-    # Only the LLM call, not a second supplemental
-    assert executed == [("get_accounts", {"history_days": 7})]
-    assert len(result) == 1
+    # LLM called get_accounts → not duplicated. list_payees was neither read
+    # nor attempted → supplemented with query=None.
+    assert ("get_accounts", {"history_days": 7}) in executed
+    assert ("list_payees", {"query": None}) in executed
+    assert len(result) == 2
 
 
 def test_gather_supplements_list_payees_for_transfer_with_payee_name():
@@ -1422,12 +1426,14 @@ def test_gather_supplements_list_payees_for_transfer_with_payee_name():
 
     scripted = ScriptedLLM([text_response("done")])
     llm = build(scripted)
-    result = GatherAdapter(llm, executor)(_make_gather_state(text="转800给王五"), ctx())
+    result = GatherAdapter(llm, executor, supplement_transfer_reads=True)(
+        _make_gather_state(text="转800给王五"), ctx()
+    )
     tools = [r.tool for r in result]
     assert "get_accounts" in tools
     assert "list_payees" in tools
-    assert ("get_accounts", {}) in executed
-    assert ("list_payees", {}) in executed
+    assert ("get_accounts", {"history_days": 0}) in executed
+    assert ("list_payees", {"query": None}) in executed
 
 
 def test_gather_supplement_read_failure_propagates():
@@ -1438,7 +1444,9 @@ def test_gather_supplement_read_failure_propagates():
     scripted = ScriptedLLM([text_response("done")])
     llm = build(scripted)
     with pytest.raises(RuntimeError, match="gateway unreachable"):
-        GatherAdapter(llm, executor)(_make_gather_state(), ctx())
+        GatherAdapter(llm, executor, supplement_transfer_reads=True)(
+            _make_gather_state(), ctx()
+        )
 
 
 # ── plan retries on missing rationale ──
