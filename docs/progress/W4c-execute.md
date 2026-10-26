@@ -264,3 +264,13 @@
   2. **非终态行无法升级**：写入是普通 INSERT，request_id 先得 409/202、后经对账得终态时会主键冲突。终态写入改为 upsert（仅当已存行非 200 时覆盖，终态永不被覆盖），非终态标记改为 ON CONFLICT DO NOTHING。
 - 变异：去掉旧 request_id 恢复守卫 → 1 failed。
 - 复跑全部 exit 0：lint 354；test 2702/740 skip；test-gateway 2018/647 skip；gateway-db 17；wave1-state 231；w1 1688；w3b 33；w4b1 57；w4b2b 58；w4b2c 56；**test-w4c 35**；shared-runtime 79；contracts PASS。
+
+## 评审修复轮 1（2026-10-26）
+
+- 红测 961dcb0（worker W4c-fix-r1，第 61 轮 ECONNREFUSED 中断）。
+- P1-1 恢复路径 execute 遇 STATE_CHANGED 改走屏障（worker 改动）；P1-2 fence prepare 用当前 attempt，且协调者补改 ACK 校验 `fence_result.attempt != exec_identity.attempt`（原写死 1）→ 0478105。
+- P2-1（协调者）：PAUSED job 且 plan 为 DENIED/REPLAN/PENDING_APPROVAL 时不进入恢复，直接 409 STATE_CHANGED 并在 details.decision 返回最新评估决策；不访问 L3。
+- P2-3（协调者）：G8 经 UNKNOWN 对账得到终态 200 时，为本次 request_id 写终态 request_dedup（写入函数只覆盖非终态）。
+- P2-2 归 W5（孤儿 PAUSED job 归档）。
+- 变异：去 P2-1 拦截 → 1 failed；去 P2-3 写入 → 1 failed；还原。
+- 复跑全部 exit 0：lint 355；test 2702/743 skip；test-gateway 2018/650 skip；gateway-db 17；wave1-state 231；w1 1688；w3b 33；w4b1 57；w4b2b 58；w4b2c 56；**test-w4c 38**；shared-runtime 79；contracts PASS；actionlint。

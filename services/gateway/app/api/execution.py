@@ -1218,6 +1218,25 @@ async def execute_plan(plan_id: str, request: Request):
         )
 
         if existing_job is not None:
+            if existing_job["status"] == "PAUSED" and plan["status"] in {
+                PlanStatus.DENIED.value,
+                PlanStatus.REPLAN.value,
+                PlanStatus.PENDING_APPROVAL.value,
+            }:
+                # The fence published a decision that is not executable as-is
+                # (review P2-1): report it instead of attempting a resume.
+                latest = await conn.scalar(
+                    select(t.evaluations.c.decision)
+                    .where(t.evaluations.c.plan_id == plan_id)
+                    .order_by(t.evaluations.c.revision.desc())
+                    .limit(1)
+                )
+                raise GatewayError(
+                    Code.STATE_CHANGED,
+                    409,
+                    "state changed; plan is not executable as published",
+                    details={"decision": latest},
+                )
             if existing_job["status"] == "PAUSED":
                 # ADR-008: old request_id must not trigger a new attempt (C4).
                 if is_non_terminal:
@@ -1293,7 +1312,7 @@ async def execute_plan(plan_id: str, request: Request):
                     request_hash=request_hash,
                 )
             if existing_job["status"] == "UNKNOWN":
-                return await _handle_reconcile(
+                reconciled = await _handle_reconcile(
                     conn=conn,
                     plan_id=plan_id,
                     caller_customer_id=caller.customer_id,
@@ -1302,6 +1321,19 @@ async def execute_plan(plan_id: str, request: Request):
                     l3=l3,
                     request=request,
                 )
+                # A terminal outcome is now this request_id's response too
+                # (review P2-3); the writer never overwrites a terminal row.
+                if getattr(reconciled, "status_code", None) == 200:
+                    await _write_request_dedup_row(
+                        conn,
+                        plan_id=plan_id,
+                        customer_id=caller.customer_id,
+                        request_id=body["request_id"],
+                        request_hash=request_hash,
+                        status_code=200,
+                        response=json.loads(reconciled.body),
+                    )
+                return reconciled
             raise GatewayError(Code.EXECUTION_IN_PROGRESS, 409, "execution already in progress")
 
         # EVALUATED (ALLOW) or CONFIRMED
