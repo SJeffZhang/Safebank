@@ -74,6 +74,7 @@ class GatherAdapter:
 
     def __call__(self, state: AgentState, context: AgentContext) -> list[ReadRecord]:
         reads: list[ReadRecord] = []
+        tools_attempted: set[str] = set()
         messages = [SystemMessage(content=_SYSTEM), HumanMessage(content=self._prompt(state))]
         for _ in range(self._max_rounds):
             message = self._model.invoke(messages)
@@ -82,8 +83,12 @@ class GatherAdapter:
             if getattr(message, "invalid_tool_calls", None):
                 raise LlmToolError("model returned malformed tool call arguments")
             calls = message.tool_calls or []
+            for call in calls:
+                name = call.get("name")
+                if name:
+                    tools_attempted.add(name)
             if not calls:
-                return self._supplement_reads(reads, state)
+                return self._supplement_reads(reads, state, tools_attempted)
             messages.append(message)
             prepared, rejected = self._validate_calls(calls)
             if rejected:
@@ -147,14 +152,20 @@ class GatherAdapter:
         )
 
     def _supplement_reads(
-        self, reads: list[ReadRecord], state: AgentState
+        self, reads: list[ReadRecord], state: AgentState,
+        tools_attempted: set[str],
     ) -> list[ReadRecord]:
         """Deterministic supplemental reads for transfer-like intents.
 
         When the understanding indicates a transfer-like intent but the LLM's
-        gather loop didn't read accounts or payees, the adapter calls them
-        directly through the injected read executor so the plan step has valid
-        read-kind sources for ``from_account_id`` / ``payee_id``.
+        gather loop didn't read accounts or payees (and didn't even attempt
+        to call those tools), the adapter calls them directly through the
+        injected read executor so the plan step has valid read-kind sources
+        for ``from_account_id`` / ``payee_id``.
+
+        If the LLM attempted a tool (even with bad args that were rejected per
+        round), we don't second-guess it — the supplement only covers cases
+        where the model genuinely forgot the tool exists.
         """
         understanding = state.get("understanding")
         if understanding is None:
@@ -165,20 +176,21 @@ class GatherAdapter:
         read_tools = {r.tool for r in reads}
         result = list(reads)
 
-        if "get_accounts" not in read_tools:
+        if "get_accounts" not in read_tools and "get_accounts" not in tools_attempted:
             result.append(
                 self._execute_supplemental("get_accounts", {}, "src_gather_accounts")
             )
 
-        if "list_payees" not in read_tools:
-            # Only auto-supplement list_payees when the LLM also didn't read
-            # get_accounts — if it already thought to read accounts it usually
-            # reads payees too.  This avoids surprising existing tests with an
-            # extra read on every transfer utterance.
-            if "get_accounts" not in read_tools and self._utterances_mention_payee(state):
-                result.append(
-                    self._execute_supplemental("list_payees", {}, "src_gather_payees")
-                )
+        if (
+            "list_payees" not in read_tools
+            and "list_payees" not in tools_attempted
+            and "get_accounts" not in read_tools
+            and "get_accounts" not in tools_attempted
+            and self._utterances_mention_payee(state)
+        ):
+            result.append(
+                self._execute_supplemental("list_payees", {}, "src_gather_payees")
+            )
 
         return result
 
