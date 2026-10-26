@@ -42,8 +42,8 @@
 | 调研 | 开源项目元数据和 DeepSeek 官方信息已核实；评分/提交已从官网公开 JS 核实（docs/acceptance/official-v1.md）；竞品「明鉴」未核实 |
 | PRD | **`PRD.md` = v2.1 定稿**（§0–§16；三轮多 agent 审核 + 两次修订复核，决议 D1–D47 见 §0.5；执行屏障增量约定见ADR-008）。v1.2 与作废的 v2.0 草稿在 `docs/archive/`；审核报告在 `docs/reviews/` |
 | 代码 | **P1 完成并逐组件验收且已由PR #1合入main**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116项单元+33项真实PG通过，契约v1已冻结。历史功能提交7fd7a26、CI权限修复70dcabe，远端unit与p1-postgres均通过（run 39929405919）；完整六场景业务仍未完成。 |
-| L2 网关 | main `00aca15`：W4b2a/b/c（PR #23/#25/#27）、W3b（#29）、W4c（#31）均已合入。W4c 独立复审 APPROVE；精确 head `79229ae` 的 push/PR 四 CI 成功。前任协调者合并后组合回归与真实网络/HTTP集成通过；本次只读复核六服务 healthy、gateway 库 `0003_plan_draft`、两持久卷未重建。启动恢复扫描/孤儿 PAUSED job 归档仍属 W5。 |
-| L1 Agent | C1a–C1e 全部合入（C1c2 #24、C1d #26、C1e #28）；真实 PG checkpoint/服务/输出与回放组件已验收，完整 live 三层黄级转账尚未闭合。E0a #30 已合（405 条语料）；E0b worktree 保留 `ba76448`，收尾/live 与 try-agent 按用户指令暂停。中文金额角/分与中阿混写的输出解析缺口见 C1e 验收。 |
+| L2 网关 | main `62e83ac`（L1 SSE修复 #33）：W4b2a/b/c（PR #23/#25/#27）、W3b（#29）、W4c（#31）均已合入。W4c 独立复审 APPROVE；精确 head `79229ae` 的 push/PR 四 CI 成功。前任协调者合并后组合回归与真实网络/HTTP集成通过；本次只读复核六服务 healthy、gateway 库 `0003_plan_draft`、两持久卷未重建。启动恢复扫描/孤儿 PAUSED job 归档仍属 W5。 |
+| L1 Agent | C1a–C1e 全部合入（C1c2 #24、C1d #26、C1e #28）；真实 PG checkpoint/服务/输出与回放组件已验收，L1 SSE结构化输出小修 #33 已合，39真实PG通过；完整 live 三层黄级转账尚未闭合。E0a #30 已合（405 条语料）；E0b worktree 保留 `ba76448`，收尾/live 与 try-agent 按用户指令暂停。中文金额角/分与中阿混写的输出解析缺口见 C1e 验收。 |
 | 前端 | **暂停**，用户亲自下令才开工（§2 第 13 条） |
 | 协调状态 | **2026-10-26 同机交给 Codex**，当前授权范围为完成 P2，同时推进 E0 与 try-agent，先据评测修复 L1。实现/独审继续使用本机 Claude Code CLI 的 DeepSeek V4 Pro worker，一次一个任务、全新会话；本次未派业务 worker。worktree、stash、WIP refs、匹配 W0 密钥与长期卷保留。所有定时任务及前端/BFF继续暂停，不擅启或终止现有 Claude 会话。 |
 | 下一步 | W4c 已合并部署，进度页已同步并核对线上。之后按用户下一步指示进行 P2 真实三层验收或 W5/W6；E0 与 try-agent 已由用户恢复并行；先完成驱动与评测，修复 L1，再闭合 P2。P2 尚未真实闭合，不进入 P3；402/403/429 立即停止，不反复请求或换模型。 |
@@ -751,6 +751,14 @@
 | 2026-10-26 | Codex（协调者） | E0b T5 r2用尽41轮（input314653/output38203/cacheRead5702656），快照保留；亲验 **3 failed/29 passed**。定点查L3真实get_cards返回items而不是W4c手种cards字段，导致测试来源路径错；黄级interrupt不应要求execute终止异常；所谓run_corpus连通测试仍直接调用graph，且入口evaluate_only默认False不安全。已将这四处精确事实裁定写25轮r3任务，继续保留失败证据，不改L2/生产图。 |
 
 | 2026-10-26 | Codex（协调者） | L1-P2-wire-r1用满31轮（input148811/output15685/cacheRead3559424），WIP保留。协调者亲验SSE结构化修复：test-agent-db **39 passed**；变异换回00aca15旧main时新HTTP/PG测试 **4 failed/1 passed**，finally原样恢复；清理import/格式后最终树lint365、test **2727 passed/748 skipped**、agent-db **39 passed**均exit0。模型/L2端口仍测试注入，未声称真实三层。新增进度/验收，保存当前协调文档后准备独立DS定点审，未发布。 |
+
+| 2026-10-26 | Codex（协调者） | E0b T5 r3用尽26轮（input156589/output18407/cacheRead3179520），亲跑 **2 failed/30 passed**。单跑run_corpus正例 **1 passed/3.82s**，定位固定G4 request_id跨测试命中缓存（而不是L2故障）；黄测实际注册文本仍漏“我的卡”目标，FORM_REQUIRED属正确防御。已将仅两处夹具修法写15轮r4，禁止清库/放宽规则。已有真实G2→G4 ALLOW冻结正例通过且无L3变化，runner默认G4-only已接。 |
+
+| 2026-10-26 | Codex（协调者） | E0b T5夹具已修至真实G4黄级，但亲验仍1 failed/31 passed；临时诊断并finally还原后确认生产503“approval HMAC is not configured”。定点查明G4与STATE_CHANGED创建审批使用approval.service全局_config，GatewayRuntime只安装app.state实例key；既有w3b夹具global configure掩盖生产缺陷。按D0实例隔离要求建P2-approval-runtime独立分支，任务只接显式实例配置+两生产调用点+真PG回归，不给E0 harness加global来假绿。T5其他ALLOW/run_corpus无G8断言已通过，整体仍不标完成。L1 SSE修复已推PR #33（head e0f59e2，CI两事件运行中），try-agent T1独审APPROVE/45协议通过/全量2772+743skip/lint367/contracts通过，待发布。 |
+
+| 2026-10-26 | Codex（协调者） | PR #33精确head e0f59e2723f805aef3d5e84e72ba5ec52fb6e1ae 的push40341396072与PR40341464740两事件四job均completed success，按长期授权match-head merge为62e83ac61d2167632500115b1f956571b189375b。root先备份/private/tmp/sbg-coordinator-pr33-preserve-20261026并stash保留，再ff；逐行确认远端AGENTS无丢失、恢复新增任务书，stash未drop。干净main-baseline切62e83ac亲跑组合exit0：test2727/748skip；agent-db39；replay47；verify70；cards19；contracts PASS，长期栈未重启。Try-agent T1独审APPROVE后PR #34已开（93b7737，45协议/2772全量+743skip/lint367/contracts亲验），仍只到确认面板、不宣称P2闭合。进度页同步PR33与实测数字、E0恢复进行中/try-agent评审中；线上核对另记。 |
+| 2026-10-26 | Claude（新主会话，桌面 App） | 用户关闭 Codex 进程后交回协调。只读接续旧主会话 89da7fbc 与 Codex 之后现场：main 62e83ac；PR #34（try-agent T1）已于 15:05Z 合并（root 日志此前只记到开 PR）；PR #32 文档仍 OPEN；P2-approval-runtime 有未提交 WIP（G4/屏障改用实例审批密钥），E0b 在 74f4c03（T6 证据归档）。关闭终端里误开的旧会话副本（c1）。按单任务、全新会话派发：P2-approval-runtime-r2（impl，30 轮，沿用 Codex 已写 r2 任务书）与 R-E0b-T6-r1（只读独审，20 轮），两 worktree 文件不重叠。 |
+| 2026-10-27 | Claude（新主会话） | P2 审批实例密钥：r2 worker 31 轮未提交，r3 续做提交 cb60354（7 测试），协调者红绿核验（旧生产文件 3 failed）；独审 R-P2-approval-r1 APPROVE，2 条 P2 由 r4 补测试（用满轮数未提交，协调者核验 7 passed 后代为提交 f232066）。合入 main 62e83ac 后全部 exit 0（lint 369；test 2772/755 skip；gateway 2018/657；gateway-db 17；shared 79；wave1 231；w1 1688；w3a 45；w3b 40；w4b1 57；w4b2b 58；w4b2c 56；w4c 38；agent-db 39；contracts；actionlint）。E0b T6：独审 REQUEST_CHANGES（4 P1：tuple/中段 Bearer/内嵌 JWT 绕过、g4_decision 丢弃）→ 修复轮 57a08e2（56 passed，旧 compute.py 下 9 failed）→ 复审 r2 用满轮数无报告、r3 骨架优先后 APPROVE。 |
 
 ## 5. 下一步待办（按顺序）
 
