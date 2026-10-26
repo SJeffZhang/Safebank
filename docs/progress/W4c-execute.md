@@ -222,4 +222,4 @@
   1. **撤销竞态测试死锁**：G8 读事务（含复演快照）持有 session 行锁，测试在快照钩子里同步等待另一连接的 `UPDATE sessions` → 互等。改为钩子内只启动该 UPDATE（后台任务，排队在行锁上），G8 结束读事务后它先提交，G8 写事务复核必须看到撤销。连跑 3 次稳定通过。变异：去掉写事务内的 revoked 复核 → 该测试失败。
   2. F 调用方测试误用 FastAPI 对象取私钥；`_seed_auth` 用固定 WALL 时间，已重锚到 now。
   3. **origin 检查顺序缺陷**：终态重放在 origin 检查之前返回，F 调用方可读取已执行的 agent 计划结果（同客户内）。已把 origin 检查移到加载计划后第一步，新增 `test_frontend_caller_cannot_read_executed_agent_plan`（去掉前移即失败）。
-- 复跑：test-w4c 28 passed（含 alarm 防挂死）；lint、test、test-gateway、wave1-state、w4b2b、w3b 均通过（汇总见提交前输出）。
+- 复跑：test-w4c 29 passed（含 alarm 防挂死）；lint 353；test 2702/734 skip；test-gateway 2018/641 skip；wave1-state 231；w4b2b 58；w3b 33。
