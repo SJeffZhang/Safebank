@@ -82,23 +82,28 @@ def test_g8_confirmed_executes(app_config, obligations_db):
 def test_g8_confirmed_view_changed_is_not_executed(app_config, obligations_db):
     """G8 rejects execution when the real L3 state has changed since evaluation.
 
-    Freezing ``crd_zs_1`` before calling G8 makes the re-evaluation produce a
-    different result, so G8 must return 409 ``STATE_CHANGED`` and the plan must
-    not be executed.
+    Lowering ``crd_zs_1``'s current single limit from 500000 to 300000 before
+    calling G8 keeps the plan a yellow tightening (still REQUIRE_APPROVAL) but
+    changes what the panel shows (the "before" value), so the re-evaluated
+    view_hash differs from the confirmed one: G8 must return 409
+    ``STATE_CHANGED`` and must not execute. This isolates the view_hash guard;
+    freezing the card would not, since the panel does not show card status.
     """
 
     async def run():
         async with approval_plan_ctx(app_config, obligations_db) as ctx:
-            # Mutate real L3: freeze the card so re-evaluation diverges.
+            # Mutate real L3: same action and risk, different visible "before".
             async with ctx.l3_admin.begin() as conn:
-                await conn.execute(text("UPDATE cards SET status = 'FROZEN' WHERE id = 'crd_zs_1'"))
+                await conn.execute(
+                    text("UPDATE cards SET single_limit_cents = 300000 WHERE id = 'crd_zs_1'")
+                )
 
             url = EXECUTE_PATH.format(plan_id=ctx.plan_id)
             body = {"request_id": "req_w4c_conf_changed"}
 
             resp = await ctx.test_app.client.post(url, json=body, headers=ctx.headers)
             assert resp.status_code == 409, f"G8 returned {resp.status_code}: {resp.text}"
-            error = resp.json()
+            error = resp.json()["error"]
             assert error["code"] == "STATE_CHANGED", f"error code={error.get('code')}"
 
             # Real L3: plan_executions count == 0.
@@ -110,14 +115,14 @@ def test_g8_confirmed_view_changed_is_not_executed(app_config, obligations_db):
                 )
             assert count == 0, f"L3 plan_executions count={count}, expected 0"
 
-            # Card limit still 500000 (unchanged).
+            # Card limit untouched by G8 (still the externally set 300000).
             async with ctx.l3_admin.connect() as conn:
                 row = (
                     await conn.execute(
                         select(m.cards.c.single_limit_cents).where(m.cards.c.id == "crd_zs_1")
                     )
                 ).one()
-            assert row[0] == 500000, f"card single_limit_cents={row[0]}, expected 500000"
+            assert row[0] == 300000, f"card single_limit_cents={row[0]}, expected 300000"
 
     asyncio.run(run())
 

@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .. import state
 from .. import tables as t
+from ..approval.planview import build_view
 from ..audit.chain import append as audit_append
 from ..errors import GatewayError
 from ..evaluation.repo import append_evaluation
@@ -33,7 +34,7 @@ from ..execution.replay import replay_with_context
 from ..l3.client import L3BusinessError, L3NotDelivered, L3OutcomeUnknown
 from ..locks import customer_lock
 from ..pipeline.context import EvalContext
-from ..schemas.enums import ExecutionJobStatus, PlanStatus, ServiceKind
+from ..schemas.enums import ApprovalStatus, ExecutionJobStatus, PlanStatus, ServiceKind
 from ..schemas.execution import ExecutionAccepted
 from ..utterance.service import new_id
 
@@ -145,6 +146,37 @@ def _build_evidence(
     )
 
 
+def _build_confirmed_evidence(
+    *,
+    plan: dict[str, Any],
+    evaluation_id: str,
+    risk: str,
+    session: dict[str, Any],
+    approval: dict[str, Any],
+    replayed_view_hash: str,
+) -> InteractiveEvidence:
+    """Build InteractiveEvidence for the CONFIRMED path.
+
+    confirmed_view_hash and final_view_hash are equal because we already
+    validated ``replayed_view_hash == approval["view_hash"]`` before calling.
+    """
+    return InteractiveEvidence(
+        type="INTERACTIVE",
+        origin=plan["origin"],
+        scope_ids=tuple(plan["scope_ids"]),
+        utterance_ids=tuple(plan["utterance_ids"]),
+        evaluation_id=evaluation_id,
+        approved_evaluation_id=approval["evaluation_id"],
+        plan_hash=plan["plan_hash"],
+        approval_id=approval["id"],
+        confirmed_view_hash=approval["view_hash"],
+        final_view_hash=replayed_view_hash,
+        risk=risk,
+        confirmed_at_wall=approval["confirmed_at_wall"],
+        authorization_epoch=session["authorization_epoch"],
+    )
+
+
 # ── G8 POST /plans/{plan_id}/execute ─────────────────────────────────────────
 
 
@@ -190,13 +222,15 @@ async def execute_plan(plan_id: str, request: Request):
             if job is not None and job["result"] is not None:
                 return job["result"]
 
-        # only EVALUATED ALLOW is implemented now
-        if plan["status"] != PlanStatus.EVALUATED.value:
+        # EVALUATED (ALLOW) or CONFIRMED
+        if plan["status"] not in {PlanStatus.EVALUATED.value, PlanStatus.CONFIRMED.value}:
             raise GatewayError(
                 Code.DEPENDENCY_UNAVAILABLE,
                 503,
-                "only EVALUATED plans are executable in this component",
+                "only EVALUATED or CONFIRMED plans are executable in this component",
             )
+
+        is_confirmed = plan["status"] == PlanStatus.CONFIRMED.value
 
         if caller.kind is not ServiceKind.A or plan["origin"] != "agent":
             raise GatewayError(Code.OWNERSHIP_MISMATCH, 403)
@@ -216,13 +250,38 @@ async def execute_plan(plan_id: str, request: Request):
         if eval_row is None:
             raise GatewayError(Code.STATE_CHANGED, 409, "no evaluation for plan")
 
-        decision_value = eval_row["decision"].get("decision")
-        if decision_value != "ALLOW":
-            raise GatewayError(
-                Code.DEPENDENCY_UNAVAILABLE,
-                503,
-                "only ALLOW decisions are executable in this component",
+        if is_confirmed:
+            # Load the latest CONFIRMED approval for this plan
+            approval = (
+                (
+                    await conn.execute(
+                        select(t.approvals)
+                        .where(
+                            t.approvals.c.plan_id == plan_id,
+                            t.approvals.c.status == ApprovalStatus.CONFIRMED.value,
+                        )
+                        .order_by(t.approvals.c.confirmed_at_wall.desc())
+                        .limit(1)
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
             )
+            if approval is None:
+                raise GatewayError(Code.STATE_CHANGED, 409, "no CONFIRMED approval for plan")
+            if approval["customer_id"] != caller.customer_id:
+                raise GatewayError(Code.OWNERSHIP_MISMATCH, 409)
+            if approval["expires_at_wall"] <= now:
+                raise GatewayError(Code.STATE_CHANGED, 409, "approval has expired")
+        else:
+            decision_value = eval_row["decision"].get("decision")
+            if decision_value != "ALLOW":
+                raise GatewayError(
+                    Code.DEPENDENCY_UNAVAILABLE,
+                    503,
+                    "only ALLOW decisions are executable in this component",
+                )
 
         # ── plan_draft ───────────────────────────────────────────────────
 
@@ -237,6 +296,8 @@ async def execute_plan(plan_id: str, request: Request):
         # ── deadline ─────────────────────────────────────────────────────
 
         deadline_cap_wall = await _compute_deadline_cap(conn, plan["utterance_ids"])
+        if is_confirmed and approval["expires_at_wall"] < deadline_cap_wall:
+            deadline_cap_wall = approval["expires_at_wall"]
 
         # ── replay ───────────────────────────────────────────────────────
 
@@ -262,9 +323,27 @@ async def execute_plan(plan_id: str, request: Request):
 
         new_decision, fresh = await replay_with_context(ctx)
 
-        # ALLOW equivalence: decision must still be ALLOW
-        if new_decision.decision.value != "ALLOW":
-            raise GatewayError(Code.STATE_CHANGED, 409, "replay decision no longer ALLOW")
+        # Replay decision validation
+        if is_confirmed:
+            if new_decision.decision.value != "REQUIRE_APPROVAL":
+                raise GatewayError(
+                    Code.STATE_CHANGED, 409, "replay decision no longer REQUIRE_APPROVAL"
+                )
+            # Build view and verify view_hash matches confirmed approval
+            fresh.decision = fresh.decision.model_copy(
+                update={"evaluation_id": approval["evaluation_id"]}
+            )
+            try:
+                view, replayed_view_hash = build_view(fresh)
+            except ValueError as exc:
+                raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503) from exc
+            if replayed_view_hash != approval["view_hash"]:
+                raise GatewayError(
+                    Code.STATE_CHANGED, 409, "replay view_hash differs from confirmed view_hash"
+                )
+        else:
+            if new_decision.decision.value != "ALLOW":
+                raise GatewayError(Code.STATE_CHANGED, 409, "replay decision no longer ALLOW")
 
         # plan_hash equivalence: same expression as G4 (plans.py:289-291)
         replayed_hash = digest(
@@ -284,12 +363,22 @@ async def execute_plan(plan_id: str, request: Request):
         new_risk = new_decision.risk.value
         now_wall = _exec_now()
 
-        evidence = _build_evidence(
-            plan=plan,
-            evaluation_id=new_eval_id,
-            risk=new_risk,
-            session=session,
-        )
+        if is_confirmed:
+            evidence = _build_confirmed_evidence(
+                plan=plan,
+                evaluation_id=new_eval_id,
+                risk=new_risk,
+                session=session,
+                approval=approval,
+                replayed_view_hash=replayed_view_hash,
+            )
+        else:
+            evidence = _build_evidence(
+                plan=plan,
+                evaluation_id=new_eval_id,
+                risk=new_risk,
+                session=session,
+            )
 
         async with conn.begin():
             await append_evaluation(
@@ -307,15 +396,31 @@ async def execute_plan(plan_id: str, request: Request):
                 equivalent_to=eval_row["id"],
                 created_at_wall=now_wall,
             )
-            # The plan must leave EVALUATED before its live job exists:
+            # The plan must leave its current status before its live job exists:
             # _protect_transition refuses plan transitions while a job is live.
-            await state.transition(
-                conn,
-                t.plans,
-                id_=plan_id,
-                from_statuses=[PlanStatus.EVALUATED.value],
-                to=PlanStatus.EXECUTING.value,
-            )
+            if is_confirmed:
+                await state.transition(
+                    conn,
+                    t.plans,
+                    id_=plan_id,
+                    from_statuses=[PlanStatus.CONFIRMED.value],
+                    to=PlanStatus.EXECUTING.value,
+                )
+                await state.transition(
+                    conn,
+                    t.approvals,
+                    id_=approval["id"],
+                    from_statuses=[ApprovalStatus.CONFIRMED.value],
+                    to=ApprovalStatus.USED.value,
+                )
+            else:
+                await state.transition(
+                    conn,
+                    t.plans,
+                    id_=plan_id,
+                    from_statuses=[PlanStatus.EVALUATED.value],
+                    to=PlanStatus.EXECUTING.value,
+                )
             # Claim every authorizing scope in this same transaction (PRD §7.4):
             # scope_id is the primary key, so a scope can feed only one plan.
             for scope_id in plan["scope_ids"]:

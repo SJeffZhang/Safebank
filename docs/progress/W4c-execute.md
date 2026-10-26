@@ -127,3 +127,13 @@
   2. `test_g8_confirmed_view_changed_is_not_executed`：调 G8 前把 crd_zs_1 freeze → 409 STATE_CHANGED + L3 plan_executions count==0 + card limit 仍 500000。
   3. `test_g8_confirmed_rejects_approval_not_confirmed`：调 G8 前把 approvals status 改为 REJECTED → 409 + L3 plan_executions count==0。
 - 运行：**3 failed / 12 passed**（3 条全部 503 DEPENDENCY_UNAVAILABLE，预期）；lint 349 files 通过。
+
+## T3c + 协调者收尾（2026-10-26）：G8 CONFIRMED 路径转绿
+
+- worker W4c-T3c-r1 实现了 CONFIRMED 分支（取最新 CONFIRMED 审批并加锁、过期/归属校验、复演须仍为 REQUIRE_APPROVAL 且 build_view 的 view_hash 逐字节等于审批、证据带审批字段、cap 取原话与审批有效期最小值、plan CONFIRMED→EXECUTING 与审批 CONFIRMED→USED 同事务），用满 51 轮未提交。
+- 协调者收尾：
+  1. 夹具时钟：G4 以 w3b 固定时钟（2026-10-24）生成审批有效期，真实 L3 按真实时间判 EXECUTION_DEADLINE_EXPIRED。新增 `_use_real_clock`（app.state.wall_now 与 approval_service 的时钟改为真实时间）与 `_anchor_to_real_time`（把该会话的 sessions/auth_sessions/utterances 时间重锚到 now），替换原先只改原话有效期的做法；read_records 的 observed_at 保持与 L3 一致（重锚它会导致 UNKNOWN_SENSITIVE_ARG，已验证并撤回）。
+  2. 红测前提修正：原测试「执行前把卡冻结」不改变面板内容，且 L3 允许冻结卡改限额，执行是正确行为。改为把当前单笔限额由 500000 改为 300000：仍是黄级收紧（仍 REQUIRE_APPROVAL），但面板的「改前值」变化，view_hash 必然不同。另修错误体取值（`resp.json()["error"]["code"]`）。中途试过 80000（变为放宽），会先被「复演决策已非 REQUIRE_APPROVAL」挡住，无法单独证明 view_hash 守卫，故弃用。
+- 变异核验：去掉 view_hash 比对 → test_g8_confirmed 1 failed；审批不迁到 USED → 1 failed；去掉审批状态过滤时由后续 CONFIRMED→USED 迁移兜底仍 409 且 L3 未执行（多层防护，接受）；均还原。
+- 复跑全部 exit 0：lint 349；test 2702/720 skip；test-gateway 2018/627 skip；gateway-db 17；wave1-state 231；w1 1688；w3b 33；w4b1 57；w4b2b 58；w4b2c 56；**test-w4c 15**；shared-runtime 79；contracts PASS。
+- 未覆盖（后续）：复演不等价时持久化新评估/新审批并在 details.decision 返回（T4）；STATE_CHANGED 屏障（T4）；UNKNOWN 对账（T5）；并发/撤销（T6）；G5/重放（T7）。

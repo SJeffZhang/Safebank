@@ -12,16 +12,19 @@ import asyncio
 import json
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.pool import NullPool
 
 from services.gateway.app import locks
+from services.gateway.app.approval import service as approval_service
 from services.gateway.app.auth.tokens import APP_AUDIENCE, sign_jwt
 from services.gateway.app.db import engine as gw_engine
 from tests.gateway.w3a.db.test_real_preflight import _serve_l3
 from tests.gateway.w3b.db.conftest import (
+    HMAC_KEY,
     SERVICE_TOKEN,
     _seed_auth,
     _seed_session,
@@ -42,6 +45,33 @@ class AllowPlan:
     app: Any
     response: dict
     db_url: str
+
+
+def _real_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _use_real_clock(fastapi_app) -> None:
+    """Run the w3b-built gateway on real time.
+
+    The w3b fixture pins every gateway clock to a fixed WALL, but the real L3
+    validates execution deadlines against real time, so authorization windows
+    derived from WALL (utterances, approvals) arrive at L3 already expired.
+    """
+    fastapi_app.state.wall_now = _real_now
+    approval_service.configure(approval_hmac_key=HMAC_KEY, profile="B2", wall_now=_real_now)
+
+
+async def _anchor_to_real_time(conn, *, sid: str) -> None:
+    """Re-anchor the WALL-based seed rows of this session to real now."""
+    for sql in (
+        "UPDATE sessions SET created_at_wall = now() - interval '5 minutes' WHERE id = :sid",
+        "UPDATE auth_sessions SET created_at_wall = now() - interval '5 minutes', "
+        "expires_at_wall = now() + interval '60 minutes'",
+        "UPDATE utterances SET created_at_wall = now() - interval '1 minute', "
+        "expires_at_wall = now() + interval '30 minutes' WHERE sid = :sid",
+    ):
+        await conn.execute(text(sql), {"sid": sid})
 
 
 @dataclass
@@ -124,6 +154,7 @@ async def allow_plan_ctx(app_config, obligations_db):
     admin, runtime, l3 = await _serve_l3(obligations_db)
     fastapi_app.state.l3 = l3
     locks.configure(fastapi_app.state.db, max_executions=4)
+    _use_real_clock(fastapi_app)
 
     sid = "ses_w4c_allow"
     jti = "jti-w4c-allow"
@@ -137,16 +168,7 @@ async def allow_plan_ctx(app_config, obligations_db):
             conn, utt_id=utt_id, sid=sid, text="冻结我的卡", scope=_freeze_scope()
         )
         rid_card = await _seed_card_read(conn, rid="rec_w4c_card", sid=sid)
-        # The w3b gateway clock is pinned to a fixed WALL, but the real L3 checks
-        # execution deadlines against real time; anchor the authorization window
-        # (deadline_cap_wall source) to real now so G8 is not born expired.
-        await conn.execute(
-            text(
-                "UPDATE utterances SET expires_at_wall = now() + interval '30 minutes' "
-                "WHERE id = :id"
-            ),
-            {"id": utt_id},
-        )
+        await _anchor_to_real_time(conn, sid=sid)
     await db.dispose()
 
     pd = make_plan_draft_dict(
@@ -265,6 +287,7 @@ async def approval_plan_ctx(app_config, obligations_db):
     admin, runtime, l3 = await _serve_l3(obligations_db)
     fastapi_app.state.l3 = l3
     locks.configure(fastapi_app.state.db, max_executions=4)
+    _use_real_clock(fastapi_app)
 
     sid = "ses_w4c_approve"
     jti = "jti-w4c-approve"
@@ -278,13 +301,7 @@ async def approval_plan_ctx(app_config, obligations_db):
         await _seed_auth(conn, jti="jti-w4c-approve-f", customer="cus_zs")
         await _seed_utterance(conn, utt_id=utt_id, sid=sid, text=utt_text, scope=_tighten_scope())
         rid_card = await _seed_card_read(conn, rid="rec_w4c_approve", sid=sid)
-        await conn.execute(
-            text(
-                "UPDATE utterances SET expires_at_wall = now() + interval '30 minutes' "
-                "WHERE id = :id"
-            ),
-            {"id": utt_id},
-        )
+        await _anchor_to_real_time(conn, sid=sid)
     await db.dispose()
 
     step = _limit_tighten_step(rid_card, utt_id)
