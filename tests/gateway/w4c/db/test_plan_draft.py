@@ -53,13 +53,19 @@ def test_upgrade_0002_to_0003_keeps_rows():
         async with db.begin() as conn:
             await conn.execute(
                 text(
+                    "INSERT INTO sessions(id,customer_id,created_at_wall) "
+                    "VALUES('old_s','old_c',now())"
+                )
+            )
+            await conn.execute(
+                text(
                     "INSERT INTO "
                     "plans(id,customer_id,sid,origin,request_id,request_hash,plan_hash,"
                     "steps_hash,resolved_steps,status,created_at_wall) "
                     "VALUES('old_p','old_c','old_s','agent','old_r','h','h','h','[]',"
                     "'EXECUTING',now())"
                 )
-            ),
+            )
         await db.dispose()
 
         env = {
