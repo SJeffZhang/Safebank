@@ -4,6 +4,9 @@
 >
 > 接手者先读本文件，再读 `AGENTS.md`（§2 约束、§4 最新日志、§8.6 进度网站、§8.7 派发规则）。本机就是协调机；worktree、Docker 卷、`.secrets` 软链都在原位，**不要重建或删除**。
 
+
+> **Codex 2026-10-26 现场复核**：本文剩余步骤已由前任继续完成至 PR #31 合并 `00aca15`、合并后组合回归、长期库 `0003_plan_draft` 与进度页发布。本次另亲跑 W4c 38 passed，核实精确 head 的 push/PR 四 CI、六服务 healthy及两卷 CreatedAt 未变。当前状态见 AGENTS §3，证据见 `docs/acceptance/L2-W4c-execute.md`「合并后交接核对」；不要按本历史表重复修复或合并。E0b/live/try-agent 继续暂停。
+
 ## 0. 用户最新指令（优先级最高）
 
 1. **全力解决 W4c**（用户原话：「全力解决w4c」）。

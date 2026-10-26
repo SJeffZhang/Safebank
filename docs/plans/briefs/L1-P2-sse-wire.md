@@ -1,0 +1,7 @@
+# L1 P2小修：真实SSE values必须是结构化JSON
+你是DeepSeek V4 Pro实现worker，新会话30轮，不用子agent。用户要求先做E0/try-agent测试、发现问题先修L1再验P2。现已实证：services/agent/app/main.py:460-465对final_state.values调用json.dumps(default=str)，Decision Pydantic变成repr字符串；try-agent无法可靠读决策。只修这一个缺陷，当前不处理其他L1潜在问题。
+白名单3文件：services/agent/app/main.py；tests/agent/test_sse_wire.py（新建）；docs/progress/L1-P2-sse-wire.md。其余生产/PRD/contracts/Makefile/依赖冻结。
+最多读4文件：main.py相关HTTP/SSE范围；graph/state.py模型；tests/agent/test_service.py既有fakeports+PG/HTTP fixture模式；tests/agent/conftest.py agent_pg。第一步前5轮建test骨架。
+红测必须走真实app_factory HTTP POST /threads/{sid}/runs/stream、真实tmpfs agent_pg checkpoint（AGENT_DB_TESTS=1），测试注入Ports仅代LLM/L2，不声称真实P2。用真实Decision和ExecutionResult对象进入state，解析实际SSE values事件，断言decision为dict、字段decision为ALLOW/REQUIRE_APPROVAL等真实枚举值、execution若有为dict且status保持；金额整数分，Decimal份额若出现保持精确字符串，datetime为ISO；不得出现Pydantic repr。覆盖中断与普通完成至少2条，并保留updates.__interrupt__当前扁平格式；GET state与SSE同语义。使用已存在测试的JWT/key fixture和Ports构建，不打印secret，不自己猜模型构造字段。
+实现用已有标准编码器（例如FastAPI jsonable_encoder，Decimal明确字符串），不要把任意对象str化作为默认，不改状态字段/授权/路由。既有Decision/ExecutionResult字段应真实model_dump(mode=json)语义。不得把rawtoken/服务配置加入state。响应不能捏造执行成功。
+退出每条单独：AGENT_DB_TESTS=1 .venv/bin/pytest tests/agent/test_sse_wire.py -q --tb=short（零skip）；make test-agent-db；ruff check/format --check仅改文件。全部加合适alarm300，输出只看汇总。临时PG许可，不碰长期栈up/down/卷/seed。先红后绿，必要变异还原旧default=str应失败。完成本地提交3文件并结束，回复SHA/实际红绿/未覆盖。禁.env/.secrets/live/gitpush。
