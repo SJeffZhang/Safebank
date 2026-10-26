@@ -178,7 +178,7 @@ class GatherAdapter:
 
         if "get_accounts" not in read_tools and "get_accounts" not in tools_attempted:
             result.append(
-                self._execute_supplemental("get_accounts", {}, "src_gather_accounts")
+                self._execute_supplemental("get_accounts", {"history_days": 0}, "src_gather_accounts")
             )
 
         if (
@@ -189,7 +189,7 @@ class GatherAdapter:
             and self._utterances_mention_payee(state)
         ):
             result.append(
-                self._execute_supplemental("list_payees", {}, "src_gather_payees")
+                self._execute_supplemental("list_payees", {"query": None}, "src_gather_payees")
             )
 
         return result
