@@ -114,3 +114,8 @@
 - 变异核验：去掉 claims 插入 → test_g8_allow 3 failed；去掉 EXECUTED 幂等返回 → 1 failed；UNKNOWN 分支改回 503 → test_g8_unknown 1 failed；均还原。
 - 协调者复跑全部 exit 0：lint 347；test 2702/716 skip；test-gateway 2018/623 skip；gateway-db 17；wave1-state 231；w1 1688；w3b 33；w4b1 57；w4b2b 58；w4b2c 56；**test-w4c 11**；shared-runtime 79；contracts PASS；actionlint。
 - 已知未覆盖（后续任务）：复演不等价导致 409 的路径尚无测试（T3/T4 会构造状态变化）；CONFIRMED（T3）；STATE_CHANGED 屏障（T4）；UNKNOWN 对账（T5）；并发/迟到/撤销（T6）；G5 与 request_id 终态重放（T7）。
+
+## T3a（2026-10-26）：已确认审批夹具
+
+- `approval_plan_ctx`（support.py）：真实 L3 + 真实 G4 得到收紧卡限额的 REQUIRE_APPROVAL/YELLOW 计划，再经真实 G9 取面板 view_hash、G6 确认；test_approval_fixture.py 断言 approvals 与 plans 均为 CONFIRMED、L3 为真实客户端。
+- worker W4c-T3a-r1 用满 51 轮未提交（快照 refs/wip/W4c-T3a-r1），卡在 G9 KeyError。协调者定位：夹具未校验 G9 状态码（实为 403）；w3b 的 app_jwt 只有 `app` scope，G9/G6 需要 `approve`（改为按 w4b2b 写法直接 sign_jwt）；该 app 令牌的 jti 未种入 auth_sessions（401）。修后 1 passed；make test-w4c 12 passed、lint 348。
