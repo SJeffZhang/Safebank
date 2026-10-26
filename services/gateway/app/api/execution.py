@@ -412,7 +412,7 @@ async def _handle_state_changed(
     fence_prepare_body = Prepare(
         customer_id=caller_customer_id,
         plan_id=plan_id,
-        attempt=1,
+        attempt=exec_identity.attempt,
         plan_hash=plan["plan_hash"],
         steps=plan_draft.steps,
         deadline_wall=state.FENCE_AT,
@@ -496,7 +496,7 @@ async def _handle_state_changed(
             content=ExecutionAccepted(plan_id=plan_id).model_dump(mode="json"),
         )
 
-    if fence_result.status != "PREPARED" or fence_result.attempt != 1:
+    if fence_result.status != "PREPARED" or fence_result.attempt != exec_identity.attempt:
         await conn.rollback()
         async with conn.begin():
             await state.mark_execution_unknown(
@@ -646,6 +646,8 @@ async def _handle_resume(
     caller: Any,
     request: Request,
     job_attempt: int,
+    request_id: str,
+    request_hash: str,
 ) -> JSONResponse:
     """ADR-008: resume execution after STATE_CHANGED fence.
 
@@ -864,6 +866,40 @@ async def _handle_resume(
     try:
         exec_resp = await l3.execute(execute_body.model_dump(mode="json"))
     except L3BusinessError as exc:
+        if exc.code == "STATE_CHANGED":
+            # ADR-008 fence from resume path.
+            # Write non-terminal dedup so the same request_id can't be reused.
+            await conn.rollback()
+            async with conn.begin():
+                await conn.execute(
+                    pg_insert(t.request_dedup)
+                    .values(
+                        customer_id=caller_customer_id,
+                        route=_execute_route(plan_id),
+                        request_id=request_id,
+                        request_hash=request_hash,
+                        status_code=409,
+                        response={"non_terminal": True},
+                        created_at_wall=text("now()"),
+                    )
+                    .on_conflict_do_nothing()
+                )
+            return await _handle_state_changed(
+                conn=conn,
+                plan_id=plan_id,
+                caller_customer_id=caller_customer_id,
+                plan=plan,
+                eval_row=eval_row,
+                exec_identity=exec_identity,
+                plan_draft=plan_draft,
+                evidence=evidence,
+                wall_now=wall_now,
+                l3=l3,
+                deadline_cap_wall=deadline_cap_wall,
+                sid=sid,
+                caller=caller,
+                request=request,
+            )
         return await _unknown(f"execute(resume): L3BusinessError {exc.code}")
     except (L3NotDelivered, L3OutcomeUnknown) as exc:
         return await _unknown(f"execute(resume): {type(exc).__name__}")
@@ -1253,6 +1289,8 @@ async def execute_plan(plan_id: str, request: Request):
                     caller=caller,
                     request=request,
                     job_attempt=existing_job["l3_attempt"],
+                    request_id=body["request_id"],
+                    request_hash=request_hash,
                 )
             if existing_job["status"] == "UNKNOWN":
                 return await _handle_reconcile(

@@ -6,7 +6,7 @@ All tests use real L3 via :func:`allow_plan_ctx` (ALLOW freeze_card plan).
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app import models as m
 from sqlalchemy import func, select, text
@@ -16,12 +16,13 @@ from services.gateway.app import tables as t
 from services.gateway.app.db import engine
 from tests.gateway.w4c.db.support import allow_plan_ctx
 
-FENCE_AT = datetime(1970, 1, 1, tzinfo=timezone.utc)
+FENCE_AT = datetime(1970, 1, 1, tzinfo=UTC)
 
 EXECUTE_PATH = "/plans/{plan_id}/execute"
 
 
 # ── P1-1 + P1-2: resume STATE_CHANGED enters fence again ──────────────────────
+
 
 def test_resume_state_changed_enters_fence_again(app_config, obligations_db):
     """Resume execute hits STATE_CHANGED → _handle_state_changed with correct attempt.
@@ -45,9 +46,7 @@ def test_resume_state_changed_enters_fence_again(app_config, obligations_db):
                 if execute_count in (1, 2):
                     # Bump clock before execute so L3 rejects with STATE_CHANGED.
                     async with ctx.l3_admin.begin() as conn:
-                        await conn.execute(
-                            text("UPDATE clock SET version = version + 1")
-                        )
+                        await conn.execute(text("UPDATE clock SET version = version + 1"))
                 return await original_execute(body)
 
             l3.execute = bump_then_execute
@@ -84,9 +83,7 @@ def test_resume_state_changed_enters_fence_again(app_config, obligations_db):
                     .mappings()
                     .one()
                 )
-                assert intent["attempt"] == 2, (
-                    f"L3 intent attempt={intent['attempt']}, expected 2"
-                )
+                assert intent["attempt"] == 2, f"L3 intent attempt={intent['attempt']}, expected 2"
                 # FENCE_AT is 1970-01-01 00:00:00+00:00 (epoch zero).
                 assert intent["deadline_wall"] == FENCE_AT, (
                     f"L3 intent deadline={intent['deadline_wall']}, expected 1970-01-01Z"
@@ -137,9 +134,7 @@ def test_resume_state_changed_enters_fence_again(app_config, obligations_db):
                     .mappings()
                     .one()
                 )
-                assert intent["attempt"] == 3, (
-                    f"L3 intent attempt={intent['attempt']}, expected 3"
-                )
+                assert intent["attempt"] == 3, f"L3 intent attempt={intent['attempt']}, expected 3"
                 executed = await conn.scalar(
                     select(func.count())
                     .select_from(m.plan_executions)
@@ -154,6 +149,7 @@ def test_resume_state_changed_enters_fence_again(app_config, obligations_db):
 
 
 # ── P2-1: PAUSED + DENIED/REPLAN plan is not resumed ─────────────────────────
+
 
 def test_paused_replan_plan_is_not_resumed(app_config, obligations_db):
     """PAUSED job with REPLAN plan status returns 409 without entering resume.
@@ -202,9 +198,7 @@ def test_paused_replan_plan_is_not_resumed(app_config, obligations_db):
             resp2 = await ctx.test_app.client.post(
                 url, json={"request_id": "req_w4c_fix_rp2"}, headers=ctx.headers
             )
-            assert resp2.status_code == 409, (
-                f"r2 returned {resp2.status_code}: {resp2.text}"
-            )
+            assert resp2.status_code == 409, f"r2 returned {resp2.status_code}: {resp2.text}"
             err2 = resp2.json()["error"]
             assert err2["code"] == "STATE_CHANGED", f"r2 code={err2.get('code')}"
             assert err2["details"]["decision"]["decision"] == "REPLAN", (
@@ -218,6 +212,7 @@ def test_paused_replan_plan_is_not_resumed(app_config, obligations_db):
 
 
 # ── P2-3: reconciliation writes terminal dedup for current request ────────────
+
 
 def test_reconcile_writes_terminal_dedup_for_current_request(app_config, obligations_db):
     """Reconciliation writes a terminal request_dedup row for the reconciling request.
@@ -237,6 +232,7 @@ def test_reconcile_writes_terminal_dedup_for_current_request(app_config, obligat
             async def execute_then_lost(body):
                 await real_execute(body)  # L3 commits
                 from services.gateway.app.l3.client import L3OutcomeUnknown
+
                 raise L3OutcomeUnknown("reply lost after delivery")
 
             l3.execute = execute_then_lost
