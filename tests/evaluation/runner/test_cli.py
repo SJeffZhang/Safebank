@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+import io
+import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 from unittest import mock
+
+import pytest
 
 PROJECT = Path(__file__).resolve().parent.parent.parent.parent
 
@@ -21,6 +26,165 @@ def _run_cli(args: list[str], **kwargs) -> subprocess.CompletedProcess:
         env=env,
         **kwargs,
     )
+
+
+def _require_docker() -> None:
+    """Skip if Docker is not available."""
+    r = subprocess.run(["docker", "info"], capture_output=True, text=True)
+    if r.returncode != 0:
+        pytest.skip("Docker not available")
+
+
+# ── restored from T7b (c73082f), adapted for self-provisioning CLI ──────────
+
+
+def test_fake_limit_1_creates_output_through_real_g4(tmp_path: Path):
+    """Fake mode with --limit 1 → output from real L3 tmpfs PG and real G4.
+
+    The CLI provisions its own tmpfs PostgreSQL; requires Docker.
+    """
+    _require_docker()
+
+    out = tmp_path / "report"
+    r = _run_cli(
+        ["--llm-mode", "fake", "--limit", "1", "--repeat", "2", "--out", str(out)],
+    )
+    assert r.returncode == 0, f"stderr={r.stderr}\nstdout={r.stdout}"
+
+    assert (out / "metrics.json").is_file()
+    assert (out / "report.md").is_file()
+    assert (out / "cases.jsonl").is_file()
+
+    metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert metrics["totals"]["runs"] == 2  # 1 case x 2 repeats
+
+    cases_lines = (out / "cases.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    assert len(cases_lines) == 2
+
+    # Meta must show l3=real-tmpfs (not "fake").
+    report = (out / "report.md").read_text(encoding="utf-8")
+    assert "real-tmpfs" in report, f"report missing l3=real-tmpfs:\n{report}"
+
+
+def test_anti_spoofing_tweaked_expected_does_not_change_actual(tmp_path: Path):
+    """Tweak a case's expected.decision to DENY; actual must NOT follow it.
+
+    Proves CLI obtains results from real G4, not fabricated from corpus.
+    The CLI provisions its own tmpfs PostgreSQL; requires Docker.
+    """
+    _require_docker()
+
+    from evaluation.runner import cli
+
+    # Find the first non-attack case with turns.
+    cases = cli._load_cases(limit=None, sample_ids=None, filter_pat=None)
+    non_attack = [
+        c for c in cases if not c.get("category", "").startswith("attack_") and c.get("turns")
+    ]
+    assert non_attack, "no non-attack corpus case with turns"
+    first = dict(non_attack[0])
+    original_expected = first.get("expected", {})
+
+    # Build a tweaked version: expected.outcome = "DENY".
+    tweaked = dict(first)
+    tweaked["expected"] = dict(original_expected, outcome="DENY")
+
+    # Write the tweaked case as a single-line JSONL file.
+    tweaked_dir = tmp_path / "corpus"
+    tweaked_dir.mkdir()
+    (tweaked_dir / "tweaked.jsonl").write_text(
+        json.dumps(tweaked, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
+    out = tmp_path / "report"
+    with mock.patch.object(cli, "CORPUS_DIR", tweaked_dir):
+        exit_code = cli.main(["--llm-mode", "fake", "--repeat", "1", "--out", str(out)])
+
+    assert exit_code == 0, f"CLI exit code {exit_code}"
+
+    # Read the actual CaseRun.
+    cases_data = [
+        json.loads(line)
+        for line in (out / "cases.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    ]
+    assert len(cases_data) == 1
+
+    actual_outcome = cases_data[0].get("actual_outcome")
+    # The tweaked expected was DENY. If actual is also DENY AND the original
+    # expected was NOT DENY, the CLI fabricated results from expected.
+    if original_expected.get("outcome") != "DENY" and actual_outcome == "DENY":
+        raise AssertionError(
+            f"actual_outcome={actual_outcome} matches tweaked expected=DENY "
+            f"(original expected={original_expected.get('outcome')}). "
+            f"Results appear fabricated, not from real G4."
+        )
+
+    # Meta must show real-tmpfs.
+    report = (out / "report.md").read_text(encoding="utf-8")
+    assert "real-tmpfs" in report
+
+
+# ── sentinel leak test ──────────────────────────────────────────────────────
+
+
+_SENTINEL = "sk-test-SENTINEL-0123456789"
+
+
+def test_live_402_sentinel_not_leaked_to_output(tmp_path: Path):
+    """DEEPSEEK_API_KEY sentinel must never appear in files, stdout, or stderr.
+
+    Mocks ``make_llm`` to raise (simulating 402) and verifies the error path
+    does not leak the API key.  No Docker needed — all provisioning is mocked.
+    """
+    from contextlib import asynccontextmanager
+
+    from evaluation.runner import cli
+
+    out = tmp_path / "report"
+
+    async def _fake_run_corpus(*a, **kw):
+        from evaluation.runner.loop import StopRun
+
+        raise StopRun("402 Payment Required — test", [])
+
+    @asynccontextmanager
+    async def _fake_harness(*a, **kw):
+        yield object()
+
+    args = cli._build_arg_parser().parse_args(
+        ["--llm-mode", "live", "--limit", "1", "--repeat", "1", "--out", str(out)]
+    )
+    args.limit = 5  # emulate main()
+
+    # Capture stderr written by _run_eval's print(…, file=sys.stderr).
+    captured_stderr = io.StringIO()
+
+    with (
+        mock.patch("evaluation.runner.cli.run_corpus", _fake_run_corpus),
+        mock.patch("evaluation.runner.cli._provision_gateway_db"),
+        mock.patch("evaluation.runner.cli._provision_obligations_db"),
+        mock.patch("evaluation.runner.cli._migrate_obligations"),
+        mock.patch("evaluation.runner.cli.eval_harness", _fake_harness),
+        mock.patch("sys.stderr", captured_stderr),
+        mock.patch.dict("os.environ", {"DEEPSEEK_API_KEY": _SENTINEL}),
+    ):
+        exit_code = asyncio.run(cli._run_eval(args))
+
+    assert exit_code == 3
+    assert (out / "metrics.json").is_file()
+
+    stderr_text = captured_stderr.getvalue()
+
+    # Sentinal must not appear anywhere.
+    sentinel_lower = _SENTINEL.lower()
+    for fname in ["metrics.json", "report.md", "cases.jsonl"]:
+        fp = out / fname
+        if not fp.is_file():
+            continue
+        content = fp.read_text(encoding="utf-8")
+        assert sentinel_lower not in content.lower(), f"{fname} leaked sentinel key"
+
+    assert sentinel_lower not in stderr_text.lower(), "stderr leaked sentinel key"
 
 
 # ── live mode: subprocess tests (no Docker required) ──────────────────────
