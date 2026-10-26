@@ -215,9 +215,7 @@ def _make_transport_and_client(h, loop):
 async def _snapshot_l3(h):
     """Capture L3 state for before/after comparison."""
     async with h._admin.connect() as conn:
-        card_status = await conn.scalar(
-            text("SELECT status FROM cards WHERE id = 'crd_zs_1'")
-        )
+        card_status = await conn.scalar(text("SELECT status FROM cards WHERE id = 'crd_zs_1'"))
         plan_execs = await conn.scalar(text("SELECT count(*) FROM plan_executions"))
         txns = await conn.scalar(
             text("SELECT count(*) FROM transactions WHERE account_id = 'acc_zs_chk'")
@@ -242,12 +240,8 @@ async def _assert_l3_unchanged(h, before, label=""):
     after_card, after_execs, after_txns = await _snapshot_l3(h)
     b_card, b_execs, b_txns = before
     assert after_card == b_card, f"{label}card changed: {b_card} → {after_card}"
-    assert after_execs == b_execs, (
-        f"{label}plan_executions changed: {b_execs} → {after_execs}"
-    )
-    assert after_txns == b_txns, (
-        f"{label}transactions changed: {b_txns} → {after_txns}"
-    )
+    assert after_execs == b_execs, f"{label}plan_executions changed: {b_execs} → {after_execs}"
+    assert after_txns == b_txns, f"{label}transactions changed: {b_txns} → {after_txns}"
 
 
 # ── tests ────────────────────────────────────────────────────────────────
@@ -454,9 +448,7 @@ def test_evaluate_only_run_corpus_connected(gateway_db, obligations_db, monkeypa
 
             assert len(runs) == 1
             r = runs[0]
-            assert r.actual_outcome == "ALLOW", (
-                f"expected ALLOW, got {r.actual_outcome}"
-            )
+            assert r.actual_outcome == "ALLOW", f"expected ALLOW, got {r.actual_outcome}"
 
             # L3 unchanged — proves run_corpus never reached G8
             await _assert_l3_unchanged(h, before, label="run_corpus ALLOW ")

@@ -324,6 +324,108 @@ def _fake_ports_factory(case: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+# ── live ports factory ─────────────────────────────────────────────────────────
+
+
+class _CountingLLMProxy:
+    """Wraps a ChatDeepSeek, counting every ``.invoke()`` / ``.ainvoke()``.
+
+    Counter is a shared mutable list ``[0]`` so the caller (``run_corpus``)
+    can read it between graph invocations.
+    """
+
+    def __init__(self, llm, counter: list[int]) -> None:
+        self._llm = llm
+        self._counter = counter
+
+    def invoke(self, *args, **kwargs):
+        self._counter[0] += 1
+        return self._llm.invoke(*args, **kwargs)
+
+    async def ainvoke(self, *args, **kwargs):
+        self._counter[0] += 1
+        return await self._llm.ainvoke(*args, **kwargs)
+
+    def __getattr__(self, name: str):
+        return getattr(self._llm, name)
+
+
+def _live_ports_factory(case: dict[str, Any]) -> dict[str, Any]:
+    """Create LLM adapter ports for live DeepSeek mode.
+
+    ``DEEPSEEK_API_KEY`` is read once here from the environment (not printed).
+
+    The gather adapter is created with a **dummy** read executor — the real
+    gateway-backed executor is wired later by ``_wire_live_gather`` once
+    the per-iteration ``GatewayClient`` is available inside ``run_corpus``.
+    """
+    from services.agent.app.llm.client import make_llm
+    from services.agent.app.llm.gather import GatherAdapter
+    from services.agent.app.llm.plan import PlanAdapter
+    from services.agent.app.llm.respond import RespondAdapter
+    from services.agent.app.llm.understand import UnderstandAdapter
+    from services.agent.app.llm.verify import OutputVerifier
+
+    llm = make_llm()
+
+    return dict(
+        understand=UnderstandAdapter(llm),
+        gather=GatherAdapter(llm, read_executor=lambda _t, _a: []),
+        plan=PlanAdapter(llm),
+        respond=RespondAdapter(llm),
+        verify_output=OutputVerifier(llm),
+    )
+
+
+def _live_ports_factory_counting(
+    case: dict[str, Any],
+    counter: list[int],
+) -> dict[str, Any]:
+    """Same as ``_live_ports_factory`` but wraps the LLM with a counting proxy."""
+    from services.agent.app.llm.client import make_llm
+    from services.agent.app.llm.gather import GatherAdapter
+    from services.agent.app.llm.plan import PlanAdapter
+    from services.agent.app.llm.respond import RespondAdapter
+    from services.agent.app.llm.understand import UnderstandAdapter
+    from services.agent.app.llm.verify import OutputVerifier
+
+    llm = make_llm()
+    counting = _CountingLLMProxy(llm, counter)
+
+    return dict(
+        understand=UnderstandAdapter(counting),
+        gather=GatherAdapter(counting, read_executor=lambda _t, _a: []),
+        plan=PlanAdapter(counting),
+        respond=RespondAdapter(counting),
+        verify_output=OutputVerifier(counting),
+    )
+
+
+def _wire_live_gather(
+    client,  # GatewayClient
+    ports_kwargs: dict[str, Any],
+    _case: dict[str, Any],
+) -> dict[str, Any]:
+    """Replace the gather port with one whose read executor talks to the real gateway.
+
+    The returned gather callable wraps ``GatherAdapter``: on each ``(state, context)``
+    call it creates a per-invocation ``with_read_executor`` copy whose executor reads
+    through the ``GatewayClient`` — same bridge transport as the current iteration.
+    """
+    from services.agent.app.gateway.adapters import make_gateway_read_executor
+    from services.agent.app.llm.gather import GatherAdapter
+
+    inner: GatherAdapter = ports_kwargs["gather"]
+    _read_factory = make_gateway_read_executor(client)
+
+    def gather(state, context):
+        executor = _read_factory(context)
+        wired = inner.with_read_executor(executor)
+        return wired(state, context)
+
+    return {**ports_kwargs, "gather": gather}
+
+
 def _read_seed_version() -> str:
     """Read the dataset_revision from the seed file."""
     try:
@@ -338,11 +440,13 @@ def _fmt_ts() -> str:
     return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
-def _build_meta(llm_mode: str, case_count: int, runs: list[Any]) -> dict[str, str]:
+def _build_meta(
+    llm_mode: str, case_count: int, runs: list[Any], *, model: str = "fake"
+) -> dict[str, str]:
     """Build meta dict for report output."""
     return {
         "llm_mode": llm_mode,
-        "model": "fake" if llm_mode == "fake" else llm_mode,
+        "model": model,
         "l3": "real-tmpfs",
         "seed_version": _read_seed_version(),
         "corpus_version": "v1",
@@ -364,6 +468,76 @@ async def _run_eval(args: argparse.Namespace) -> int:
         print("没有匹配的语料用例", file=sys.stderr)
         return 1
 
+    # ── live mode ──────────────────────────────────────────────────────────
+    if args.llm_mode == "live":
+        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+        if not api_key:
+            print("live 需要设置 DEEPSEEK_API_KEY 环境变量", file=sys.stderr)
+            return 2
+
+        counter: list[int] = [0]  # mutable, read by run_corpus between invocations
+        from services.agent.app.llm.client import MODEL as LIVE_MODEL
+
+        gw_db = _provision_gateway_db()
+        try:
+            obl_db = _provision_obligations_db()
+            _migrate_obligations(obl_db, "head")
+            _migrate_obligations(obl_db, "head")
+        except BaseException:
+            subprocess.run(["docker", "rm", "-f", gw_db.name], capture_output=True)
+            raise
+
+        try:
+            mp = pytest.MonkeyPatch()
+            try:
+                async with eval_harness(gw_db, obl_db, str(SEED_PATH), mp) as h:
+                    try:
+                        runs = await run_corpus(
+                            h,
+                            cases,
+                            ports_factory=lambda c: _live_ports_factory_counting(c, counter),
+                            repeat=args.repeat,
+                            customer_id="cus_zs",
+                            wire_gather=_wire_live_gather,
+                            max_requests=args.max_requests,
+                            max_requests_counter=counter,
+                        )
+                    except StopRun as exc:
+                        print(f"评测中断: {exc}", file=sys.stderr)
+                        runs = exc.runs
+                        if runs:
+                            print(
+                                f"已保留 {len(runs)} 条已完成结果",
+                                file=sys.stderr,
+                            )
+                        metrics = compute_metrics(runs)
+                        out_dir = (
+                            Path(args.out_dir)
+                            if args.out_dir
+                            else PROJECT_ROOT / "evaluation" / "reports" / _fmt_ts()
+                        )
+                        meta = _build_meta(args.llm_mode, len(cases), runs, model=LIVE_MODEL)
+                        write_outputs(out_dir, runs, metrics, meta)
+                        _print_summary(out_dir, len(cases), args.repeat, runs)
+                        return 3
+            finally:
+                mp.undo()
+        finally:
+            subprocess.run(["docker", "rm", "-f", gw_db.name], capture_output=True)
+            subprocess.run(["docker", "rm", "-f", obl_db.name], capture_output=True)
+
+        metrics = compute_metrics(runs)
+        out_dir = (
+            Path(args.out_dir)
+            if args.out_dir
+            else PROJECT_ROOT / "evaluation" / "reports" / _fmt_ts()
+        )
+        meta = _build_meta(args.llm_mode, len(cases), runs, model=LIVE_MODEL)
+        write_outputs(out_dir, runs, metrics, meta)
+        _print_summary(out_dir, len(cases), args.repeat, runs)
+        return 0
+
+    # ── fake mode (real gateway + L3 + tmpfs PG) ──────────────────────────
     gw_db = _provision_gateway_db()
     try:
         obl_db = _provision_obligations_db()
@@ -428,7 +602,8 @@ def _print_summary(out_dir: Path, case_count: int, repeat: int, runs: list[Any])
 # ── CLI entry point ───────────────────────────────────────────────────────────
 
 
-def main(argv: list[str] | None = None) -> int:
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """Build the argument parser (testable without running the CLI)."""
     parser = argparse.ArgumentParser(
         description="E0b L1 Stability Evaluation Runner",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -444,12 +619,18 @@ def main(argv: list[str] | None = None) -> int:
         default="fake",
         help="LLM mode: fake | replay | live (default: fake)",
     )
-    parser.add_argument("--limit", type=int, default=None, help="Max cases to run (default: all)")
+    parser.add_argument("--limit", type=int, default=None, help="Max cases (live default: 5)")
     parser.add_argument(
         "--repeat",
         type=int,
         default=3,
         help="Repeat each case N times (default: 3)",
+    )
+    parser.add_argument(
+        "--max-requests",
+        type=int,
+        default=60,
+        help="Hard cap on LLM API requests before StopRun (live mode only, default: 60)",
     )
     parser.add_argument("--sample-ids", nargs="*", default=None, help="Run only these case IDs")
     parser.add_argument(
@@ -464,22 +645,23 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Output directory (default: evaluation/reports/<UTC timestamp>)",
     )
+    return parser
 
+
+def main(argv: list[str] | None = None) -> int:
+    parser = _build_arg_parser()
     args = parser.parse_args(argv)
 
     # ── live guard ──────────────────────────────────────────────────────────
     if args.llm_mode == "live":
-        if not os.environ.get("DEEPSEEK_API_KEY"):
-            print("live 需要设置 DEEPSEEK_API_KEY 环境变量", file=sys.stderr)
-            return 2
-        print("live 由协调者在后续任务接入", file=sys.stderr)
-        return 2
+        if args.limit is None:
+            args.limit = 5  # live default
 
     if args.llm_mode == "replay":
         print("replay 模式尚未接入，后续任务实现", file=sys.stderr)
         return 2
 
-    # ── fake mode (real gateway + L3 + tmpfs PG) ──────────────────────────
+    # ── fake / live (both use real gateway + L3 + tmpfs PG) ──────────────
     return asyncio.run(_run_eval(args))
 
 

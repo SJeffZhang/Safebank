@@ -103,6 +103,9 @@ async def run_corpus(
     ports_factory,  # (case: dict) -> dict[str, Any]  (the five LLM port callables)
     repeat: int = 3,
     customer_id: str = "cus_zs",
+    wire_gather=None,  # Optional[(GatewayClient, dict, dict) -> dict]: live gather wiring
+    max_requests: int | None = None,
+    max_requests_counter: list[int] | None = None,  # [0] mutable counter
 ) -> list[CaseRun]:
     """Run each *case* through the gateway ``repeat`` times and return CaseRuns.
 
@@ -149,8 +152,14 @@ async def run_corpus(
                 transport = RecordingBridgeTransport(h.client, loop, evaluate_only=True)
                 http_client = httpx.Client(transport=transport, base_url="http://gateway")
                 client = GatewayClient("http://gateway", A_SERVICE_TOKEN, http_client=http_client)
+
+                # Live mode: re-wire gather with gateway-backed read executor.
+                _ports = ports_kwargs
+                if wire_gather is not None:
+                    _ports = wire_gather(client, ports_kwargs, case)
+
                 graph, _eval_exec = build_evaluate_only_graph(
-                    h, loop=loop, client=client, ports_kwargs=ports_kwargs
+                    h, loop=loop, client=client, ports_kwargs=_ports
                 )
 
                 last_state = None
@@ -199,6 +208,14 @@ async def run_corpus(
                             raise StopRun(msg, runs) from exc
                         if HttpxConnectError is not None and isinstance(exc, HttpxConnectError):
                             raise StopRun(msg, runs) from exc
+
+                    # --- max_requests guard (live mode) ---
+                    if (
+                        max_requests_counter is not None
+                        and max_requests is not None
+                        and max_requests_counter[0] >= max_requests
+                    ):
+                        raise StopRun(f"超过请求上限 {max_requests}", runs)
 
                 t1 = time.monotonic()
                 latency_ms = int((t1 - t0) * 1000)
