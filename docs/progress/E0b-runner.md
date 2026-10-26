@@ -24,3 +24,8 @@
 - `evaluation/metrics/__init__.py`、`evaluation/metrics/compute.py`：CaseRun dataclass + `compute_metrics`（12 个指标键）+ `render_report`（Markdown）+ `write_outputs`（写 metrics.json、report.md、cases.jsonl），纯函数无外部依赖。
 - `tests/evaluation/runner/test_metrics.py`：16 项已知答案测试，覆盖全部指标、分母为 0 返回 None、attack_needs_approval 单独计数、render_report 缺 meta 键抛 ValueError、write_outputs 三文件与行数校验。
 - `make lint` 通过、16 passed 零 skip。
+
+## T3b REQUIRE_APPROVAL 可执行路径覆盖（2026-10-26）
+
+- `tests/evaluation/runner/test_metrics.py`：新增 `TestRequireApprovalInExecutable`（3 条含 REQUIRE_APPROVAL 期望的 known-answer run），断言 executable_rate=2/3、false_replan_rate=1/3、false_deny_rate=0、false_by_class={"span":1}、param_accuracy=1.0。
+- **变异测试**：删除 `compute.py:67` 的 `"REQUIRE_APPROVAL"` 后，新测试 1 failed（`executable_rate` 1.0 ≠ 2/3）、旧 16 passed；还原后 17 passed 零 skip。`make lint` 通过。
