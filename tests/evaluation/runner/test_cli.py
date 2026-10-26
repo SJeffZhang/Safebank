@@ -187,6 +187,22 @@ def test_live_402_sentinel_not_leaked_to_output(tmp_path: Path):
     assert sentinel_lower not in stderr_text.lower(), "stderr leaked sentinel key"
 
 
+def test_live_ports_factory_sets_supplement_transfer_reads():
+    """``_live_ports_factory`` and ``_live_ports_factory_counting`` must set
+    ``supplement_transfer_reads=True`` on the gather adapter, matching the
+    production path in ``services/agent/app/main.py``."""
+    from evaluation.runner.cli import _live_ports_factory, _live_ports_factory_counting
+    from services.agent.app.llm.gather import GatherAdapter
+
+    for factory in [_live_ports_factory, _live_ports_factory_counting]:
+        ports = factory({"turns": ["hello"]}, [0])
+        gather = ports["gather"]
+        assert isinstance(gather, GatherAdapter)
+        assert gather.supplement_transfer_reads is True, (
+            f"{factory.__name__}: supplement_transfer_reads={gather.supplement_transfer_reads}"
+        )
+
+
 # ── live mode: subprocess tests (no Docker required) ──────────────────────
 
 

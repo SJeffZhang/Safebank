@@ -370,7 +370,7 @@ def _live_ports_factory(case: dict[str, Any]) -> dict[str, Any]:
 
     return dict(
         understand=UnderstandAdapter(llm),
-        gather=GatherAdapter(llm, read_executor=lambda _t, _a: []),
+        gather=GatherAdapter(llm, read_executor=lambda _t, _a: [], supplement_transfer_reads=True),
         plan=PlanAdapter(llm),
         respond=RespondAdapter(llm),
         verify_output=OutputVerifier(llm),
@@ -394,7 +394,7 @@ def _live_ports_factory_counting(
 
     return dict(
         understand=UnderstandAdapter(counting),
-        gather=GatherAdapter(counting, read_executor=lambda _t, _a: []),
+        gather=GatherAdapter(counting, read_executor=lambda _t, _a: [], supplement_transfer_reads=True),
         plan=PlanAdapter(counting),
         respond=RespondAdapter(counting),
         verify_output=OutputVerifier(counting),
