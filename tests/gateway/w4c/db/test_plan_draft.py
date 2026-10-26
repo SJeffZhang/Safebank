@@ -51,7 +51,7 @@ def test_upgrade_0002_to_0003_keeps_rows():
         db = engine(old.admin_url, poolclass=NullPool)
         assert not await ready(db)
         async with db.begin() as conn:
-            conn.execute(
+            await conn.execute(
                 text(
                     "INSERT INTO "
                     "plans(id,customer_id,sid,origin,request_id,request_hash,plan_hash,"
@@ -102,7 +102,6 @@ def test_upgrade_0002_to_0003_keeps_rows():
     try:
         asyncio.run(run())
     finally:
-        if old.temp_dir is not None:
-            old.cleanup()
+        subprocess.run(["docker", "rm", "-f", old.name], check=True, capture_output=True)
 
     assert GATEWAY_REVISION == "0003_plan_draft"
