@@ -24,7 +24,11 @@ _PLAN_TOOL = "submit_action_plan"
 _SYSTEM = (
     "你是银行助手，把用户请求与已读信息整理成一份计划草稿；你不授权、不执行任何操作。"
     "金额一律用整数分；份额用四位小数字符串。实体引用用判别对象（kind=id/ref/none）；"
-    "可空字符串用哨兵 __NULL__，可空整数用 -1，渠道三态用 KEEP/ON/OFF。"
+    "可空字符串（仅 memo、phone、alias、end_at 四个可选字段）用哨兵 __NULL__，可空整数用 -1，渠道三态用 KEEP/ON/OFF。"
+    "必填 id 字段（from_account_id、card_id、account_id、product_id、instruction_id、"
+    "merchant_id、questionnaire_id 等）不能用 __NULL__ 或空串，必须从已读数据中引用具体值——"
+    "例如付款账户 id 请从 gather 读取的 /accounts/N/id 中取，来源 kind 用 read。"
+    "已有实体（收款人、卡、账户）一律用 read 来源引用其 id，不要用新建实体引用（kind=ref）。"
     "可空参数用哨兵或实体 kind=none 时，不要在 arg_sources 里为它声明来源；"
     "arg_sources 只为有真实值的参数声明来源。source.kind 只能是 "
     "utterance/read/step/derived/hint/action，不存在 none。"
@@ -84,6 +88,61 @@ _MAX_REFERENCE_PROBLEMS = 5
 _OPTIONAL_PARAM_KEYWORDS: dict[str, frozenset[str]] = {
     "memo": frozenset({"备注", "附言", "留言", "memo", "note"}),
 }
+
+# Params whose "__NULL__" sentinel is valid (converted to None by from_strict_plan).
+# All other params that look like id fields must not use __NULL__ or empty strings.
+_NULLABLE_PARAMS: frozenset[str] = frozenset({"memo", "phone", "alias", "end_at"})
+
+
+def _required_value_problems(draft: PlanDraft, state: AgentState) -> list[str]:
+    """Catch required params filled with __NULL__ or empty, and bad from_account_id source.
+
+    ``__NULL__`` is only valid for nullable params (memo, phone, alias, end_at).
+    For required id params (from_account_id, card_id, account_id, etc.) it indicates
+    the model guessed instead of referencing actual gather data.
+
+    Also verifies that ``from_account_id`` has a read or utterance source — it must
+    not be derived from a step, hint, or action.
+    """
+    utterances = state.get("utterances", [])
+    utt_by_id = {u.id: u for u in utterances}
+    problems: list[str] = []
+    for index, step in enumerate(draft.steps):
+        for source in step.arg_sources:
+            param = source.param
+            if param in _NULLABLE_PARAMS:
+                continue
+            value = getattr(step.args, param, None)
+            if value is None:
+                continue
+            if isinstance(value, str) and value in ("", "__NULL__"):
+                problems.append(
+                    f"steps[{index}].{param}: 必填参数不能为 __NULL__ 或空字符串，"
+                    "请从 gather 读取结果中引用正确的 id；"
+                    "若无法确定（多个账户/卡片）则不要生成计划，改为让 understand 标记 unclear"
+                )
+        # from_account_id must have a read or utterance source (not step/derived/hint/action)
+        if step.tool in ("transfer", "schedule_transfer"):
+            from_id = step.args.from_account_id
+            if from_id and from_id not in ("", "__NULL__"):
+                found_source = False
+                for source in step.arg_sources:
+                    if source.param == "from_account_id":
+                        found_source = True
+                        if source.source.kind not in ("read", "utterance"):
+                            problems.append(
+                                f"steps[{index}].from_account_id: "
+                                "来源必须是 read（从 gather 读取结果引用）或 utterance（用户原话中明确的账户），"
+                                f"不能是 {source.source.kind}"
+                            )
+                        break
+                if not found_source:
+                    # No source declared for from_account_id at all.
+                    problems.append(
+                        f"steps[{index}].from_account_id: "
+                        "缺少参数来源声明，请从 gather 读取的 /accounts/N/id 中以 read 来源引用"
+                    )
+    return problems
 
 
 def _semantic_problems(draft: PlanDraft, state: AgentState) -> list[str]:
@@ -202,9 +261,12 @@ class PlanAdapter:
                 args = single_tool_call(message, _PLAN_TOOL)
                 body = PlanBody.model_validate(from_strict_plan(args))
                 draft = self._to_draft(body, state)
-                problems = _reference_problems(draft, state)
-                if problems:
-                    raise ReferenceError(problems)
+                ref_problems = _reference_problems(draft, state)
+                if ref_problems:
+                    raise ReferenceError(ref_problems)
+                val_problems = _required_value_problems(draft, state)
+                if val_problems:
+                    raise ReferenceError(val_problems)
                 sem_problems = _semantic_problems(draft, state)
                 if sem_problems:
                     raise ReferenceError(sem_problems)
