@@ -180,8 +180,8 @@ if isinstance(raw, dict) and "steps" in raw:
 
 ---
 
-**审核人**：DeepSeek V4 Pro（全新会话，只读）  
-**审核时间**：2026-10-26  
+**审核人**：DeepSeek V4 Pro（全新会话，只读）
+**审核时间**：2026-10-26
 **实际运行**：`make test` 未跑（仅协调者亲跑 `test_metrics + test_case_evidence = 45 passed`）；tuple/JWT/Bearer 绕过证据为静态分析 + 手动 Python 验证（`/tmp/sbg-probe-strip.py`）
 ---
 
@@ -225,6 +225,6 @@ if isinstance(raw, dict) and "steps" in raw:
 
 ---
 
-**复审人**：DeepSeek V4 Pro（全新会话，定点复审）  
-**复审时间**：2026-10-27  
+**复审人**：DeepSeek V4 Pro（全新会话，定点复审）
+**复审时间**：2026-10-27
 **实际运行**：`test_metrics + test_case_evidence = 56 passed`（协调者亲跑）

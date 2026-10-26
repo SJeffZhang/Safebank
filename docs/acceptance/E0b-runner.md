@@ -1,7 +1,7 @@
 # E0b Runner 验收：L1 稳定性评测
 
-**状态**：组件开发中（T14 收尾）  
-**日期**：2026-10-27  
+**状态**：已完成（终审 APPROVE）
+**日期**：2026-10-27
 **分支**：`codex/e0b-l1-runner`
 
 ## 组件说明
@@ -15,7 +15,7 @@ E0b 是 L1 稳定性评测 runner，对 E0a 语料库（405 条）逐条运行�
 **基础设施**：
 - 真实 tmpfs PostgreSQL（隔离 bank + agent 双库，`GATEWAY_DB_TESTS=1 OBLIGATIONS_DB_TESTS=1`）
 - 真实 bank-backend（uvicorn in-process）
-- 真实 gateway（ASGI in-process）  
+- 真实 gateway（ASGI in-process）
 - 真实 L1 graph（`services/agent/`）
 
 **密钥安全**：
