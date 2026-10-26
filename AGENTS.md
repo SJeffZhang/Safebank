@@ -35,7 +35,7 @@
 
 ## 3. 当前状态（每次工作后更新）
 
-**最后更新**：2026-10-26（交接给 Codex，入口 `docs/handoffs/2026-10-26-codex-handoff.md`）
+**最后更新**：2026-10-26 晚（W4c 已合 `00aca15`；交接给 Codex，入口 `docs/handoffs/2026-10-26-codex-handoff-v2.md`）
 
 | 模块 | 状态 |
 |---|---|
@@ -731,6 +731,8 @@
 | 2026-10-26 | Claude（主会话 89da7fbc） | W4c 评审修复轮 1（W4c-fix-r1，DS_MAX_TURNS=70）提交红测 961dcb0（3 条，覆盖 P1-1/P1-2/P2-1/P2-3），第 61 轮 **ECONNREFUSED** 中断，execution.py 留 +39 行未提交（快照 refs/wip/W4c-fix-r1），test-w4c 3 failed/35 passed。有界验证一次（probe-econn-20261026-1）：**403 Access to model denied**（与此前余额/额度不足时同类）。按规则停止全部 DeepSeek 派发，不重试、不换模型；E0b 收尾与 try-agent 两项并行任务因此暂未启动，待用户确认额度后先有界验证再派。 |
 | 2026-10-26 | Claude（主会话 89da7fbc） | 用户确认额度恢复，有界验证 probe-recover-20261026-1 通过（deepseek-v4-pro）。随后用户改令：「先暂停E0b 收尾 + live 评测」及 try-agent，「全力解决w4c」，并要求写详细交接给 Codex（主会话额度将满）。协调者亲修 W4c 评审修复：worker 遗留的恢复路径屏障与 fence attempt 改动之外，fence ACK 校验仍写死 `attempt != 1`（execution.py:499），改为当前 attempt；P1-1/P1-2 转绿，提交 0478105，test-w4c 36 passed / 2 failed（P2-1 PAUSED+REPLAN 未返回 details.decision；P2-3 对账终态未写本次 request_id 的 dedup）。写交接文档 docs/handoffs/2026-10-26-codex-handoff.md（现场、剩余 10 步、关键技术事实）。E0b 与 try-agent 未开工。主会话就此停止。 |
 | 2026-10-26 | Claude（主会话 89da7fbc） | 用户令「继续推进w4c的工作」。协调者亲修评审 P2-1（PAUSED 且 plan 为 DENIED/REPLAN/PENDING_APPROVAL 时 409+details.decision，不进恢复、不访问 L3）与 P2-3（对账得终态时为本次 request_id 写终态 dedup），dbb5426；变异：去任一修复对应测试失败。原评审 R-W4c-r2（24 轮）**APPROVE**，4 条全 ADDRESSED、无新问题（静态核对）。W4c 合入 main 51c3b90 无冲突；带入主 checkout 的 AGENTS、ds-worker.sh 与交接文档（标注为 0478105 时快照）。合并后最终树复跑全部 exit 0：lint 364；test 2727/743 skip；test-gateway 2018/650 skip；gateway-db 17；wave1-state 231；w1 1688；w2 246；w3a 45；w3b 33；w4b1 57；w4b2b 58；w4b2c 56；**w4c 38**；shared-runtime 79；obligations 30；agent-db 34；corpus 25；contracts；actionlint。另：用户问起仍在跑的旧 T6 结果——是协调者 T6 核验时未加 alarm 的 make test-w4c，卡在当时已重写的撤销死锁测试上约 1 小时 52 分；已终止，并清理 27 个属主进程已退出的 tmpfs 测试库容器（无挂载卷），长期栈六容器与 safebank_pg-bank/pg-agent 两卷未动。 |
+| 2026-10-26 | Claude（主会话 89da7fbc） | PR #31（W4c）候选 79229ae2864066623ca7046458a642880ffdd433：push run 40328430495 与 pull_request run 40328499146 head_sha 一致、四 job success，`gh pr merge 31 --merge --match-head-commit` 成功，merge 00aca15b7928ccfa222b85a6757d941a7b68425e（2026-10-26T13:23:28Z）。**W4c 完成。** 主 checkout stash（coordinator-pr31-ff-preserve-20261026）后 ff，stash 内容均已随 PR 合入。main-baseline 00aca15 组合回归全部 exit 0（lint 364；test 2727/743 skip；test-gateway 2018/650 skip；gateway-db 17；shared-runtime 79；wave1-state 231；w1 1688；w2 246；w3a 45；w3b 33；w4b1 57；w4b2b 58；w4b2c 56；w4c 38；obligations 30；agent-db 34；replay 47；verify 70；cards 19；contracts；corpus 25；actionlint）。**长期栈迁移**：迁移前 gateway 0002_wave1 / bank 0003_obligations、两卷 CreatedAt 2026-10-23T11:29:55Z；main-baseline `make up` exit 0 后 gateway 为 0003_plan_draft（plans.plan_draft jsonb nullable），bank 不变，六服务 healthy，两卷 CreatedAt 不变；`make test-integration` exit 0。进度网站：W4c done（#31）、E0b 标为暂停、回归 00aca15（7bd1ccc、77064c4），Pages build=built 后 curl 核对线上一致。 |
+| 2026-10-26 | Claude（主会话 89da7fbc） | 按用户指令停工，重写交接：`docs/handoffs/2026-10-26-codex-handoff-v2.md`（取代 0478105 时的快照版）与可直接粘贴的 `docs/handoffs/2026-10-26-codex-prompt.md`；在分支 `docs/codex-handoff-20261026` 提交并开文档 PR。无运行中的 worker 或测试进程。E0b 收尾 + live 评测与 try-agent 仍暂停，待用户下令。 |
 
 ## 5. 下一步待办（按顺序）
 
@@ -781,7 +783,7 @@ P0 准备阶段（决定后续一切）：
 | [x] | W2 读代理、参数来源与污点 | W2a #16与W2b #18均已合，W2b246真PG/HTTP、独审及当前head四CI成功；跨真实G4/审批执行待后续组件 | `docs/acceptance/L2-W2b-reserve-integration.md` |
 | [x] | W3a 快照、预演、工作流、决策阶段 | PR #20已合26dea40；45真实PG/HTTP及独审/四CI通过，非完整G4 | `docs/acceptance/L2-W3a-stages.md` |
 | [ ] | W3b 完整G4持久化/复演/hint | 待W4b确认/OTP先决；旧3bcbe8e仅只读参考，不覆盖现行main | `docs/plans/briefs/W3-decision.md`；`W3-W4-integration-order.md` |
-| [ ] | W4c 执行与UNKNOWN恢复 | `codex/w4c-execute`：评审 APPROVE、全部退出通过，PR 待开 | `docs/plans/briefs/W4-execution.md` |
+| [x] | W4c 执行与UNKNOWN恢复 | PR #31 merge `00aca15`；38 项真实 L3 测试、独立评审 APPROVE、四 CI 全绿；长期栈已迁移 0003 | `docs/acceptance/L2-W4c-execute.md` | `docs/plans/briefs/W4-execution.md` |
 | [x] | W4b1 面板/HMAC审批库 | PR #22 merge8ad47d0；亲验/独审/精确head四CI与实际main组合通过 | `docs/acceptance/L2-W4b1-planview-binding.md` |
 | [ ] | W4b2a 运行密钥资源 | 任务已准备，DS余额402待恢复，未派发 | `docs/plans/briefs/W4b2a-runtime-keys.md` |
 | [x] | S1b / 0002_wave1 迁移与受控状态 | PR #6已合并94e40fe（四CI成功，真实现有库升级与集成通过） | `docs/plans/briefs/S1b-wave1-state.md` |
