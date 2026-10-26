@@ -127,3 +127,16 @@
   - `.venv/bin/ruff check` 通过。
   - `.venv/bin/ruff format` 通过（test_t10_harness.py 被格式化）。
 - **提交**：见下。
+
+## T14 收尾（2026-10-27）
+
+- **范围**：supplement_transfer_reads、CI test-e0b 步骤、验收文档、进度
+- **改动**：
+  - `evaluation/runner/cli.py`：`_live_ports_factory` 与 `_live_ports_factory_counting` 的 `GatherAdapter` 构造均加 `supplement_transfer_reads=True`（匹配 production `services/agent/app/main.py:204`）
+  - `tests/evaluation/runner/test_cli.py`：新增 `test_live_ports_factory_sets_supplement_transfer_reads`，mock `make_llm`，断言两工厂的 gather adapter 开关均为 True
+  - `.github/workflows/checks.yml`：p1-postgres job 在 `make test-w4c` 后新增 `make test-e0b` 步骤
+  - `docs/acceptance/E0b-runner.md`：新建验收文档（组件说明、模式、密钥安全、证据字段、make 目标、命令、实测数字、已知限制、输出格式）
+- **协调者亲自复跑**：
+  - `make test-e0b`：119 passed 零 skip（15.45s）
+  - `make lint`：388 files already formatted, All checks passed
+- **未完成**：actionlint 未在本机运行（用户未授权命令）
