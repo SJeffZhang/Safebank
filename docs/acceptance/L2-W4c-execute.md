@@ -20,22 +20,31 @@
 | G5 | A 限本 sid、F 限本客户；返回状态、最新决策、执行结果 | `test_g5_and_replay.py` |
 | request_id 重放 | 键为具体路径 `POST /plans/<plan_id>/execute`；终态原样重放且永不覆盖；旧 request_id 不得触发新 attempt | `test_g5_and_replay.py` |
 
-## 协调者亲自复跑（HEAD `95225bc`，全部 exit 0）
+## 协调者亲自复跑（合入 main `51c3b90` 后的最终树，全部 exit 0）
 
 | 命令 | 结果 |
 |---|---|
-| `make lint` | 354 files |
-| `make test` | 2702 passed / 740 skipped |
-| `make test-gateway` | 2018 passed / 647 skipped |
+| `make lint` | 364 files |
+| `make test` | 2727 passed / 743 skipped |
+| `make test-gateway` | 2018 passed / 650 skipped |
 | `make test-gateway-db` | 17 passed |
 | `make test-wave1-state` | 231 passed |
 | `make test-w1` | 1688 passed |
-| `make test-w3b` | 33 passed |
+| `make test-w2` / `test-w3a` / `test-w3b` | 246 / 45 / 33 passed |
 | `make test-w4b1` / `test-w4b2b` / `test-w4b2c` | 57 / 58 / 56 passed |
-| `make test-w4c` | **35 passed** |
+| `make test-w4c` | **38 passed** |
 | `make test-shared-runtime` | 79 passed |
+| `make test-obligations` | 30 passed（1 条既有 FK 环 SAWarning） |
+| `make test-agent-db` | 34 passed |
+| `pytest tests/evaluation/corpus -q` | 25 passed |
 | `make contracts-check` | PASS |
 | `actionlint` | 通过（CI 已加 `make test-w4c`） |
+
+## 独立评审
+
+- R-W4c-r1（DeepSeek，只读）：REQUEST_CHANGES，无 P0；8 项核对全部通过；P1-1 恢复路径吞掉 STATE_CHANGED、P1-2 fence 写死 attempt、P2-1 PAUSED+非可执行决策误入恢复、P2-2 孤儿 PAUSED 无归档（归 W5）、P2-3 对账终态未写本次 request_id。
+- 修复轮 1：P1-1/P1-2/P2-1/P2-3 全部修复（`0478105`、`dbb5426`），各配红测与变异核验。
+- R-W4c-r2 定点复审：**APPROVE**，4 条全部 ADDRESSED，无新问题（报告 `docs/reviews/W4c-execute-review.md` 末节）。
 
 ## 变异核验（协调者，均已还原）
 
@@ -52,6 +61,8 @@
 | 去掉写事务内的撤销复核 | 撤销竞态用例 1 failed |
 | origin 检查不前置 | F 读取已执行计划用例 1 failed |
 | 去掉旧 request_id 恢复守卫 | 1 failed |
+| 去掉 P2-1 的非可执行决策拦截 | 1 failed |
+| 去掉 P2-3 的对账终态去重写入 | 1 failed |
 | dedup 键改回字面模板 | 2 failed |
 
 ## 已知问题与未覆盖

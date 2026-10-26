@@ -128,3 +128,47 @@ When the barrier produces a DENIED or REPLAN decision (via `publish_paused_decis
 All 8 review criteria are satisfied for the normal execution path. The two P1 findings affect the resume-after-fence path (attempt ≥ 2 executions after a STATE_CHANGED barrier). The P2 findings are non-blocking quality/cleanup items.
 
 **Recommended fix order**: (1) Fix P1-2 first (replace `attempt=1` with `exec_identity.attempt` at line 415) — this is a one-line change with no behavioral impact on the current callers. (2) Fix P1-1 (add STATE_CHANGED check in the resume `except L3BusinessError` block at line 864-869, route to `_handle_state_changed`). (3) Add a new test in `test_g8_resume.py` for the resume + STATE_CHANGED scenario (simulate L3 returning STATE_CHANGED on attempt 2 by bumping state_version before the resumed execute).
+## 复审（修复轮 1）
+
+**Reviewer**: Claude (DeepSeek V4 Pro), 2026-10-26  
+**Scope**: `git diff 95225bc..dbb5426 -- services tests/gateway/w4c`  
+**Verdict**: **APPROVE** — all 4 findings addressed; no new P0/P1
+
+### P1-1: Resume STATE_CHANGED enters `_handle_state_changed` → ADDRESSED
+
+- `execution.py:869-902`: Resume path now checks `exc.code == "STATE_CHANGED"`, writes non-terminal dedup (`on_conflict_do_nothing`), and calls `_handle_state_changed` with `exec_identity`.
+- The `exec_identity` (line 817-823) already uses `attempt=new_attempt` from `resume_paused_execution`, so the fence receives the correct attempt.
+- Other `L3BusinessError` codes still go to `_unknown()` (line 903) — correct.
+- Dedup pattern mirrors the normal path (line 1695-1701): both use `on_conflict_do_nothing()` with `{"non_terminal": True}`.
+
+### P1-2: Hardcoded `attempt=1` removed → ADDRESSED
+
+- `execution.py:415`: `attempt=1` → `attempt=exec_identity.attempt`.
+- `execution.py:499`: `!= 1` → `!= exec_identity.attempt`.
+- `grep -n 'attempt=1\|!= 1' execution.py` returns zero hits — no remaining hardcoded values.
+
+### P2-1: PAUSED + DENIED/REPLAN/PENDING_APPROVAL intercepted → ADDRESSED
+
+- `execution.py:1218-1237`: Early check before any resume/reconcile path.
+- PENDING_APPROVAL is correctly intercepted, not rejected: a PAUSED job with PENDING_APPROVAL means the fence published a decision requiring confirmation. The plan becomes CONFIRMED only after explicit user approval, at which point this check no longer matches and resume proceeds normally.
+- The check is inside `customer_lock` (line 166) — no race with concurrent plan status changes.
+- Reads `evaluations.decision` directly from DB (line 1227-1231), independent of any in-memory `decision` dict.
+
+### P2-3: Reconciliation writes terminal dedup → ADDRESSED
+
+- `execution.py:1324-1336`: After `_handle_reconcile` returns 200, `_write_request_dedup_row` is called.
+- Inside customer lock: yes — line 1327 is within `async with customer_lock(...)` at line 166.
+- Independent short transaction: `_write_request_dedup_row` at line 87-107 does `await conn.rollback()` then `async with conn.begin()` — a fresh sub-transaction on the lock-holding connection.
+- Won't overwrite terminal rows: `on_conflict_do_update ... WHERE status_code != 200` (line 105) upgrades non-terminal markers, skips existing terminal ones.
+- Only `status_code == 200` results trigger the write (line 1326); non-200 reconciliation outcomes leave the non-terminal marker — acceptable (same request_id can't be reused anyway).
+
+### New issues from this diff: none
+
+- No double-execution risk: the resume STATE_CHANGED path writes non-terminal dedup before `_handle_state_changed`, which only fences (no L3 write).
+- No transaction-in-HTTP: `_handle_state_changed` opens its own transactions; no L3 call is inside a write transaction.
+- No authorization bypass: P2-1 intercepts non-executable plans before resume; P1-1 correctly fences on STATE_CHANGED instead of routing to UNKNOWN.
+- Dedup behavior is consistent between normal path (line 1695-1702) and resume path (line 869-885).
+
+### Unconfirmed
+
+1. `tests/gateway/w4c/db/test_g8_review_fixes.py` — static review confirms test assertions match code changes (attempt==2 on fence, l3_attempt==2, execute_count assertions, PAUSED+REPLAN interception, terminal dedup write), but tests were not run by this reviewer (Docker/PG approval required).

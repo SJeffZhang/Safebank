@@ -38,8 +38,27 @@ env -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_API_KEY -u ANTHRO
   ANTHROPIC_MODEL="$ds_model" ANTHROPIC_DEFAULT_OPUS_MODEL="$ds_model" \
   ANTHROPIC_DEFAULT_SONNET_MODEL="$ds_model" ANTHROPIC_DEFAULT_HAIKU_MODEL="$ds_model" \
   ANTHROPIC_SMALL_FAST_MODEL="$ds_model" \
+  MAX_THINKING_TOKENS="${DS_MAX_THINKING:-8000}" \
   "${worker[@]}" --permission-mode acceptEdits \
   --allowedTools "${allow[@]}" --disallowedTools "${deny[@]}" \
-  --max-turns 400 --output-format json < /dev/null > "$logdir/$name.json" 2> "$logdir/$name.err" || status=$?
-echo "$name exit=$status"
+  --max-turns "${DS_MAX_TURNS:-120}" --output-format json < /dev/null > "$logdir/$name.json" 2> "$logdir/$name.err" || status=$?
+
+# Never lose a worker's progress: whatever the exit reason (done, max turns, API error),
+# snapshot uncommitted changes to refs/wip/<name> without touching the branch or worktree.
+snapshot_wip() {
+  # Ignored files (e.g. the .secrets symlink) are never added by `git add -A`.
+  local tmp_index tree snap
+  tmp_index=$(mktemp) || return 1
+  cp "$(git rev-parse --git-dir)/index" "$tmp_index" 2>/dev/null || true
+  GIT_INDEX_FILE="$tmp_index" git add -A >/dev/null 2>&1 || { rm -f "$tmp_index"; return 1; }
+  tree=$(GIT_INDEX_FILE="$tmp_index" git write-tree) || { rm -f "$tmp_index"; return 1; }
+  rm -f "$tmp_index"
+  snap=$(git commit-tree "$tree" -p HEAD -m "wip snapshot of $name (uncommitted worker changes)") || return 1
+  git update-ref "refs/wip/$name" "$snap" || return 1
+  echo "$name wip-snapshot=refs/wip/$name ($snap)"
+}
+if [ -n "$(git status --porcelain --untracked-files=all 2>/dev/null)" ]; then
+  snapshot_wip || echo "$name wip-snapshot FAILED — snapshot manually before relaunching" >&2
+fi
+echo "$name exit=$status head=$(git rev-parse --short HEAD)"
 exit "$status"
