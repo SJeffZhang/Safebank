@@ -147,6 +147,7 @@ async def _persist_plan(
     scope_ids: list[str],
     status: str,
     now: datetime,
+    plan_draft: dict | None = None,
 ) -> None:
     """Insert the plan row; raises 409 if *request_id* is already used."""
     existing = await conn.scalar(
@@ -173,6 +174,7 @@ async def _persist_plan(
             scope_ids=scope_ids,
             status=status,
             created_at_wall=now,
+            plan_draft=plan_draft,
         )
     )
 
@@ -321,6 +323,7 @@ async def evaluate_plan(request: Request) -> JSONResponse:
             scope_ids=scope_ids_list,
             status=plan_status.value,
             now=now,
+            plan_draft=plan_draft.model_dump(mode="json"),
         )
 
         risk_str: str = decision.risk.value

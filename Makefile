@@ -141,3 +141,7 @@ test-w3b:
 .PHONY: test-e0b
 test-e0b:
 	GATEWAY_DB_TESTS=1 OBLIGATIONS_DB_TESTS=1 .venv/bin/pytest tests/evaluation/runner -q
+
+.PHONY: test-w4c
+test-w4c:
+	GATEWAY_DB_TESTS=1 OBLIGATIONS_DB_TESTS=1 .venv/bin/pytest tests/gateway/w4c -q
