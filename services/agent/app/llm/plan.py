@@ -104,20 +104,18 @@ def _required_value_problems(draft: PlanDraft, state: AgentState) -> list[str]:
     Also verifies that ``from_account_id`` has a read or utterance source — it must
     not be derived from a step, hint, or action.
     """
-    utterances = state.get("utterances", [])
-    utt_by_id = {u.id: u for u in utterances}
     problems: list[str] = []
     for index, step in enumerate(draft.steps):
-        for source in step.arg_sources:
-            param = source.param
-            if param in _NULLABLE_PARAMS:
+        # Check all arg fields (not just those with sources) for __NULL__ on required params.
+        for field_name in type(step.args).model_fields:
+            if field_name in _NULLABLE_PARAMS:
                 continue
-            value = getattr(step.args, param, None)
+            value = getattr(step.args, field_name, None)
             if value is None:
                 continue
             if isinstance(value, str) and value in ("", "__NULL__"):
                 problems.append(
-                    f"steps[{index}].{param}: 必填参数不能为 __NULL__ 或空字符串，"
+                    f"steps[{index}].{field_name}: 必填参数不能为 __NULL__ 或空字符串，"
                     "请从 gather 读取结果中引用正确的 id；"
                     "若无法确定（多个账户/卡片）则不要生成计划，改为让 understand 标记 unclear"
                 )

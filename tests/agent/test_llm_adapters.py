@@ -59,7 +59,13 @@ def plan_state():
             UtteranceRef(id="utt_ctx", kind="context", text="页面位置"),
         ],
         "understanding": Understanding(intents=["transfer"], needs_write=True),
-        "reads": [],
+        "reads": [
+            ReadRecord(
+                source_ref="src_acct",
+                tool="get_accounts",
+                data={"accounts": [{"account_id": "acc_a", "balance_cents": 500000}]},
+            )
+        ],
     }
 
 
@@ -78,7 +84,16 @@ def strict_plan() -> dict:
                     "memo": "__NULL__",
                 },
                 "depends_on": [],
-                "arg_sources": [],
+                "arg_sources": [
+                    {
+                        "param": "from_account_id",
+                        "source": {
+                            "kind": "read",
+                            "ref": "src_acct",
+                            "pointer": "/accounts/0/account_id",
+                        },
+                    },
+                ],
             }
         ],
         "rationale": "test",
@@ -774,6 +789,14 @@ def _memo_plan(memo_value: str | None, memo_span=(4, 6)) -> dict:
     }
     sources: list = [
         {
+            "param": "from_account_id",
+            "source": {
+                "kind": "read",
+                "ref": "src_acct",
+                "pointer": "/accounts/0/account_id",
+            },
+        },
+        {
             "param": "amount_cents",
             "source": {"kind": "utterance", "ref": "utt_typed", "span": [4, 6]},
         },
@@ -803,12 +826,19 @@ def _memo_plan(memo_value: str | None, memo_span=(4, 6)) -> dict:
 def test_plan_retries_on_unsolicited_memo():
     """Model sets memo from payee name without user asking → retry with feedback."""
     user_text = "给赵六转800元"  # 赵六 = [1,3], no memo request
+    reads = [
+        ReadRecord(
+            source_ref="src_acct",
+            tool="get_accounts",
+            data={"accounts": [{"account_id": "acc_a"}]},
+        )
+    ]
     state = {
         "customer_id": "cus_a",
         "session_id": "ses_a",
         "utterances": [UtteranceRef(id="utt_typed", kind="typed", text=user_text)],
         "understanding": Understanding(intents=["transfer"], needs_write=True),
-        "reads": [],
+        "reads": reads,
     }
     # First attempt: memo="赵六" copied from payee name — unsolicited
     bad = _memo_plan(memo_value="赵六", memo_span=(1, 3))
@@ -829,12 +859,19 @@ def test_plan_retries_on_unsolicited_memo():
 def test_plan_accepts_explicitly_requested_memo():
     """When the user explicitly asks for a memo, it is allowed."""
     user_text = "给赵六转800元，备注:房租"  # 房租 = [12,14], "备注" is a memo keyword
+    reads = [
+        ReadRecord(
+            source_ref="src_acct",
+            tool="get_accounts",
+            data={"accounts": [{"account_id": "acc_a"}]},
+        )
+    ]
     state = {
         "customer_id": "cus_a",
         "session_id": "ses_a",
         "utterances": [UtteranceRef(id="utt_typed", kind="typed", text=user_text)],
         "understanding": Understanding(intents=["transfer"], needs_write=True),
-        "reads": [],
+        "reads": reads,
     }
     plan = _memo_plan(memo_value="房租", memo_span=(12, 14))
     scripted = ScriptedLLM([tool_response("submit_action_plan", plan)])
@@ -923,3 +960,201 @@ def test_plan_retries_on_empty_required_id():
     draft = PlanAdapter(llm)(state, ctx())
     assert draft.steps[0].args.from_account_id == "acc_zs_chk"
     assert len(scripted.requests) == 2
+
+
+# ── __NULL__ on required id params (L1-plan-fill round 2) ──
+
+
+def _plan_with_from_account(value: str, source_kind: str = "read") -> dict:
+    """Return a transfer plan dict with the given from_account_id value and source."""
+    args: dict = {
+        "from_account_id": value,
+        "payee_id": {"kind": "id", "id": "pye_zs_ww"},
+        "to_account_id": {"kind": "none"},
+        "amount_cents": 80000,
+        "memo": "__NULL__",
+    }
+    sources: list = [
+        {
+            "param": "from_account_id",
+            "source": {
+                "kind": source_kind,
+                "ref": "src_acct",
+                "pointer": "/accounts/0/account_id",
+            },
+        },
+        {
+            "param": "amount_cents",
+            "source": {"kind": "utterance", "ref": "utt_typed", "span": [4, 7]},
+        },
+    ]
+    return {
+        "intents": ["transfer"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "transfer",
+                "args": args,
+                "depends_on": [],
+                "arg_sources": sources,
+            }
+        ],
+        "rationale": "test",
+    }
+
+
+def test_plan_retries_on_null_sentinel_in_required_id():
+    """__NULL__ on from_account_id is caught → retry with feedback → fix."""
+    user_text = "给赵六转800元"
+    reads = [
+        ReadRecord(
+            source_ref="src_acct",
+            tool="get_accounts",
+            data={"accounts": [{"account_id": "acc_zs_chk", "balance_cents": 600000}]},
+        )
+    ]
+    state = {
+        "customer_id": "cus_a",
+        "session_id": "ses_a",
+        "utterances": [UtteranceRef(id="utt_typed", kind="typed", text=user_text)],
+        "understanding": Understanding(intents=["transfer"], needs_write=True),
+        "reads": reads,
+    }
+    # Bad: from_account_id="__NULL__" with no source declaration (so _reference_problems
+    # skips it, but _required_value_problems catches the sentinel on a required param).
+    def bad_with_null():
+        return {
+            "intents": ["transfer"],
+            "steps": [
+                {
+                    "step_id": "s1",
+                    "tool": "transfer",
+                    "args": {
+                        "from_account_id": "__NULL__",
+                        "payee_id": {"kind": "id", "id": "pye_zs_ww"},
+                        "to_account_id": {"kind": "none"},
+                        "amount_cents": 80000,
+                        "memo": "__NULL__",
+                    },
+                    "depends_on": [],
+                    "arg_sources": [
+                        {
+                            "param": "amount_cents",
+                            "source": {"kind": "utterance", "ref": "utt_typed", "span": [4, 7]},
+                        },
+                    ],
+                }
+            ],
+            "rationale": "test",
+        }
+
+    good = _plan_with_from_account("acc_zs_chk")
+    scripted = ScriptedLLM(
+        [
+            tool_response("submit_action_plan", bad_with_null()),
+            tool_response("submit_action_plan", good),
+        ]
+    )
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    draft = PlanAdapter(llm)(state, ctx())
+    assert draft.steps[0].args.from_account_id == "acc_zs_chk"
+    assert len(scripted.requests) == 2
+    human = body_of(scripted, 1)["messages"][1]["content"]
+    assert "__NULL__" in human
+
+
+def test_plan_exhausted_null_sentinel_raises_reference_error():
+    """Two attempts with __NULL__ on required id → ReferenceError."""
+    user_text = "给赵六转800元"
+    reads = [
+        ReadRecord(
+            source_ref="src_acct",
+            tool="get_accounts",
+            data={"accounts": [{"account_id": "acc_zs_chk", "balance_cents": 600000}]},
+        )
+    ]
+    state = {
+        "customer_id": "cus_a",
+        "session_id": "ses_a",
+        "utterances": [UtteranceRef(id="utt_typed", kind="typed", text=user_text)],
+        "understanding": Understanding(intents=["transfer"], needs_write=True),
+        "reads": reads,
+    }
+    bad = {
+        "intents": ["transfer"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "transfer",
+                "args": {
+                    "from_account_id": "__NULL__",
+                    "payee_id": {"kind": "id", "id": "pye_zs_ww"},
+                    "to_account_id": {"kind": "none"},
+                    "amount_cents": 80000,
+                    "memo": "__NULL__",
+                },
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "amount_cents",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [4, 7]},
+                    },
+                ],
+            }
+        ],
+        "rationale": "test",
+    }
+    scripted = ScriptedLLM(
+        [tool_response("submit_action_plan", bad), tool_response("submit_action_plan", bad)]
+    )
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    with pytest.raises(ReferenceError):
+        PlanAdapter(llm)(state, ctx())
+    assert len(scripted.requests) == 2
+
+
+def test_plan_retries_on_bad_from_account_source():
+    """from_account_id with step/derived/hint/action source → retry."""
+    user_text = "给赵六转800元"
+    reads = [
+        ReadRecord(
+            source_ref="src_acct",
+            tool="get_accounts",
+            data={"accounts": [{"account_id": "acc_zs_chk", "balance_cents": 600000}]},
+        )
+    ]
+    state = {
+        "customer_id": "cus_a",
+        "session_id": "ses_a",
+        "utterances": [UtteranceRef(id="utt_typed", kind="typed", text=user_text)],
+        "understanding": Understanding(intents=["transfer"], needs_write=True),
+        "reads": reads,
+    }
+    # First attempt: from_account_id source is "hint" — not allowed
+    bad = _plan_with_from_account("acc_zs_chk", source_kind="hint")
+    # Second attempt: proper read source
+    good = _plan_with_from_account("acc_zs_chk", source_kind="read")
+    scripted = ScriptedLLM(
+        [tool_response("submit_action_plan", bad), tool_response("submit_action_plan", good)]
+    )
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    draft = PlanAdapter(llm)(state, ctx())
+    assert draft.steps[0].args.from_account_id == "acc_zs_chk"
+    assert len(scripted.requests) == 2
+    human = body_of(scripted, 1)["messages"][1]["content"]
+    assert "hint" in human
+
+
+def test_plan_prompt_forbids_null_on_required_ids():
+    """System prompt clarifies __NULL__ is only for memo/phone/alias/end_at."""
+    scripted = ScriptedLLM([tool_response("submit_action_plan", freeze_plan_typed(span=(2, 10)))])
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    PlanAdapter(llm)(card_state(), ctx())
+    system = body_of(scripted, 0)["messages"][0]["content"]
+    assert "memo" in system
+    assert "phone" in system
+    assert "alias" in system
+    assert "end_at" in system
+    assert "必填" in system
+    assert "from_account_id" in system  # named as example of required id
+    assert "/accounts" in system  # example read pointer
