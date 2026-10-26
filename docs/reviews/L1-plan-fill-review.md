@@ -27,4 +27,7 @@
 
 ```
 tests/agent/test_llm_adapters.py: 41 passed
+tests/agent -q: 469 passed, 38 skipped
+make test (pytest -q): 2786 passed, 755 skipped
+ruff check services/agent tests/agent: All checks passed
 ```
