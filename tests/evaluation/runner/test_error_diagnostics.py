@@ -8,7 +8,6 @@ from pathlib import Path
 from evaluation.metrics.compute import CaseRun, compute_metrics, write_outputs
 from evaluation.runner.loop import _extract_error_info
 
-
 # ── _extract_error_info unit tests ───────────────────────────────────────────
 
 
