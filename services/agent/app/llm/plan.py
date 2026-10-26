@@ -288,10 +288,7 @@ class PlanAdapter:
             except ReferenceError as exc:
                 if attempt == self._max_retries:
                     raise
-                note = (
-                    f"计划未通过本地校验：{'；'.join(exc.problems)}；"
-                    "请修正后重新生成。"
-                )
+                note = f"计划未通过本地校验：{'；'.join(exc.problems)}；请修正后重新生成。"
             except (LlmToolError, ValidationError, ValueError) as exc:
                 if attempt == self._max_retries:
                     raise
