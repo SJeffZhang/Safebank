@@ -14,6 +14,9 @@ import json
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import date as date_type
+from datetime import datetime as datetime_type
+from decimal import Decimal
 from pathlib import Path
 
 import jwt as pyjwt
@@ -26,6 +29,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
+from pydantic import BaseModel
 
 from services.agent.app.graph import (
     AgentContext,
@@ -35,6 +39,31 @@ from services.agent.app.graph import (
     build_graph,
 )
 from services.agent.app.llm.cards import generate_cards
+
+# ── JSON encoder for state values ──────────────────────────────────────────
+
+
+def _state_json_default(obj: object) -> object:
+    """JSON default encoder that never falls back to Pydantic ``repr``.
+
+    Pydantic models are serialised via ``model_dump(mode="json")`` so that
+    ``DecisionValue`` enums become strings, ``datetime`` becomes ISO-8601,
+    and nested models are fully expanded.  ``Decimal`` is explicitly coerced
+    to ``str`` to preserve precision.  No catch-all ``str()`` fallback: any
+    unresolvable type raises ``TypeError`` so the defect is visible.
+    """
+    if isinstance(obj, BaseModel):
+        return obj.model_dump(mode="json")
+    if isinstance(obj, Decimal):
+        return str(obj)
+    if isinstance(obj, (datetime_type, date_type)):
+        return obj.isoformat()
+    if isinstance(obj, (set, frozenset)):
+        return list(obj)
+    if isinstance(obj, bytes):
+        return obj.hex()
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
 
 # ── Environment defaults ─────────────────────────────────────────────────
 
@@ -452,7 +481,9 @@ def app_factory(
                     ]
                     yield (
                         "event: updates\ndata: "
-                        + json.dumps({"__interrupt__": interrupt_events}, default=str)
+                        + json.dumps(
+                            {"__interrupt__": interrupt_events}, default=_state_json_default
+                        )
                         + "\n\n"
                     )
 
@@ -460,7 +491,7 @@ def app_factory(
                 if final_state and final_state.values:
                     yield (
                         "event: values\ndata: "
-                        + json.dumps(final_state.values, default=str)
+                        + json.dumps(final_state.values, default=_state_json_default)
                         + "\n\n"
                     )
 
