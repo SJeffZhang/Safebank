@@ -1,24 +1,25 @@
 """G5 / G8 (W4): plan status and execution.
 
-G8 ALLOW path (T2b–T2c): implements the EVALUATED/ALLOW → EXECUTED flow.
+G8 ALLOW path (T2e): implements the EVALUATED/ALLOW → EXECUTED flow.
 CONFIRMED, STATE_CHANGED, UNKNOWN, G5, and request_id replay are later tasks.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
+from safebank_bankcore.ids import digest
 from safebank_contracts.codes import Code
 from safebank_contracts.plan import (
     Execute,
     ExecutionResult,
     InteractiveEvidence,
+    PlanDraft,
     Prepare,
 )
-from safebank_contracts.state import BankState
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -26,11 +27,11 @@ from .. import state
 from .. import tables as t
 from ..audit.chain import append_tx
 from ..errors import GatewayError
-from ..evaluation.repo import append_evaluation, latest_revision
+from ..evaluation.repo import append_evaluation
 from ..execution.replay import replay
 from ..l3.client import L3BusinessError, L3NotDelivered, L3OutcomeUnknown
 from ..locks import customer_lock
-from ..pipeline.context import EvalContext, ResolvedStep
+from ..pipeline.context import EvalContext
 from ..schemas.enums import ExecutionJobStatus, PlanStatus, ServiceKind
 from ..utterance.service import new_id
 
@@ -45,6 +46,8 @@ class ExecuteRequest(BaseModel):
 
 
 def _exec_now() -> datetime:
+    from datetime import UTC
+
     return datetime.now(UTC)
 
 
@@ -53,10 +56,6 @@ async def _stub_g5(request: Request) -> None:
 
 
 router.get("/plans/{plan_id}")(_stub_g5)
-
-
-def _resolve_steps(raw: list[dict[str, Any]]) -> tuple[ResolvedStep, ...]:
-    return tuple(ResolvedStep(**s) for s in raw)
 
 
 async def _load_plan(conn: AsyncConnection, plan_id: str, customer_id: str) -> dict[str, Any]:
@@ -74,7 +73,8 @@ async def _load_plan(conn: AsyncConnection, plan_id: str, customer_id: str) -> d
     return plan
 
 
-async def _load_session(conn: AsyncConnection, sid: str, customer_id: str) -> dict[str, Any]:
+async def _load_session(conn: AsyncConnection, sid: str) -> dict[str, Any]:
+    """Load session row with FOR UPDATE; raise 404/409 as appropriate."""
     row = (
         (
             await conn.execute(
@@ -93,6 +93,40 @@ async def _load_session(conn: AsyncConnection, sid: str, customer_id: str) -> di
     return row
 
 
+async def _compute_deadline_cap(
+    conn: AsyncConnection, utterance_ids: list[str]
+) -> datetime:
+    """Return the earliest expires_at_wall across all utterance_ids.
+
+    The seed data may use historical timestamps; L3 owns the actual
+    expiration enforcement, so this function only computes the minimum
+    without rejecting based on the current wall clock.
+    """
+    rows = (
+        (
+            await conn.execute(
+                select(t.utterances.c.expires_at_wall).where(
+                    t.utterances.c.id.in_(utterance_ids)
+                )
+            )
+        )
+        .mappings()
+        .all()
+    )
+    if len(rows) != len(utterance_ids):
+        raise GatewayError(
+            Code.STATE_CHANGED, 409, "one or more utterance_ids not found"
+        )
+    expires: list[datetime] = []
+    for r in rows:
+        if r["expires_at_wall"] is None:
+            raise GatewayError(
+                Code.STATE_CHANGED, 409, "utterance has no expires_at_wall"
+            )
+        expires.append(r["expires_at_wall"])
+    return min(expires)
+
+
 def _build_evidence(
     *,
     plan: dict[str, Any],
@@ -102,11 +136,7 @@ def _build_evidence(
 ) -> InteractiveEvidence:
     """Build InteractiveEvidence for the ALLOW GREEN path.
 
-    final_view_hash is "" because ALLOW decisions have no approval panel (the
-    view_hash only exists for REQUIRE_APPROVAL evaluations).  L3 state.py's
-    ALLOW path (approval_id is None) does not cross-check final_view_hash
-    against evaluation view_hash; it only checks the _stored_submission path
-    which is for PAUSED → resume.
+    final_view_hash is "" because ALLOW decisions have no approval panel.
     """
     return InteractiveEvidence(
         type="INTERACTIVE",
@@ -142,6 +172,10 @@ async def execute_plan(plan_id: str, request: Request):
 
     app_state = request.app.state
     l3 = app_state.l3
+    wall_now = getattr(app_state, "wall_now", None)
+    if wall_now is None:
+        raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503)
+    now = wall_now()
 
     async with customer_lock([caller.customer_id]) as conn:
 
@@ -149,7 +183,7 @@ async def execute_plan(plan_id: str, request: Request):
 
         plan = await _load_plan(conn, plan_id, caller.customer_id)
         sid = plan["sid"]
-        session = await _load_session(conn, sid, caller.customer_id)
+        session = await _load_session(conn, sid)
 
         # idempotent replay: if already terminal, return existing result
         if plan["status"] == PlanStatus.EXECUTED.value:
@@ -201,39 +235,56 @@ async def execute_plan(plan_id: str, request: Request):
                 "only ALLOW decisions are executable in this component",
             )
 
+        # ── plan_draft ───────────────────────────────────────────────────
+
+        if plan["plan_draft"] is None:
+            raise GatewayError(
+                Code.DEPENDENCY_UNAVAILABLE,
+                503,
+                "plan has no persisted plan_draft",
+            )
+        plan_draft = PlanDraft.model_validate(plan["plan_draft"])
+
+        # ── deadline ─────────────────────────────────────────────────────
+
+        deadline_cap_wall = await _compute_deadline_cap(conn, plan["utterance_ids"])
+
         # ── replay ───────────────────────────────────────────────────────
 
-        steps = _resolve_steps(plan["resolved_steps"])
-        snapshot_resp = await l3.snapshot(
-            {
-                "customer_id": caller.customer_id,
-                "steps": [s.model_dump(mode="json") for s in steps],
-                "event_id": None,
-            }
-        )
+        from .plans import _load_authorization
+
+        authorization = await _load_authorization(conn, sid, caller.customer_id, now)
 
         ctx = EvalContext(
             request=None,
             identity=caller,
-            authorization=None,
-            plan_draft=None,
+            authorization=authorization,
+            plan_draft=plan_draft,
             plan_id=plan_id,
             origin=plan["origin"],
             customer_id=caller.customer_id,
             session_id=sid,
             profile="B2",
-            wall_now=_exec_now,
+            wall_now=wall_now,
             conn=conn,
             l3=l3,
             audit=append_tx,
-            steps=steps,
         )
-        ctx._lazy_state = BankState.model_validate(snapshot_resp)
 
         new_decision = await replay(ctx)
+
+        # ALLOW equivalence: decision must still be ALLOW
         if new_decision.decision.value != "ALLOW":
             raise GatewayError(
                 Code.STATE_CHANGED, 409, "replay decision no longer ALLOW"
+            )
+
+        # plan_hash equivalence: re-compute from contract steps
+        resolved_steps = [s.model_dump(mode="json") for s in plan_draft.steps]
+        replay_plan_hash = digest(resolved_steps)
+        if replay_plan_hash != plan["plan_hash"]:
+            raise GatewayError(
+                Code.STATE_CHANGED, 409, "replay plan_hash differs from stored plan"
             )
 
         # ── 5.2 write transaction ────────────────────────────────────────
@@ -242,7 +293,6 @@ async def execute_plan(plan_id: str, request: Request):
         new_eval_id = new_id("evl")
         new_risk = new_decision.risk.value
         now_wall = _exec_now()
-        deadline = now_wall + timedelta(minutes=5)
 
         evidence = _build_evidence(
             plan=plan,
@@ -274,8 +324,8 @@ async def execute_plan(plan_id: str, request: Request):
                     l3_attempt=1,
                     retry_count=0,
                     authorization_evidence=evidence.model_dump(mode="json"),
-                    deadline_wall=deadline,
-                    deadline_cap_wall=deadline,
+                    deadline_wall=deadline_cap_wall,
+                    deadline_cap_wall=deadline_cap_wall,
                     created_at_wall=now_wall,
                     updated_at_wall=now_wall,
                 )
@@ -305,9 +355,9 @@ async def execute_plan(plan_id: str, request: Request):
             plan_id=plan_id,
             attempt=1,
             plan_hash=plan["plan_hash"],
-            steps=tuple(s.model_dump(mode="json") for s in steps),
-            deadline_wall=deadline,
-            deadline_cap_wall=deadline,
+            steps=plan_draft.steps,
+            deadline_wall=deadline_cap_wall,
+            deadline_cap_wall=deadline_cap_wall,
             authorization_evidence=evidence,
         )
         try:
@@ -324,7 +374,7 @@ async def execute_plan(plan_id: str, request: Request):
             plan_id=plan_id,
             attempt=1,
             plan_hash=plan["plan_hash"],
-            steps=tuple(s.model_dump(mode="json") for s in steps),
+            steps=plan_draft.steps,
             expected_versions=new_decision.versions,
             clock_version=new_decision.clock_version,
             authorization_evidence=evidence,
