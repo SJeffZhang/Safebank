@@ -1,9 +1,9 @@
 # TryAgent T1 独立协议评审
 
-**日期**: 2026-10-26  
-**评审范围**: HEAD `60d57d7`（`codex/p2-acceptance`），`scripts/try_agent.py` + `tests/try_agent/test_driver.py`  
-**评审依据**: 真实 API 源码（`services/agent/app/main.py:265-510`、`services/agent/app/graph/state.py`、`services/gateway/app/api/approvals.py`）  
-**验证方式**: 静态核对 wire 格式 + 真实 pytest 28 passed 复跑确认  
+**日期**: 2026-10-26
+**评审范围**: HEAD `60d57d7`（`codex/p2-acceptance`），`scripts/try_agent.py` + `tests/try_agent/test_driver.py`
+**评审依据**: 真实 API 源码（`services/agent/app/main.py:265-510`、`services/agent/app/graph/state.py`、`services/gateway/app/api/approvals.py`）
+**验证方式**: 静态核对 wire 格式 + 真实 pytest 28 passed 复跑确认
 **结论**: **REQUEST_CHANGES** — P0×2（全部决策路由到 UNKNOWN、无执行却报 COMPLETED），P1×3，P2×4
 
 ---
@@ -103,8 +103,8 @@
 
 ## 修复轮 1 定点复审（HEAD debd001，对比 60d57d7..debd001）
 
-**日期**: 2026-10-26  
-**方式**: 静态核对 diff + 真实 pytest 45 passed + ruff 零问题  
+**日期**: 2026-10-26
+**方式**: 静态核对 diff + 真实 pytest 45 passed + ruff 零问题
 **结论**: **APPROVE** — 原 P0×2、P1×2（P1-2 不成立）、P2×4 全部修复，无新增 P0/P1/P2。
 
 ### 逐条核对
