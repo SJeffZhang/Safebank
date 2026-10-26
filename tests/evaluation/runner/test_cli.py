@@ -191,15 +191,30 @@ def test_live_ports_factory_sets_supplement_transfer_reads():
     """``_live_ports_factory`` and ``_live_ports_factory_counting`` must set
     ``supplement_transfer_reads=True`` on the gather adapter, matching the
     production path in ``services/agent/app/main.py``."""
-    from evaluation.runner.cli import _live_ports_factory, _live_ports_factory_counting
+    from unittest import mock
+
     from services.agent.app.llm.gather import GatherAdapter
 
-    for factory in [_live_ports_factory, _live_ports_factory_counting]:
-        ports = factory({"turns": ["hello"]}, [0])
+    fake_llm = mock.MagicMock()
+
+    with mock.patch("services.agent.app.llm.client.make_llm", return_value=fake_llm):
+        from evaluation.runner.cli import _live_ports_factory, _live_ports_factory_counting
+
+        # _live_ports_factory(case) — no counter
+        ports = _live_ports_factory({"turns": ["hello"]})
         gather = ports["gather"]
         assert isinstance(gather, GatherAdapter)
         assert gather.supplement_transfer_reads is True, (
-            f"{factory.__name__}: supplement_transfer_reads={gather.supplement_transfer_reads}"
+            f"_live_ports_factory: supplement_transfer_reads={gather.supplement_transfer_reads}"
+        )
+
+        # _live_ports_factory_counting(case, counter)
+        ports2 = _live_ports_factory_counting({"turns": ["hello"]}, [0])
+        gather2 = ports2["gather"]
+        assert isinstance(gather2, GatherAdapter)
+        assert gather2.supplement_transfer_reads is True, (
+            "_live_ports_factory_counting: "
+            f"supplement_transfer_reads={gather2.supplement_transfer_reads}"
         )
 
 

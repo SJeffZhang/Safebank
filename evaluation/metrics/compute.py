@@ -128,8 +128,16 @@ def _count_items(data: Any) -> int | None:
     """
     if not isinstance(data, dict):
         return None
-    for key in ("items", "accounts", "cards", "transactions", "subscriptions",
-                "products", "entries", "results"):
+    for key in (
+        "items",
+        "accounts",
+        "cards",
+        "transactions",
+        "subscriptions",
+        "products",
+        "entries",
+        "results",
+    ):
         val = data.get(key)
         if isinstance(val, list):
             return len(val)
