@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 from safebank_contracts.codes import Code
 from sqlalchemy import select
 from sqlalchemy import update as sql_update
@@ -184,6 +185,18 @@ async def _verify_binding_from_db(db, approval_id: str) -> tuple[ApprovalBinding
         expires_at_wall=apv["expires_at_wall"],
     )
     return binding, apv["binding_mac"]
+
+
+# ── Fixture: isolate global config per test ───────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _isolate_global_configure():
+    """Save and restore global approval_service._config so no test leaks."""
+    saved = approval_service._config
+    approval_service._config = None  # type: ignore[attr-defined]
+    yield
+    approval_service._config = saved  # type: ignore[attr-defined]
 
 
 # ── Test: G4 uses instance keys, not global configure ─────────────────────
@@ -452,9 +465,50 @@ def test_instance_non_bytes_key_returns_503(app_config):
     asyncio.run(run())
 
 
-# ── Cleanup: reset global config after tests that call configure() ────────
+# ── Test: global valid but instance key None → 503 ────────────────────────
 
 
-def test_reset_global_configure():
-    """Reset global config so later tests aren't polluted by test_g4_bad_global_configure."""
-    approval_service._config = None  # type: ignore[attr-defined]
+def test_global_valid_but_instance_none_returns_503(app_config):
+    """Global configure() is valid, but app.state has no key → 503, no approval."""
+
+    async def run():
+        app = await build_app(app_config)
+        db = _runtime_db(app)
+        sid = "ses_gv_nokey"
+        jti = "jti-gv-nokey"
+        rid_acc, rid_pay = await _seed_basic(app, db, sid, jti)
+
+        # Count approvals before.
+        async with db.connect() as conn:
+            before = (await conn.execute(select(t.approvals))).fetchall()
+
+        # Make global valid, but remove instance key.
+        approval_service.configure(
+            approval_hmac_key=b"\x01" * 32,
+            profile="B2",
+            wall_now=_app_state(app).wall_now,
+        )
+        _app_state(app).approval_hmac_key = None
+
+        step = _step_with_sources(sid, rid_acc, rid_pay)
+        body = _body("req_gv_nokey", sid, [f"utt_{sid}_1"], steps=[step])
+        hdrs = app.auth_headers(sid=sid, jti=jti, utts=[f"utt_{sid}_1"])
+
+        resp = await app.client.post(EVALUATE_URL, json=body, headers=hdrs)
+        assert resp.status_code == 503, (
+            f"Expected 503 when instance key missing despite valid global, "
+            f"got {resp.status_code}: {resp.text}"
+        )
+        data = resp.json()
+        assert data["error"]["code"] == Code.DEPENDENCY_UNAVAILABLE.value
+
+        # No new approvals row.
+        async with db.connect() as conn:
+            after = (await conn.execute(select(t.approvals))).fetchall()
+        assert len(after) == len(before), (
+            f"Expected no new approvals (before={len(before)}, after={len(after)})"
+        )
+
+        await db.dispose()
+
+    asyncio.run(run())
