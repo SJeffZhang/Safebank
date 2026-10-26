@@ -1,0 +1,3 @@
+# E0b T6逐样本证据独立审（20轮，新DS review）
+只写docs/reviews/E0b-T6-review.md，首步骨架；不改实现不子agent，不读大AGENTS/PRD/secret。只审6653010..74f4c03的evaluation/metrics/compute.py、runner/loop.py与test_case_evidence.py，最多读5文件。协调者亲跑test_metrics+test_case_evidence=45passed/0.03s。
+需求：cases.jsonl保留完整多步plan与arg_sources、多turn原话、G4 decision/findings与每次失败code，未知usage不能装作已知0；不输出key/JWT/PIN/service token，调用方数据不被原地改写。检查是否真正从run_corpus接入、是否所有证据字段最终写入（extract返回但丢弃也算缺陷），原指标定义不改。特别检验_strip_secrets超过depth10直接原样返回、tuple嵌套、文本中间Bearer或JWT（当前只startswith/整串match）的绕过，不能只看现有happy path。只做离线测试/复现，不Docker/live。报告P0/P1/P2精确最小例与ADDRESSED建议，未亲跑PG注明；结束APPROVE或REQUEST_CHANGES。
