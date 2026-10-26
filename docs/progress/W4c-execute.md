@@ -119,3 +119,11 @@
 
 - `approval_plan_ctx`（support.py）：真实 L3 + 真实 G4 得到收紧卡限额的 REQUIRE_APPROVAL/YELLOW 计划，再经真实 G9 取面板 view_hash、G6 确认；test_approval_fixture.py 断言 approvals 与 plans 均为 CONFIRMED、L3 为真实客户端。
 - worker W4c-T3a-r1 用满 51 轮未提交（快照 refs/wip/W4c-T3a-r1），卡在 G9 KeyError。协调者定位：夹具未校验 G9 状态码（实为 403）；w3b 的 app_jwt 只有 `app` scope，G9/G6 需要 `approve`（改为按 w4b2b 写法直接 sign_jwt）；该 app 令牌的 jti 未种入 auth_sessions（401）。修后 1 passed；make test-w4c 12 passed、lint 348。
+
+## T3b（2026-10-26）：G8 CONFIRMED 路径红测
+
+- 新增 `tests/gateway/w4c/db/test_g8_confirmed.py`：3 条红测（G8 当前对 CONFIRMED 计划返回 503，故全部预期失败）：
+  1. `test_g8_confirmed_executes`：G8 200 EXECUTED + 真实 L3 card single_limit_cents==100000 + approvals USED + plans EXECUTED + L3 plan_executions count==1。
+  2. `test_g8_confirmed_view_changed_is_not_executed`：调 G8 前把 crd_zs_1 freeze → 409 STATE_CHANGED + L3 plan_executions count==0 + card limit 仍 500000。
+  3. `test_g8_confirmed_rejects_approval_not_confirmed`：调 G8 前把 approvals status 改为 REJECTED → 409 + L3 plan_executions count==0。
+- 运行：**3 failed / 12 passed**（3 条全部 503 DEPENDENCY_UNAVAILABLE，预期）；lint 349 files 通过。
