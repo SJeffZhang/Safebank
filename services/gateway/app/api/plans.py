@@ -377,7 +377,13 @@ async def evaluate_plan(request: Request) -> JSONResponse:
                 .one()
             )
             approval_id = await create_for_evaluation(
-                conn, plan=plan_row, evaluation=eval_row, view=view
+                conn,
+                plan=plan_row,
+                evaluation=eval_row,
+                view=view,
+                key=getattr(request.app.state, "approval_hmac_key", None),
+                profile=getattr(settings, "profile", "B2") if settings else "B2",
+                wall_now=wall_now,
             )
 
         # ── Audit ─────────────────────────────────────────────────

@@ -305,7 +305,14 @@ async def _supersede_session(conn: AsyncConnection, *, sid: str, except_evaluati
 
 
 async def create_for_evaluation(
-    conn: AsyncConnection, *, plan: Any, evaluation: Any, view: Any
+    conn: AsyncConnection,
+    *,
+    plan: Any,
+    evaluation: Any,
+    view: Any,
+    key: bytes | None = None,
+    profile: str | None = None,
+    wall_now: Callable[[], datetime] | None = None,
 ) -> str | None:
     """Create a PENDING approval for a REQUIRE_APPROVAL evaluation.
 
@@ -315,8 +322,41 @@ async def create_for_evaluation(
     REQUIRE_APPROVAL call) and persists the final ``view_json`` (real approval
     ID / status / expiry) on the evaluation row. ALLOW returns None and creates
     nothing; DENY/REPLAN are caller errors. The caller owns commit/rollback.
+
+    *key*, *profile* and *wall_now* form an optional per-call instance config.
+    All three must be provided together (or all three None/omitted). When
+    provided they are used for the HMAC key, profile string and wall clock;
+    the global ``_config`` is never read or mutated. When omitted the legacy
+    ``_require_config()`` path is used for backward compatibility with library
+    tests that call ``configure()`` directly.
     """
-    cfg = _require_config()
+    # Instance config (all three or none).
+    instance_args = (key, profile, wall_now)
+    if all(a is not None for a in instance_args):
+        if not isinstance(key, bytes) or len(key) < 32:
+            raise GatewayError(
+                Code.DEPENDENCY_UNAVAILABLE, 503, "approval HMAC key missing or too short"
+            )
+        if not isinstance(profile, str) or profile not in _VALID_PROFILES:
+            raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503, f"invalid profile {profile!r}")
+        if not callable(wall_now):
+            raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503, "wall_now must be callable")
+        now = wall_now()
+        if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
+            raise GatewayError(
+                Code.DEPENDENCY_UNAVAILABLE,
+                503,
+                "wall_now must return a timezone-aware datetime",
+            )
+        cfg = _ApprovalConfig(bytes(key), profile, wall_now)
+    elif any(a is not None for a in instance_args):
+        raise GatewayError(
+            Code.DEPENDENCY_UNAVAILABLE,
+            503,
+            "key, profile, wall_now must be provided together or not at all",
+        )
+    else:
+        cfg = _require_config()
     plan_id = plan["id"]
     customer_id = plan["customer_id"]
     sid = plan["sid"]
