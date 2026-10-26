@@ -98,3 +98,62 @@
 **REQUEST_CHANGES**。P0-1（decision 路由失败）与 P0-2（无执行却报 COMPLETED）必须修复才能合并。P1-1（HTTP 错误体脱敏 + 资源泄漏）、P1-3（`--out`/getpass 测试覆盖）建议修。P1-2 不成立（协调者疑点经代码证实与实际一致）。
 
 修后需要真实 `make up` 环境下一次真实端到端验证（非 mock）确认决策路由正确。
+
+---
+
+## 修复轮 1 定点复审（HEAD debd001，对比 60d57d7..debd001）
+
+**日期**: 2026-10-26  
+**方式**: 静态核对 diff + 真实 pytest 45 passed + ruff 零问题  
+**结论**: **APPROVE** — 原 P0×2、P1×2（P1-2 不成立）、P2×4 全部修复，无新增 P0/P1/P2。
+
+### 逐条核对
+
+| 原条目 | 修复方式 | 判定 |
+|--------|---------|------|
+| **P0-1** decision 字段类型路由 | `_resolve_decision()` 接受结构化 dict（`model_dump(mode='json')`）与裸枚举字符串；repr 串返回 UNKNOWN；`_VALID_DECISIONS` frozenset 精确匹配 | **ADDRESSED** |
+| **P0-2** ALLOW 误报 COMPLETED | 新增 `EXIT_ALLOW_READY`（code 8）；`EXIT_COMPLETED` 仅当 `execution.status == "EXECUTED"`；去掉 `ALLOWED`/`COMPLETED` 决策别名 | **ADDRESSED** |
+| **P1-1** 非 200 SSE 未 close + 错误体脱敏 | `stream_resp.read()` + `stream_resp.close()` 在 try/finally 中；`_safe_error_body()` 只提取 `code` 字段不回显 detail；G1/G15/G3/L1 thread 非 200 路径均用 `_safe_error_body`；`_sanitise_headers` 在所有 6 个 HTTP 响应 event 中调用 | **ADDRESSED** |
+| **P1-2** `__interrupt__` 解析路径 | 原评审已判定不成立；当前代码与真实 `main.py` 路径一致 | **N/A（原不成立）** |
+| **P1-3** `--out` 写入与 getpass 无测试 | 新增 `test_pin_from_getpass`（monkeypatch）、`test_pin_empty_rejected`（空 PIN→CONFIG_ERROR）、`test_no_secrets_in_out_file`（临时文件→脱敏断言→还原 key 存在）、`test_out_file_contains_panel_when_approval`（面板入 trace） | **ADDRESSED** |
+| **P2-1** 面板不经终端呈现 | `main()` 输出 reply 与 sanitised 面板摘要（approval_id/plan_id/risk/decision/status）到 stderr；`test_panel_visible_in_stdout` 验证 | **ADDRESSED** |
+| **P2-2** `ALLOW`/`ALLOWED`/`COMPLETED` 三种命名 | 路由仅用 `_VALID_DECISIONS = frozenset({"ALLOW", "REQUIRE_APPROVAL", "REPLAN", "DENY"})`；`ALLOWED`/`COMPLETED` 已删除 | **ADDRESSED** |
+| **P2-3** `_sanitise_headers` 未调用 | 现已在 G1/G15/G3/L1 thread/L1 SSE/G9 六个 HTTP 响应 event 中调用 | **ADDRESSED** |
+| **P2-4** SSE error body 截断 | 原评审判定无实际风险；`_ensure_no_secrets` 在 `parse_sse` 中覆盖所有 SSE data 行，error 分支 `raw` 回退路径同受保护 | **N/A（原无风险）** |
+
+### 新增要求的逐条核实
+
+以下为协调者在派发中额外要求的检查项：
+
+| 要求 | 核实 |
+|------|------|
+| **ALLOW_READY 而非无执行 COMPLETED** | `try_agent.py:572-579`：ALLOW + 无 execution → `EXIT_ALLOW_READY`；ALLOW + `execution.status == "EXECUTED"` → `EXIT_COMPLETED`。plan_id 匹配由同一 SSE stream 保证，T1 范围内合理 |
+| **面板真实默认呈现、不改写** | `main():664-671` 提取 5 个 sanitised key 到 stderr，不改写 panel 原始 JSON；`test_panel_visible_in_stdout` 覆盖 |
+| **HTTP/SSE 错误不泄漏 token/JWT/PIN** | `_safe_error_body` 只输出 `code` 不回显 detail；`_sanitise_headers` 遮蔽 Authorization/X-Service-Token；`_ensure_no_secrets` 拦截 `Bearer eyJ`/`FRONTEND_SERVICE_TOKEN`/`AGENT_SERVICE_TOKEN` 到 `--out` 文件 |
+| **非 200 流有 read + finally close** | `try_agent.py:448-451`：`try: content = stream_resp.read()` / `finally: stream_resp.close()` |
+| **连接异常无 traceback** | `test_connection_error_clean_exit` 断言 `Traceback` 不在 error detail 中 |
+| **getpass/out 真实 main 测试** | `test_pin_from_getpass`、`test_pin_empty_rejected`、`test_no_secrets_in_out_file`、`test_out_file_contains_panel_when_approval` 四项覆盖 |
+| **不接受 ALLOWED/COMPLETED 等非法决策别名** | `_VALID_DECISIONS` 仅含四个 PRD 枚举值；`_resolve_decision()` 对未知值返回 UNKNOWN；`test_unknown_decision_value_is_unknown` + `test_repr_decision_is_unknown` 两条覆盖 |
+| **不得建议解析 repr 猜决策** | `_resolve_decision():218` 对 str 非枚举成员直接返回 `"UNKNOWN"`；`test_repr_decision_is_unknown` 验证；`test_resolve_decision_repr_is_unknown` 单元覆盖 |
+
+### 未覆盖 / 已知限制（不阻塞合并）
+
+- **真实 L1 SSE 编码缺陷**（独立分支 efde4d7 修复，尚未合入 main）：当前 `main.py` 用 `json.dumps(default=str)` 序列化 AgentState，Decision 对象会变成 repr 字符串。efde4d7 改为 `model_dump(mode='json')` 后 39 真 PG 通过。合入后结构化 dict 路径即可正常路由；合入前 `default=str` 产生的 repr 串经 `_resolve_decision` 正确返回 UNKNOWN（fail-safe）。
+- **真实 make up 端到端验证**：MockTransport 测试无法覆盖真实 L1/L2/L3 堆栈。协调者指示由独立分支 efde4d7 合入后再做真实闭环验收，不在本组件重复要求。
+
+### 验证摘要
+
+| 检查项 | 结果 |
+|--------|------|
+| `pytest tests/try_agent -q --tb=short` | **45 passed**（0.05s） |
+| `ruff check` | All checks passed |
+| 原 P0-1 路由修复 | `test_terminal_decisions[ALLOW→ALLOW_READY, REPLAN, DENY]` 3 条 + `test_allow_with_execution_is_completed` + `test_allow_without_execution_is_allow_ready` + `test_repr_decision_is_unknown` + `test_unknown_decision_value_is_unknown` |
+| 原 P1-1 脱敏修复 | `test_g1_unauthorized`（code 在 detail、raw body 不在）、`test_non_200_sse_stream_reads_body_safely`（503 非 200 流 safe、raw detail 不在） |
+| 原 P1-3 --out/getpass | `test_pin_from_getpass`、`test_pin_empty_rejected`、`test_no_secrets_in_out_file`、`test_out_file_contains_panel_when_approval` |
+| 令牌隔离 | `test_app_token_sent_to_gateway_not_agent` 覆盖 |
+| 连接异常无泄漏 | `test_connection_error_clean_exit` |
+| 脱敏基础函数 | `test_ensure_no_secrets_*` ×2、`test_sanitise_headers_masks_auth`、`test_safe_error_body_*` ×2、`test_resolve_decision_*` ×5 |
+
+## 最终结论
+
+**APPROVE**。原 P0×2 阻塞全部修复，P1/P2 全部关闭；新增 45 项测试覆盖路由、脱敏、`--out`、getpass、连接异常、repr fail-safe。无新增 P0/P1/P2。Real L1 SSE 编码修复在独立分支 efde4d7，合入后即可做真实端到端验收，不阻塞本组件。
