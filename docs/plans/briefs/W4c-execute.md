@@ -331,3 +331,9 @@ actionlint               # 若未安装，先 brew install actionlint
 - **C5 故障注入**（Q5）：两种手段都用。「L3 已提交但回包丢失」和超时，用 httpx transport 包装做到可确定复现；进程崩溃后恢复，至少要有一项真实测试，即真实 bank-backend 应用加 gateway 重建，参照 S1/P1 的做法。
 - **C6 ADR-008 前提**（Q6）：Task 0 先用真实 L3 验证「deadline 已过期的同 attempt prepare 不会被挡掉」。验证不通过就**停止**，在进度文件里写明证据并上报，不得绕过屏障，也不得放宽 L3 校验。
 - **C7 锁序与范围**：沿用 B5 锁序 session→plan→evaluation→approval→otp_challenge，客户锁只能用 W4a 的 `customer_lock`，并说明客户锁与上述行锁之间的相对顺序。不新增迁移，不改 contracts。fake 与真实 L3 的证据边界要在测试名和文档里标清。
+
+### 协调者裁定 C8（2026-10-26，修订 C7「不加迁移」）
+
+- 事实：PRD §7.10 第 4 项要求执行前「在新快照上重跑 ①–⑧」，而阶段 ①–④（实体、来源与污点、意图）需要原始 PlanDraft（含 `arg_sources`）；`plans` 表只存 `resolved_steps`/`plan_hash`，**没有**原始 PlanDraft，复演无从重跑。T2c 的 WIP 以 `plan_draft=None` 构造复演上下文，实体阶段因此直接返回，等于不复核——判为不可接受。
+- 裁定：新增 gateway 迁移 `0003_plan_draft`，`plans.plan_draft JSONB NULL`（旧行 NULL，不回填）；G4 在插入 plans 的同一事务写入 `PlanDraft.model_dump(mode="json")`；G8 用 `PlanDraft.model_validate(plans.plan_draft)` 构造复演上下文，授权输入复用 G4 的 `_load_authorization`；`plan_draft IS NULL` 的计划 G8 一律 503 DEPENDENCY_UNAVAILABLE、DB 不变。PRD §7.2 `plans` 行已同步。
+- 拆分：T2d 迁移 + tables + G4 写入 + 漂移/升级测试；T2e 在 T2d 之上完成 G8 ALLOW 路径（T2c 的 execution.py WIP 已放在 `git stash`「W4c-T2c2 WIP」，可参考，不得照搬 `plan_draft=None`）。

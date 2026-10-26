@@ -966,7 +966,7 @@ L2 根据 F / A 确定 `origin`；PlanDraft 不接受 `origin`、`customer_id`�
 | `read_records` | id/source_ref、sid、tool、canonical_args、response、untrusted_paths、versions、observed_at、created_at_wall；原始文本限长、仅内部保留 |
 | `pending_clarifications` | id、sid、kind SLOTS/FORM_REQUIRED、prompt_template_id、parent_utterance_ids、authorization_epoch、required_fields、candidate_refs、partial_scope、status OPEN/RESOLVED/CANCELLED、expires_at_wall；每 sid 最多一个 OPEN |
 | `form_actions` / `hints` | id、sid、规范化作用域/字段、parent_plan_id、view_hash、expires_at_wall、used_by；ID 一次使用，重试同请求除外 |
-| `plans` | id、customer_id、sid、origin、request_id、request_hash、plan_hash、steps_hash、resolved_steps、utterance_ids、scope_ids、status、created_at_wall；内容不可改（status 除外） |
+| `plans` | id、customer_id、sid、origin、request_id、request_hash、plan_hash、steps_hash、resolved_steps、plan_draft（原始 PlanDraft，含 arg_sources，供执行前在新快照上重跑 ①–⑧；0003 前的旧行为 NULL，此类计划不可执行，fail-closed）、utterance_ids、scope_ids、status、created_at_wall；内容不可改（status 除外） |
 | `evaluations` | id、plan_id、revision、decision、risk、findings、preflight、versions、policy_version、view_hash、view_json（对应不可变PlanView）、created_at_wall；每次复演追加 |
 | `approvals` | id、plan_id、evaluation_id、customer_id、sid、plan_hash、view_hash、binding_mac、expires_at_wall、status、risk_ack、confirmed_at_wall；每 sid 最多一个 PENDING；同计划最多一个可用审批 |
 | `otp_challenges` | approval_id、code_digest（带密钥 HMAC）、code_ciphertext（仅D模拟短信使用的AEAD密文，绑定approval_id与view_hash）、expires_at_wall、attempt_count、sent_count、locked_at_wall；不存日志明文 |
