@@ -588,7 +588,15 @@ async def _handle_state_changed(
         approval_id: str | None = None
         if to_status == PlanStatus.PENDING_APPROVAL:
             approval_id = await create_for_evaluation(
-                conn, plan=plan_row, evaluation=eval_row_new, view=view
+                conn,
+                plan=plan_row,
+                evaluation=eval_row_new,
+                view=view,
+                key=getattr(request.app.state, "approval_hmac_key", None),
+                profile=getattr(request.app.state, "settings", None).profile
+                if getattr(request.app.state, "settings", None)
+                else "B2",
+                wall_now=getattr(request.app.state, "wall_now", None),
             )
 
         fence_new_identity = state.ExecutionIdentity(
