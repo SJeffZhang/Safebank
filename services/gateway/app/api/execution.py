@@ -22,7 +22,7 @@ from safebank_contracts.plan import (
     Prepare,
 )
 from safebank_contracts.protocol import PrepareResult
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .. import state
@@ -35,10 +35,15 @@ from ..evaluation.repo import append_evaluation, latest_revision
 from ..execution.replay import replay_with_context
 from ..l3.client import L3BusinessError, L3NotDelivered, L3OutcomeUnknown
 from ..locks import customer_lock
+from ..middleware import digest_hex
 from ..pipeline.context import EvalContext
-from ..schemas.enums import ApprovalStatus, ExecutionJobStatus, PlanStatus
-from ..schemas.execution import ExecutionAccepted
+from ..schemas.enums import ApprovalStatus, ExecutionJobStatus, PlanStatus, ServiceKind
+from ..schemas.execution import ExecutionAccepted, PlanStatusView
 from ..utterance.service import new_id
+
+router = APIRouter()
+
+ROUTE_EXECUTE = "POST /plans/{plan_id}/execute"
 
 router = APIRouter()
 
@@ -56,11 +61,170 @@ def _exec_now() -> datetime:
     return datetime.now(UTC)
 
 
-async def _stub_g5(request: Request) -> None:
-    raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503, "G5 plan status lands in W4")
+# ── request_dedup helpers ──────────────────────────────────────────────────────
 
 
-router.get("/plans/{plan_id}")(_stub_g5)
+async def _write_request_dedup_row(
+    conn: AsyncConnection,
+    *,
+    customer_id: str,
+    request_id: str,
+    request_hash: str,
+    status_code: int,
+    response: dict[str, Any],
+) -> None:
+    """Persist a request_dedup row (C4).  Caller owns the customer_lock conn."""
+    await conn.rollback()
+    async with conn.begin():
+        await conn.execute(
+            t.request_dedup.insert().values(
+                customer_id=customer_id,
+                route=ROUTE_EXECUTE,
+                request_id=request_id,
+                request_hash=request_hash,
+                status_code=status_code,
+                response=response,
+                created_at_wall=text("now()"),
+            )
+        )
+
+
+async def _check_request_dedup(
+    conn: AsyncConnection,
+    *,
+    customer_id: str,
+    request_id: str,
+    request_hash: str,
+) -> tuple[dict[str, Any] | None, bool]:
+    """Check request_dedup. Returns (replay_response, is_non_terminal_dedup).
+
+    - replay_response is not None → return this JSON body as-is (terminal)
+    - is_non_terminal_dedup → old request_id had a non-terminal response;
+      PAUSED-resume path must be blocked
+    """
+    existing = (
+        (
+            await conn.execute(
+                select(
+                    t.request_dedup.c.request_hash,
+                    t.request_dedup.c.status_code,
+                    t.request_dedup.c.response,
+                ).where(
+                    t.request_dedup.c.customer_id == customer_id,
+                    t.request_dedup.c.route == ROUTE_EXECUTE,
+                    t.request_dedup.c.request_id == request_id,
+                )
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if existing is None:
+        return None, False
+    if existing["request_hash"] != request_hash:
+        raise GatewayError(
+            Code.IDEMPOTENCY_CONFLICT, 409, "request_id reused with different body"
+        )
+    if existing["status_code"] == 200:
+        return dict(existing["response"]), False
+    return None, True  # non-terminal → flag, don't replay
+
+
+# ── G5 GET /plans/{plan_id} ───────────────────────────────────────────────────
+
+
+@router.get("/plans/{plan_id}")
+async def get_plan_status(plan_id: str, request: Request):
+    caller = getattr(request.state, "caller", None)
+    if caller is None or caller.customer_id is None:
+        raise GatewayError(Code.UNAUTHENTICATED, 401)
+
+    app_state = request.app.state
+    l3 = app_state.l3
+    wall_now = getattr(app_state, "wall_now", None)
+    if wall_now is None:
+        raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503)
+    trace_id = getattr(request.state, "trace_id", "")
+
+    async with customer_lock([caller.customer_id]) as conn:
+        plan = await _load_plan(conn, plan_id, caller.customer_id)
+
+        # A caller restricted to own session
+        if caller.kind is ServiceKind.A and plan["sid"] != caller.sid:
+            raise GatewayError(Code.OWNERSHIP_MISMATCH, 404, "plan not found for this session")
+
+        decision: dict[str, Any] | None = None
+        eval_row = (
+            (
+                await conn.execute(
+                    select(t.evaluations)
+                    .where(t.evaluations.c.plan_id == plan_id)
+                    .order_by(t.evaluations.c.revision.desc())
+                    .limit(1)
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if eval_row is not None:
+            decision = {
+                "decision": eval_row["decision"].get("decision"),
+                "risk": eval_row["risk"],
+                "evaluation_id": eval_row["id"],
+                "revision": eval_row["revision"],
+                "approval_id": None,
+            }
+            # Find the approval for this evaluation
+            approval_row = (
+                (
+                    await conn.execute(
+                        select(t.approvals.c.id).where(
+                            t.approvals.c.evaluation_id == eval_row["id"]
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if approval_row is not None:
+                decision["approval_id"] = approval_row["id"]
+
+        execution: dict[str, Any] | None = None
+        job = (
+            (
+                await conn.execute(
+                    select(t.execution_jobs).where(t.execution_jobs.c.plan_id == plan_id)
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if job is not None:
+            if job["status"] in ("EXECUTED", "FAILED"):
+                if job["result"] is not None:
+                    execution = dict(job["result"])
+            elif job["status"] == "UNKNOWN":
+                reconciled = await _reconcile_job(
+                    conn=conn,
+                    plan_id=plan_id,
+                    caller_customer_id=caller.customer_id,
+                    plan=plan,
+                    job=job,
+                    l3=l3,
+                    trace_id=trace_id,
+                )
+                if reconciled is not None:
+                    execution = reconciled
+                else:
+                    execution = {"status": "UNKNOWN"}
+            # live job states (EXECUTING, FENCING, PAUSED) → execution = None
+
+        return PlanStatusView(
+            plan_id=plan_id,
+            status=plan["status"],
+            decision=decision,
+            execution=execution,
+        ).model_dump(mode="json")
 
 
 async def _load_plan(conn: AsyncConnection, plan_id: str, customer_id: str) -> dict[str, Any]:
