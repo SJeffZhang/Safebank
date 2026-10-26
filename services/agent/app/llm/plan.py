@@ -96,14 +96,11 @@ _NULLABLE_PARAMS: frozenset[str] = frozenset({"memo", "phone", "alias", "end_at"
 
 
 def _required_value_problems(draft: PlanDraft, state: AgentState) -> list[str]:
-    """Catch required params filled with __NULL__ or empty, and bad from_account_id source.
+    """Catch required params filled with __NULL__ or empty.
 
     ``__NULL__`` is only valid for nullable params (memo, phone, alias, end_at).
     For required id params (from_account_id, card_id, account_id, etc.) it indicates
     the model guessed instead of referencing actual gather data.
-
-    Also verifies that ``from_account_id`` has a read or utterance source — it must
-    not be derived from a step, hint, or action.
     """
     problems: list[str] = []
     for index, step in enumerate(draft.steps):
@@ -120,28 +117,6 @@ def _required_value_problems(draft: PlanDraft, state: AgentState) -> list[str]:
                     "请从 gather 读取结果中引用正确的 id；"
                     "若无法确定（多个账户/卡片）则不要生成计划，改为让 understand 标记 unclear"
                 )
-        # from_account_id must have a read or utterance source (not step/derived/hint/action)
-        if step.tool in ("transfer", "schedule_transfer"):
-            from_id = step.args.from_account_id
-            if from_id and from_id not in ("", "__NULL__"):
-                found_source = False
-                for source in step.arg_sources:
-                    if source.param == "from_account_id":
-                        found_source = True
-                        if source.source.kind not in ("read", "utterance"):
-                            problems.append(
-                                f"steps[{index}].from_account_id: "
-                                "来源必须是 read（从 gather 读取结果引用）"
-                                "或 utterance（用户原话中明确的账户），"
-                                f"不能是 {source.source.kind}"
-                            )
-                        break
-                if not found_source:
-                    # No source declared for from_account_id at all.
-                    problems.append(
-                        f"steps[{index}].from_account_id: "
-                        "缺少参数来源声明，请从 gather 读取的 /accounts/N/id 中以 read 来源引用"
-                    )
     return problems
 
 

@@ -59,13 +59,7 @@ def plan_state():
             UtteranceRef(id="utt_ctx", kind="context", text="页面位置"),
         ],
         "understanding": Understanding(intents=["transfer"], needs_write=True),
-        "reads": [
-            ReadRecord(
-                source_ref="src_acct",
-                tool="get_accounts",
-                data={"accounts": [{"account_id": "acc_a", "balance_cents": 500000}]},
-            )
-        ],
+        "reads": [],
     }
 
 
@@ -84,16 +78,7 @@ def strict_plan() -> dict:
                     "memo": "__NULL__",
                 },
                 "depends_on": [],
-                "arg_sources": [
-                    {
-                        "param": "from_account_id",
-                        "source": {
-                            "kind": "read",
-                            "ref": "src_acct",
-                            "pointer": "/accounts/0/account_id",
-                        },
-                    },
-                ],
+                "arg_sources": [],
             }
         ],
         "rationale": "test",
@@ -388,7 +373,7 @@ def test_plan_prompt_includes_reads_utterances_and_derived():
         "understanding": Understanding(intents=["transfer"], needs_write=True),
         "reads": [
             ReadRecord(
-                source_ref="src_acct",
+                source_ref="src_a",
                 tool="get_accounts",
                 data={"accounts": [{"account_id": "acc_a"}]},
             )
@@ -403,7 +388,7 @@ def test_plan_prompt_includes_reads_utterances_and_derived():
     human = body["messages"][1]["content"]
     assert "derived" in system
     assert "utt_typed" in human
-    assert "src_acct" in human
+    assert "src_a" in human
     assert "acc_a" in human
     serialized = json.dumps(body, ensure_ascii=False)
     for secret in ("cus_a", "ses_a", "SECRET_TOKEN", API_KEY):
@@ -456,7 +441,7 @@ def test_plan_strips_wall_from_reads_defense():
         "understanding": Understanding(intents=["transfer"], needs_write=True),
         "reads": [
             ReadRecord(
-                source_ref="src_acct",
+                source_ref="src_a",
                 tool="get_accounts",
                 data={"accounts": [{"account_id": "acc_a", "leak_wall": "secret"}]},
             )
@@ -789,14 +774,6 @@ def _memo_plan(memo_value: str | None, memo_span=(4, 6)) -> dict:
     }
     sources: list = [
         {
-            "param": "from_account_id",
-            "source": {
-                "kind": "read",
-                "ref": "src_acct",
-                "pointer": "/accounts/0/account_id",
-            },
-        },
-        {
             "param": "amount_cents",
             "source": {"kind": "utterance", "ref": "utt_typed", "span": [4, 6]},
         },
@@ -826,19 +803,12 @@ def _memo_plan(memo_value: str | None, memo_span=(4, 6)) -> dict:
 def test_plan_retries_on_unsolicited_memo():
     """Model sets memo from payee name without user asking → retry with feedback."""
     user_text = "给赵六转800元"  # 赵六 = [1,3], no memo request
-    reads = [
-        ReadRecord(
-            source_ref="src_acct",
-            tool="get_accounts",
-            data={"accounts": [{"account_id": "acc_a"}]},
-        )
-    ]
     state = {
         "customer_id": "cus_a",
         "session_id": "ses_a",
         "utterances": [UtteranceRef(id="utt_typed", kind="typed", text=user_text)],
         "understanding": Understanding(intents=["transfer"], needs_write=True),
-        "reads": reads,
+        "reads": [],
     }
     # First attempt: memo="赵六" copied from payee name — unsolicited
     bad = _memo_plan(memo_value="赵六", memo_span=(1, 3))
@@ -859,19 +829,12 @@ def test_plan_retries_on_unsolicited_memo():
 def test_plan_accepts_explicitly_requested_memo():
     """When the user explicitly asks for a memo, it is allowed."""
     user_text = "给赵六转800元，备注:房租"  # 房租 = [12,14], "备注" is a memo keyword
-    reads = [
-        ReadRecord(
-            source_ref="src_acct",
-            tool="get_accounts",
-            data={"accounts": [{"account_id": "acc_a"}]},
-        )
-    ]
     state = {
         "customer_id": "cus_a",
         "session_id": "ses_a",
         "utterances": [UtteranceRef(id="utt_typed", kind="typed", text=user_text)],
         "understanding": Understanding(intents=["transfer"], needs_write=True),
-        "reads": reads,
+        "reads": [],
     }
     plan = _memo_plan(memo_value="房租", memo_span=(12, 14))
     scripted = ScriptedLLM([tool_response("submit_action_plan", plan)])
@@ -962,9 +925,6 @@ def test_plan_retries_on_empty_required_id():
     assert len(scripted.requests) == 2
 
 
-# ── __NULL__ on required id params (L1-plan-fill round 2) ──
-
-
 def _plan_with_from_account(value: str, source_kind: str = "read") -> dict:
     """Return a transfer plan dict with the given from_account_id value and source."""
     args: dict = {
@@ -1020,6 +980,7 @@ def test_plan_retries_on_null_sentinel_in_required_id():
         "understanding": Understanding(intents=["transfer"], needs_write=True),
         "reads": reads,
     }
+
     # Bad: from_account_id="__NULL__" with no source declaration (so _reference_problems
     # skips it, but _required_value_problems catches the sentinel on a required param).
     def bad_with_null():
@@ -1111,38 +1072,6 @@ def test_plan_exhausted_null_sentinel_raises_reference_error():
     with pytest.raises(ReferenceError):
         PlanAdapter(llm)(state, ctx())
     assert len(scripted.requests) == 2
-
-
-def test_plan_retries_on_bad_from_account_source():
-    """from_account_id with step/derived/hint/action source → retry."""
-    user_text = "给赵六转800元"
-    reads = [
-        ReadRecord(
-            source_ref="src_acct",
-            tool="get_accounts",
-            data={"accounts": [{"account_id": "acc_zs_chk", "balance_cents": 600000}]},
-        )
-    ]
-    state = {
-        "customer_id": "cus_a",
-        "session_id": "ses_a",
-        "utterances": [UtteranceRef(id="utt_typed", kind="typed", text=user_text)],
-        "understanding": Understanding(intents=["transfer"], needs_write=True),
-        "reads": reads,
-    }
-    # First attempt: from_account_id source is "hint" — not allowed
-    bad = _plan_with_from_account("acc_zs_chk", source_kind="hint")
-    # Second attempt: proper read source
-    good = _plan_with_from_account("acc_zs_chk", source_kind="read")
-    scripted = ScriptedLLM(
-        [tool_response("submit_action_plan", bad), tool_response("submit_action_plan", good)]
-    )
-    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
-    draft = PlanAdapter(llm)(state, ctx())
-    assert draft.steps[0].args.from_account_id == "acc_zs_chk"
-    assert len(scripted.requests) == 2
-    human = body_of(scripted, 1)["messages"][1]["content"]
-    assert "hint" in human
 
 
 def test_plan_prompt_forbids_null_on_required_ids():

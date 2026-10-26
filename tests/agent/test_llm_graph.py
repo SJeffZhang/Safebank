@@ -64,7 +64,7 @@ def test_c1b_adapters_drive_c1a_graph_end_to_end():
 
     def executor(name, args):
         executor_calls.append((name, args))
-        return ReadResult(data={"accounts": [{"account_id": "acc_a"}]}, source_ref="src_acct")
+        return ReadResult(data={"accounts": []}, source_ref="src_a")
 
     ports = Ports(
         understand=UnderstandAdapter(llm),
