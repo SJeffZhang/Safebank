@@ -208,7 +208,7 @@ def test_error_message_stripped_of_bearer_token(tmp_path: Path):
     msg = obj.get("error_message") or ""
     assert "eyJhbGciOiJIUzI1NiJ9" not in msg
     assert "[REDACTED]" in msg
-    assert obj["error_message"] == "[REDACTED]"
+    assert msg.startswith("401 Unauthorized")  # diagnostic text kept
 
 
 def test_error_where_stripped_of_token_in_param(tmp_path: Path):
