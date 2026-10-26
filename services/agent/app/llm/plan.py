@@ -24,7 +24,8 @@ _PLAN_TOOL = "submit_action_plan"
 _SYSTEM = (
     "你是银行助手，把用户请求与已读信息整理成一份计划草稿；你不授权、不执行任何操作。"
     "金额一律用整数分；份额用四位小数字符串。实体引用用判别对象（kind=id/ref/none）；"
-    "可空字符串（仅 memo、phone、alias、end_at 四个可选字段）用哨兵 __NULL__，可空整数用 -1，渠道三态用 KEEP/ON/OFF。"
+    "可空字符串（仅 memo、phone、alias、end_at 四个可选字段）用哨兵 __NULL__，"
+    "可空整数用 -1，渠道三态用 KEEP/ON/OFF。"
     "必填 id 字段（from_account_id、card_id、account_id、product_id、instruction_id、"
     "merchant_id、questionnaire_id 等）不能用 __NULL__ 或空串，必须从已读数据中引用具体值——"
     "例如付款账户 id 请从 gather 读取的 /accounts/N/id 中取，来源 kind 用 read。"
@@ -130,7 +131,8 @@ def _required_value_problems(draft: PlanDraft, state: AgentState) -> list[str]:
                         if source.source.kind not in ("read", "utterance"):
                             problems.append(
                                 f"steps[{index}].from_account_id: "
-                                "来源必须是 read（从 gather 读取结果引用）或 utterance（用户原话中明确的账户），"
+                                "来源必须是 read（从 gather 读取结果引用）"
+                                "或 utterance（用户原话中明确的账户），"
                                 f"不能是 {source.source.kind}"
                             )
                         break

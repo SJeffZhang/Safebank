@@ -388,7 +388,7 @@ def test_plan_prompt_includes_reads_utterances_and_derived():
         "understanding": Understanding(intents=["transfer"], needs_write=True),
         "reads": [
             ReadRecord(
-                source_ref="src_a",
+                source_ref="src_acct",
                 tool="get_accounts",
                 data={"accounts": [{"account_id": "acc_a"}]},
             )
@@ -403,7 +403,7 @@ def test_plan_prompt_includes_reads_utterances_and_derived():
     human = body["messages"][1]["content"]
     assert "derived" in system
     assert "utt_typed" in human
-    assert "src_a" in human
+    assert "src_acct" in human
     assert "acc_a" in human
     serialized = json.dumps(body, ensure_ascii=False)
     for secret in ("cus_a", "ses_a", "SECRET_TOKEN", API_KEY):
@@ -456,7 +456,7 @@ def test_plan_strips_wall_from_reads_defense():
         "understanding": Understanding(intents=["transfer"], needs_write=True),
         "reads": [
             ReadRecord(
-                source_ref="src_a",
+                source_ref="src_acct",
                 tool="get_accounts",
                 data={"accounts": [{"account_id": "acc_a", "leak_wall": "secret"}]},
             )
