@@ -137,3 +137,11 @@
 - 变异核验：去掉 view_hash 比对 → test_g8_confirmed 1 failed；审批不迁到 USED → 1 failed；去掉审批状态过滤时由后续 CONFIRMED→USED 迁移兜底仍 409 且 L3 未执行（多层防护，接受）；均还原。
 - 复跑全部 exit 0：lint 349；test 2702/720 skip；test-gateway 2018/627 skip；gateway-db 17；wave1-state 231；w1 1688；w3b 33；w4b1 57；w4b2b 58；w4b2c 56；**test-w4c 15**；shared-runtime 79；contracts PASS。
 - 未覆盖（后续）：复演不等价时持久化新评估/新审批并在 details.decision 返回（T4）；STATE_CHANGED 屏障（T4）；UNKNOWN 对账（T5）；并发/撤销（T6）；G5/重放（T7）。
+
+## T4a（2026-10-26）：ADR-008 STATE_CHANGED 屏障红测
+
+- 新增 `tests/gateway/w4c/db/test_g8_fence.py`（3 条红测，只改测试不碰生产代码）。
+- 3 条测试均使用 `allow_plan_ctx` + 包装 `l3.execute`（首次调用前通过 `ctx.l3_admin` 把 `state_versions` 中 `cus_zs` 的 version +1，使 L3 因版本不符返回 STATE_CHANGED）。
+- **`make test-w4c`：3 failed / 15 passed**（15.63s），3 条新测均在 409 断言失败（G8 返回 202 UNKNOWN），预期红。
+- **`make lint`：exit 0**（350 files formatted）。
+- 未改生产代码；不 push。
