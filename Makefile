@@ -1,6 +1,7 @@
 UV_CACHE_DIR ?= /private/tmp/sbg-uv-cache
 export UV_CACHE_DIR
 PYTHON := .venv/bin/python
+LIMIT ?= 20
 .PHONY: setup keys test lint wheels build up down logs test-integration probe demo eval reset \
  test-postgres-bootstrap contracts-check contracts-generate p1-provision migrate seed-p1 test-p1-build \
  test-p1-db test-p1-concurrency test-p1-consistency test-p1 gateway-provision migrate-gateway test-obligations
@@ -142,6 +143,10 @@ test-w3b:
 .PHONY: test-e0b
 test-e0b:
 	GATEWAY_DB_TESTS=1 OBLIGATIONS_DB_TESTS=1 .venv/bin/pytest tests/evaluation/runner -q
+
+.PHONY: eval-l1
+eval-l1:
+	$(PYTHON) -m evaluation.runner.cli --llm-mode fake --limit $(LIMIT)
 
 .PHONY: test-w4c
 test-w4c:
