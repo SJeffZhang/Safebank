@@ -172,10 +172,11 @@ class TestStripSecrets:
     def test_strips_bearer_value(self):
         obj = {"header": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dummy"}
         result = _strip_secrets(obj)
-        assert result["header"] == "[REDACTED]"
+        assert result["header"] == "Bearer [REDACTED]"
 
     def test_strips_jwt_string(self):
-        # JWT: base64url.base64url.base64url, ≥50 chars
+        # JWT: base64url.base64url.base64url, starts with eyJ.
+        # Note: key "token" matches _SECRET_KEY_RE → whole-value replacement.
         jwt = (
             "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
             "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIn0."
@@ -236,28 +237,28 @@ class TestStripSecrets:
         h0 = result["headers"][0]
         assert isinstance(h0, tuple)
         # Old code returned the raw tuple unchanged → Bearer leaked.
-        # Now the second element (Bearer) is stripped; header name kept.
-        assert h0[1] == "[REDACTED]"
+        # Now the second element (Bearer) has token stripped, prefix kept.
+        assert h0[1] == "Bearer [REDACTED]"
         assert "eyJ" not in str(h0)
 
     # ── P1-2: mid-string Bearer ─────────────────────────────────────────
 
     def test_strips_bearer_anywhere_in_string(self):
-        """P1-2: Bearer anywhere in string must be detected."""
+        """P1-2: Bearer anywhere in string must be detected, only token replaced."""
         obj = {"header": "Authorization: Bearer eyJhbGci.eyJzdWI.SflKxw"}
         result = _strip_secrets(obj)
-        assert result["header"] == "[REDACTED]"
+        assert result["header"] == "Authorization: Bearer [REDACTED]"
 
     def test_strips_lowercase_bearer(self):
-        """P1-2: Lowercase 'bearer' must also be detected."""
+        """P1-2: Lowercase 'bearer' must also be detected, only token replaced."""
         obj = {"h": "bearer eyJhbGci.eyJzdWI.SflKxw"}
         result = _strip_secrets(obj)
-        assert result["h"] == "[REDACTED]"
+        assert result["h"] == "bearer [REDACTED]"
 
     # ── P1-3: embedded JWT ──────────────────────────────────────────────
 
     def test_strips_embedded_jwt(self):
-        """P1-3: JWT embedded in longer text must be detected."""
+        """P1-3: JWT embedded in longer text — only the JWT substring is replaced."""
         jwt = (
             "eyJhbGciOiJIUzI1NiJ9."
             "eyJzdWIiOiIxMjM0NTY3ODkwIn0."
@@ -265,7 +266,7 @@ class TestStripSecrets:
         )
         obj = {"text": "some text " + jwt + " more"}
         result = _strip_secrets(obj)
-        assert result["text"] == "[REDACTED]"
+        assert result["text"] == "some text [REDACTED:jwt] more"
 
     # ── P2-1: depth placeholder ─────────────────────────────────────────
 
@@ -292,7 +293,7 @@ class TestStripSecrets:
         result = _strip_secrets(obj)
         s = result["items"]
         assert isinstance(s, set)
-        assert "[REDACTED]" in s
+        assert "Bearer [REDACTED]" in s
         assert "safe_value" in s
 
     def test_strips_frozenset(self):
@@ -301,7 +302,7 @@ class TestStripSecrets:
         result = _strip_secrets(obj)
         s = result["items"]
         assert isinstance(s, frozenset)
-        assert "[REDACTED]" in s
+        assert "Bearer [REDACTED]" in s
         assert "keep" in s
 
     def test_depth_limit(self):
@@ -314,6 +315,40 @@ class TestStripSecrets:
         # Should not raise RecursionError
         result = _strip_secrets(obj)
         assert isinstance(result, dict)
+
+    # ── T12: tightened JWT regex, substring-only replacement ────────────
+
+    def test_validation_error_path_not_stripped(self):
+        """T12: pydantic ValidationError paths like 'steps.0.arg_sources.2.source'
+        must NOT be mistaken for JWTs and must be preserved as-is."""
+        obj = {
+            "error_message": (
+                "1 validation error for PlanDraft\n"
+                "steps.0.arg_sources.2.source\n"
+                "  Field required [type=missing, input_value={}]"
+            ),
+        }
+        result = _strip_secrets(obj)
+        assert "steps.0.arg_sources.2.source" in result["error_message"]
+        assert "arg_sources" in result["error_message"]
+        assert "[REDACTED" not in result["error_message"]  # nothing should be redacted
+
+    def test_bearer_token_only_replaced_in_mid_string(self):
+        """T12: 'x Bearer abc.def y' → only token replaced, surrounding text kept."""
+        obj = {"text": "x Bearer abc.def y"}
+        result = _strip_secrets(obj)
+        assert result["text"] == "x Bearer [REDACTED] y"
+
+    def test_embedded_real_jwt_only_substring_replaced(self):
+        """T12: embedded real-form JWT (eyJ...) only that substring replaced."""
+        jwt = (
+            "eyJhbGciOiJIUzI1NiJ9."
+            "eyJzdWIiOiIxMjM0NTY3ODkwIn0."
+            "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        )
+        obj = {"text": "token=" + jwt + "&other=value"}
+        result = _strip_secrets(obj)
+        assert result["text"] == "token=[REDACTED:jwt]&other=value"
 
 
 # ── extract_g4_evidence ─────────────────────────────────────────────────────
@@ -550,6 +585,7 @@ class TestWriteOutputsWithEvidence:
         o = objs[0]
         assert o["plan_draft"]["assistant_token"] == "[REDACTED]"
         assert o["plan_draft"]["steps"][0]["args"]["api_key"] == "[REDACTED]"
+        # key "authorization" matches _SECRET_KEY_RE
         assert o["g4_attempts"][0]["authorization"] == "[REDACTED]"
 
     def test_old_fields_still_present(self, tmp_path: Path):

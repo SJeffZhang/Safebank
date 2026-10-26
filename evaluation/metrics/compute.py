@@ -27,9 +27,9 @@ _SECRET_KEY_RE = re.compile(
     re.IGNORECASE,
 )
 
-_JWT_RE = re.compile(r"[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+")
+_JWT_RE = re.compile(r"eyJ[A-Za-z0-9_-]{7,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}")
 
-_BEARER_RE = re.compile(r"\bBearer\s+\S+", re.IGNORECASE)
+_BEARER_RE = re.compile(r"\b(Bearer)\s+\S+", re.IGNORECASE)
 
 _MAX_STRIP_DEPTH = 10
 
@@ -56,10 +56,10 @@ def _strip_secrets(obj: Any, *, _depth: int = 0) -> Any:
     if isinstance(obj, (set, frozenset)):
         return type(obj)(_strip_secrets(v, _depth=_depth + 1) for v in obj)
     if isinstance(obj, str):
-        if _BEARER_RE.search(obj):
-            return "[REDACTED]"
-        if len(obj) > 50 and _JWT_RE.search(obj):
-            return "[REDACTED]"
+        # Replace Bearer <token> → "Bearer [REDACTED]" (preserves surrounding text)
+        obj = _BEARER_RE.sub(r"\1 [REDACTED]", obj)
+        # Replace JWT substrings → "[REDACTED:jwt]" (preserves surrounding text)
+        obj = _JWT_RE.sub("[REDACTED:jwt]", obj)
         return obj
     return obj
 

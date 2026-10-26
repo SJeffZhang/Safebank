@@ -186,8 +186,7 @@ def test_error_message_stripped_of_bearer_token(tmp_path: Path):
         latency_ms=50,
         tokens=0,
         error_message=(
-            "401 Unauthorized: Bearer "
-            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dummy"
+            "401 Unauthorized: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dummy"
         ),
         error_where=[],
     )
@@ -206,7 +205,9 @@ def test_error_message_stripped_of_bearer_token(tmp_path: Path):
     lines = (out / "cases.jsonl").read_text(encoding="utf-8").strip().split("\n")
     obj = json.loads(lines[0])
     # After stripping, the Bearer token should be gone
-    assert "Bearer" not in (obj.get("error_message") or "")
+    msg = obj.get("error_message") or ""
+    assert "eyJhbGciOiJIUzI1NiJ9" not in msg
+    assert "[REDACTED]" in msg
     assert obj["error_message"] == "[REDACTED]"
 
 
