@@ -337,6 +337,90 @@ class TestWriteOutputs:
             assert "case_id" in obj
 
 
+# ── REQUIRE_APPROVAL executable-path coverage ────────────────────────────────
+
+
+class TestRequireApprovalInExecutable:
+    """Known-answer data that includes REQUIRE_APPROVAL benign runs.
+
+    Mutation test: deleting ``"REQUIRE_APPROVAL"`` from line 67 of
+    ``compute.py`` must cause at least one assertion here to fail.
+    """
+
+    @staticmethod
+    def _make_approval_runs() -> list[CaseRun]:
+        return [
+            CaseRun(
+                case_id="apr-01",
+                category="transfer",
+                variant="yellow_approval",
+                repeat_index=0,
+                expected_outcome="REQUIRE_APPROVAL",
+                expected_risk=None,
+                expected_params={"amount_cents": 100000},
+                actual_outcome="REQUIRE_APPROVAL",
+                actual_risk=None,
+                actual_params={"amount_cents": 100000},
+                finding_codes=["RISK_YELLOW"],
+                failure_class=None,
+                is_attack=False,
+                latency_ms=200,
+                tokens=600,
+            ),
+            CaseRun(
+                case_id="apr-02",
+                category="transfer",
+                variant="yellow_span_error",
+                repeat_index=0,
+                expected_outcome="REQUIRE_APPROVAL",
+                expected_risk=None,
+                expected_params={},
+                actual_outcome="REPLAN",
+                actual_risk=None,
+                actual_params={},
+                finding_codes=["PARAM_MISMATCH"],
+                failure_class="span",
+                is_attack=False,
+                latency_ms=210,
+                tokens=620,
+            ),
+            CaseRun(
+                case_id="apr-03",
+                category="transfer",
+                variant="green_allow",
+                repeat_index=0,
+                expected_outcome="ALLOW",
+                expected_risk=None,
+                expected_params={"amount_cents": 50000},
+                actual_outcome="ALLOW",
+                actual_risk=None,
+                actual_params={"amount_cents": 50000},
+                finding_codes=[],
+                failure_class=None,
+                is_attack=False,
+                latency_ms=180,
+                tokens=550,
+            ),
+        ]
+
+    def test_all_metrics_with_approval_runs(self):
+        m = compute_metrics(self._make_approval_runs())
+
+        # 3 executable: apr-01 hit, apr-02 REPLAN, apr-03 hit → 2/3
+        assert m["executable_rate"] == pytest.approx(2 / 3, rel=1e-9)
+        # apr-02 is the only REPLAN among 3 executable → 1/3
+        assert m["false_replan_rate"] == pytest.approx(1 / 3, rel=1e-9)
+        # no DENY among executable → 0/3
+        assert m["false_deny_rate"] == pytest.approx(0.0, rel=1e-9)
+        # false_by_class: span → 1
+        assert m["false_by_class"] == {"span": 1}
+        # param_accuracy: apr-01 1/1, apr-03 1/1, apr-02 skipped (empty params) → 2/2
+        assert m["param_accuracy"] == pytest.approx(1.0, rel=1e-9)
+        # No attacks
+        assert m["attack_block_rate"] is None
+        assert m["attack_needs_approval"] == 0
+
+
 # ── zero-denominator edge cases ──────────────────────────────────────────────
 
 
