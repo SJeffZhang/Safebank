@@ -227,6 +227,83 @@ class TestStripSecrets:
         assert _strip_secrets(None) is None
         assert _strip_secrets(True) is True
 
+    # ── P1-1: tuple bypass ──────────────────────────────────────────────
+
+    def test_strips_tuple_headers(self):
+        """P1-1: Tuple now processed; Bearer element stripped (old code skipped tuples)."""
+        obj = {"headers": [("Authorization", "Bearer eyJhbGci.eyJzdWI.SflKxw")]}
+        result = _strip_secrets(obj)
+        h0 = result["headers"][0]
+        assert isinstance(h0, tuple)
+        # Old code returned the raw tuple unchanged → Bearer leaked.
+        # Now the second element (Bearer) is stripped; header name kept.
+        assert h0[1] == "[REDACTED]"
+        assert "eyJ" not in str(h0)
+
+    # ── P1-2: mid-string Bearer ─────────────────────────────────────────
+
+    def test_strips_bearer_anywhere_in_string(self):
+        """P1-2: Bearer anywhere in string must be detected."""
+        obj = {"header": "Authorization: Bearer eyJhbGci.eyJzdWI.SflKxw"}
+        result = _strip_secrets(obj)
+        assert result["header"] == "[REDACTED]"
+
+    def test_strips_lowercase_bearer(self):
+        """P1-2: Lowercase 'bearer' must also be detected."""
+        obj = {"h": "bearer eyJhbGci.eyJzdWI.SflKxw"}
+        result = _strip_secrets(obj)
+        assert result["h"] == "[REDACTED]"
+
+    # ── P1-3: embedded JWT ──────────────────────────────────────────────
+
+    def test_strips_embedded_jwt(self):
+        """P1-3: JWT embedded in longer text must be detected."""
+        jwt = (
+            "eyJhbGciOiJIUzI1NiJ9."
+            "eyJzdWIiOiIxMjM0NTY3ODkwIn0."
+            "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        )
+        obj = {"text": "some text " + jwt + " more"}
+        result = _strip_secrets(obj)
+        assert result["text"] == "[REDACTED]"
+
+    # ── P2-1: depth placeholder ─────────────────────────────────────────
+
+    def test_depth_limit_returns_placeholder(self):
+        """P2-1: Beyond max depth returns [REDACTED:depth], not raw obj."""
+        obj: Any = {"a": {}}
+        cur = obj["a"]
+        for _ in range(20):
+            cur["a"] = {}
+            cur = cur["a"]
+        result = _strip_secrets(obj)
+        # Walk down to find the placeholder
+        node = result
+        for _ in range(11):  # _MAX_STRIP_DEPTH=10, then next is placeholder
+            assert isinstance(node, dict)
+            node = node["a"]
+        assert node == "[REDACTED:depth]"
+
+    # ── P2-3: set / frozenset ───────────────────────────────────────────
+
+    def test_strips_set(self):
+        """P2-3: set containing secret-bearing strings must be stripped."""
+        obj = {"items": {"Bearer abc.def.ghi", "safe_value"}}
+        result = _strip_secrets(obj)
+        s = result["items"]
+        assert isinstance(s, set)
+        assert "[REDACTED]" in s
+        assert "safe_value" in s
+
+    def test_strips_frozenset(self):
+        """P2-3: frozenset must be stripped and remain frozenset."""
+        obj = {"items": frozenset(["Bearer xyz.secret.token", "keep"])}
+        result = _strip_secrets(obj)
+        s = result["items"]
+        assert isinstance(s, frozenset)
+        assert "[REDACTED]" in s
+        assert "keep" in s
+
     def test_depth_limit(self):
         """Deeply nested structures should be handled (capped)."""
         obj: Any = {"a": {}}
@@ -521,3 +598,92 @@ class TestWriteOutputsWithEvidence:
         assert m["totals"]["runs"] == 10
         assert m["executable_rate"] == pytest.approx(5 / 7, rel=1e-9)
         assert m["attack_block_rate"] == pytest.approx(2 / 3, rel=1e-9)
+
+    # ── P1-4: g4_decision / g4_findings preserved ───────────────────────
+
+    def test_g4_decision_and_findings_in_jsonl(self, tmp_path: Path):
+        """P1-4: g4_decision and g4_findings must be written to cases.jsonl."""
+        pd = _fake_plan_draft()
+        runs = [
+            _make_minimal_run(
+                case_id="g4-ev",
+                plan_draft=pd,
+                g4_decision="REQUIRE_APPROVAL",
+                g4_findings=[{"code": "X1", "severity": "YELLOW"}],
+                g4_attempts=[
+                    {
+                        "status": 200,
+                        "decision": "REQUIRE_APPROVAL",
+                        "risk": "YELLOW",
+                        "error_code": None,
+                    }
+                ],
+            ),
+        ]
+        objs = self._write_and_read(tmp_path, runs)
+        assert objs[0]["g4_decision"] == "REQUIRE_APPROVAL"
+        assert objs[0]["g4_findings"] == [{"code": "X1", "severity": "YELLOW"}]
+
+    def test_g4_decision_none_when_no_successful_g4(self, tmp_path: Path):
+        """P1-4: g4_decision=None when no G4 call succeeded."""
+        runs = [
+            _make_minimal_run(
+                case_id="g4-fail",
+                g4_decision=None,
+                g4_findings=None,
+                g4_attempts=[
+                    {
+                        "status": 503,
+                        "decision": None,
+                        "risk": None,
+                        "error_code": "DEPENDENCY_UNAVAILABLE",
+                    },
+                ],
+            ),
+        ]
+        objs = self._write_and_read(tmp_path, runs)
+        assert objs[0]["g4_decision"] is None
+        assert objs[0]["g4_findings"] is None
+
+    # ── P2-5: additional secret-bearing patterns ────────────────────────
+
+    def test_strips_bearer_in_g4_error_code(self, tmp_path: Path):
+        """P2-5: error_code containing Bearer token must be stripped."""
+        runs = [
+            _make_minimal_run(
+                case_id="sec-err",
+                g4_attempts=[
+                    {
+                        "status": 503,
+                        "decision": None,
+                        "risk": None,
+                        "error_code": "Bearer leaked-token-value",
+                    }
+                ],
+            ),
+        ]
+        objs = self._write_and_read(tmp_path, runs)
+        # error_code is a str, so startswith-then-bearer → but with our fix
+        # the whole string gets stripped because it contains Bearer
+        assert "leaked-token-value" not in json.dumps(objs[0]["g4_attempts"])
+
+    def test_strips_secrets_in_nested_arg_sources(self, tmp_path: Path):
+        """P2-5: Secrets in arg_sources[].source.memo must be stripped."""
+        pd = _fake_plan_draft()
+        pd["steps"][0]["arg_sources"].append(
+            {
+                "param": "memo",
+                "source": {
+                    "kind": "utterance",
+                    "ref": "utt_01",
+                    "span": [5, 10],
+                    "api_key": "leak-in-source",
+                },
+            }
+        )
+        runs = [
+            _make_minimal_run(case_id="sec-nested", plan_draft=pd),
+        ]
+        objs = self._write_and_read(tmp_path, runs)
+        raw = json.dumps(objs[0])
+        assert "leak-in-source" not in raw

@@ -27,7 +27,9 @@ _SECRET_KEY_RE = re.compile(
     re.IGNORECASE,
 )
 
-_JWT_RE = re.compile(r"^[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+$")
+_JWT_RE = re.compile(r"[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+")
+
+_BEARER_RE = re.compile(r"\bBearer\s+\S+", re.IGNORECASE)
 
 _MAX_STRIP_DEPTH = 10
 
@@ -38,7 +40,7 @@ def _strip_secrets(obj: Any, *, _depth: int = 0) -> Any:
     Returns a *copy*; never mutates the original.
     """
     if _depth > _MAX_STRIP_DEPTH:
-        return obj
+        return "[REDACTED:depth]"
     if isinstance(obj, dict):
         result: dict = {}
         for k, v in obj.items():
@@ -49,10 +51,14 @@ def _strip_secrets(obj: Any, *, _depth: int = 0) -> Any:
         return result
     if isinstance(obj, list):
         return [_strip_secrets(v, _depth=_depth + 1) for v in obj]
+    if isinstance(obj, tuple):
+        return tuple(_strip_secrets(v, _depth=_depth + 1) for v in obj)
+    if isinstance(obj, (set, frozenset)):
+        return type(obj)(_strip_secrets(v, _depth=_depth + 1) for v in obj)
     if isinstance(obj, str):
-        if obj.startswith("Bearer "):
+        if _BEARER_RE.search(obj):
             return "[REDACTED]"
-        if len(obj) > 50 and _JWT_RE.match(obj):
+        if len(obj) > 50 and _JWT_RE.search(obj):
             return "[REDACTED]"
         return obj
     return obj
@@ -85,6 +91,8 @@ class CaseRun:
     # ── T6 evidence fields (all default-empty for backward compat) ──────────
     utterances: list[str] = field(default_factory=list)
     plan_draft: dict[str, Any] | None = None
+    g4_decision: str | None = None
+    g4_findings: list[dict[str, Any]] | None = None
     g4_attempts: list[dict[str, Any]] = field(default_factory=list)
     usage_known: bool = False
     usage: dict[str, int] | None = None
@@ -123,9 +131,9 @@ def extract_g4_evidence(transport_requests: list[dict[str, Any]]) -> dict[str, A
 
         # Last request's plan_draft wins (most recent attempt)
         if isinstance(req_body, dict):
-            pd = req_body.get("plan_draft", req_body) if "plan_draft" in req_body else req_body
-            if isinstance(pd, dict) and "steps" in pd:
-                plan_draft = pd
+            raw = req_body.get("plan_draft")
+            if isinstance(raw, dict) and "steps" in raw:
+                plan_draft = raw
 
         attempt: dict[str, Any] = {
             "status": status,
@@ -412,6 +420,8 @@ def write_outputs(
                 "utterances": r.utterances,
                 "plan_draft": _strip_secrets(r.plan_draft) if r.plan_draft is not None else None,
                 "g4_attempts": _strip_secrets(r.g4_attempts),
+                "g4_decision": r.g4_decision,
+                "g4_findings": r.g4_findings,
                 "usage_known": r.usage_known,
                 "usage": r.usage,
             }

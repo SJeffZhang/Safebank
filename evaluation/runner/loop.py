@@ -228,6 +228,8 @@ async def run_corpus(
                         tokens=0,
                         utterances=utt_texts,
                         plan_draft=evidence["plan_draft"],
+                        g4_decision=evidence["g4_decision"],
+                        g4_findings=evidence["g4_findings"],
                         g4_attempts=evidence["g4_attempts"],
                     )
                 )

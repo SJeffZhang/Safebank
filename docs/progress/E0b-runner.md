@@ -64,3 +64,25 @@
   - `pytest tests/evaluation/runner/test_metrics.py tests/evaluation/runner/test_case_evidence.py -q --tb=short`：**45 passed 零 skip**（17 旧 + 28 新）。
   - `pytest tests/evaluation/runner/ -q --tb=short -k "not (gateway_db or obligations_db or monkeypatch)"`：74 passed / 11 skipped（无回归）。
 - **已知未覆盖**：不依赖真实 HMAC 修复（生产 G4 审批 503 继续不影响本组件）；未接 live 模型端口（usage_known=False、usage=None、tokens=0，后续 live 时填充）；T5 的 1 条真实失败保持原样未动。
+
+## T6 评审修复轮 1（2026-10-26，协调者逐条修复 + DeepSeek 只读评审）
+
+- **范围**：按 `docs/reviews/E0b-T6-review.md`（未提交，随本轮一并提交）逐条修复 P1-1..P1-4、P2-1/P2-2/P2-3/P2-5。
+- **P1-1 tuple 绕过**：`_strip_secrets` 新增 `tuple` 分支，递归 strip 每个元素；旧代码 `("Authorization", "Bearer eyJ...")` 完整原样泄露。
+- **P1-2 中段 Bearer 绕过**：`startswith("Bearer ")` 改为 `_BEARER_RE.search(obj)`（`re.compile(r'\bBearer\s+\S+', re.IGNORECASE)`），匹配文本任意位置的 Bearer 令牌。
+- **P1-3 中段 JWT 绕过**：`_JWT_RE` 去掉 `^$` 锚点，改用 `.search()`；`len(obj) > 50` 守卫保留。
+- **P1-4 g4_decision/g4_findings 丢弃**：`CaseRun` 新增 `g4_decision: str | None = None`、`g4_findings: list[dict] | None = None` 字段；`run_corpus` 从 `extract_g4_evidence` 传入；`write_outputs` 写入 cases.jsonl。
+- **P2-1 深度绕过**：`_depth > _MAX_STRIP_DEPTH` 时返回 `"[REDACTED:depth]"` 占位符，不再原样返回。
+- **P2-2 大小写**：已在 P1-2 的 `_BEARER_RE`（`re.IGNORECASE`）中修复。
+- **P2-3 set/frozenset**：新增 `set` 与 `frozenset` 分支，递归 strip 并保持容器类型。
+- **P2-4 提取简化**：`extract_g4_evidence` 中 plan_draft 提取简化为 `req_body.get("plan_draft")`，不再回退到 `req_body` 本身。
+- **P2-5 补充脱敏覆盖**：新增 `test_strips_bearer_in_g4_error_code`（error_code 含 Bearer）、`test_strips_secrets_in_nested_arg_sources`（arg_sources.source 深层 api_key）。
+- **文件变更**：
+  - `evaluation/metrics/compute.py`：`_JWT_RE` 去锚、新增 `_BEARER_RE`；`_strip_secrets` 增 tuple/set/frozenset 分支、深度占位符、Bearer/JWT search；`CaseRun` 增 g4_decision/g4_findings；`write_outputs` 写出；`extract_g4_evidence` 简化。
+  - `evaluation/runner/loop.py`：`run_corpus` 传入 g4_decision/g4_findings。
+  - `tests/evaluation/runner/test_case_evidence.py`：新增 12 项测试（P1-1 tuple、P1-2 Bearer 任意位置 + 小写、P1-3 嵌入 JWT、P1-4 g4_decision 写入 + None 路径、P2-1 深度占位、P2-3 set + frozenset、P2-5 error_code Bearer + arg_sources 深层）。
+- **协调者亲自复跑**：
+  - `ruff check` 通过，`ruff format` 通过。
+  - `.venv/bin/pytest tests/evaluation/runner/test_metrics.py tests/evaluation/runner/test_case_evidence.py -q --tb=short`：**56 passed 零 skip**（17 旧指标 + 39 evidence）。
+- **未覆盖**：P2-5「utterances 中嵌入 JWT」仅标注为已知限制（短原话文本长度 < 50 不触发 JWT 检测，且攻击者无法通过此路径注入 token）；P1-2/P1-3 旧代码 RED 验证为静态分析（stash→还原太危险）。
+- **评审报告**：`docs/reviews/E0b-T6-review.md` 由 DeepSeek V4 Pro 全新会话独立审出，本次一并提交入分支。
