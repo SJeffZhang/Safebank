@@ -758,3 +758,735 @@ def test_normalized_enum_string_not_false_rejected():
     )
     state = {"utterances": [UtteranceRef(id="utt_a", kind="typed", text="每月转800")], "reads": []}
     assert _reference_problems(draft, state) == []
+
+
+# ── plan parameter filling (L1-plan-fill) ──
+
+
+def _memo_plan(memo_value: str | None, memo_span=(4, 6)) -> dict:
+    """Return a strict plan dict with memo set; None means __NULL__."""
+    args: dict = {
+        "from_account_id": "acc_a",
+        "payee_id": {"kind": "id", "id": "pye_b"},
+        "to_account_id": {"kind": "none"},
+        "amount_cents": 80000,
+        "memo": "__NULL__" if memo_value is None else memo_value,
+    }
+    sources: list = [
+        {
+            "param": "amount_cents",
+            "source": {"kind": "utterance", "ref": "utt_typed", "span": [4, 6]},
+        },
+    ]
+    if memo_value is not None:
+        sources.append(
+            {
+                "param": "memo",
+                "source": {"kind": "utterance", "ref": "utt_typed", "span": list(memo_span)},
+            }
+        )
+    return {
+        "intents": ["transfer"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "transfer",
+                "args": args,
+                "depends_on": [],
+                "arg_sources": sources,
+            }
+        ],
+        "rationale": "test",
+    }
+
+
+def test_plan_retries_on_unsolicited_memo():
+    """Model sets memo from payee name without user asking → retry with feedback."""
+    user_text = "给赵六转800元"  # 赵六 = [1,3], no memo request
+    state = {
+        "customer_id": "cus_a",
+        "session_id": "ses_a",
+        "utterances": [UtteranceRef(id="utt_typed", kind="typed", text=user_text)],
+        "understanding": Understanding(intents=["transfer"], needs_write=True),
+        "reads": [],
+    }
+    # First attempt: memo="赵六" copied from payee name — unsolicited
+    bad = _memo_plan(memo_value="赵六", memo_span=(1, 3))
+    # Second attempt: model removes the unsolicited memo
+    good = _memo_plan(memo_value=None)
+    scripted = ScriptedLLM(
+        [tool_response("submit_action_plan", bad), tool_response("submit_action_plan", good)]
+    )
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    draft = PlanAdapter(llm)(state, ctx())
+    assert draft.steps[0].args.memo is None
+    assert len(scripted.requests) == 2
+    # Feedback message references the unsolicited parameter
+    human = body_of(scripted, 1)["messages"][1]["content"]
+    assert "memo" in human
+
+
+def test_plan_accepts_explicitly_requested_memo():
+    """When the user explicitly asks for a memo, it is allowed."""
+    user_text = "给赵六转800元，备注:房租"  # 房租 = [12,14], "备注" is a memo keyword
+    state = {
+        "customer_id": "cus_a",
+        "session_id": "ses_a",
+        "utterances": [UtteranceRef(id="utt_typed", kind="typed", text=user_text)],
+        "understanding": Understanding(intents=["transfer"], needs_write=True),
+        "reads": [],
+    }
+    plan = _memo_plan(memo_value="房租", memo_span=(12, 14))
+    scripted = ScriptedLLM([tool_response("submit_action_plan", plan)])
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    draft = PlanAdapter(llm)(state, ctx())
+    assert draft.steps[0].args.memo == "房租"
+    assert len(scripted.requests) == 1
+
+
+def test_plan_prompt_forbids_guessing_optional_params():
+    """System prompt must instruct model not to guess memo/phone/alias/end_at from names."""
+    scripted = ScriptedLLM([tool_response("submit_action_plan", strict_plan())])
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    PlanAdapter(llm)(plan_state(), ctx())
+    system = body_of(scripted, 0)["messages"][0]["content"]
+    assert "memo" in system
+    assert "phone" in system
+    assert "不得" in system
+    assert "推断" in system  # "不得从收款人名/其他文字推断"
+
+
+def test_plan_retries_on_empty_required_id():
+    """Empty from_account_id fails ValidationError and triggers retry with feedback."""
+    user_text = "给赵六转800元"
+    reads = [
+        ReadRecord(
+            source_ref="src_acct",
+            tool="get_accounts",
+            data={"accounts": [{"account_id": "acc_zs_chk", "balance_cents": 600000}]},
+        )
+    ]
+    state = {
+        "customer_id": "cus_a",
+        "session_id": "ses_a",
+        "utterances": [UtteranceRef(id="utt_typed", kind="typed", text=user_text)],
+        "understanding": Understanding(intents=["transfer"], needs_write=True),
+        "reads": reads,
+    }
+
+    def bad_plan_from_account(empty: bool = True):
+        args: dict = {
+            "from_account_id": "" if empty else "acc_zs_chk",
+            "payee_id": {"kind": "id", "id": "pye_b"},
+            "to_account_id": {"kind": "none"},
+            "amount_cents": 80000,
+            "memo": "__NULL__",
+        }
+        sources: list = []
+        if not empty:
+            sources.append(
+                {
+                    "param": "from_account_id",
+                    "source": {
+                        "kind": "read",
+                        "ref": "src_acct",
+                        "pointer": "/accounts/0/account_id",
+                    },
+                }
+            )
+        sources.append(
+            {
+                "param": "amount_cents",
+                "source": {"kind": "utterance", "ref": "utt_typed", "span": [4, 7]},
+            }
+        )
+        return {
+            "intents": ["transfer"],
+            "steps": [
+                {
+                    "step_id": "s1",
+                    "tool": "transfer",
+                    "args": args,
+                    "depends_on": [],
+                    "arg_sources": sources,
+                }
+            ],
+            "rationale": "test",
+        }
+
+    bad = bad_plan_from_account(empty=True)
+    good = bad_plan_from_account(empty=False)
+    scripted = ScriptedLLM(
+        [tool_response("submit_action_plan", bad), tool_response("submit_action_plan", good)]
+    )
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    draft = PlanAdapter(llm)(state, ctx())
+    assert draft.steps[0].args.from_account_id == "acc_zs_chk"
+    assert len(scripted.requests) == 2
+
+
+def _plan_with_from_account(value: str, source_kind: str = "read") -> dict:
+    """Return a transfer plan dict with the given from_account_id value and source."""
+    args: dict = {
+        "from_account_id": value,
+        "payee_id": {"kind": "id", "id": "pye_zs_ww"},
+        "to_account_id": {"kind": "none"},
+        "amount_cents": 80000,
+        "memo": "__NULL__",
+    }
+    sources: list = [
+        {
+            "param": "from_account_id",
+            "source": {
+                "kind": source_kind,
+                "ref": "src_acct",
+                "pointer": "/accounts/0/account_id",
+            },
+        },
+        {
+            "param": "amount_cents",
+            "source": {"kind": "utterance", "ref": "utt_typed", "span": [4, 7]},
+        },
+    ]
+    return {
+        "intents": ["transfer"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "transfer",
+                "args": args,
+                "depends_on": [],
+                "arg_sources": sources,
+            }
+        ],
+        "rationale": "test",
+    }
+
+
+def test_plan_retries_on_null_sentinel_in_required_id():
+    """__NULL__ on from_account_id is caught → retry with feedback → fix."""
+    user_text = "给赵六转800元"
+    reads = [
+        ReadRecord(
+            source_ref="src_acct",
+            tool="get_accounts",
+            data={"accounts": [{"account_id": "acc_zs_chk", "balance_cents": 600000}]},
+        )
+    ]
+    state = {
+        "customer_id": "cus_a",
+        "session_id": "ses_a",
+        "utterances": [UtteranceRef(id="utt_typed", kind="typed", text=user_text)],
+        "understanding": Understanding(intents=["transfer"], needs_write=True),
+        "reads": reads,
+    }
+
+    # Bad: from_account_id="__NULL__" with no source declaration (so _reference_problems
+    # skips it, but _required_value_problems catches the sentinel on a required param).
+    def bad_with_null():
+        return {
+            "intents": ["transfer"],
+            "steps": [
+                {
+                    "step_id": "s1",
+                    "tool": "transfer",
+                    "args": {
+                        "from_account_id": "__NULL__",
+                        "payee_id": {"kind": "id", "id": "pye_zs_ww"},
+                        "to_account_id": {"kind": "none"},
+                        "amount_cents": 80000,
+                        "memo": "__NULL__",
+                    },
+                    "depends_on": [],
+                    "arg_sources": [
+                        {
+                            "param": "amount_cents",
+                            "source": {"kind": "utterance", "ref": "utt_typed", "span": [4, 7]},
+                        },
+                    ],
+                }
+            ],
+            "rationale": "test",
+        }
+
+    good = _plan_with_from_account("acc_zs_chk")
+    scripted = ScriptedLLM(
+        [
+            tool_response("submit_action_plan", bad_with_null()),
+            tool_response("submit_action_plan", good),
+        ]
+    )
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    draft = PlanAdapter(llm)(state, ctx())
+    assert draft.steps[0].args.from_account_id == "acc_zs_chk"
+    assert len(scripted.requests) == 2
+    human = body_of(scripted, 1)["messages"][1]["content"]
+    assert "__NULL__" in human
+
+
+def test_plan_exhausted_null_sentinel_raises_reference_error():
+    """Two attempts with __NULL__ on required id → ReferenceError."""
+    user_text = "给赵六转800元"
+    reads = [
+        ReadRecord(
+            source_ref="src_acct",
+            tool="get_accounts",
+            data={"accounts": [{"account_id": "acc_zs_chk", "balance_cents": 600000}]},
+        )
+    ]
+    state = {
+        "customer_id": "cus_a",
+        "session_id": "ses_a",
+        "utterances": [UtteranceRef(id="utt_typed", kind="typed", text=user_text)],
+        "understanding": Understanding(intents=["transfer"], needs_write=True),
+        "reads": reads,
+    }
+    bad = {
+        "intents": ["transfer"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "transfer",
+                "args": {
+                    "from_account_id": "__NULL__",
+                    "payee_id": {"kind": "id", "id": "pye_zs_ww"},
+                    "to_account_id": {"kind": "none"},
+                    "amount_cents": 80000,
+                    "memo": "__NULL__",
+                },
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "amount_cents",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [4, 7]},
+                    },
+                ],
+            }
+        ],
+        "rationale": "test",
+    }
+    scripted = ScriptedLLM(
+        [tool_response("submit_action_plan", bad), tool_response("submit_action_plan", bad)]
+    )
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    with pytest.raises(ReferenceError):
+        PlanAdapter(llm)(state, ctx())
+    assert len(scripted.requests) == 2
+
+
+def test_plan_prompt_forbids_null_on_required_ids():
+    """System prompt clarifies __NULL__ is only for memo/phone/alias/end_at."""
+    scripted = ScriptedLLM([tool_response("submit_action_plan", freeze_plan_typed(span=(2, 10)))])
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    PlanAdapter(llm)(card_state(), ctx())
+    system = body_of(scripted, 0)["messages"][0]["content"]
+    assert "memo" in system
+    assert "phone" in system
+    assert "alias" in system
+    assert "end_at" in system
+    assert "必填" in system
+    assert "from_account_id" in system  # named as example of required id
+    assert "/accounts" in system  # example read pointer
+
+
+# ── ID prefix validation ──
+
+
+def test_plan_retries_on_wrong_id_prefix_from_account():
+    """from_account_id='pye_zs_ww' (payee prefix) → retry → acc_zs_chk succeeds."""
+    user_text = "用pye_zs_ww给王五转800元"
+    reads = [
+        ReadRecord(
+            source_ref="src_acct",
+            tool="get_accounts",
+            data={"accounts": [{"account_id": "acc_zs_chk", "balance_cents": 600000}]},
+        ),
+        ReadRecord(
+            source_ref="src_payee",
+            tool="list_payees",
+            data={"payees": [{"payee_id": "pye_zs_ww", "name": "王五"}]},
+        ),
+    ]
+    state = {
+        "customer_id": "cus_a",
+        "session_id": "ses_a",
+        "utterances": [UtteranceRef(id="utt_typed", kind="typed", text=user_text)],
+        "understanding": Understanding(intents=["transfer"], needs_write=True),
+        "reads": reads,
+    }
+    bad = {
+        "intents": ["transfer"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "transfer",
+                "args": {
+                    "from_account_id": "pye_zs_ww",
+                    "payee_id": {"kind": "id", "id": "pye_zs_ww"},
+                    "to_account_id": {"kind": "none"},
+                    "amount_cents": 80000,
+                    "memo": "__NULL__",
+                },
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "from_account_id",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [1, 10]},
+                    },
+                    {
+                        "param": "amount_cents",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [14, 17]},
+                    },
+                ],
+            }
+        ],
+        "rationale": "test",
+    }
+    good = _plan_with_from_account("acc_zs_chk")
+    scripted = ScriptedLLM(
+        [tool_response("submit_action_plan", bad), tool_response("submit_action_plan", good)]
+    )
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    draft = PlanAdapter(llm)(state, ctx())
+    assert draft.steps[0].args.from_account_id == "acc_zs_chk"
+    assert len(scripted.requests) == 2
+    human = body_of(scripted, 1)["messages"][1]["content"]
+    assert "acc_" in human
+
+
+def test_plan_retries_on_wrong_id_prefix_card():
+    """card_id='acc_x' (account prefix for a card) → retry."""
+    text = "冻结acc_x这张卡"
+    state = {
+        "customer_id": "cus_a",
+        "session_id": "ses_a",
+        "utterances": [UtteranceRef(id="utt_a", kind="typed", text=text)],
+        "understanding": Understanding(intents=["card"], needs_write=True),
+        "reads": [
+            ReadRecord(
+                source_ref="src_card",
+                tool="get_cards",
+                data={"cards": [{"card_id": "crd_zs_1", "status": "ACTIVE"}]},
+            )
+        ],
+    }
+    bad = {
+        "intents": ["card"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "freeze_card",
+                "args": {"card_id": "acc_x"},
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "card_id",
+                        "source": {"kind": "utterance", "ref": "utt_a", "span": [2, 7]},
+                    }
+                ],
+            }
+        ],
+        "rationale": "test",
+    }
+    good = {
+        "intents": ["card"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "freeze_card",
+                "args": {"card_id": "crd_zs_1"},
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "card_id",
+                        "source": {
+                            "kind": "read",
+                            "ref": "src_card",
+                            "pointer": "/cards/0/card_id",
+                        },
+                    }
+                ],
+            }
+        ],
+        "rationale": "test",
+    }
+    scripted = ScriptedLLM(
+        [tool_response("submit_action_plan", bad), tool_response("submit_action_plan", good)]
+    )
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    draft = PlanAdapter(llm)(state, ctx())
+    assert draft.steps[0].args.card_id == "crd_zs_1"
+    assert len(scripted.requests) == 2
+    human = body_of(scripted, 1)["messages"][1]["content"]
+    assert "crd_" in human
+
+
+def test_plan_accepts_correct_id_prefixes():
+    """from_account_id='acc_zs_chk' with correct prefix → no retry."""
+    state = transfer_with_reads_state()
+    good = _plan_with_from_account("acc_zs_chk")
+    scripted = ScriptedLLM([tool_response("submit_action_plan", good)])
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    draft = PlanAdapter(llm)(state, ctx())
+    assert draft.steps[0].args.from_account_id == "acc_zs_chk"
+    assert len(scripted.requests) == 1
+
+
+def test_plan_feedback_includes_all_problem_categories():
+    """First response has both read-ref error AND unsolicited memo →
+    retry feedback must mention both, not just the first category found."""
+    user_text = "给王五转800元"  # no memo request
+    state = {
+        "customer_id": "cus_a",
+        "session_id": "ses_a",
+        "utterances": [UtteranceRef(id="utt_typed", kind="typed", text=user_text)],
+        "understanding": Understanding(intents=["transfer"], needs_write=True),
+        "reads": [
+            ReadRecord(
+                source_ref="src_payee",
+                tool="list_payees",
+                data={"payees": [{"payee_id": "pye_zs_ww", "name": "王五"}]},
+            ),
+        ],
+    }
+    # First attempt: wrong payee pointer (read ref error) + unsolicited memo (semantic error)
+    bad = {
+        "intents": ["transfer"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "transfer",
+                "args": {
+                    "from_account_id": "acc_zs_chk",
+                    "payee_id": {"kind": "id", "id": "pye_zs_ww"},
+                    "to_account_id": {"kind": "none"},
+                    "amount_cents": 80000,
+                    "memo": "王五",  # unsolicited
+                },
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "payee_id",
+                        "source": {
+                            "kind": "read",
+                            "ref": "src_payee",
+                            "pointer": "/payees/0/name",  # "王五" != "pye_zs_ww"
+                        },
+                    },
+                    {
+                        "param": "amount_cents",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [4, 7]},
+                    },
+                    {
+                        "param": "memo",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [1, 3]},
+                    },
+                ],
+            }
+        ],
+        "rationale": "test",
+    }
+    # Second attempt: fix both
+    good = {
+        "intents": ["transfer"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "transfer",
+                "args": {
+                    "from_account_id": "acc_zs_chk",
+                    "payee_id": {"kind": "id", "id": "pye_zs_ww"},
+                    "to_account_id": {"kind": "none"},
+                    "amount_cents": 80000,
+                    "memo": "__NULL__",
+                },
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "payee_id",
+                        "source": {
+                            "kind": "read",
+                            "ref": "src_payee",
+                            "pointer": "/payees/0/payee_id",
+                        },
+                    },
+                    {
+                        "param": "amount_cents",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [4, 7]},
+                    },
+                ],
+            }
+        ],
+        "rationale": "test",
+    }
+    scripted = ScriptedLLM(
+        [tool_response("submit_action_plan", bad), tool_response("submit_action_plan", good)]
+    )
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    draft = PlanAdapter(llm)(state, ctx())
+    assert draft.steps[0].args.memo is None
+    assert len(scripted.requests) == 2
+    human = body_of(scripted, 1)["messages"][1]["content"]
+    # Feedback must mention both the read-pointer problem and the unsolicited-memo problem
+    assert "pointer" in human or "payee_id" in human
+    assert "memo" in human
+
+
+# ── gather deterministic supplement reads ──
+
+
+def _make_gather_state(intents=("transfer",), needs_write=True, text="给王五转800元"):
+    return {
+        "customer_id": "cus_a",
+        "session_id": "ses_a",
+        "utterances": [UtteranceRef(id="utt_a", kind="typed", text=text)],
+        "understanding": Understanding(intents=list(intents), needs_write=needs_write),
+    }
+
+
+def test_gather_supplements_get_accounts_for_transfer_intent():
+    """Transfer intent, LLM reads nothing → result includes get_accounts record."""
+    executed = []
+
+    def executor(name, args):
+        executed.append((name, args))
+        if name == "list_payees":
+            data = {"payees": [{"payee_id": "pye_ww", "name": "王五"}]}
+        elif name == "get_accounts":
+            data = {"accounts": [{"account_id": "acc_zs_chk", "balance_cents": 600000}]}
+        else:
+            data = {}
+        return ReadResult(data=data, source_ref=f"src_{name}")
+
+    scripted = ScriptedLLM([text_response("done")])
+    llm = build(scripted)
+    result = GatherAdapter(llm, executor, supplement_transfer_reads=True)(
+        _make_gather_state(), ctx()
+    )
+    tools = [r.tool for r in result]
+    assert "get_accounts" in tools
+    assert "list_payees" in tools
+    assert ("get_accounts", {"history_days": 0}) in executed
+    assert ("list_payees", {"query": None}) in executed
+
+
+def test_gather_no_supplement_for_non_transfer():
+    """Freeze card intent → no supplemental account/payee reads."""
+    executed = []
+
+    def executor(name, args):
+        executed.append((name, args))
+        return ReadResult(data={}, source_ref=f"src_{name}")
+
+    scripted = ScriptedLLM([text_response("done")])
+    llm = build(scripted)
+    result = GatherAdapter(llm, executor, supplement_transfer_reads=True)(
+        _make_gather_state(intents=["card"], text="冻结卡"), ctx()
+    )
+    assert len(executed) == 0
+    assert len(result) == 0
+
+
+def test_gather_no_duplicate_get_accounts():
+    """LLM already called get_accounts → no duplicate supplemental read."""
+    executed = []
+
+    def executor(name, args):
+        executed.append((name, args))
+        return ReadResult(data={"accounts": [{"account_id": "acc_a"}]}, source_ref=f"src_{name}")
+
+    scripted = ScriptedLLM(
+        [tool_response("get_accounts", {"history_days": 7}), text_response("done")]
+    )
+    llm = build(scripted)
+    result = GatherAdapter(llm, executor, supplement_transfer_reads=True)(
+        _make_gather_state(text="转800元到主意账户"), ctx()
+    )
+    # LLM called get_accounts → not duplicated. list_payees was neither read
+    # nor attempted → supplemented with query=None.
+    assert ("get_accounts", {"history_days": 7}) in executed
+    assert ("list_payees", {"query": None}) in executed
+    assert len(result) == 2
+
+
+def test_gather_supplements_list_payees_for_transfer_with_payee_name():
+    """Transfer intent with payee name in utterance, LLM reads nothing →
+    both get_accounts and list_payees are supplemented together."""
+    executed = []
+
+    def executor(name, args):
+        executed.append((name, args))
+        if name == "get_accounts":
+            data = {"accounts": [{"account_id": "acc_zs_chk"}]}
+        elif name == "list_payees":
+            data = {"payees": [{"payee_id": "pye_ww", "name": "王五"}]}
+        else:
+            data = {}
+        return ReadResult(data=data, source_ref=f"src_{name}")
+
+    scripted = ScriptedLLM([text_response("done")])
+    llm = build(scripted)
+    result = GatherAdapter(llm, executor, supplement_transfer_reads=True)(
+        _make_gather_state(text="转800给王五"), ctx()
+    )
+    tools = [r.tool for r in result]
+    assert "get_accounts" in tools
+    assert "list_payees" in tools
+    assert ("get_accounts", {"history_days": 0}) in executed
+    assert ("list_payees", {"query": None}) in executed
+
+
+def test_gather_supplement_read_failure_propagates():
+    """Supplemental read failure (e.g. network error) is not swallowed."""
+
+    def executor(name, args):
+        raise RuntimeError("gateway unreachable")
+
+    scripted = ScriptedLLM([text_response("done")])
+    llm = build(scripted)
+    with pytest.raises(RuntimeError, match="gateway unreachable"):
+        GatherAdapter(llm, executor, supplement_transfer_reads=True)(_make_gather_state(), ctx())
+
+
+# ── plan retries on missing rationale ──
+
+
+def test_plan_retries_on_missing_rationale():
+    """PlanBody without 'rationale' → ValidationError → retry with feedback → success."""
+    state = {
+        "customer_id": "cus_a",
+        "session_id": "ses_a",
+        "utterances": [UtteranceRef(id="utt_typed", kind="typed", text="给王五转800元")],
+        "understanding": Understanding(intents=["transfer"], needs_write=True),
+        "reads": [],
+    }
+    # First attempt: no "rationale" key at all
+    bad = {
+        "intents": ["transfer"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "transfer",
+                "args": {
+                    "from_account_id": "acc_a",
+                    "payee_id": {"kind": "id", "id": "pye_b"},
+                    "to_account_id": {"kind": "none"},
+                    "amount_cents": 80000,
+                    "memo": "__NULL__",
+                },
+                "depends_on": [],
+                "arg_sources": [],
+            }
+        ],
+        # no "rationale"
+    }
+    good = strict_plan()
+    scripted = ScriptedLLM(
+        [tool_response("submit_action_plan", bad), tool_response("submit_action_plan", good)]
+    )
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    draft = PlanAdapter(llm)(state, ctx())
+    assert draft.rationale == "test"
+    assert len(scripted.requests) == 2
+    human = body_of(scripted, 1)["messages"][1]["content"]
+    assert "rationale" in human
