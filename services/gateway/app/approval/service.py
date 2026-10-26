@@ -351,7 +351,8 @@ async def create_for_evaluation(
         cfg = _ApprovalConfig(bytes(key), profile, wall_now)
     elif any(a is not None for a in instance_args):
         raise GatewayError(
-            Code.DEPENDENCY_UNAVAILABLE, 503,
+            Code.DEPENDENCY_UNAVAILABLE,
+            503,
             "key, profile, wall_now must be provided together or not at all",
         )
     else:
