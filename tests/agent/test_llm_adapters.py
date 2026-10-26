@@ -1087,3 +1087,146 @@ def test_plan_prompt_forbids_null_on_required_ids():
     assert "必填" in system
     assert "from_account_id" in system  # named as example of required id
     assert "/accounts" in system  # example read pointer
+
+
+# ── ID prefix validation ──
+
+
+def test_plan_retries_on_wrong_id_prefix_from_account():
+    """from_account_id='pye_zs_ww' (payee prefix) → retry → acc_zs_chk succeeds."""
+    user_text = "用pye_zs_ww给王五转800元"
+    reads = [
+        ReadRecord(
+            source_ref="src_acct",
+            tool="get_accounts",
+            data={"accounts": [{"account_id": "acc_zs_chk", "balance_cents": 600000}]},
+        ),
+        ReadRecord(
+            source_ref="src_payee",
+            tool="list_payees",
+            data={"payees": [{"payee_id": "pye_zs_ww", "name": "王五"}]},
+        ),
+    ]
+    state = {
+        "customer_id": "cus_a",
+        "session_id": "ses_a",
+        "utterances": [UtteranceRef(id="utt_typed", kind="typed", text=user_text)],
+        "understanding": Understanding(intents=["transfer"], needs_write=True),
+        "reads": reads,
+    }
+    bad = {
+        "intents": ["transfer"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "transfer",
+                "args": {
+                    "from_account_id": "pye_zs_ww",
+                    "payee_id": {"kind": "id", "id": "pye_zs_ww"},
+                    "to_account_id": {"kind": "none"},
+                    "amount_cents": 80000,
+                    "memo": "__NULL__",
+                },
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "from_account_id",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [1, 10]},
+                    },
+                    {
+                        "param": "amount_cents",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [14, 17]},
+                    },
+                ],
+            }
+        ],
+        "rationale": "test",
+    }
+    good = _plan_with_from_account("acc_zs_chk")
+    scripted = ScriptedLLM(
+        [tool_response("submit_action_plan", bad), tool_response("submit_action_plan", good)]
+    )
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    draft = PlanAdapter(llm)(state, ctx())
+    assert draft.steps[0].args.from_account_id == "acc_zs_chk"
+    assert len(scripted.requests) == 2
+    human = body_of(scripted, 1)["messages"][1]["content"]
+    assert "acc_" in human
+
+
+def test_plan_retries_on_wrong_id_prefix_card():
+    """card_id='acc_x' (account prefix for a card) → retry."""
+    text = "冻结acc_x这张卡"
+    state = {
+        "customer_id": "cus_a",
+        "session_id": "ses_a",
+        "utterances": [UtteranceRef(id="utt_a", kind="typed", text=text)],
+        "understanding": Understanding(intents=["card"], needs_write=True),
+        "reads": [
+            ReadRecord(
+                source_ref="src_card",
+                tool="get_cards",
+                data={"cards": [{"card_id": "crd_zs_1", "status": "ACTIVE"}]},
+            )
+        ],
+    }
+    bad = {
+        "intents": ["card"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "freeze_card",
+                "args": {"card_id": "acc_x"},
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "card_id",
+                        "source": {"kind": "utterance", "ref": "utt_a", "span": [2, 7]},
+                    }
+                ],
+            }
+        ],
+        "rationale": "test",
+    }
+    good = {
+        "intents": ["card"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "freeze_card",
+                "args": {"card_id": "crd_zs_1"},
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "card_id",
+                        "source": {
+                            "kind": "read",
+                            "ref": "src_card",
+                            "pointer": "/cards/0/card_id",
+                        },
+                    }
+                ],
+            }
+        ],
+        "rationale": "test",
+    }
+    scripted = ScriptedLLM(
+        [tool_response("submit_action_plan", bad), tool_response("submit_action_plan", good)]
+    )
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    draft = PlanAdapter(llm)(state, ctx())
+    assert draft.steps[0].args.card_id == "crd_zs_1"
+    assert len(scripted.requests) == 2
+    human = body_of(scripted, 1)["messages"][1]["content"]
+    assert "crd_" in human
+
+
+def test_plan_accepts_correct_id_prefixes():
+    """from_account_id='acc_zs_chk' with correct prefix → no retry."""
+    state = transfer_with_reads_state()
+    good = _plan_with_from_account("acc_zs_chk")
+    scripted = ScriptedLLM([tool_response("submit_action_plan", good)])
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    draft = PlanAdapter(llm)(state, ctx())
+    assert draft.steps[0].args.from_account_id == "acc_zs_chk"
+    assert len(scripted.requests) == 1
