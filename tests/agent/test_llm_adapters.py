@@ -1330,3 +1330,163 @@ def test_plan_feedback_includes_all_problem_categories():
     # Feedback must mention both the read-pointer problem and the unsolicited-memo problem
     assert "pointer" in human or "payee_id" in human
     assert "memo" in human
+
+
+# ── gather deterministic supplement reads ──
+
+
+def _make_gather_state(intents=("transfer",), needs_write=True, text="给王五转800元"):
+    return {
+        "customer_id": "cus_a",
+        "session_id": "ses_a",
+        "utterances": [UtteranceRef(id="utt_a", kind="typed", text=text)],
+        "understanding": Understanding(intents=list(intents), needs_write=needs_write),
+    }
+
+
+def test_gather_supplements_get_accounts_for_transfer_intent():
+    """Transfer intent, LLM reads nothing → result includes get_accounts record."""
+    executed = []
+
+    def executor(name, args):
+        executed.append((name, args))
+        if name == "list_payees":
+            data = {"payees": [{"payee_id": "pye_ww", "name": "王五"}]}
+        elif name == "get_accounts":
+            data = {"accounts": [{"account_id": "acc_zs_chk", "balance_cents": 600000}]}
+        else:
+            data = {}
+        return ReadResult(data=data, source_ref=f"src_{name}")
+
+    scripted = ScriptedLLM([text_response("done")])
+    llm = build(scripted)
+    result = GatherAdapter(llm, executor, supplement_transfer_reads=True)(
+        _make_gather_state(), ctx()
+    )
+    tools = [r.tool for r in result]
+    assert "get_accounts" in tools
+    assert "list_payees" in tools
+    assert ("get_accounts", {"history_days": 0}) in executed
+    assert ("list_payees", {"query": None}) in executed
+
+
+def test_gather_no_supplement_for_non_transfer():
+    """Freeze card intent → no supplemental account/payee reads."""
+    executed = []
+
+    def executor(name, args):
+        executed.append((name, args))
+        return ReadResult(data={}, source_ref=f"src_{name}")
+
+    scripted = ScriptedLLM([text_response("done")])
+    llm = build(scripted)
+    result = GatherAdapter(llm, executor, supplement_transfer_reads=True)(
+        _make_gather_state(intents=["card"], text="冻结卡"), ctx()
+    )
+    assert len(executed) == 0
+    assert len(result) == 0
+
+
+def test_gather_no_duplicate_get_accounts():
+    """LLM already called get_accounts → no duplicate supplemental read."""
+    executed = []
+
+    def executor(name, args):
+        executed.append((name, args))
+        return ReadResult(data={"accounts": [{"account_id": "acc_a"}]}, source_ref=f"src_{name}")
+
+    scripted = ScriptedLLM(
+        [tool_response("get_accounts", {"history_days": 7}), text_response("done")]
+    )
+    llm = build(scripted)
+    result = GatherAdapter(llm, executor, supplement_transfer_reads=True)(
+        _make_gather_state(text="转800元到主意账户"), ctx()
+    )
+    # LLM called get_accounts → not duplicated. list_payees was neither read
+    # nor attempted → supplemented with query=None.
+    assert ("get_accounts", {"history_days": 7}) in executed
+    assert ("list_payees", {"query": None}) in executed
+    assert len(result) == 2
+
+
+def test_gather_supplements_list_payees_for_transfer_with_payee_name():
+    """Transfer intent with payee name in utterance, LLM reads nothing →
+    both get_accounts and list_payees are supplemented together."""
+    executed = []
+
+    def executor(name, args):
+        executed.append((name, args))
+        if name == "get_accounts":
+            data = {"accounts": [{"account_id": "acc_zs_chk"}]}
+        elif name == "list_payees":
+            data = {"payees": [{"payee_id": "pye_ww", "name": "王五"}]}
+        else:
+            data = {}
+        return ReadResult(data=data, source_ref=f"src_{name}")
+
+    scripted = ScriptedLLM([text_response("done")])
+    llm = build(scripted)
+    result = GatherAdapter(llm, executor, supplement_transfer_reads=True)(
+        _make_gather_state(text="转800给王五"), ctx()
+    )
+    tools = [r.tool for r in result]
+    assert "get_accounts" in tools
+    assert "list_payees" in tools
+    assert ("get_accounts", {"history_days": 0}) in executed
+    assert ("list_payees", {"query": None}) in executed
+
+
+def test_gather_supplement_read_failure_propagates():
+    """Supplemental read failure (e.g. network error) is not swallowed."""
+
+    def executor(name, args):
+        raise RuntimeError("gateway unreachable")
+
+    scripted = ScriptedLLM([text_response("done")])
+    llm = build(scripted)
+    with pytest.raises(RuntimeError, match="gateway unreachable"):
+        GatherAdapter(llm, executor, supplement_transfer_reads=True)(_make_gather_state(), ctx())
+
+
+# ── plan retries on missing rationale ──
+
+
+def test_plan_retries_on_missing_rationale():
+    """PlanBody without 'rationale' → ValidationError → retry with feedback → success."""
+    state = {
+        "customer_id": "cus_a",
+        "session_id": "ses_a",
+        "utterances": [UtteranceRef(id="utt_typed", kind="typed", text="给王五转800元")],
+        "understanding": Understanding(intents=["transfer"], needs_write=True),
+        "reads": [],
+    }
+    # First attempt: no "rationale" key at all
+    bad = {
+        "intents": ["transfer"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "transfer",
+                "args": {
+                    "from_account_id": "acc_a",
+                    "payee_id": {"kind": "id", "id": "pye_b"},
+                    "to_account_id": {"kind": "none"},
+                    "amount_cents": 80000,
+                    "memo": "__NULL__",
+                },
+                "depends_on": [],
+                "arg_sources": [],
+            }
+        ],
+        # no "rationale"
+    }
+    good = strict_plan()
+    scripted = ScriptedLLM(
+        [tool_response("submit_action_plan", bad), tool_response("submit_action_plan", good)]
+    )
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    draft = PlanAdapter(llm)(state, ctx())
+    assert draft.rationale == "test"
+    assert len(scripted.requests) == 2
+    human = body_of(scripted, 1)["messages"][1]["content"]
+    assert "rationale" in human
