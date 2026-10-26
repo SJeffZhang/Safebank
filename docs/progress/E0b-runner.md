@@ -12,3 +12,9 @@
   - `make test-e0b`：3 passed（真实 L3，零 skip）
   - `make test`：2702 passed / 708 skipped
 - **未完成**：checks.yml 中的 test-e0b 一行、runner 主流程、指标、报告，留到后续单任务（T2 起）。
+
+## T2b（2026-10-26）
+
+- `evaluation/runner/l1.py`：同步 `GatewayClient` → 主事件循环 ASGI gateway 的桥接 transport（记录每个请求/响应）与 fake LLM 端口；`tests/evaluation/runner/test_l1_one_case.py`：真实 L1 graph 经真实 gateway G4 评估「冻结我的卡」。
+- worker E0b-T2b-r1 用满 41 轮未提交（快照 `refs/wip/E0b-T2b-r1`）；协调者修 ruff 3 处（import 排序/未用导入），复跑 `make lint` 通过、`make test-e0b` 5 passed，代为提交。
+- 实际 G4 Decision 为 **REPLAN**：fake plan 把 `card_id=crd_zs_1` 的来源标为原话 span(0,5)，而原话不含该值，L2 拒绝来源，符合预期，不放宽。待决：E0b 的 fake 计划需改为先 gather `get_cards` 并标 read 来源，才能得到 ALLOW 样例；live 模式由真实 LLM 产出来源。
