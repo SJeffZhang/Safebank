@@ -18,7 +18,7 @@ from typing import Any
 
 import httpx
 
-from evaluation.metrics.compute import CaseRun, extract_g4_evidence
+from evaluation.metrics.compute import CaseRun, extract_g4_evidence, extract_gather_reads
 from evaluation.runner.harness import GatewayRateLimited
 from evaluation.runner.l1 import (
     A_SERVICE_TOKEN,
@@ -335,6 +335,7 @@ async def run_corpus(
                 ) = classify_outcome(transport.requests, last_state, last_error, g3s)
 
                 evidence = extract_g4_evidence(transport.requests)
+                gather_reads = extract_gather_reads(transport.requests)
 
                 error_message_val: str | None = None
                 error_where_val: list[str] = []
@@ -381,6 +382,7 @@ async def run_corpus(
                         l2_g3_response=g3s,
                         error_message=error_message_val,
                         error_where=error_where_val,
+                        gather_reads=gather_reads,
                     )
                 )
     except StopRun:

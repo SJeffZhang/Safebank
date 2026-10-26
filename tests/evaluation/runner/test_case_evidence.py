@@ -17,6 +17,7 @@ from evaluation.metrics.compute import (
     _strip_secrets,
     compute_metrics,
     extract_g4_evidence,
+    extract_gather_reads,
     write_outputs,
 )
 
@@ -723,3 +724,172 @@ class TestWriteOutputsWithEvidence:
         objs = self._write_and_read(tmp_path, runs)
         raw = json.dumps(objs[0])
         assert "leak-in-source" not in raw
+
+
+# ── extract_gather_reads ────────────────────────────────────────────────────
+
+
+class TestExtractGatherReads:
+    """Pure function: extract read requests from transport log."""
+
+    def _read_request(
+        self,
+        tool: str = "get_cards",
+        status: int = 200,
+        source_ref: str = "src_01",
+        items: list | None = None,
+    ) -> dict:
+        """Create a fake transport entry for a POST /tools/read/{tool} call."""
+        resp: dict[str, Any] = {"source_ref": source_ref}
+        if items is not None:
+            resp["data"] = {"items": items}
+        else:
+            resp["data"] = {"items": [{"id": "crd_zs_1", "status": "ACTIVE"}]}
+        return {
+            "method": "POST",
+            "url": f"http://gateway:8200/tools/read/{tool}",
+            "status": status,
+            "request": {"account_id": None},
+            "json": resp,
+        }
+
+    def test_single_read(self):
+        """One read request → one entry with tool, source_id, item_count."""
+        result = extract_gather_reads([self._read_request()])
+        assert len(result) == 1
+        r = result[0]
+        assert r["tool"] == "get_cards"
+        assert r["status"] == 200
+        assert r["source_id"] == "src_01"
+        assert r["item_count"] == 1
+
+    def test_no_reads_empty(self):
+        """No /tools/read/ requests → empty list."""
+        result = extract_gather_reads([])
+        assert result == []
+
+    def test_ignores_non_read_requests(self):
+        """Only POST /tools/read/ paths are extracted; evaluate, sessions, etc. ignored."""
+        reqs = [
+            self._read_request(),
+            {
+                "method": "POST",
+                "url": "/plans/evaluate",
+                "status": 200,
+                "request": {"plan_draft": {}},
+                "json": {"decision": "ALLOW"},
+            },
+            {
+                "method": "GET",
+                "url": "/clarifications",
+                "status": 200,
+                "request": None,
+                "json": {"clarification": {}},
+            },
+        ]
+        result = extract_gather_reads(reqs)
+        assert len(result) == 1
+
+    def test_multiple_reads(self):
+        """Multiple read requests → all captured in order."""
+        reqs = [
+            self._read_request("get_cards", source_ref="src_a"),
+            self._read_request("get_accounts", source_ref="src_b"),
+        ]
+        result = extract_gather_reads(reqs)
+        assert len(result) == 2
+        assert result[0]["tool"] == "get_cards"
+        assert result[0]["source_id"] == "src_a"
+        assert result[1]["tool"] == "get_accounts"
+        assert result[1]["source_id"] == "src_b"
+
+    def test_read_error_status(self):
+        """Read with non-200 status still captured (source_id/item_count may be None)."""
+        req = self._read_request("get_cards", status=503)
+        req["json"] = None  # no response body on error
+        result = extract_gather_reads([req])
+        assert len(result) == 1
+        r = result[0]
+        assert r["tool"] == "get_cards"
+        assert r["status"] == 503
+        assert r["source_id"] is None
+        assert r["item_count"] is None
+
+    def test_item_count_accounts(self):
+        """Response with 'accounts' key → counted correctly."""
+        req = self._read_request("get_accounts", items=None)
+        req["json"] = {
+            "source_ref": "src_acc",
+            "data": {"accounts": [{"id": "a1"}, {"id": "a2"}, {"id": "a3"}]},
+        }
+        result = extract_gather_reads([req])
+        assert result[0]["item_count"] == 3
+
+    def test_item_count_no_list_key(self):
+        """Response without any known list key → item_count=None."""
+        req = self._read_request("get_product", items=None)
+        req["json"] = {
+            "source_ref": "src_prd",
+            "data": {"product_id": "prd_01", "name": "基金A"},
+        }
+        result = extract_gather_reads([req])
+        assert result[0]["item_count"] is None
+
+    def test_empty_items(self):
+        """Response items=[] → item_count=0."""
+        req = self._read_request("get_cards", items=[])
+        result = extract_gather_reads([req])
+        assert result[0]["item_count"] == 0
+
+    def test_secrets_stripped(self):
+        """Secret-bearing fields in gather_reads are redacted."""
+        req = self._read_request("get_cards")
+        req["json"]["data"]["api_key"] = "secret-value"
+        result = extract_gather_reads([req])
+        assert result[0]["source_id"] == "src_01"  # business data preserved
+        # No secret keys in the output
+        raw = json.dumps(result)
+        assert "secret-value" not in raw
+
+
+# ── write_outputs gather_reads in JSONL ────────────────────────────────────
+
+
+class TestWriteOutputsGatherReads:
+    """gather_reads field appears in cases.jsonl, stripped of secrets."""
+
+    def _write_and_read(self, tmp_path: Path, runs: list[CaseRun]) -> list[dict]:
+        metrics = compute_metrics(runs)
+        meta = {
+            "llm_mode": "fake",
+            "model": "deepseek-v4-pro",
+            "l3": "real",
+            "seed_version": "l1_seed_v1",
+            "corpus_version": "v1",
+            "sample_count": str(len(runs)),
+        }
+        out = tmp_path / "report"
+        write_outputs(out, runs, metrics, meta)
+        lines = (out / "cases.jsonl").read_text(encoding="utf-8").strip().split("\n")
+        return [json.loads(line) for line in lines]
+
+    def test_gather_reads_in_jsonl(self, tmp_path: Path):
+        """gather_reads appears in JSONL output."""
+        runs = [
+            _make_minimal_run(
+                case_id="gr-01",
+                gather_reads=[
+                    {"tool": "get_cards", "status": 200, "source_id": "src_01", "item_count": 1}
+                ],
+            ),
+        ]
+        objs = self._write_and_read(tmp_path, runs)
+        assert objs[0]["gather_reads"] == [
+            {"tool": "get_cards", "status": 200, "source_id": "src_01", "item_count": 1}
+        ]
+
+    def test_gather_reads_empty_default(self, tmp_path: Path):
+        """CaseRun with no gather_reads → empty list in JSONL."""
+        runs = [_make_minimal_run(case_id="no-reads")]
+        objs = self._write_and_read(tmp_path, runs)
+        assert objs[0]["gather_reads"] == []

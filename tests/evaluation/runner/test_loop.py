@@ -420,3 +420,35 @@ def test_l2_g3_response_fields_no_tokens():
     assert "token" not in g3
     assert "assistant_token" not in g3
     assert "bearer" not in str(g3).lower()
+
+
+def test_error_with_understanding_from_last_state():
+    """ERROR outcome where last_state has understanding → understanding captured.
+
+    This represents a multi-turn case where turn 1 succeeded (populated
+    understanding) and turn 2 raised an error.  The "before-error"
+    understanding should survive into the CaseRun.
+    """
+    state = {
+        "understanding": Understanding(
+            intents=("transfer",), needs_write=True, unclear=False, slots=()
+        ),
+        "clarification": None,
+    }
+    exc = RuntimeError("port failure")
+    outcome, risk, params, codes, fc, cs, cl, un = classify_outcome([], state, exc)
+    assert outcome == "ERROR"
+    assert fc == "RuntimeError"
+    assert un is not None
+    assert un.get("intents") == ["transfer"]
+
+
+def test_error_without_understanding_is_null():
+    """ERROR outcome where last_state is None → understanding stays null.
+
+    Single-turn error — no 'before' state to extract from.
+    """
+    exc = ValueError("first turn failed")
+    outcome, risk, params, codes, fc, cs, cl, un = classify_outcome([], None, exc)
+    assert outcome == "ERROR"
+    assert un is None

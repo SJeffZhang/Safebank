@@ -6,6 +6,7 @@ __all__ = [
     "CaseRun",
     "compute_metrics",
     "extract_g4_evidence",
+    "extract_gather_reads",
     "render_report",
     "write_outputs",
     "_strip_secrets",
@@ -109,8 +110,66 @@ class CaseRun:
     error_message: str | None = None  # str(exc) truncated to 800, secrets stripped
     error_where: list[str] = field(default_factory=list)  # last 3 services/eval frames
 
+    # ── T13 gather reads evidence ──
+    gather_reads: list[dict[str, Any]] = field(default_factory=list)
+    # Each entry: {tool, status, source_id, item_count} — read requests sent
+    # through the transport during the graph's gather phase.
 
-# ── helper ───────────────────────────────────────────────────────────────────
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+
+def _count_items(data: Any) -> int | None:
+    """Count the number of top-level items in a gateway read response.
+
+    Returns the length of the first list-valued key (``items``, ``accounts``,
+    ``cards``, ``transactions``, ``subscriptions``, ``products``, etc.), or
+    ``None`` when no list key is found or *data* is not a dict.
+    """
+    if not isinstance(data, dict):
+        return None
+    for key in ("items", "accounts", "cards", "transactions", "subscriptions",
+                "products", "entries", "results"):
+        val = data.get(key)
+        if isinstance(val, list):
+            return len(val)
+    return None
+
+
+def extract_gather_reads(transport_requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Extract gather read requests from recorded transport requests.
+
+    Each entry captures the tool name, HTTP status, the read record's
+    ``source_id`` (``source_ref`` in the response), and the ``item_count``
+    (length of the first list-valued key in the response data).
+
+    The result is passed through ``_strip_secrets`` so no tokens or keys leak.
+    """
+    reads: list[dict[str, Any]] = []
+    for r in transport_requests:
+        if not (r.get("method") == "POST" and "/tools/read/" in r.get("url", "")):
+            continue
+        tool_or_path: str = ""
+        url: str = r.get("url", "")
+        if "/tools/read/" in url:
+            # Extract the tool name: /tools/read/get_cards → get_cards
+            tool_or_path = url.rsplit("/tools/read/", 1)[-1]
+        status: int = r.get("status", 0)
+        resp_json: dict[str, Any] | None = r.get("json")
+        source_id: str | None = None
+        item_count: int | None = None
+        if isinstance(resp_json, dict):
+            source_id = resp_json.get("source_ref")
+            data = resp_json.get("data")
+            item_count = _count_items(data)
+        entry: dict[str, Any] = {
+            "tool": tool_or_path,
+            "status": status,
+            "source_id": source_id,
+            "item_count": item_count,
+        }
+        reads.append(entry)
+    return _strip_secrets(reads)
 
 
 def extract_g4_evidence(transport_requests: list[dict[str, Any]]) -> dict[str, Any]:
@@ -450,5 +509,7 @@ def write_outputs(
                 if r.error_message is not None
                 else None,
                 "error_where": _strip_secrets(r.error_where),
+                # ── T13 gather reads evidence ──
+                "gather_reads": _strip_secrets(r.gather_reads),
             }
             fh.write(json.dumps(obj, ensure_ascii=False) + "\n")
