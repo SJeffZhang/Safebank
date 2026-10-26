@@ -133,18 +133,32 @@ def _verify(state, context):
     return state["reply_draft"]
 
 
-def build_real_gateway_graph(harness, *, loop, utterance_id: str):
-    """Build a compiled L1 graph whose GatewayClient reaches the real gateway."""
+def build_graph_with_ports(harness, *, loop, ports_kwargs):
+    """Build a compiled L1 graph with custom ports, recording through a bridge transport.
+
+    ``ports_kwargs`` must contain the five LLM port callables
+    (understand / gather / plan / respond / verify_output) that are passed
+    through to ``make_gateway_ports``.  evaluate and execute are assembled
+    automatically from the real gateway client.
+    """
     transport = RecordingBridgeTransport(harness.client, loop)
     http_client = httpx.Client(transport=transport, base_url="http://gateway")
     client = GatewayClient("http://gateway", A_SERVICE_TOKEN, http_client=http_client)
-    ports = make_gateway_ports(
-        client,
-        understand=_understand,
-        gather=_gather,
-        plan=_make_plan(utterance_id),
-        respond=_respond,
-        verify_output=_verify,
-    )
+    ports = make_gateway_ports(client, **ports_kwargs)
     graph = build_gateway_graph(ports, InMemorySaver(), client)
     return graph, transport
+
+
+def build_real_gateway_graph(harness, *, loop, utterance_id: str):
+    """Build a compiled L1 graph whose GatewayClient reaches the real gateway."""
+    return build_graph_with_ports(
+        harness,
+        loop=loop,
+        ports_kwargs=dict(
+            understand=_understand,
+            gather=_gather,
+            plan=_make_plan(utterance_id),
+            respond=_respond,
+            verify_output=_verify,
+        ),
+    )

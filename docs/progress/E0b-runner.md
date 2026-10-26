@@ -29,3 +29,9 @@
 
 - `tests/evaluation/runner/test_metrics.py`：新增 `TestRequireApprovalInExecutable`（3 条含 REQUIRE_APPROVAL 期望的 known-answer run），断言 executable_rate=2/3、false_replan_rate=1/3、false_deny_rate=0、false_by_class={"span":1}、param_accuracy=1.0。
 - **变异测试**：删除 `compute.py:67` 的 `"REQUIRE_APPROVAL"` 后，新测试 1 failed（`executable_rate` 1.0 ≠ 2/3）、旧 16 passed；还原后 17 passed 零 skip。`make lint` 通过。
+
+## T4（2026-10-26）
+
+- `evaluation/runner/loop.py`：`run_corpus`（每 case × repeat 新会话，逐轮登记原话并调用 L1 graph，取最后一轮结果）、纯函数 `classify_outcome`、`StopRun`（402/403/429/连接错误立即停止并保留已完成 runs）；l1.py 泛化为 `build_graph_with_ports`。
+- 事实：L2 在 G3 登记「hello」「hi」「查询余额」这类无写意图原话时会创建 `FORM_REQUIRED` 澄清，L1 经 G21 取回，故结果记为 CLARIFY；这是系统真实行为，测试据实断言，并以 gateway 库新增 4 条 FORM_REQUIRED 记录为证。语料中期望 NO_PLAN 的样本在 live 下可能同样得到 CLARIFY，届时作为 E0 发现报告，不改 L2。
+- worker E0b-T4-r1、E0b-T4b-r1 均用满轮数未提交；协调者补 L2 证据断言（计数取前后差值，因同一测试库被多个测试共用）、ruff 格式化，复跑 make lint、make test-e0b 29 passed、make test 通过后代为提交。
