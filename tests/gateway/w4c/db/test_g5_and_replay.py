@@ -9,7 +9,7 @@ import asyncio
 import hashlib
 
 from app import models as m
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.pool import NullPool
 
 from services.gateway.app import tables as t
@@ -46,9 +46,7 @@ def test_g5_after_execute_shows_result(app_config, obligations_db):
             # Now call G5 with A headers.
             g5_url = G5_PATH.format(plan_id=ctx.plan_id)
             g5_resp = await ctx.test_app.client.get(g5_url, headers=ctx.headers)
-            assert g5_resp.status_code == 200, (
-                f"G5 returned {g5_resp.status_code}: {g5_resp.text}"
-            )
+            assert g5_resp.status_code == 200, f"G5 returned {g5_resp.status_code}: {g5_resp.text}"
             status_view = g5_resp.json()
             assert status_view["plan_id"] == ctx.plan_id
             assert status_view["status"] == "EXECUTED"
@@ -70,8 +68,6 @@ def test_g5_other_session_is_hidden(app_config, obligations_db):
 
     async def run():
         async with allow_plan_ctx(app_config, obligations_db) as ctx:
-            app = ctx.test_app.client._transport.app
-
             # Build a second session for the same customer.
             sid2 = "ses_w4c_g5_hide"
             utt2 = f"utt_{sid2}_1"
@@ -85,23 +81,6 @@ def test_g5_other_session_is_hidden(app_config, obligations_db):
                     conn, utt_id=utt2, sid=sid2, text="查余额", scope=_freeze_scope()
                 )
                 await _anchor_to_real_time(conn, sid=sid2)
-
-                # Also register this session in the test app's auth sessions
-                # so the JWT is recognised.
-                from sqlalchemy import text as sqla_text
-
-                now_sql = sqla_text("now()")
-                await conn.execute(
-                    sqla_text(
-                        """
-                        INSERT INTO auth_sessions (jti, customer_id, session_id,
-                            created_at_wall, expires_at_wall)
-                        VALUES (:jti, 'cus_zs', :sid, now(), now() + interval '60 minutes')
-                        ON CONFLICT DO NOTHING
-                        """
-                    ),
-                    {"jti": jti2, "sid": sid2},
-                )
             await db.dispose()
 
             # A token for sid2
@@ -168,9 +147,7 @@ def test_g5_reconciles_unknown(app_config, obligations_db):
             # G5 (not G8!) → should reconcile inline and return executed result.
             g5_url = G5_PATH.format(plan_id=ctx.plan_id)
             g5_resp = await ctx.test_app.client.get(g5_url, headers=ctx.headers)
-            assert g5_resp.status_code == 200, (
-                f"G5 returned {g5_resp.status_code}: {g5_resp.text}"
-            )
+            assert g5_resp.status_code == 200, f"G5 returned {g5_resp.status_code}: {g5_resp.text}"
             sv = g5_resp.json()
             assert sv["status"] == "EXECUTED"
             assert sv["execution"] is not None
@@ -254,6 +231,7 @@ def test_g8_request_id_body_mismatch_conflicts(app_config, obligations_db):
                         request_hash=wrong_hash,
                         status_code=0,
                         response={},
+                        created_at_wall=func.now(),
                     )
                 )
             await db.dispose()
@@ -346,7 +324,7 @@ def test_g8_old_request_id_cannot_resume_after_fence(app_config, obligations_db)
 
             # L3 must NOT have executed (attempt still 1, no executions).
             async with ctx.l3_admin.connect() as conn:
-                intent = (
+                _intent = (
                     (
                         await conn.execute(
                             select(m.execution_intents.c.attempt).where(

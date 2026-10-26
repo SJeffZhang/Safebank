@@ -223,3 +223,35 @@
   2. F 调用方测试误用 FastAPI 对象取私钥；`_seed_auth` 用固定 WALL 时间，已重锚到 now。
   3. **origin 检查顺序缺陷**：终态重放在 origin 检查之前返回，F 调用方可读取已执行的 agent 计划结果（同客户内）。已把 origin 检查移到加载计划后第一步，新增 `test_frontend_caller_cannot_read_executed_agent_plan`（去掉前移即失败）。
 - 复跑：test-w4c 29 passed（含 alarm 防挂死）；lint 353；test 2702/734 skip；test-gateway 2018/641 skip；wave1-state 231；w4b2b 58；w3b 33。
+
+## T7 G5 + G8 request_id 重放（2026-10-26）
+
+上一个 worker 在 `a347afe` 留下 5 条失败测试。本次修复：
+
+### 测试修正（2 处）
+1. `test_g5_other_session_is_hidden`：删掉向 `auth_sessions` 插入不存在的 `session_id` 列的原始 SQL（该表只有 `jti, customer_id, created_at_wall, expires_at_wall, revoked_at_wall`）；已有 `_seed_session` + `_seed_auth` 足够。
+2. `test_g8_request_id_body_mismatch_conflicts`：`request_dedup` INSERT 缺 `created_at_wall`（NOT NULL），补 `func.now()`。
+3. 去掉未使用的 `sqlalchemy.text` import 与 `app` 变量。
+
+### 实现修复（execution.py）
+1. **提取 `_reconcile_job`**：从 `_handle_reconcile` 抽出对账核心逻辑为 `_reconcile_job(conn, ...) -> dict | None`，G5 与 G8 共用。G5 在 `customer_lock` 内调用。
+2. **G5 刷新计划状态**：对账归档后重新读取 `plans.status`（原缓存可能陈旧），正确返回 EXECUTED。
+3. **G8 request_dedup 检查**：入口处计算 `request_hash`（`json.dumps(body, sort_keys=True)` + `digest_hex`），调用 `_check_request_dedup`。
+   - 命中终态（200）→ 原样返回存储的响应。
+   - 命中非终态（409/202）且当前 job 为 PAUSED → 409 STATE_CHANGED（"use a new request_id"）。
+4. **G8 request_dedup 写入**：
+   - 终态（200）后：与 `archive_execution_terminal` 同事务写 `request_dedup`。
+   - fence 409 前：单独写事务写 `status_code=409, response={"non_terminal": true}`。
+   - `_unknown` helper：与 `mark_execution_unknown` 同事务写 `status_code=202, response={"non_terminal": true}`。
+
+### 退出命令
+| 命令 | 结果 |
+|---|---|
+| `make test-w4c` | 35 passed（21.67s） |
+| `make test-wave1-state` | 231 passed（13.50s） |
+| `make test-gateway` | 2018 passed, 647 skipped（8.80s） |
+| `make lint` | All checks passed（354 files formatted） |
+| `make contracts-check` | PASS: contracts v1 match frozen schemas |
+
+### 提交
+（本条）

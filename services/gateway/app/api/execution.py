@@ -6,6 +6,7 @@ CONFIRMED, STATE_CHANGED, UNKNOWN, G5, and request_id replay are later tasks.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any
 
@@ -122,9 +123,7 @@ async def _check_request_dedup(
     if existing is None:
         return None, False
     if existing["request_hash"] != request_hash:
-        raise GatewayError(
-            Code.IDEMPOTENCY_CONFLICT, 409, "request_id reused with different body"
-        )
+        raise GatewayError(Code.IDEMPOTENCY_CONFLICT, 409, "request_id reused with different body")
     if existing["status_code"] == 200:
         return dict(existing["response"]), False
     return None, True  # non-terminal → flag, don't replay
@@ -215,6 +214,12 @@ async def get_plan_status(plan_id: str, request: Request):
                 )
                 if reconciled is not None:
                     execution = reconciled
+                    # Re-read plan status — reconciliation may have archived the job.
+                    refreshed_status = await conn.scalar(
+                        select(t.plans.c.status).where(t.plans.c.id == plan_id)
+                    )
+                    plan = dict(plan)  # don't mutate the original mapping
+                    plan["status"] = refreshed_status
                 else:
                     execution = {"status": "UNKNOWN"}
             # live job states (EXECUTING, FENCING, PAUSED) → execution = None
@@ -865,7 +870,7 @@ async def _handle_resume(
 # ── G8 POST /plans/{plan_id}/execute ─────────────────────────────────────────
 
 
-async def _handle_reconcile(
+async def _reconcile_job(
     *,
     conn: AsyncConnection,
     plan_id: str,
@@ -873,18 +878,17 @@ async def _handle_reconcile(
     plan: dict[str, Any],
     job: dict[str, Any],
     l3: Any,
-    request: Request,
-) -> JSONResponse:
-    """Inline reconciliation for UNKNOWN jobs (T5).
+    trace_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Reconcile an UNKNOWN job (shared by G5 and G8).
 
-    Only query/reconcile — never resubmit.  Reads the attempt from the
-    job row, queries L3 for the true outcome, reconciles uncommitted
-    intents, and archives the terminal result.
+    Queries L3 for the true outcome, reconciles uncommitted intents,
+    and archives any terminal result.  Returns the terminal result dict,
+    or ``None`` when the outcome is still unclear.
     """
     from safebank_contracts.plan import Reconcile
     from safebank_contracts.protocol import ExecutionStatus
 
-    # Build execution identity from the job row (attempt is *not* hard-coded).
     revision = (
         await conn.execute(
             select(t.evaluations.c.revision)
@@ -894,7 +898,7 @@ async def _handle_reconcile(
         )
     ).scalar()
     if revision is None:
-        raise GatewayError(Code.STATE_CHANGED, 409, "no evaluation for plan")
+        return None
 
     exec_identity = state.ExecutionIdentity(
         customer_id=caller_customer_id,
@@ -904,18 +908,14 @@ async def _handle_reconcile(
         revision=revision,
     )
 
-    # End read transaction before any HTTP call.
     if conn.in_transaction():
         await conn.rollback()
 
-    trace_id = getattr(request.state, "trace_id", "")
-
-    # ── step 1: query L3 for the true outcome ──────────────────────────
+    # ── step 1: query L3 ──────────────────────────────────────────────────
     try:
         exec_status_resp = await l3.execution(caller_customer_id, plan_id)
     except L3BusinessError as exc:
         if exc.status == 404:
-            # Never prepared at L3 — reconcile to a CANCELLED tombstone.
             try:
                 reconcile_body = Reconcile(
                     customer_id=caller_customer_id,
@@ -924,10 +924,7 @@ async def _handle_reconcile(
                 )
                 await l3.reconcile(plan_id, reconcile_body.model_dump(mode="json"))
             except (L3NotDelivered, L3OutcomeUnknown, L3BusinessError):
-                return JSONResponse(
-                    status_code=202,
-                    content=ExecutionAccepted(plan_id=plan_id).model_dump(mode="json"),
-                )
+                return None
             async with conn.begin():
                 await state.archive_execution_terminal(
                     conn,
@@ -950,32 +947,22 @@ async def _handle_reconcile(
                     plan_id=plan_id,
                     now_wall=_exec_now(),
                 )
-            return JSONResponse(
-                status_code=200,
-                content=ExecutionResult(
-                    plan_id=plan_id,
-                    status="FAILED",
-                    steps=(),
-                    versions={},
-                    committed_at=None,
-                    error_code=None,
-                    replayed=True,
-                ).model_dump(mode="json"),
-            )
-        # Other L3 business errors — keep UNKNOWN.
-        return JSONResponse(
-            status_code=202,
-            content=ExecutionAccepted(plan_id=plan_id).model_dump(mode="json"),
-        )
+            return ExecutionResult(
+                plan_id=plan_id,
+                status="FAILED",
+                steps=(),
+                versions={},
+                committed_at=None,
+                error_code=None,
+                replayed=True,
+            ).model_dump(mode="json")
+        return None
     except (L3NotDelivered, L3OutcomeUnknown):
-        return JSONResponse(
-            status_code=202,
-            content=ExecutionAccepted(plan_id=plan_id).model_dump(mode="json"),
-        )
+        return None
 
     exec_status = ExecutionStatus.model_validate(exec_status_resp)
 
-    # ── step 2a: L3 already committed → archive with the real result ──
+    # ── step 2a: L3 committed → archive ──────────────────────────────────
     if exec_status.status == "COMMITTED" and exec_status.result is not None:
         async with conn.begin():
             await state.archive_execution_terminal(
@@ -989,10 +976,7 @@ async def _handle_reconcile(
                 conn,
                 customer_id=caller_customer_id,
                 event_type="EXECUTION_RECONCILED",
-                payload={
-                    "plan_id": plan_id,
-                    "reconciled_status": "COMMITTED",
-                },
+                payload={"plan_id": plan_id, "reconciled_status": "COMMITTED"},
                 event_id=new_id("evt"),
                 trace_id=trace_id,
                 plan_id=plan_id,
@@ -1000,9 +984,9 @@ async def _handle_reconcile(
             )
         result_dict = exec_status.result.model_dump(mode="json")
         result_dict["replayed"] = True
-        return JSONResponse(status_code=200, content=result_dict)
+        return result_dict
 
-    # ── step 2b: PREPARED (or other non-terminal) → reconcile → CANCELLED
+    # ── step 2b: reconcile → CANCELLED ───────────────────────────────────
     try:
         reconcile_body = Reconcile(
             customer_id=caller_customer_id,
@@ -1011,10 +995,7 @@ async def _handle_reconcile(
         )
         reconcile_resp = await l3.reconcile(plan_id, reconcile_body.model_dump(mode="json"))
     except (L3NotDelivered, L3OutcomeUnknown, L3BusinessError):
-        return JSONResponse(
-            status_code=202,
-            content=ExecutionAccepted(plan_id=plan_id).model_dump(mode="json"),
-        )
+        return None
 
     reconcile_status = ExecutionStatus.model_validate(reconcile_resp)
 
@@ -1031,10 +1012,7 @@ async def _handle_reconcile(
                 conn,
                 customer_id=caller_customer_id,
                 event_type="EXECUTION_RECONCILED",
-                payload={
-                    "plan_id": plan_id,
-                    "reconciled_status": "COMMITTED",
-                },
+                payload={"plan_id": plan_id, "reconciled_status": "COMMITTED"},
                 event_id=new_id("evt"),
                 trace_id=trace_id,
                 plan_id=plan_id,
@@ -1042,7 +1020,7 @@ async def _handle_reconcile(
             )
         result_dict = reconcile_status.result.model_dump(mode="json")
         result_dict["replayed"] = True
-        return JSONResponse(status_code=200, content=result_dict)
+        return result_dict
 
     if reconcile_status.status == "CANCELLED":
         async with conn.begin():
@@ -1057,29 +1035,51 @@ async def _handle_reconcile(
                 conn,
                 customer_id=caller_customer_id,
                 event_type="EXECUTION_RECONCILED",
-                payload={
-                    "plan_id": plan_id,
-                    "reconciled_status": "CANCELLED",
-                },
+                payload={"plan_id": plan_id, "reconciled_status": "CANCELLED"},
                 event_id=new_id("evt"),
                 trace_id=trace_id,
                 plan_id=plan_id,
                 now_wall=_exec_now(),
             )
-        return JSONResponse(
-            status_code=200,
-            content=ExecutionResult(
-                plan_id=plan_id,
-                status="FAILED",
-                steps=(),
-                versions={},
-                committed_at=None,
-                error_code=None,
-                replayed=True,
-            ).model_dump(mode="json"),
-        )
+        return ExecutionResult(
+            plan_id=plan_id,
+            status="FAILED",
+            steps=(),
+            versions={},
+            committed_at=None,
+            error_code=None,
+            replayed=True,
+        ).model_dump(mode="json")
 
-    # Still unclear after reconcile → keep UNKNOWN.
+    return None
+
+
+async def _handle_reconcile(
+    *,
+    conn: AsyncConnection,
+    plan_id: str,
+    caller_customer_id: str,
+    plan: dict[str, Any],
+    job: dict[str, Any],
+    l3: Any,
+    request: Request,
+) -> JSONResponse:
+    """Inline reconciliation for UNKNOWN jobs (T5).
+
+    Delegates to :func:`_reconcile_job` and wraps the result.
+    """
+    trace_id = getattr(request.state, "trace_id", "")
+    result = await _reconcile_job(
+        conn=conn,
+        plan_id=plan_id,
+        caller_customer_id=caller_customer_id,
+        plan=plan,
+        job=job,
+        l3=l3,
+        trace_id=trace_id,
+    )
+    if result is not None:
+        return JSONResponse(status_code=200, content=result)
     return JSONResponse(
         status_code=202,
         content=ExecutionAccepted(plan_id=plan_id).model_dump(mode="json"),
@@ -1115,6 +1115,18 @@ async def execute_plan(plan_id: str, request: Request):
             raise GatewayError(Code.OWNERSHIP_MISMATCH, 403)
         sid = plan["sid"]
         session = await _load_session(conn, sid)
+
+        # ── request_dedup (C4) ─────────────────────────────────────────
+        request_body_bytes = json.dumps(body, sort_keys=True).encode("utf-8")
+        request_hash = digest_hex(request_body_bytes)
+        replay_response, is_non_terminal = await _check_request_dedup(
+            conn,
+            customer_id=caller.customer_id,
+            request_id=body["request_id"],
+            request_hash=request_hash,
+        )
+        if replay_response is not None:
+            return replay_response  # terminal — return as-is
 
         # idempotent replay: if already terminal (EXECUTED or FAILED),
         # return the existing result with replayed=True.
@@ -1152,6 +1164,13 @@ async def execute_plan(plan_id: str, request: Request):
 
         if existing_job is not None:
             if existing_job["status"] == "PAUSED":
+                # ADR-008: old request_id must not trigger a new attempt (C4).
+                if is_non_terminal:
+                    raise GatewayError(
+                        Code.STATE_CHANGED,
+                        409,
+                        "state changed; use a new request_id",
+                    )
                 # Determine is_confirmed for resume path
                 _resume_confirmed = plan["status"] == PlanStatus.CONFIRMED.value
                 if plan["origin"] != caller.origin:
@@ -1523,6 +1542,18 @@ async def execute_plan(plan_id: str, request: Request):
                     from_status=ExecutionJobStatus.EXECUTING,
                     reason={"reason": reason},
                 )
+                # Write non-terminal dedup so the same request_id can't be reused.
+                await conn.execute(
+                    t.request_dedup.insert().values(
+                        customer_id=caller.customer_id,
+                        route=ROUTE_EXECUTE,
+                        request_id=body["request_id"],
+                        request_hash=request_hash,
+                        status_code=202,
+                        response={"non_terminal": True},
+                        created_at_wall=text("now()"),
+                    )
+                )
             return JSONResponse(
                 status_code=202,
                 content=ExecutionAccepted(plan_id=plan_id).model_dump(mode="json"),
@@ -1562,6 +1593,20 @@ async def execute_plan(plan_id: str, request: Request):
         except L3BusinessError as exc:
             if exc.code == "STATE_CHANGED":
                 # ADR-008 fence: prepare succeeded but state changed before execute.
+                # Write non-terminal dedup so the same request_id can't be reused.
+                await conn.rollback()
+                async with conn.begin():
+                    await conn.execute(
+                        t.request_dedup.insert().values(
+                            customer_id=caller.customer_id,
+                            route=ROUTE_EXECUTE,
+                            request_id=body["request_id"],
+                            request_hash=request_hash,
+                            status_code=409,
+                            response={"non_terminal": True},
+                            created_at_wall=text("now()"),
+                        )
+                    )
                 return await _handle_state_changed(
                     conn=conn,
                     plan_id=plan_id,
@@ -1595,6 +1640,19 @@ async def execute_plan(plan_id: str, request: Request):
                 from_status=ExecutionJobStatus.EXECUTING,
                 l3_status="COMMITTED",
                 result=result,
+            )
+
+            # Write terminal request_dedup in the same tx (C4).
+            await conn.execute(
+                t.request_dedup.insert().values(
+                    customer_id=caller.customer_id,
+                    route=ROUTE_EXECUTE,
+                    request_id=body["request_id"],
+                    request_hash=request_hash,
+                    status_code=200,
+                    response=result.model_dump(mode="json"),
+                    created_at_wall=text("now()"),
+                )
             )
 
     return result.model_dump(mode="json")
