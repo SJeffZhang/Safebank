@@ -183,3 +183,48 @@ if isinstance(raw, dict) and "steps" in raw:
 **审核人**：DeepSeek V4 Pro（全新会话，只读）  
 **审核时间**：2026-10-26  
 **实际运行**：`make test` 未跑（仅协调者亲跑 `test_metrics + test_case_evidence = 45 passed`）；tuple/JWT/Bearer 绕过证据为静态分析 + 手动 Python 验证（`/tmp/sbg-probe-strip.py`）
+---
+
+## 修复复审（74f4c03..57a08e2）
+
+**方法**：只读 `git diff 74f4c03..57a08e2` + 协调者实测 `test_metrics + test_case_evidence = 56 passed`（57a08e2）。不做探针、不读其他文件、不跑 Docker/live。
+
+### 逐条结论
+
+| # | 条目 | 结论 | 备注 |
+|---|---|---|---|
+| P1-1 | `_strip_secrets` tuple 绕过 | **ADDRESSED** ✓ | 新增 `isinstance(obj, tuple)` 分支；`test_strips_tuple_headers` 验证 tuple 内 Bearer 被 strip、header name 保留 |
+| P1-2 | 中段 Bearer 绕过 | **ADDRESSED** ✓ | `startswith("Bearer ")` → `_BEARER_RE.search(obj)` + `re.IGNORECASE`；`test_strips_bearer_anywhere_in_string` + `test_strips_lowercase_bearer` |
+| P1-3 | 中段 JWT 绕过 | **ADDRESSED** ✓ | 去 `^$` 锚点、`match` → `search`；`test_strips_embedded_jwt` |
+| P1-4 | `g4_decision`/`g4_findings` 丢弃 | **ADDRESSED** ✓ | `CaseRun` 新增两字段（默认 `None`）、`run_corpus` 传入、`write_outputs` 写出；`test_g4_decision_and_findings_in_jsonl` + `test_g4_decision_none_when_no_successful_g4` |
+| P2-1 | depth 绕过 `return obj` | **ADDRESSED** ✓ | `return "[REDACTED:depth]"` 替代 `return obj`；`test_depth_limit_returns_placeholder` |
+| P2-2 | Bearer 大小写 | **ADDRESSED** ✓ | 由 P1-2 的 `_BEARER_RE` + `re.IGNORECASE` 自然解决；`test_strips_lowercase_bearer` |
+| P2-3 | set/frozenset 未处理 | **ADDRESSED** ✓ | 新增 `isinstance(obj, (set, frozenset))` 分支；`test_strips_set` + `test_strips_frozenset` |
+| P2-4 | `extract_g4_evidence` plan_draft 逻辑晦涩 | **ADDRESSED** ✓ | 简化为 `req_body.get("plan_draft")` + `isinstance(raw, dict) and "steps" in raw`，不再 fallback 到 `req_body` 本身 |
+| P2-5 | 测试盲点 | **ADDRESSED** ✓ | `test_strips_bearer_in_g4_error_code` + `test_strips_secrets_in_nested_arg_sources`；utterances 中 JWT 样式文本已在原始评审中标注为「已知限制」，不阻塞 |
+
+### 新增问题检查
+
+| 检查项 | 结论 |
+|---|---|
+| Bearer 正则 `\bBearer\s+\S+` 过度替换 | **安全**：整串含 Bearer 时返回 `[REDACTED]`，丢失前缀文本，但评测输出以安全为优先，不保留部分原文 |
+| JWT 无锚点假阳风险 | **可接受**：`len > 50` 守卫仍在；评测输出中 `xxx.yyy.zzz` 恰好 >50 字符的假阳概率低；原始评审已明确批准此权衡 |
+| set 类型返回与 JSON 序列化 | **安全**：`_strip_secrets` 返回的 `set` 仅出现在单元测试；实际 `g4_attempts`/`plan_draft` 来自 JSON 解析，只有 `list`/`dict` |
+| `g4_findings=None` 时 `_strip_secrets(None)` | **安全**：`_strip_secrets(None)` 走末尾 `return obj`，输出 JSON `null`，合法 |
+| `g4_decision`/`g4_findings` 向后兼容 | **安全**：两者默认 `None`，旧 `CaseRun(...)` 构造不受影响；旧 `write_outputs` 消费者忽略未知 JSON 键 |
+| `[REDACTED:depth]` 格式 | **安全**：纯标记值，不含任何凭据特征 |
+
+### 协调者实测确认
+
+- `test_metrics + test_case_evidence`：**56 passed**（57a08e2）
+- 换回 74f4c03 的 `compute.py` 后新增 9 条全部失败 → **红测有效**（协调者验证）
+
+### 结论
+
+**APPROVE** — 9 条全部 ADDRESSED，无新增 P0/P1/P2，修复不引入回归。
+
+---
+
+**复审人**：DeepSeek V4 Pro（全新会话，定点复审）  
+**复审时间**：2026-10-27  
+**实际运行**：`test_metrics + test_case_evidence = 56 passed`（协调者亲跑）
