@@ -26,9 +26,15 @@ _MAX_ROUNDS = 3
 
 # Intents that require account + payee reads for the plan step to construct valid
 # from_account_id / payee_id with read-kind sources.
-_TRANSFER_LIKE_INTENTS = frozenset({
-    "transfer", "schedule_transfer", "智能转账", "转账", "定时转账",
-})
+_TRANSFER_LIKE_INTENTS = frozenset(
+    {
+        "transfer",
+        "schedule_transfer",
+        "智能转账",
+        "转账",
+        "定时转账",
+    }
+)
 
 
 class ReadResult(BaseModel):
@@ -157,7 +163,9 @@ class GatherAdapter:
         )
 
     def _supplement_reads(
-        self, reads: list[ReadRecord], state: AgentState,
+        self,
+        reads: list[ReadRecord],
+        state: AgentState,
         tools_attempted: set[str],
     ) -> list[ReadRecord]:
         """Deterministic supplemental reads for transfer-like intents.
@@ -177,7 +185,9 @@ class GatherAdapter:
 
         if "get_accounts" not in read_tools and "get_accounts" not in tools_attempted:
             result.append(
-                self._execute_supplemental("get_accounts", {"history_days": 0}, "src_gather_accounts")
+                self._execute_supplemental(
+                    "get_accounts", {"history_days": 0}, "src_gather_accounts"
+                )
             )
 
         if "list_payees" not in read_tools and "list_payees" not in tools_attempted:
@@ -187,9 +197,7 @@ class GatherAdapter:
 
         return result
 
-    def _execute_supplemental(
-        self, tool: str, args: dict, source_ref: str
-    ) -> ReadRecord:
+    def _execute_supplemental(self, tool: str, args: dict, source_ref: str) -> ReadRecord:
         """Call the read executor for a supplemental read (no LLM ToolMessage)."""
         result = self._read_executor(tool, args)
         wrapped = apply_untrusted_wrapping(

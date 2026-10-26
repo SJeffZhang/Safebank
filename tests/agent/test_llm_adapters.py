@@ -1438,15 +1438,14 @@ def test_gather_supplements_list_payees_for_transfer_with_payee_name():
 
 def test_gather_supplement_read_failure_propagates():
     """Supplemental read failure (e.g. network error) is not swallowed."""
+
     def executor(name, args):
         raise RuntimeError("gateway unreachable")
 
     scripted = ScriptedLLM([text_response("done")])
     llm = build(scripted)
     with pytest.raises(RuntimeError, match="gateway unreachable"):
-        GatherAdapter(llm, executor, supplement_transfer_reads=True)(
-            _make_gather_state(), ctx()
-        )
+        GatherAdapter(llm, executor, supplement_transfer_reads=True)(_make_gather_state(), ctx())
 
 
 # ── plan retries on missing rationale ──
