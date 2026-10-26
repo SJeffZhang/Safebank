@@ -92,3 +92,10 @@
 - `support.py`：新增 `AllowPlanContext` dataclass 与 `allow_plan_ctx()` async context manager（复用 `_build_allow_plan` 的完整步骤，yield `test_app`/`headers`/`plan_id`/`utt_id`/`db_url`/`l3_admin`/`response`，退出时 dispose L3 引擎）；`_build_allow_plan` 改为调用 `allow_plan_ctx` 保持 `test_allow_fixture.py` 不变。
 - `test_g8_allow.py`：3 条红测——`test_g8_allow_executes_once`（G8 200 + real L3 crd_zs_1 FROZEN + 幂等）、`test_g8_allow_job_and_plan_terminal`（execution_jobs l3_attempt=1/EXECUTED + plans EXECUTED）、`test_g8_allow_consumes_claims`（utterances CONSUMED）。
 - 运行：**3 failed / 5 passed**，全部失败因 G8 stub 返回 503 `DEPENDENCY_UNAVAILABLE`。所有测试期待真实 G8 实现后转绿。
+
+## T2d（2026-10-26）
+
+- 0003_plan_draft：`plans.plan_draft JSONB NULL`（只增，不回填）；`GATEWAY_REVISION` 改为 0003；G4 插入 plans 时写入 `PlanDraft.model_dump(mode="json")`；test_migration / wave1 test_schema 版本断言与 test_ddl_drift 增量登记同步。
+- 新测试 test_plan_draft.py 2 passed（G4 持久化原始计划且 arg_sources 一致；0002 库升级后旧行保留、plan_draft 为 NULL）。
+- worker W4c-T2d-r2 提交 2c3057d/4f6985b/d63f427/9b801d0 后用满 51 轮；协调者收尾 ruff（import 排序、超长行、格式）并复跑：lint 346；test-gateway-db 17；test-wave1-state 231；test-w3b 33；test-gateway 2018/622 skip；make test 见提交；test-w4c 仅 G8 三条红测失败（预期，T2e 实现）。
+- 注意：长期栈 gateway 库当前为 0002，合入后需协调者在全栈阶段 `make up`（引导迁移至 0003）再验收。

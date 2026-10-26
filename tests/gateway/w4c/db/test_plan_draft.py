@@ -6,10 +6,10 @@ import subprocess
 import sys
 
 import pytest
+from safebank_contracts.plan import PlanDraft
 from sqlalchemy import text
 from sqlalchemy.pool import NullPool
 
-from safebank_contracts.plan import PlanDraft
 from services.gateway.app.db import GATEWAY_REVISION, engine, ready
 from tests.gateway.db.conftest import ROOT, _provision
 
@@ -23,11 +23,15 @@ def test_g4_persists_plan_draft(app_config, obligations_db):
             db = engine(ctx.db_url, poolclass=NullPool)
             async with db.connect() as conn:
                 row = (
-                    await conn.execute(
-                        text("SELECT plan_draft, resolved_steps FROM plans WHERE id = :pid"),
-                        {"pid": ctx.plan_id},
+                    (
+                        await conn.execute(
+                            text("SELECT plan_draft, resolved_steps FROM plans WHERE id = :pid"),
+                            {"pid": ctx.plan_id},
+                        )
                     )
-                ).mappings().one()
+                    .mappings()
+                    .one()
+                )
             await db.dispose()
 
         assert row.plan_draft is not None, "G4 must persist plan_draft"
@@ -97,12 +101,18 @@ def test_upgrade_0002_to_0003_keeps_rows():
         assert await ready(db)
         async with db.connect() as conn:
             row = (
-                await conn.execute(
-                    text("SELECT id, customer_id, plan_draft FROM plans WHERE id = 'old_p'")
+                (
+                    await conn.execute(
+                        text("SELECT id, customer_id, plan_draft FROM plans WHERE id = 'old_p'")
+                    )
                 )
-            ).mappings().one()
+                .mappings()
+                .one()
+            )
             assert row.customer_id == "old_c"
-            assert row.plan_draft is None, "existing row upgraded from 0002 must have NULL plan_draft"
+            assert row.plan_draft is None, (
+                "existing row upgraded from 0002 must have NULL plan_draft"
+            )
         await db.dispose()
 
     try:
