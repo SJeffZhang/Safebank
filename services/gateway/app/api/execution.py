@@ -36,7 +36,7 @@ from ..execution.replay import replay_with_context
 from ..l3.client import L3BusinessError, L3NotDelivered, L3OutcomeUnknown
 from ..locks import customer_lock
 from ..pipeline.context import EvalContext
-from ..schemas.enums import ApprovalStatus, ExecutionJobStatus, PlanStatus, ServiceKind
+from ..schemas.enums import ApprovalStatus, ExecutionJobStatus, PlanStatus
 from ..schemas.execution import ExecutionAccepted
 from ..utterance.service import new_id
 
@@ -458,6 +458,7 @@ async def _handle_resume(
     l3: Any,
     caller: Any,
     request: Request,
+    job_attempt: int,
 ) -> JSONResponse:
     """ADR-008: resume execution after STATE_CHANGED fence.
 
@@ -571,13 +572,35 @@ async def _handle_resume(
     if conn.in_transaction():
         await conn.rollback()
     async with conn.begin():
+        # Re-verify session hasn't been revoked since initial load.
+        session_row = (
+            (
+                await conn.execute(
+                    select(
+                        t.sessions.c.revoked_at_wall,
+                        t.sessions.c.authorization_epoch,
+                    )
+                    .where(t.sessions.c.id == sid)
+                    .with_for_update()
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if session_row is None:
+            raise GatewayError(Code.OWNERSHIP_MISMATCH, 404, "session not found")
+        if session_row["revoked_at_wall"] is not None:
+            raise GatewayError(Code.AUTHORIZATION_CANCELLED, 409, "session has been revoked")
+        if session_row["authorization_epoch"] != session["authorization_epoch"]:
+            raise GatewayError(Code.AUTHORIZATION_CANCELLED, 409, "authorization epoch changed")
+
         new_attempt = await state.resume_paused_execution(
             conn,
             expected=state.ExecutionIdentity(
                 customer_id=caller_customer_id,
                 plan_id=plan_id,
                 origin=plan["origin"],
-                attempt=1,
+                attempt=job_attempt,
                 revision=eval_row["revision"],
             ),
             authorization_evidence=evidence,
@@ -925,8 +948,9 @@ async def execute_plan(plan_id: str, request: Request):
         sid = plan["sid"]
         session = await _load_session(conn, sid)
 
-        # idempotent replay: if already terminal, return existing result
-        if plan["status"] == PlanStatus.EXECUTED.value:
+        # idempotent replay: if already terminal (EXECUTED or FAILED),
+        # return the existing result with replayed=True.
+        if plan["status"] in {PlanStatus.EXECUTED.value, PlanStatus.FAILED.value}:
             job = (
                 (
                     await conn.execute(
@@ -939,7 +963,9 @@ async def execute_plan(plan_id: str, request: Request):
                 .one_or_none()
             )
             if job is not None and job["result"] is not None:
-                return job["result"]
+                cached = dict(job["result"])
+                cached["replayed"] = True
+                return cached
 
         # ── ADR-008: detect PAUSED job (resume after fence) ──────────────
         # Must be checked before the EVALUATED/CONFIRMED status gate because
@@ -960,7 +986,7 @@ async def execute_plan(plan_id: str, request: Request):
             if existing_job["status"] == "PAUSED":
                 # Determine is_confirmed for resume path
                 _resume_confirmed = plan["status"] == PlanStatus.CONFIRMED.value
-                if caller.kind is not ServiceKind.A or plan["origin"] != "agent":
+                if plan["origin"] != caller.origin:
                     raise GatewayError(Code.OWNERSHIP_MISMATCH, 403)
 
                 eval_row = (
@@ -1020,6 +1046,7 @@ async def execute_plan(plan_id: str, request: Request):
                     l3=l3,
                     caller=caller,
                     request=request,
+                    job_attempt=existing_job["l3_attempt"],
                 )
             if existing_job["status"] == "UNKNOWN":
                 return await _handle_reconcile(
@@ -1043,7 +1070,10 @@ async def execute_plan(plan_id: str, request: Request):
 
         is_confirmed = plan["status"] == PlanStatus.CONFIRMED.value
 
-        if caller.kind is not ServiceKind.A or plan["origin"] != "agent":
+        # G8 is reachable by both agent and app_form callers; the caller's
+        # origin must match the plan's origin (PRD §7.1: origin is derived
+        # from the credential, never from the request body).
+        if plan["origin"] != caller.origin:
             raise GatewayError(Code.OWNERSHIP_MISMATCH, 403)
 
         eval_row = (
@@ -1192,6 +1222,28 @@ async def execute_plan(plan_id: str, request: Request):
             )
 
         async with conn.begin():
+            # Re-verify session hasn't been revoked since step 5.1.
+            session_row = (
+                (
+                    await conn.execute(
+                        select(
+                            t.sessions.c.revoked_at_wall,
+                            t.sessions.c.authorization_epoch,
+                        )
+                        .where(t.sessions.c.id == sid)
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if session_row is None:
+                raise GatewayError(Code.OWNERSHIP_MISMATCH, 404, "session not found")
+            if session_row["revoked_at_wall"] is not None:
+                raise GatewayError(Code.AUTHORIZATION_CANCELLED, 409, "session has been revoked")
+            if session_row["authorization_epoch"] != session["authorization_epoch"]:
+                raise GatewayError(Code.AUTHORIZATION_CANCELLED, 409, "authorization epoch changed")
+
             await append_evaluation(
                 conn,
                 plan_id=plan_id,
