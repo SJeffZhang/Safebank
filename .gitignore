@@ -17,3 +17,4 @@ build/
 dist/
 evaluation/reports/raw/
 .wheels/
+evaluation/reports/20*/

@@ -38,6 +38,7 @@ jobs:
       - run: make test-w4b2b
       - run: make test-w4b2c
       - run: make test-w4c
+      - run: make test-e0b
       - run: make test-p1
       - run: make test-p1-concurrency
       - run: make test-p1-consistency
