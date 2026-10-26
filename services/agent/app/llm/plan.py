@@ -29,6 +29,8 @@ _SYSTEM = (
     "必填 id 字段（from_account_id、card_id、account_id、product_id、instruction_id、"
     "merchant_id、questionnaire_id 等）不能用 __NULL__ 或空串，必须从已读数据中引用具体值——"
     "例如付款账户 id 请从 gather 读取的 /accounts/N/id 中取，来源 kind 用 read。"
+    "付款账户 id 以 acc_ 开头，收款人 id 以 pye_ 开头；卡 id 以 crd_、产品 id 以 prd_、"
+    "商户 id 以 mer_、定时指令 id 以 si_ 开头，不要混用。"
     "已有实体（收款人、卡、账户）一律用 read 来源引用其 id，不要用新建实体引用（kind=ref）。"
     "可空参数用哨兵或实体 kind=none 时，不要在 arg_sources 里为它声明来源；"
     "arg_sources 只为有真实值的参数声明来源。source.kind 只能是 "
@@ -94,17 +96,41 @@ _OPTIONAL_PARAM_KEYWORDS: dict[str, frozenset[str]] = {
 # All other params that look like id fields must not use __NULL__ or empty strings.
 _NULLABLE_PARAMS: frozenset[str] = frozenset({"memo", "phone", "alias", "end_at"})
 
+# id params → expected prefix (PRD §9.1).
+_ID_PREFIX: dict[str, str] = {
+    "from_account_id": "acc_",
+    "to_account_id": "acc_",
+    "account_id": "acc_",
+    "payee_id": "pye_",
+    "card_id": "crd_",
+    "merchant_id": "mer_",
+    "product_id": "prd_",
+    "instruction_id": "si_",
+}
+
+_ID_LABEL: dict[str, str] = {
+    "acc_": "账户 id",
+    "pye_": "收款人 id",
+    "crd_": "卡 id",
+    "mer_": "商户 id",
+    "prd_": "产品 id",
+    "si_": "定时指令 id",
+}
+
 
 def _required_value_problems(draft: PlanDraft, state: AgentState) -> list[str]:
-    """Catch required params filled with __NULL__ or empty.
+    """Catch required params filled with __NULL__, empty, or wrong id prefix.
 
     ``__NULL__`` is only valid for nullable params (memo, phone, alias, end_at).
     For required id params (from_account_id, card_id, account_id, etc.) it indicates
     the model guessed instead of referencing actual gather data.
+
+    Additionally, id params must use the correct prefix (acc_ for accounts,
+    crd_ for cards, pye_ for payees, etc.) to catch the common model mistake
+    of putting a payee id into from_account_id.
     """
     problems: list[str] = []
     for index, step in enumerate(draft.steps):
-        # Check all arg fields (not just those with sources) for __NULL__ on required params.
         for field_name in type(step.args).model_fields:
             if field_name in _NULLABLE_PARAMS:
                 continue
@@ -117,6 +143,22 @@ def _required_value_problems(draft: PlanDraft, state: AgentState) -> list[str]:
                     "请从 gather 读取结果中引用正确的 id；"
                     "若无法确定（多个账户/卡片）则不要生成计划，改为让 understand 标记 unclear"
                 )
+                continue
+            # id prefix check: catch model putting a payee id into from_account_id, etc.
+            if isinstance(value, str) and field_name in _ID_PREFIX:
+                expected = _ID_PREFIX[field_name]
+                if not value.startswith(expected):
+                    got_label = "未知类型 id"
+                    for prefix, label in _ID_LABEL.items():
+                        if value.startswith(prefix):
+                            got_label = label
+                            break
+                    expected_label = _ID_LABEL.get(expected, f"{expected} 开头的 id")
+                    problems.append(
+                        f"steps[{index}].{field_name}: 应为以 {expected} 开头的{expected_label}，"
+                        f"当前值 {value} 像{got_label}，"
+                        "请从 gather 读取结果中引用正确前缀的 id"
+                    )
     return problems
 
 
