@@ -48,6 +48,7 @@ def test_frozen_ddl_matches_metadata():
             "authorization_evidence": "JSONB",
             "deadline_cap_wall": "TIMESTAMP WITH TIME ZONE",
         },
+        "plans": {"plan_draft": "JSONB"},
     }
     for name, columns in additions.items():
         table = historical.tables[name]
