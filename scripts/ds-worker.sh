@@ -5,6 +5,7 @@
 #   scripts/ds-worker.sh review <worktree> <prompt-file> <log-name> [resume-session-id]
 # Result JSON: $DS_LOG_DIR/<log-name>.json (fields: result, num_turns, session_id, modelUsage).
 set -euo pipefail
+script_dir=$(cd "$(dirname "$0")" && pwd)
 mode=$1 wt=$2 prompt=$3 name=$4 resume=${5:-}
 logdir=${DS_LOG_DIR:-/Users/zhangshijie/Desktop/Project/Fintech2026-wt/.ds-logs}
 mkdir -p "$logdir"
@@ -27,7 +28,16 @@ cd "$wt"
 # The CC Switch / Bailian route only serves deepseek-v4-pro; requests that name a Claude
 # model (e.g. claude-opus-5) are rejected with 429, so pin every model alias explicitly.
 ds_model=${DS_MODEL:-deepseek-v4-pro}
-worker=(claude -p "$(cat "$prompt")" --model "$ds_model")
+max_turns=${DS_MAX_TURNS:-120}
+# Per-worker PostToolUse hook: counts tool calls and, DS_TURN_WARN calls before the limit,
+# injects a "commit a checkpoint now" reminder. Passed with --settings, so it applies only
+# to this worker session and never touches the user's global settings.
+hook=$script_dir/ds-turn-hook.sh
+counter="$logdir/$name.turns"; : > "$counter"
+settings="$logdir/$name.settings.json"
+printf '{"hooks":{"PostToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"bash %q %q %q %q"}]}]}}\n' \
+  "$hook" "$counter" "$max_turns" "${DS_TURN_WARN:-5}" > "$settings"
+worker=(claude -p "$(cat "$prompt")" --model "$ds_model" --settings "$settings")
 if [ -n "$resume" ]; then worker+=(--resume "$resume"); fi
 
 # Clear inherited Anthropic env so the CLI uses ~/.claude/settings.json (DeepSeek), not the desktop app's account.
@@ -41,7 +51,7 @@ env -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_API_KEY -u ANTHRO
   MAX_THINKING_TOKENS="${DS_MAX_THINKING:-8000}" \
   "${worker[@]}" --permission-mode acceptEdits \
   --allowedTools "${allow[@]}" --disallowedTools "${deny[@]}" \
-  --max-turns "${DS_MAX_TURNS:-120}" --output-format json < /dev/null > "$logdir/$name.json" 2> "$logdir/$name.err" || status=$?
+  --max-turns "$max_turns" --output-format json < /dev/null > "$logdir/$name.json" 2> "$logdir/$name.err" || status=$?
 
 # Never lose a worker's progress: whatever the exit reason (done, max turns, API error),
 # snapshot uncommitted changes to refs/wip/<name> without touching the branch or worktree.
