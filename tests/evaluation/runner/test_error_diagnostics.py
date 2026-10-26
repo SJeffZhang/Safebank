@@ -185,7 +185,10 @@ def test_error_message_stripped_of_bearer_token(tmp_path: Path):
         is_attack=False,
         latency_ms=50,
         tokens=0,
-        error_message="401 Unauthorized: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dummy",
+        error_message=(
+            "401 Unauthorized: Bearer "
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dummy"
+        ),
         error_where=[],
     )
     metrics = compute_metrics([run])
