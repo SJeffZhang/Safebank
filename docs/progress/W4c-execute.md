@@ -144,4 +144,16 @@
 - 3 条测试均使用 `allow_plan_ctx` + 包装 `l3.execute`（首次调用前通过 `ctx.l3_admin` 把 `state_versions` 中 `cus_zs` 的 version +1，使 L3 因版本不符返回 STATE_CHANGED）。
 - **`make test-w4c`：3 failed / 15 passed**（15.63s），3 条新测均在 409 断言失败（G8 返回 202 UNKNOWN），预期红。
 - **`make lint`：exit 0**（350 files formatted）。
+
+## T4b（2026-10-26）：ADR-008 STATE_CHANGED 屏障转绿
+
+- 仅改 `services/gateway/app/api/execution.py`：
+  - 新增 `_handle_state_changed` 函数：begin_fencing → HTTP fence prepare（deadline_wall=FENCE_AT）→ acknowledge_fence → HTTP replay → append_evaluation（含 view_hash/view_json）→ build_view → create_for_evaluation（如 PENDING_APPROVAL）→ publish_paused_decision → 返回 409 STATE_CHANGED（details.decision 含完整新 Decision 与 approval_id）。
+  - 新增 `_DECISION_TO_STATUS` 映射（ALLOW→EVALUATED、REQUIRE_APPROVAL→PENDING_APPROVAL、DENY→DENIED、REPLAN→REPLAN）。
+  - execute 的 except 块拆分为：L3BusinessError STATE_CHANGED → `_handle_state_changed`；其他 L3BusinessError → `_unknown`；L3NotDelivered/L3OutcomeUnknown → `_unknown`。
+  - 新增导入：`PrepareResult`（contracts.protocol）、`create_for_evaluation`（approval.service）、`latest_revision`（evaluation.repo）。
+- 所有 `async with conn.begin()` 前加 `await conn.rollback()`（同主流程 L414 模式）。
+- `build_view` 返回的 PlanView 以 `.model_dump(mode="json")` 序列化为 view_json。
+- **`make test-w4c`：18 passed 零 skip/fail**（15.09s），原 3 条红测全部转绿、原 15 条保持绿。
+- **`make test-wave1-state`：231 passed**；**`make test-w4b2b`：58 passed**；**`make test-w3b`：33 passed**；**`make test-gateway`：2018 passed / 630 skipped**；**`make lint`：exit 0**（350 files formatted）。
 - 未改生产代码；不 push。

@@ -21,15 +21,17 @@ from safebank_contracts.plan import (
     PlanDraft,
     Prepare,
 )
+from safebank_contracts.protocol import PrepareResult
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .. import state
 from .. import tables as t
 from ..approval.planview import build_view
+from ..approval.service import create_for_evaluation
 from ..audit.chain import append as audit_append
 from ..errors import GatewayError
-from ..evaluation.repo import append_evaluation
+from ..evaluation.repo import append_evaluation, latest_revision
 from ..execution.replay import replay_with_context
 from ..l3.client import L3BusinessError, L3NotDelivered, L3OutcomeUnknown
 from ..locks import customer_lock
@@ -174,6 +176,266 @@ def _build_confirmed_evidence(
         risk=risk,
         confirmed_at_wall=approval["confirmed_at_wall"],
         authorization_epoch=session["authorization_epoch"],
+    )
+
+
+# ── ADR-008 STATE_CHANGED fence ───────────────────────────────────────────────
+
+
+_DECISION_TO_STATUS: dict[str, PlanStatus] = {
+    "ALLOW": PlanStatus.EVALUATED,
+    "REQUIRE_APPROVAL": PlanStatus.PENDING_APPROVAL,
+    "DENY": PlanStatus.DENIED,
+    "REPLAN": PlanStatus.REPLAN,
+}
+
+
+async def _handle_state_changed(
+    *,
+    conn: AsyncConnection,
+    plan_id: str,
+    caller_customer_id: str,
+    plan: dict[str, Any],
+    eval_row: dict[str, Any],
+    exec_identity: state.ExecutionIdentity,
+    plan_draft: PlanDraft,
+    evidence: InteractiveEvidence,
+    wall_now: Any,
+    l3: Any,
+    deadline_cap_wall: Any,
+    sid: str,
+    caller: Any,
+    request: Request,
+) -> JSONResponse:
+    """ADR-008 fence: STATE_CHANGED after successful prepare.
+
+    1. begin_fencing (write tx)
+    2. HTTP: fence prepare with deadline_wall = FENCE_AT
+    3. acknowledge_fence (write tx)
+    4. HTTP: replay_with_context for fresh decision
+    5. Write tx: append_evaluation + build_view + publish_paused_decision
+    6. Return 409 STATE_CHANGED
+    """
+    # ── 1. begin_fencing ──────────────────────────────────────────────────
+    await conn.rollback()
+    async with conn.begin():
+        await state.begin_fencing(conn, expected=exec_identity)
+
+    # ── 2. fence prepare (HTTP) ───────────────────────────────────────────
+    fence_prepare_body = Prepare(
+        customer_id=caller_customer_id,
+        plan_id=plan_id,
+        attempt=1,
+        plan_hash=plan["plan_hash"],
+        steps=plan_draft.steps,
+        deadline_wall=state.FENCE_AT,
+        deadline_cap_wall=deadline_cap_wall,
+        authorization_evidence=evidence,
+    )
+    try:
+        fence_prepare_resp = await l3.prepare(fence_prepare_body.model_dump(mode="json"))
+    except (L3NotDelivered, L3OutcomeUnknown) as exc:
+        await conn.rollback()
+        async with conn.begin():
+            await state.mark_execution_unknown(
+                conn,
+                expected=exec_identity,
+                from_status=ExecutionJobStatus.FENCING,
+                reason={"reason": f"fence prepare: {type(exc).__name__}"},
+            )
+        return JSONResponse(
+            status_code=202,
+            content=ExecutionAccepted(plan_id=plan_id).model_dump(mode="json"),
+        )
+    except L3BusinessError as exc:
+        await conn.rollback()
+        async with conn.begin():
+            await state.mark_execution_unknown(
+                conn,
+                expected=exec_identity,
+                from_status=ExecutionJobStatus.FENCING,
+                reason={"reason": f"fence prepare: L3BusinessError {exc.code}"},
+            )
+        return JSONResponse(
+            status_code=202,
+            content=ExecutionAccepted(plan_id=plan_id).model_dump(mode="json"),
+        )
+
+    fence_result = PrepareResult.model_validate(fence_prepare_resp)
+    if fence_result.status == "COMMITTED":
+        # L3 already committed — query result and archive normally.
+        try:
+            exec_status = await l3.execution(caller_customer_id, plan_id)
+        except (L3NotDelivered, L3OutcomeUnknown, L3BusinessError) as exc:
+            await conn.rollback()
+            async with conn.begin():
+                await state.mark_execution_unknown(
+                    conn,
+                    expected=exec_identity,
+                    from_status=ExecutionJobStatus.FENCING,
+                    reason={"reason": f"fence query after COMMITTED: {type(exc).__name__}"},
+                )
+            return JSONResponse(
+                status_code=202,
+                content=ExecutionAccepted(plan_id=plan_id).model_dump(mode="json"),
+            )
+        from safebank_contracts.protocol import ExecutionStatus
+
+        status_obj = ExecutionStatus.model_validate(exec_status)
+        if status_obj.status == "COMMITTED" and status_obj.result is not None:
+            await conn.rollback()
+            async with conn.begin():
+                await state.archive_execution_terminal(
+                    conn,
+                    expected=exec_identity,
+                    from_status=ExecutionJobStatus.FENCING,
+                    l3_status="COMMITTED",
+                    result=status_obj.result,
+                )
+            return JSONResponse(
+                status_code=200,
+                content=status_obj.result.model_dump(mode="json"),
+            )
+        await conn.rollback()
+        async with conn.begin():
+            await state.mark_execution_unknown(
+                conn,
+                expected=exec_identity,
+                from_status=ExecutionJobStatus.FENCING,
+                reason={"reason": "fence COMMITTED but no usable result"},
+            )
+        return JSONResponse(
+            status_code=202,
+            content=ExecutionAccepted(plan_id=plan_id).model_dump(mode="json"),
+        )
+
+    if fence_result.status != "PREPARED" or fence_result.attempt != 1:
+        await conn.rollback()
+        async with conn.begin():
+            await state.mark_execution_unknown(
+                conn,
+                expected=exec_identity,
+                from_status=ExecutionJobStatus.FENCING,
+                reason={
+                    "reason": (
+                        f"fence prepare: unexpected status={fence_result.status}"
+                        f" attempt={fence_result.attempt}"
+                    )
+                },
+            )
+        return JSONResponse(
+            status_code=202,
+            content=ExecutionAccepted(plan_id=plan_id).model_dump(mode="json"),
+        )
+
+    # ── 3. acknowledge_fence ──────────────────────────────────────────────
+    await conn.rollback()
+    async with conn.begin():
+        await state.acknowledge_fence(conn, expected=exec_identity)
+
+    # ── 4. replay (HTTP, fresh snapshot) ──────────────────────────────────
+    from .plans import _load_authorization
+
+    now_wall = _exec_now()
+    authorization = await _load_authorization(conn, sid, caller_customer_id, now_wall)
+    ctx = EvalContext(
+        request=None,
+        identity=caller,
+        authorization=authorization,
+        plan_draft=plan_draft,
+        plan_id=plan_id,
+        origin=plan["origin"],
+        customer_id=caller_customer_id,
+        session_id=sid,
+        profile="B2",
+        wall_now=wall_now,
+        conn=conn,
+        l3=l3,
+        audit=None,
+    )
+    new_decision_raw, fresh = await replay_with_context(ctx)
+
+    # ── 5. write transaction ──────────────────────────────────────────────
+    new_eval_id = new_id("evl")
+    new_risk = new_decision_raw.risk.value
+    new_decision_value = new_decision_raw.decision.value
+
+    await conn.rollback()
+    async with conn.begin():
+        new_revision = (await latest_revision(conn, plan_id)) + 1
+
+        fresh.decision = fresh.decision.model_copy(update={"evaluation_id": new_eval_id})
+        try:
+            view, view_hash = build_view(fresh)
+        except ValueError as exc:
+            raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503) from exc
+
+        await append_evaluation(
+            conn,
+            plan_id=plan_id,
+            evaluation_id=new_eval_id,
+            revision=new_revision,
+            decision=new_decision_raw.model_dump(mode="json"),
+            risk=new_risk,
+            findings=[f.model_dump(mode="json") for f in new_decision_raw.findings],
+            preflight=new_decision_raw.preflight.model_dump(mode="json"),
+            versions=new_decision_raw.versions,
+            policy_version=new_decision_raw.policy_version,
+            clock_version=new_decision_raw.clock_version,
+            view_hash=view_hash,
+            view_json=view.model_dump(mode="json"),
+            equivalent_to=eval_row["id"],
+            created_at_wall=now_wall,
+        )
+
+        plan_row = (
+            (await conn.execute(select(t.plans).where(t.plans.c.id == plan_id))).mappings().one()
+        )
+        eval_row_new = (
+            (await conn.execute(select(t.evaluations).where(t.evaluations.c.id == new_eval_id)))
+            .mappings()
+            .one()
+        )
+
+        to_status = _DECISION_TO_STATUS[new_decision_value]
+        approval_id: str | None = None
+        if to_status == PlanStatus.PENDING_APPROVAL:
+            approval_id = await create_for_evaluation(
+                conn, plan=plan_row, evaluation=eval_row_new, view=view
+            )
+
+        fence_new_identity = state.ExecutionIdentity(
+            customer_id=exec_identity.customer_id,
+            plan_id=exec_identity.plan_id,
+            origin=exec_identity.origin,
+            attempt=exec_identity.attempt,
+            revision=new_revision,
+        )
+        await state.publish_paused_decision(
+            conn,
+            expected=fence_new_identity,
+            to=to_status,
+            approval_id=approval_id,
+            now=now_wall,
+        )
+
+    # ── 6. return 409 STATE_CHANGED ───────────────────────────────────────
+    decision_dict = new_decision_raw.model_dump(mode="json")
+    details: dict[str, Any] = {"decision": decision_dict}
+    if approval_id is not None:
+        details["approval_id"] = approval_id
+        decision_dict["approval_id"] = approval_id
+        details["decision"] = decision_dict
+
+    trace_id = getattr(request.state, "trace_id", "")
+    return JSONResponse(
+        status_code=409,
+        content=GatewayError(
+            Code.STATE_CHANGED,
+            409,
+            message="state changed; re-evaluated",
+            details=details,
+        ).body(trace_id),
     )
 
 
@@ -528,9 +790,27 @@ async def execute_plan(plan_id: str, request: Request):
         )
         try:
             exec_resp = await l3.execute(execute_body.model_dump(mode="json"))
-        except (L3NotDelivered, L3OutcomeUnknown, L3BusinessError) as exc:
-            # STATE_CHANGED after a successful prepare needs the ADR-008 fence
-            # (T4); until then it is reconciled like any other unclear outcome.
+        except L3BusinessError as exc:
+            if exc.code == "STATE_CHANGED":
+                # ADR-008 fence: prepare succeeded but state changed before execute.
+                return await _handle_state_changed(
+                    conn=conn,
+                    plan_id=plan_id,
+                    caller_customer_id=caller.customer_id,
+                    plan=plan,
+                    eval_row=eval_row,
+                    exec_identity=exec_identity,
+                    plan_draft=plan_draft,
+                    evidence=evidence,
+                    wall_now=wall_now,
+                    l3=l3,
+                    deadline_cap_wall=deadline_cap_wall,
+                    sid=sid,
+                    caller=caller,
+                    request=request,
+                )
+            return await _unknown(f"execute: {type(exc).__name__}")
+        except (L3NotDelivered, L3OutcomeUnknown) as exc:
             return await _unknown(f"execute: {type(exc).__name__}")
 
         result = ExecutionResult.model_validate(exec_resp)
