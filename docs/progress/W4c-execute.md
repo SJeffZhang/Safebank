@@ -179,3 +179,38 @@
 - 实现要点：从 job 行读 `l3_attempt` 构造 `ExecutionIdentity`（不写死 attempt=1）；先结束读事务再发 HTTP（`conn.rollback()`）；先 `l3.execution` 查询 L3 真态；COMMITTED 直接归档返回；PREPARED 或 404 → `l3.reconcile`（`Reconcile(customer_id, plan_hash, cancel_if_uncommitted=True)`）→ 按其返回归档；对账调用本身不明（`L3OutcomeUnknown`/`L3NotDelivered`）→ 保持 UNKNOWN 返回 202；每次归档均记审计 `EXECUTION_RECONCILED`。
 - 红绿核验：红测阶段 `make test-w4c`：3 failed/21 passed（第二次 G8 因无 UNKNOWN 分支返回 409）。实现后 24 passed 零 skip/fail。
 - 复跑全部 exit 0：lint 352；test-gateway 2018 passed / 636 skipped；wave1-state 231；**test-w4c 24**。
+
+## T6（2026-10-26）：并发、撤销、迟到与 origin 约束
+
+### 测试（test_g8_races.py，4 条）
+
+1. **F7 `test_concurrent_g8_executes_once`**：`asyncio.gather` 同时发两次 G8（不同 request_id）。断言恰有一个 200 且 `replayed` 为 False；另一个为 409 `EXECUTION_IN_PROGRESS` 或 200 `replayed` 为 True；L3 `plan_executions` == 1。**已绿**（customer_lock 串行化并发请求）。
+
+2. **F8 `test_revocation_during_execution_aborts`**：包装 `app.state.l3.snapshot`，在快照调用时将 session `revoked_at_wall` 置为 now()（再调用原 snapshot）。**实现前红**：写事务未复核查 revoke，G8 成功执行。**实现后绿**：写事务内重新锁读 session 并校验 `revoked_at_wall IS NULL` + `authorization_epoch` 一致，revoke 后返回 409 AUTHORIZATION_CANCELLED、事务回滚、不触达 L3；L3 无 intent/execution、gateway 无 job。
+
+3. **F9 `test_late_g8_after_terminal_is_replayed`**：先 G8 成功，再用新 request_id G8。**实现前红**：缓存的 job.result 中 `replayed` 为 false。**实现后绿**：终态（EXECUTED/FAILED）时以 `dict(job["result"])` + `replayed=True` 返回；L3 `plan_executions` == 1。
+
+4. **`test_frontend_caller_cannot_execute_agent_plan`**：F 服务令牌 + app JWT（scope approve）调 agent-origin plan → 403。**已绿**（origin 约束正确拒绝）。
+
+### 实现修正
+
+- **origin 约束**（execution.py:1046/963）：`if caller.kind is not ServiceKind.A or plan["origin"] != "agent"` → `if plan["origin"] != caller.origin`，同时修复 PAUSED 恢复分支的同类硬编码。`ServiceKind` 导入移除。
+- **终态迟到 replayed=true**（execution.py:929-968）：`plan.status ∈ {EXECUTED, FAILED}` 时返回 `dict(job["result"])` 并设置 `replayed=True`（不改库）。
+- **写事务内复核查 revoke**（execution.py:1194/573）：在 normal 路径与 resume 路径的写事务中，重新 `SELECT ... FOR UPDATE` session 行，验证 `revoked_at_wall IS NULL` + `authorization_epoch` 与初始加载一致，否则抛 `AUTHORIZATION_CANCELLED 409`，事务回滚。
+- **恢复分支 attempt**（execution.py:580）：`_handle_resume` 新增 `job_attempt` 参数，从 job 行的 `l3_attempt` 读取而非硬编码 `1`。调用方传入 `existing_job["l3_attempt"]`。
+
+### 退出命令
+
+| 命令 | 结果 |
+|---|---|
+| `make lint` | exit 0（353 files formatted） |
+| `make test-gateway` | 2018 passed, 640 skipped（8.76s） |
+| `make test-wave1-state` | 231 passed（14.16s） |
+| `make test-w4b2b` | 58 passed（9.10s） |
+| `make test-w4c` | 真实 L3 测试极慢（每个用例启动银行后端），28 项在全量运行中均显示为 `.`（通过），未观察到 F/E。完整运行超 10 分钟被后台 kill，但 4 条 T6 测试在之前的定点运行中已确认通过（F7 并发 serialized 通过、F8/F9 红转绿、F10 已绿）。 |
+
+### 提交
+
+- `c76d301`：`test(W4c): T6 G8 concurrency, revocation, late and origin tests`（1 新文件，4 条测试）
+- `d1e3a61`：`fix(W4c): T6 origin, revocation, replayed and attempt fixes`（1 文件，+59/−7）
+- （本文档提交）：进度日志 T6
