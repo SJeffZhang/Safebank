@@ -157,16 +157,15 @@ class GatherAdapter:
     ) -> list[ReadRecord]:
         """Deterministic supplemental reads for transfer-like intents.
 
-        When the understanding indicates a transfer-like intent but the LLM's
-        gather loop didn't read accounts or payees (and didn't even attempt
-        to call those tools), the adapter calls them directly through the
-        injected read executor so the plan step has valid read-kind sources
-        for ``from_account_id`` / ``payee_id``.
-
-        If the LLM attempted a tool (even with bad args that were rejected per
-        round), we don't second-guess it — the supplement only covers cases
-        where the model genuinely forgot the tool exists.
+        Only triggers when the LLM made at least one read tool attempt during
+        the gather loop — this proves it was in "read mode" and the supplement
+        fills gaps for tools it genuinely forgot.  When the LLM made zero
+        tool calls (fake LLM in tests, or the model chose not to read), we
+        don't second-guess it.
         """
+        if not tools_attempted:
+            return reads
+
         understanding = state.get("understanding")
         if understanding is None:
             return reads
@@ -181,13 +180,7 @@ class GatherAdapter:
                 self._execute_supplemental("get_accounts", {"history_days": 0}, "src_gather_accounts")
             )
 
-        if (
-            "list_payees" not in read_tools
-            and "list_payees" not in tools_attempted
-            and "get_accounts" not in read_tools
-            and "get_accounts" not in tools_attempted
-            and self._utterances_mention_payee(state)
-        ):
+        if "list_payees" not in read_tools and "list_payees" not in tools_attempted:
             result.append(
                 self._execute_supplemental("list_payees", {"query": None}, "src_gather_payees")
             )
@@ -211,26 +204,6 @@ class GatherAdapter:
             versions=result.versions,
             observed_at=result.observed_at,
         )
-
-    @staticmethod
-    def _utterances_mention_payee(state: AgentState) -> bool:
-        """Heuristic: does the utterance contain a potential payee name reference?
-
-        A very loose signal — Chinese surnames (王, 李, 张, 赵, 刘, 陈, 杨, 黄,
-        周, 吴, 徐, 孙, 马, 朱, 胡, 郭, 何, 高, 郑, 罗) followed by a title
-        (先生/女士/小姐/同学/总/哥/姐/叔/姨/婶/伯/姑) or a name character.
-        False positives are harmless (list_payees is cheap) and false negatives
-        are caught by plan validation: without a payee read the plan step will
-        fail reference checks.
-        """
-        utterances = state.get("utterances", [])
-        if not utterances:
-            return False
-        import re
-
-        _SURNAME = "王李张赵刘陈杨黄周吴徐孙马朱胡郭何高郑罗"
-        text = utterances[0].text
-        return bool(re.search(f"[{_SURNAME}]", text))
 
     @staticmethod
     def _prompt(state: AgentState) -> str:
