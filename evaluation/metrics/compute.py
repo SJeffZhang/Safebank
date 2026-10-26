@@ -105,6 +105,10 @@ class CaseRun:
         default_factory=list
     )  # utterance registration responses
 
+    # ── T11 error diagnostics ──
+    error_message: str | None = None  # str(exc) truncated to 800, secrets stripped
+    error_where: list[str] = field(default_factory=list)  # last 3 services/eval frames
+
 
 # ── helper ───────────────────────────────────────────────────────────────────
 
@@ -441,5 +445,10 @@ def write_outputs(
                 if r.understanding is not None
                 else None,
                 "l2_g3_response": _strip_secrets(r.l2_g3_response),
+                # ── T11 error diagnostics ──
+                "error_message": _strip_secrets(r.error_message)
+                if r.error_message is not None
+                else None,
+                "error_where": _strip_secrets(r.error_where),
             }
             fh.write(json.dumps(obj, ensure_ascii=False) + "\n")

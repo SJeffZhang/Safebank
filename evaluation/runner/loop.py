@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import traceback
 from typing import Any
 
 import httpx
@@ -34,6 +35,31 @@ try:
     from httpx import ConnectError as HttpxConnectError
 except ImportError:  # pragma: no cover — httpx is always installed
     HttpxConnectError = None  # type: ignore[assignment]
+
+
+def _extract_error_info(exc: BaseException) -> tuple[str, list[str]]:
+    """Extract error_message and error_where from an exception.
+
+    ``error_message`` is ``str(exc)`` truncated to 800 characters.
+    ``error_where`` is the last 3 frames from ``services/`` or ``evaluation/``
+    in the traceback, formatted as ``file:line:function`` (innermost first).
+    """
+    error_message = str(exc)[:800]
+    tb = exc.__traceback__
+    if tb is None:
+        return error_message, []
+
+    frames = traceback.extract_tb(tb)
+    relevant: list[str] = []
+    for frame in reversed(frames):
+        fn = frame.filename
+        if "services/" in fn or "evaluation/" in fn:
+            relevant.append(f"{fn}:{frame.lineno}:{frame.name}")
+            if len(relevant) >= 3:
+                break
+
+    error_where = list(reversed(relevant))
+    return error_message, error_where
 
 
 class StopRun(Exception):
@@ -310,6 +336,23 @@ async def run_corpus(
 
                 evidence = extract_g4_evidence(transport.requests)
 
+                error_message_val: str | None = None
+                error_where_val: list[str] = []
+                if actual_outcome == "ERROR" and last_error is not None:
+                    error_message_val, error_where_val = _extract_error_info(last_error)
+                    # Try to capture understanding / plan from last_state if
+                    # classify_outcome didn't already (e.g. last_state was set
+                    # in a previous turn before the error one).
+                    if last_state is not None:
+                        if understanding is None and last_state.get("understanding") is not None:
+                            u = last_state["understanding"]
+                            if hasattr(u, "model_dump"):
+                                understanding = u.model_dump(mode="json")
+                            elif isinstance(u, dict):
+                                understanding = u
+                            else:
+                                understanding = {"raw": str(u)}
+
                 runs.append(
                     CaseRun(
                         case_id=case_id,
@@ -336,6 +379,8 @@ async def run_corpus(
                         clarification=clarification,
                         understanding=understanding,
                         l2_g3_response=g3s,
+                        error_message=error_message_val,
+                        error_where=error_where_val,
                     )
                 )
     except StopRun:
