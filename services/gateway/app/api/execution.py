@@ -439,6 +439,242 @@ async def _handle_state_changed(
     )
 
 
+# ── ADR-008 resume: PAUSED → attempt+1 execute ───────────────────────────────
+
+
+async def _handle_resume(
+    *,
+    conn: AsyncConnection,
+    plan_id: str,
+    caller_customer_id: str,
+    plan: dict[str, Any],
+    session: dict[str, Any],
+    sid: str,
+    eval_row: dict[str, Any],
+    is_confirmed: bool,
+    approval: dict[str, Any] | None,
+    wall_now: Any,
+    now: datetime,
+    l3: Any,
+    caller: Any,
+    request: Request,
+) -> JSONResponse:
+    """ADR-008: resume execution after STATE_CHANGED fence.
+
+    The plan is EVALUATED/CONFIRMED with a PAUSED execution_jobs row
+    (l3_attempt=1, deadline=FENCE_AT).  Replay on a fresh snapshot,
+    verify equivalence against the fence evaluation, then prepare and
+    execute with an incremented attempt from ``resume_paused_execution``.
+    """
+    # ── plan_draft ──────────────────────────────────────────────────────
+    if plan["plan_draft"] is None:
+        raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503, "plan has no persisted plan_draft")
+    plan_draft = PlanDraft.model_validate(plan["plan_draft"])
+
+    # ── deadline ────────────────────────────────────────────────────────
+    deadline_cap_wall = await _compute_deadline_cap(conn, plan["utterance_ids"])
+    if is_confirmed and approval is not None and approval["expires_at_wall"] < deadline_cap_wall:
+        deadline_cap_wall = approval["expires_at_wall"]
+
+    # ── replay ──────────────────────────────────────────────────────────
+    from .plans import _load_authorization
+
+    authorization = await _load_authorization(conn, sid, caller_customer_id, now)
+
+    ctx = EvalContext(
+        request=None,
+        identity=caller,
+        authorization=authorization,
+        plan_draft=plan_draft,
+        plan_id=plan_id,
+        origin=plan["origin"],
+        customer_id=caller_customer_id,
+        session_id=sid,
+        profile="B2",
+        wall_now=wall_now,
+        conn=conn,
+        l3=l3,
+        audit=None,
+    )
+
+    new_decision, fresh = await replay_with_context(ctx)
+
+    # ── equivalence check ───────────────────────────────────────────────
+    if is_confirmed:
+        assert approval is not None
+        if new_decision.decision.value != "REQUIRE_APPROVAL":
+            raise GatewayError(
+                Code.STATE_CHANGED, 409, "replay decision no longer REQUIRE_APPROVAL"
+            )
+        fresh.decision = fresh.decision.model_copy(update={"evaluation_id": eval_row["id"]})
+        try:
+            _view, replayed_view_hash = build_view(fresh)
+        except ValueError as exc:
+            raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503) from exc
+        if replayed_view_hash != approval["view_hash"]:
+            raise GatewayError(
+                Code.STATE_CHANGED, 409, "replay view_hash differs from approved view_hash"
+            )
+        evidence = _build_confirmed_evidence(
+            plan=plan,
+            evaluation_id=eval_row["id"],
+            risk=eval_row["risk"],
+            session=session,
+            approval=approval,
+            replayed_view_hash=replayed_view_hash,
+        )
+        resume_approval_id: str | None = approval["id"]
+    else:
+        if new_decision.decision.value != "ALLOW":
+            findings_str = [f.model_dump() for f in new_decision.findings]
+            raise GatewayError(
+                Code.STATE_CHANGED,
+                409,
+                f"resume replay: got {new_decision.decision.value} findings={findings_str}",
+            )
+        fresh.decision = fresh.decision.model_copy(update={"evaluation_id": eval_row["id"]})
+        try:
+            _view, replayed_view_hash = build_view(fresh)
+        except ValueError as exc:
+            raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503) from exc
+        if replayed_view_hash != eval_row["view_hash"]:
+            raise GatewayError(
+                Code.STATE_CHANGED, 409, "replay view_hash differs from fence evaluation"
+            )
+        evidence = _build_evidence(
+            plan=plan,
+            evaluation_id=eval_row["id"],
+            risk=eval_row["risk"],
+            session=session,
+        )
+        # resume_paused_execution checks final_view_hash == evaluation.view_hash;
+        # _build_evidence leaves it "" for ALLOW — patch it here.
+        evidence = evidence.model_copy(update={"final_view_hash": eval_row["view_hash"]})
+        resume_approval_id = None
+
+    # plan_hash equivalence (same expression as G4)
+    replayed_hash = digest(
+        [{"tool": s.tool, "args": s.args, "step_id": s.step_id} for s in fresh.steps]
+    )
+    if replayed_hash != plan["plan_hash"]:
+        raise GatewayError(Code.STATE_CHANGED, 409, "replay plan_hash differs from stored plan")
+
+    # ── resume_paused_execution ─────────────────────────────────────────
+    now_wall = _exec_now()
+
+    deadline_wall = deadline_cap_wall
+    if is_confirmed and approval is not None and approval["expires_at_wall"] < deadline_wall:
+        deadline_wall = approval["expires_at_wall"]
+
+    # End the read transaction first, as the normal path does before each
+    # write block; resume_paused_execution re-locks what it checks.
+    if conn.in_transaction():
+        await conn.rollback()
+    async with conn.begin():
+        new_attempt = await state.resume_paused_execution(
+            conn,
+            expected=state.ExecutionIdentity(
+                customer_id=caller_customer_id,
+                plan_id=plan_id,
+                origin=plan["origin"],
+                attempt=1,
+                revision=eval_row["revision"],
+            ),
+            authorization_evidence=evidence,
+            deadline_wall=deadline_wall,
+            deadline_cap_wall=deadline_cap_wall,
+            approval_id=resume_approval_id,
+            now=now_wall,
+        )
+        await audit_append(
+            conn,
+            customer_id=caller_customer_id,
+            event_type="EXECUTION_RESUMED",
+            payload={
+                "plan_id": plan_id,
+                "origin": plan["origin"],
+                "attempt": new_attempt,
+                "evaluation_id": eval_row["id"],
+            },
+            event_id=new_id("evt"),
+            trace_id=getattr(request.state, "trace_id", None),
+            plan_id=plan_id,
+            now_wall=now_wall,
+        )
+
+    exec_identity = state.ExecutionIdentity(
+        customer_id=caller_customer_id,
+        plan_id=plan_id,
+        origin=plan["origin"],
+        attempt=new_attempt,
+        revision=eval_row["revision"],
+    )
+
+    # ── UNKNOWN helper ──────────────────────────────────────────────────
+    async def _unknown(reason: str):
+        async with conn.begin():
+            await state.mark_execution_unknown(
+                conn,
+                expected=exec_identity,
+                from_status=ExecutionJobStatus.EXECUTING,
+                reason={"reason": reason},
+            )
+        return JSONResponse(
+            status_code=202,
+            content=ExecutionAccepted(plan_id=plan_id).model_dump(mode="json"),
+        )
+
+    # ── prepare ─────────────────────────────────────────────────────────
+    prepare_body = Prepare(
+        customer_id=caller_customer_id,
+        plan_id=plan_id,
+        attempt=new_attempt,
+        plan_hash=plan["plan_hash"],
+        steps=plan_draft.steps,
+        deadline_wall=deadline_wall,
+        deadline_cap_wall=deadline_cap_wall,
+        authorization_evidence=evidence,
+    )
+    try:
+        await l3.prepare(prepare_body.model_dump(mode="json"))
+    except (L3NotDelivered, L3OutcomeUnknown, L3BusinessError) as exc:
+        return await _unknown(f"prepare(resume): {type(exc).__name__}")
+
+    # ── execute ─────────────────────────────────────────────────────────
+    execute_body = Execute(
+        customer_id=caller_customer_id,
+        plan_id=plan_id,
+        attempt=new_attempt,
+        plan_hash=plan["plan_hash"],
+        steps=plan_draft.steps,
+        expected_versions=new_decision.versions,
+        clock_version=new_decision.clock_version,
+        authorization_evidence=evidence,
+    )
+    try:
+        exec_resp = await l3.execute(execute_body.model_dump(mode="json"))
+    except L3BusinessError as exc:
+        return await _unknown(f"execute(resume): L3BusinessError {exc.code}")
+    except (L3NotDelivered, L3OutcomeUnknown) as exc:
+        return await _unknown(f"execute(resume): {type(exc).__name__}")
+
+    result = ExecutionResult.model_validate(exec_resp)
+    if result.status != "EXECUTED":
+        return await _unknown(f"execute(resume) returned {result.status}")
+
+    # ── archive terminal ────────────────────────────────────────────────
+    async with conn.begin():
+        await state.archive_execution_terminal(
+            conn,
+            expected=exec_identity,
+            from_status=ExecutionJobStatus.EXECUTING,
+            l3_status="COMMITTED",
+            result=result,
+        )
+
+    return JSONResponse(status_code=200, content=result.model_dump(mode="json"))
+
+
 # ── G8 POST /plans/{plan_id}/execute ─────────────────────────────────────────
 
 
@@ -483,6 +719,88 @@ async def execute_plan(plan_id: str, request: Request):
             )
             if job is not None and job["result"] is not None:
                 return job["result"]
+
+        # ── ADR-008: detect PAUSED job (resume after fence) ──────────────
+        # Must be checked before the EVALUATED/CONFIRMED status gate because
+        # a PAUSED plan may have a non-EVALUATED/non-CONFIRMED plan status
+        # (the fence sets it back to EVALUATED or PENDING_APPROVAL, which the
+        # user may then confirm).
+        existing_job = (
+            (
+                await conn.execute(
+                    select(t.execution_jobs).where(t.execution_jobs.c.plan_id == plan_id)
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+        if existing_job is not None:
+            if existing_job["status"] == "PAUSED":
+                # Determine is_confirmed for resume path
+                _resume_confirmed = plan["status"] == PlanStatus.CONFIRMED.value
+                if caller.kind is not ServiceKind.A or plan["origin"] != "agent":
+                    raise GatewayError(Code.OWNERSHIP_MISMATCH, 403)
+
+                eval_row = (
+                    (
+                        await conn.execute(
+                            select(t.evaluations)
+                            .where(t.evaluations.c.plan_id == plan_id)
+                            .order_by(t.evaluations.c.revision.desc())
+                            .limit(1)
+                        )
+                    )
+                    .mappings()
+                    .one_or_none()
+                )
+                if eval_row is None:
+                    raise GatewayError(Code.STATE_CHANGED, 409, "no evaluation for plan")
+
+                _resume_approval = None
+                if _resume_confirmed:
+                    _resume_approval = (
+                        (
+                            await conn.execute(
+                                select(t.approvals)
+                                .where(
+                                    t.approvals.c.plan_id == plan_id,
+                                    t.approvals.c.status == ApprovalStatus.CONFIRMED.value,
+                                )
+                                .order_by(t.approvals.c.confirmed_at_wall.desc())
+                                .limit(1)
+                                .with_for_update()
+                            )
+                        )
+                        .mappings()
+                        .one_or_none()
+                    )
+                    if _resume_approval is None:
+                        raise GatewayError(
+                            Code.STATE_CHANGED, 409, "no CONFIRMED approval for plan"
+                        )
+                    if _resume_approval["customer_id"] != caller.customer_id:
+                        raise GatewayError(Code.OWNERSHIP_MISMATCH, 409)
+                    if _resume_approval["expires_at_wall"] <= now:
+                        raise GatewayError(Code.STATE_CHANGED, 409, "approval has expired")
+
+                return await _handle_resume(
+                    conn=conn,
+                    plan_id=plan_id,
+                    caller_customer_id=caller.customer_id,
+                    plan=plan,
+                    session=session,
+                    sid=sid,
+                    eval_row=eval_row,
+                    is_confirmed=_resume_confirmed,
+                    approval=_resume_approval,
+                    wall_now=wall_now,
+                    now=now,
+                    l3=l3,
+                    caller=caller,
+                    request=request,
+                )
+            raise GatewayError(Code.EXECUTION_IN_PROGRESS, 409, "execution already in progress")
 
         # EVALUATED (ALLOW) or CONFIRMED
         if plan["status"] not in {PlanStatus.EVALUATED.value, PlanStatus.CONFIRMED.value}:

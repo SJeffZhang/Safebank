@@ -157,3 +157,14 @@
 - **`make test-w4c`：18 passed 零 skip/fail**（15.09s），原 3 条红测全部转绿、原 15 条保持绿。
 - **`make test-wave1-state`：231 passed**；**`make test-w4b2b`：58 passed**；**`make test-w3b`：33 passed**；**`make test-gateway`：2018 passed / 630 skipped**；**`make lint`：exit 0**（350 files formatted）。
 - 未改生产代码；不 push。
+
+## T4c + 协调者收尾（2026-10-26）：屏障后以 attempt+1 恢复执行
+
+- worker W4c-T4c-r1 先提交红测 ea2eee3，再实现恢复分支（job 为 PAUSED 时：新快照复演、对最新评估做 view_hash/plan_hash 等价判定、不插 claims/job、`resume_paused_execution` 得 attempt 2 后 prepare/execute/归档），用满 71 轮未提交。
+- 协调者收尾：
+  1. **红测前提修正**：注入方式「bump 客户状态版本」会让计划引用的读取记录过期（provenance.py:43–44 要求读取记录版本等于当前快照），屏障复演判 REPLAN——这是正确的 L2 行为，此类计划本就不能恢复。改为只 bump L3 时钟版本（`clock.version`，模拟时间不变）：L3 仍以 clock_version 不符返回 STATE_CHANGED，读取记录保持有效，恢复才有合法前提。
+  2. 恢复分支在写事务前未结束读事务（连接已 autobegin）→ 照正常路径做法先 rollback 再 begin。
+  3. 新增安全用例 `test_no_resume_when_state_change_makes_reads_stale`：状态版本变化 → 屏障发布 REPLAN → 第二次 G8 拒绝，execute 只调用 1 次、L3 无执行、claim 仍 CLAIMED。
+- 变异核验：恢复后仍用 attempt 1 → test_g8_resume 2 failed；还原通过。
+- 复跑全部 exit 0：lint 351；test 2702/726 skip；test-gateway 2018/633 skip；gateway-db 17；wave1-state 231；w1 1688；w3b 33；w4b1 57；w4b2b 58；w4b2c 56；**test-w4c 21**；shared-runtime 79；contracts PASS。
+- 已知待改：恢复分支构造 ExecutionIdentity 时 `attempt=1` 写死，若 attempt 2 再次遇到屏障需从 job 行读取当前 attempt（T6 并发/迟到任务中处理并补测）。
