@@ -71,3 +71,27 @@ def test_pointer_rejects_invalid_tilde_escape():
 def test_strip_wall_recursive():
     data = {"keep": 1, "drop_wall": 2, "nested": {"keep": 3, "x_wall": 4}}
     assert strip_wall(data) == {"keep": 1, "nested": {"keep": 3}}
+
+
+def test_null_dict_leaf_skipped_no_error():
+    """Dict leaf value is None → skip, no ValueError."""
+    data = {"items": [{"alias": None, "memo": "ok"}]}
+    out = apply_untrusted_wrapping(data, ("/items/0/alias", "/items/0/memo"), "src")
+    assert out["items"][0]["alias"] is None
+    assert out["items"][0]["memo"].startswith('<untrusted_data source="src">')
+
+
+def test_null_list_element_skipped_no_error():
+    """List element is None → skip, no ValueError."""
+    data = {"tags": ["a", None, "c"]}
+    out = apply_untrusted_wrapping(data, ("/tags/1", "/tags/0"), "src")
+    assert out["tags"][1] is None
+    assert out["tags"][0].startswith('<untrusted_data source="src">')
+
+
+def test_non_string_non_null_still_raises():
+    """Non-string, non-None leaf (e.g. int) still raises ValueError."""
+    with pytest.raises(ValueError):
+        apply_untrusted_wrapping({"a": 123}, ("/a",), "src")
+    with pytest.raises(ValueError):
+        apply_untrusted_wrapping({"items": [123]}, ("/items/0",), "src")
