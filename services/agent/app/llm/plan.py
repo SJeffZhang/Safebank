@@ -279,21 +279,18 @@ class PlanAdapter:
                 body = PlanBody.model_validate(from_strict_plan(args))
                 draft = self._to_draft(body, state)
                 ref_problems = _reference_problems(draft, state)
-                if ref_problems:
-                    raise ReferenceError(ref_problems)
                 val_problems = _required_value_problems(draft, state)
-                if val_problems:
-                    raise ReferenceError(val_problems)
                 sem_problems = _semantic_problems(draft, state)
-                if sem_problems:
-                    raise ReferenceError(sem_problems)
+                all_problems = ref_problems + val_problems + sem_problems
+                if all_problems:
+                    raise ReferenceError(all_problems)
                 return draft
             except ReferenceError as exc:
                 if attempt == self._max_retries:
                     raise
                 note = (
-                    f"上次计划的来源引用与给定数据不符：{'；'.join(exc.problems)}；"
-                    "请修正 arg_sources 的 ref/span/pointer 后重新生成。"
+                    f"计划未通过本地校验：{'；'.join(exc.problems)}；"
+                    "请修正后重新生成。"
                 )
             except (LlmToolError, ValidationError, ValueError) as exc:
                 if attempt == self._max_retries:

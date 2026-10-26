@@ -1230,3 +1230,103 @@ def test_plan_accepts_correct_id_prefixes():
     draft = PlanAdapter(llm)(state, ctx())
     assert draft.steps[0].args.from_account_id == "acc_zs_chk"
     assert len(scripted.requests) == 1
+
+
+def test_plan_feedback_includes_all_problem_categories():
+    """First response has both read-ref error AND unsolicited memo →
+    retry feedback must mention both, not just the first category found."""
+    user_text = "给王五转800元"  # no memo request
+    state = {
+        "customer_id": "cus_a",
+        "session_id": "ses_a",
+        "utterances": [UtteranceRef(id="utt_typed", kind="typed", text=user_text)],
+        "understanding": Understanding(intents=["transfer"], needs_write=True),
+        "reads": [
+            ReadRecord(
+                source_ref="src_payee",
+                tool="list_payees",
+                data={"payees": [{"payee_id": "pye_zs_ww", "name": "王五"}]},
+            ),
+        ],
+    }
+    # First attempt: wrong payee pointer (read ref error) + unsolicited memo (semantic error)
+    bad = {
+        "intents": ["transfer"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "transfer",
+                "args": {
+                    "from_account_id": "acc_zs_chk",
+                    "payee_id": {"kind": "id", "id": "pye_zs_ww"},
+                    "to_account_id": {"kind": "none"},
+                    "amount_cents": 80000,
+                    "memo": "王五",  # unsolicited
+                },
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "payee_id",
+                        "source": {
+                            "kind": "read",
+                            "ref": "src_payee",
+                            "pointer": "/payees/0/name",  # "王五" != "pye_zs_ww"
+                        },
+                    },
+                    {
+                        "param": "amount_cents",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [4, 7]},
+                    },
+                    {
+                        "param": "memo",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [1, 3]},
+                    },
+                ],
+            }
+        ],
+        "rationale": "test",
+    }
+    # Second attempt: fix both
+    good = {
+        "intents": ["transfer"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "transfer",
+                "args": {
+                    "from_account_id": "acc_zs_chk",
+                    "payee_id": {"kind": "id", "id": "pye_zs_ww"},
+                    "to_account_id": {"kind": "none"},
+                    "amount_cents": 80000,
+                    "memo": "__NULL__",
+                },
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "payee_id",
+                        "source": {
+                            "kind": "read",
+                            "ref": "src_payee",
+                            "pointer": "/payees/0/payee_id",
+                        },
+                    },
+                    {
+                        "param": "amount_cents",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [4, 7]},
+                    },
+                ],
+            }
+        ],
+        "rationale": "test",
+    }
+    scripted = ScriptedLLM(
+        [tool_response("submit_action_plan", bad), tool_response("submit_action_plan", good)]
+    )
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    draft = PlanAdapter(llm)(state, ctx())
+    assert draft.steps[0].args.memo is None
+    assert len(scripted.requests) == 2
+    human = body_of(scripted, 1)["messages"][1]["content"]
+    # Feedback must mention both the read-pointer problem and the unsolicited-memo problem
+    assert "pointer" in human or "payee_id" in human
+    assert "memo" in human
