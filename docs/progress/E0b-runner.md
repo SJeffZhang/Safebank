@@ -18,3 +18,9 @@
 - `evaluation/runner/l1.py`：同步 `GatewayClient` → 主事件循环 ASGI gateway 的桥接 transport（记录每个请求/响应）与 fake LLM 端口；`tests/evaluation/runner/test_l1_one_case.py`：真实 L1 graph 经真实 gateway G4 评估「冻结我的卡」。
 - worker E0b-T2b-r1 用满 41 轮未提交（快照 `refs/wip/E0b-T2b-r1`）；协调者修 ruff 3 处（import 排序/未用导入），复跑 `make lint` 通过、`make test-e0b` 5 passed，代为提交。
 - 实际 G4 Decision 为 **REPLAN**：fake plan 把 `card_id=crd_zs_1` 的来源标为原话 span(0,5)，而原话不含该值，L2 拒绝来源，符合预期，不放宽。待决：E0b 的 fake 计划需改为先 gather `get_cards` 并标 read 来源，才能得到 ALLOW 样例；live 模式由真实 LLM 产出来源。
+
+## T3 评测指标与报告（2026-10-26）
+
+- `evaluation/metrics/__init__.py`、`evaluation/metrics/compute.py`：CaseRun dataclass + `compute_metrics`（12 个指标键）+ `render_report`（Markdown）+ `write_outputs`（写 metrics.json、report.md、cases.jsonl），纯函数无外部依赖。
+- `tests/evaluation/runner/test_metrics.py`：16 项已知答案测试，覆盖全部指标、分母为 0 返回 None、attack_needs_approval 单独计数、render_report 缺 meta 键抛 ValueError、write_outputs 三文件与行数校验。
+- `make lint` 通过、16 passed 零 skip。
