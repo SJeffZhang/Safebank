@@ -168,3 +168,14 @@
 - 变异核验：恢复后仍用 attempt 1 → test_g8_resume 2 failed；还原通过。
 - 复跑全部 exit 0：lint 351；test 2702/726 skip；test-gateway 2018/633 skip；gateway-db 17；wave1-state 231；w1 1688；w3b 33；w4b1 57；w4b2b 58；w4b2c 56；**test-w4c 21**；shared-runtime 79；contracts PASS。
 - 已知待改：恢复分支构造 ExecutionIdentity 时 `attempt=1` 写死，若 attempt 2 再次遇到屏障需从 job 行读取当前 attempt（T6 并发/迟到任务中处理并补测）。
+
+## T5（2026-10-26）：UNKNOWN 内联对账（G8 触发）
+
+- 新增 `tests/gateway/w4c/db/test_g8_reconcile.py`（3 条真实 L3 测试，全部先红后绿）：
+  1. `test_reconcile_committed_after_lost_reply`：execute 先成功再抛 `L3OutcomeUnknown`（L3 已提交、回包丢失）→ 第一次 G8 202 UNKNOWN；第二次 G8 内联对账 → 200 EXECUTED、`replayed=true`；L3 仅 1 次 `plan_executions`；job EXECUTED、plan EXECUTED、claims CONSUMED。
+  2. `test_reconcile_cancels_uncommitted`：execute 直接抛 `L3OutcomeUnknown`（未送达 L3）→ 第一次 202；第二次 G8 → L3 intent 为 PREPARED → reconcile 写 CANCELLED 墓碑 → 200 FAILED；job FAILED、plan FAILED、claims CONSUMED；L3 `execution_intents.status == "CANCELLED"`、`plan_executions == 0`。
+  3. `test_reconcile_unreachable_stays_unknown`：在用例 2 基础上，第二次 G8 前把 `l3.execution` 与 `l3.reconcile` 都包装为抛 `L3OutcomeUnknown` → 第二次 G8 仍 202 UNKNOWN、job 仍 UNKNOWN、claims 仍 CLAIMED。
+- 实现：`execution.py` 新增 `_handle_reconcile` 函数（~200 行） + 在 `existing_job` 检查中增加 UNKNOWN 分支（PAUSED 之后、`EXECUTION_IN_PROGRESS` 之前）。
+- 实现要点：从 job 行读 `l3_attempt` 构造 `ExecutionIdentity`（不写死 attempt=1）；先结束读事务再发 HTTP（`conn.rollback()`）；先 `l3.execution` 查询 L3 真态；COMMITTED 直接归档返回；PREPARED 或 404 → `l3.reconcile`（`Reconcile(customer_id, plan_hash, cancel_if_uncommitted=True)`）→ 按其返回归档；对账调用本身不明（`L3OutcomeUnknown`/`L3NotDelivered`）→ 保持 UNKNOWN 返回 202；每次归档均记审计 `EXECUTION_RECONCILED`。
+- 红绿核验：红测阶段 `make test-w4c`：3 failed/21 passed（第二次 G8 因无 UNKNOWN 分支返回 409）。实现后 24 passed 零 skip/fail。
+- 复跑全部 exit 0：lint 352；test-gateway 2018 passed / 636 skipped；wave1-state 231；**test-w4c 24**。

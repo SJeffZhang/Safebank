@@ -292,9 +292,7 @@ def test_reconcile_unreachable_stays_unknown(app_config, obligations_db):
             resp2 = await ctx.test_app.client.post(
                 url, json={"request_id": "req_w4c_rec_x_2"}, headers=ctx.headers
             )
-            assert resp2.status_code == 202, (
-                f"expected 202, got {resp2.status_code}: {resp2.text}"
-            )
+            assert resp2.status_code == 202, f"expected 202, got {resp2.status_code}: {resp2.text}"
             assert resp2.json() == {"plan_id": ctx.plan_id, "status": "UNKNOWN"}
 
             # Gateway state: job UNKNOWN, claims CLAIMED
