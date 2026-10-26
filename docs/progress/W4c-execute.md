@@ -86,3 +86,9 @@
 - 新增 `tests/gateway/w4c/db/support.py`（`allow_plan` 夹具：w3b `build_app` 后把 `app.state.l3` 换成真实 `L3Client`，obligations 种子 `cus_zs`/`acc_zs_chk`/`crd_zs_1`，GREEN `freeze_card` 计划）与 `tests/gateway/w4c/db/test_allow_fixture.py`（`test_real_l3_allow_plan`：断言 decision==ALLOW、`app.state.l3` 为 L3Client 且非 FakeL3Client、plans 表该 plan status==EVALUATED）；`conftest.py` 补 `app_config` 导入。
 - 命令：`make test-w4c` → **5 passed**（0 skipped，6.73s）。
 - 未改生产代码 / w3a / w3b 测试；不写 G8。
+
+### T2b：G8 ALLOW 红测（2026-10-26）
+
+- `support.py`：新增 `AllowPlanContext` dataclass 与 `allow_plan_ctx()` async context manager（复用 `_build_allow_plan` 的完整步骤，yield `test_app`/`headers`/`plan_id`/`utt_id`/`db_url`/`l3_admin`/`response`，退出时 dispose L3 引擎）；`_build_allow_plan` 改为调用 `allow_plan_ctx` 保持 `test_allow_fixture.py` 不变。
+- `test_g8_allow.py`：3 条红测——`test_g8_allow_executes_once`（G8 200 + real L3 crd_zs_1 FROZEN + 幂等）、`test_g8_allow_job_and_plan_terminal`（execution_jobs l3_attempt=1/EXECUTED + plans EXECUTED）、`test_g8_allow_consumes_claims`（utterances CONSUMED）。
+- 运行：**3 failed / 5 passed**，全部失败因 G8 stub 返回 503 `DEPENDENCY_UNAVAILABLE`。所有测试期待真实 G8 实现后转绿。
