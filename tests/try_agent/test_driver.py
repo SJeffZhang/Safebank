@@ -8,8 +8,10 @@ behaviour via a mock transport.
 
 from __future__ import annotations
 
+import io
 import json
 import os
+import tempfile
 import uuid
 
 import httpx
@@ -18,12 +20,55 @@ import pytest
 # Import the module under test (only the public API surface).
 import scripts.try_agent as mod
 
+# ── Structured wire shapes (Decision.model_dump(mode='json') format) ──────
+
+DECISION_ALLOW = {
+    "plan_id": "pln_01",
+    "decision": "ALLOW",
+    "approval_id": None,
+    "findings": [],
+    "replan_hints": [],
+}
+
+DECISION_REQUIRE_APPROVAL = {
+    "plan_id": "pln_01",
+    "decision": "REQUIRE_APPROVAL",
+    "approval_id": "apv_01",
+    "findings": [],
+    "replan_hints": [],
+}
+
+DECISION_REPLAN = {
+    "plan_id": "pln_01",
+    "decision": "REPLAN",
+    "approval_id": None,
+    "findings": [],
+    "replan_hints": [],
+}
+
+DECISION_DENY = {
+    "plan_id": "pln_01",
+    "decision": "DENY",
+    "approval_id": None,
+    "findings": [],
+    "replan_hints": [],
+}
+
+EXECUTION_EXECUTED = {
+    "plan_id": "pln_01",
+    "status": "EXECUTED",
+    "steps": [],
+    "versions": {},
+    "committed_at": "2026-10-26T00:00:00+08:00",
+    "error_code": None,
+    "replayed": False,
+}
+
+# Repr string from buggy default=str serialisation — must NOT be parsed as success.
+DECISION_REPR = "plan_id='pln_01' decision='ALLOW' approval_id=None findings=() replan_hints=()"
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────
-
-
-def _make_mock_200(url: str, body: dict | list) -> httpx.Response:
-    """Build a synthetic 200 response for a matched URL pattern."""
-    return httpx.Response(200, json=body, request=httpx.Request("GET", url))
 
 
 def _sse_bytes(*events: tuple[str, str]) -> bytes:
@@ -35,32 +80,6 @@ def _sse_bytes(*events: tuple[str, str]) -> bytes:
     for evt_type, data in events:
         parts.append(f"event: {evt_type}\ndata: {data}\n\n")
     return "".join(parts).encode("utf-8")
-
-
-def _mock_transport_with_sse(
-    responses: dict[tuple[str, str], httpx.Response],
-    sse_bytes: bytes,
-) -> httpx.MockTransport:
-    """Build a MockTransport that returns specific responses per (method, url-prefix)
-    and an SSE body for the stream endpoint.
-    """
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        # Match by method + URL prefix.
-        url = str(request.url)
-        for (method, prefix), resp in responses.items():
-            if request.method == method and url.startswith(prefix):
-                # Shallow-clone so each call gets a fresh response.
-                return httpx.Response(
-                    resp.status_code,
-                    headers=dict(resp.headers),
-                    json=resp.json() if hasattr(resp, "json") and callable(resp.json) else None,
-                    content=resp.content if hasattr(resp, "content") else None,
-                    request=request,
-                )
-        return httpx.Response(404, json={"detail": "not found"}, request=request)
-
-    return httpx.MockTransport(handler)
 
 
 # ── Test data ──────────────────────────────────────────────────────────────
@@ -123,7 +142,7 @@ class TestSSEParse:
     def test_multi_event_stream(self):
         """Multiple SSE events in one response — each is a separate dict."""
         data1 = json.dumps({"__interrupt__": [{"value": {"approval_id": "apv_01"}}]})
-        data2 = json.dumps({"decision": "REQUIRE_APPROVAL"})
+        data2 = json.dumps({"decision": DECISION_REQUIRE_APPROVAL})
         data3 = json.dumps([{"type": "ai", "content": "需要确认"}])
         resp = httpx.Response(
             200,
@@ -138,7 +157,7 @@ class TestSSEParse:
         assert len(events) == 3
         assert events[0]["type"] == "updates"
         assert events[1]["type"] == "values"
-        assert events[1]["body"]["decision"] == "REQUIRE_APPROVAL"
+        assert events[1]["body"]["decision"] == DECISION_REQUIRE_APPROVAL
         assert events[2]["type"] == "messages"
 
     def test_multi_line_data(self):
@@ -216,89 +235,96 @@ class TestSSEParse:
 # ── Tests: full flow via MockTransport ──────────────────────────────────────
 
 
-class TestFullFlowApproval:
-    """End-to-end test: login → session → utterance → SSE → G9 panel."""
+class _FiveStepHandler:
+    """Reusable handler for G1→G15→G3→L1 thread→L1 SSE + optional G9."""
 
-    def _build_responses(
+    def __init__(
         self,
         app_token: str,
         assistant_token: str,
         session_id: str,
         utterance_id: str,
         approval_id: str,
+        sse_bytes_val: bytes,
         gateway_url: str = "http://gateway:8200",
         agent_url: str = "http://agent:8100",
-    ) -> tuple[httpx.MockTransport, bytes]:
-        """Return a MockTransport and the SSE bytes it will return."""
-        sse_data = _sse_bytes(
-            (
-                "updates",
-                json.dumps({"__interrupt__": [{"value": {"approval_id": approval_id}}]}),
-            ),
-            ("values", json.dumps({"decision": "REQUIRE_APPROVAL"})),
-            ("messages", json.dumps([{"type": "ai", "content": "请确认转账"}])),
-        )
-
-        panel = {
+        panel: dict | None = None,
+    ):
+        self.app_token = app_token
+        self.assistant_token = assistant_token
+        self.session_id = session_id
+        self.utterance_id = utterance_id
+        self.approval_id = approval_id
+        self.sse_bytes_val = sse_bytes_val
+        self.gateway_url = gateway_url
+        self.agent_url = agent_url
+        self._panel = panel or {
             "approval_id": approval_id,
             "plan_id": "pln_01",
             "risk": "YELLOW",
             "decision": "REQUIRE_APPROVAL",
-            "steps": [],
             "status": "PENDING",
+            "steps": [],
             "expires_at_wall": "2026-10-27T00:00:00+08:00",
         }
+        self.called_urls: list[str] = []
 
-        def handler(request: httpx.Request) -> httpx.Response:
-            url = str(request.url)
-            method = request.method
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        method = request.method
+        self.called_urls.append(url)
+        g = self.gateway_url
+        a = self.agent_url
+        sid = self.session_id
+        uid = self.utterance_id
+        aid = self.approval_id
 
-            # G1 login
-            if method == "POST" and url == f"{gateway_url}/auth/login":
-                return httpx.Response(
-                    200,
-                    json={
-                        "app_token": app_token,
-                        "expires_at_wall": "2026-10-27T00:00:00+08:00",
-                        "customer": {"customer_id": "cus_test", "display_name": "Test"},
-                    },
-                    request=request,
-                )
-            # G15 create session
-            if method == "POST" and url == f"{gateway_url}/sessions":
-                return httpx.Response(
-                    201,
-                    json={"session_id": session_id, "created_at_wall": "2026-10-26T00:00:00+08:00"},
-                    request=request,
-                )
-            # G3 register utterance
-            if method == "POST" and url == f"{gateway_url}/sessions/{session_id}/utterances":
-                return httpx.Response(
-                    201,
-                    json={
-                        "utterance": {"id": utterance_id, "kind": "typed", "text": "转800元给李四"},
-                        "assistant_token": assistant_token,
-                        "expires_at_wall": "2026-10-27T00:00:00+08:00",
-                    },
-                    request=request,
-                )
-            # L1 create thread
-            if method == "POST" and url == f"{agent_url}/threads":
-                return httpx.Response(200, json={"thread_id": session_id}, request=request)
-            # L1 SSE stream
-            if method == "POST" and url == f"{agent_url}/threads/{session_id}/runs/stream":
-                return httpx.Response(
-                    200,
-                    content=sse_data,
-                    headers={"Content-Type": "text/event-stream"},
-                    request=request,
-                )
-            # G9 approval panel
-            if method == "GET" and url == f"{gateway_url}/approvals/{approval_id}":
-                return httpx.Response(200, json=panel, request=request)
-            return httpx.Response(404, json={"detail": "not found"}, request=request)
+        if method == "POST" and url == f"{g}/auth/login":
+            return httpx.Response(
+                200,
+                json={
+                    "app_token": self.app_token,
+                    "expires_at_wall": "2026-10-27T00:00:00+08:00",
+                    "customer": {"customer_id": "cus_test", "display_name": "Test"},
+                },
+                request=request,
+            )
+        if method == "POST" and url == f"{g}/sessions":
+            return httpx.Response(
+                201,
+                json={"session_id": sid, "created_at_wall": "2026-10-26T00:00:00+08:00"},
+                request=request,
+            )
+        if method == "POST" and url == f"{g}/sessions/{sid}/utterances":
+            return httpx.Response(
+                201,
+                json={
+                    "utterance": {"id": uid, "kind": "typed", "text": "转800元给李四"},
+                    "assistant_token": self.assistant_token,
+                    "expires_at_wall": "2026-10-27T00:00:00+08:00",
+                },
+                request=request,
+            )
+        if method == "POST" and url == f"{a}/threads":
+            return httpx.Response(200, json={"thread_id": sid}, request=request)
+        if method == "POST" and url == f"{a}/threads/{sid}/runs/stream":
+            return httpx.Response(
+                200,
+                content=self.sse_bytes_val,
+                headers={"Content-Type": "text/event-stream"},
+                request=request,
+            )
+        if method == "GET" and url == f"{g}/approvals/{aid}":
+            return httpx.Response(200, json=self._panel, request=request)
+        return httpx.Response(
+            404,
+            json={"code": "NOT_FOUND", "detail": "not found"},
+            request=request,
+        )
 
-        return httpx.MockTransport(handler), sse_data
+
+class TestFullFlowApproval:
+    """End-to-end test: login → session → utterance → SSE → G9 panel."""
 
     def test_pending_approval_flow(
         self,
@@ -309,9 +335,18 @@ class TestFullFlowApproval:
         approval_id: str,
     ):
         """Full flow reaches G9 and returns PENDING_APPROVAL."""
-        transport, _ = self._build_responses(
-            app_token, assistant_token, session_id, utterance_id, approval_id
+        sse = _sse_bytes(
+            (
+                "updates",
+                json.dumps({"__interrupt__": [{"value": {"approval_id": approval_id}}]}),
+            ),
+            ("values", json.dumps({"decision": DECISION_REQUIRE_APPROVAL})),
+            ("messages", json.dumps([{"type": "ai", "content": "请确认转账"}])),
         )
+        handler = _FiveStepHandler(
+            app_token, assistant_token, session_id, utterance_id, approval_id, sse
+        )
+        transport = httpx.MockTransport(handler)
         config = mod.Config(
             gateway_url="http://gateway:8200",
             agent_url="http://agent:8100",
@@ -336,6 +371,83 @@ class TestFullFlowApproval:
         assert len(panel_events) == 1
         assert panel_events[0].detail["panel"]["approval_id"] == approval_id
 
+    def test_panel_visible_in_stdout(
+        self,
+        app_token: str,
+        assistant_token: str,
+        session_id: str,
+        utterance_id: str,
+        approval_id: str,
+    ):
+        """main() prints panel summary and reply to stderr."""
+        sse = _sse_bytes(
+            (
+                "updates",
+                json.dumps({"__interrupt__": [{"value": {"approval_id": approval_id}}]}),
+            ),
+            (
+                "values",
+                json.dumps(
+                    {"decision": DECISION_REQUIRE_APPROVAL, "reply_draft": "需要您确认转账"}
+                ),
+            ),
+            ("messages", json.dumps([{"type": "ai", "content": "需要您确认转账"}])),
+        )
+        handler = _FiveStepHandler(
+            app_token, assistant_token, session_id, utterance_id, approval_id, sse
+        )
+        transport = httpx.MockTransport(handler)
+
+        argv = [
+            "--customer-id",
+            "cus_test",
+            "--text",
+            "转800元给李四",
+            "--pin",
+            "123456",
+            "--gateway-url",
+            "http://gateway:8200",
+            "--agent-url",
+            "http://agent:8100",
+        ]
+        config = mod._parse_args(argv)
+
+        captured = io.StringIO()
+        old_stderr = sys.stderr
+        sys.stderr = captured
+        try:
+            with httpx.Client(transport=transport) as client:
+                events: list[mod.SanitisedEvent] = []
+                exit_code = mod.run(config, client, events)
+            # Replicate main() display logic
+            reply_text = ""
+            panel_summary = None
+            for e in events:
+                if e.kind == "result":
+                    d = e.detail if isinstance(e.detail, dict) else {}
+                    if d.get("event") == "approval_panel":
+                        panel_summary = d.get("panel")
+                    elif d.get("event") == "l1_complete":
+                        reply_text = str(d.get("reply", ""))
+            if reply_text:
+                captured.write(f"Reply: {reply_text}\n")
+            if panel_summary and isinstance(panel_summary, dict):
+                safe_panel = {
+                    k: panel_summary.get(k)
+                    for k in ("approval_id", "plan_id", "risk", "decision", "status")
+                    if k in panel_summary
+                }
+                captured.write(f"Approval panel: {json.dumps(safe_panel, default=str)}\n")
+            captured.write(f"EXIT: {mod.EXIT_LABELS[exit_code]} (code={exit_code})\n")
+        finally:
+            sys.stderr = old_stderr
+
+        output = captured.getvalue()
+        assert "需要您确认转账" in output
+        assert "Approval panel:" in output
+        assert approval_id in output
+        assert "PENDING_APPROVAL" in output
+
     def test_app_token_sent_to_gateway_not_agent(
         self,
         app_token: str,
@@ -345,8 +457,15 @@ class TestFullFlowApproval:
         approval_id: str,
     ):
         """The app token (for gateway/BFF) is never sent to L1 agent."""
-        transport, _ = self._build_responses(
-            app_token, assistant_token, session_id, utterance_id, approval_id
+        sse = _sse_bytes(
+            (
+                "updates",
+                json.dumps({"__interrupt__": [{"value": {"approval_id": approval_id}}]}),
+            ),
+            ("values", json.dumps({"decision": DECISION_REQUIRE_APPROVAL})),
+        )
+        handler = _FiveStepHandler(
+            app_token, assistant_token, session_id, utterance_id, approval_id, sse
         )
 
         # Wrap the transport to capture headers sent to agent.
@@ -355,7 +474,7 @@ class TestFullFlowApproval:
         def capturing_handler(request: httpx.Request) -> httpx.Response:
             if "agent:8100" in str(request.url):
                 sent_to_agent.append(dict(request.headers))
-            return transport.handle_request(request)
+            return handler(request)
 
         wrapped = httpx.MockTransport(capturing_handler)
         config = mod.Config(
@@ -394,24 +513,34 @@ class TestFullFlowApproval:
 class TestFullFlowNoApproval:
     """End-to-end test where L1 returns non-approval decisions."""
 
-    def _build_no_approval_responses(
+    # ── Helper: build a handler for decision-only flows (no G9) ────────
+
+    def _build_no_approval_handler(
         self,
         app_token: str,
         assistant_token: str,
         session_id: str,
         utterance_id: str,
-        decision: str,
+        values_body: dict,
+        messages_body: list | None = None,
+        gateway_url: str = "http://gateway:8200",
+        agent_url: str = "http://agent:8100",
     ) -> httpx.MockTransport:
+        """Build a MockTransport that returns *values_body* as the SSE values event."""
+        if messages_body is None:
+            messages_body = [{"type": "ai", "content": "已完成"}]
         sse_data = _sse_bytes(
-            ("values", json.dumps({"decision": decision})),
-            ("messages", json.dumps([{"type": "ai", "content": "已完成"}])),
+            ("values", json.dumps(values_body)),
+            ("messages", json.dumps(messages_body)),
         )
 
         def handler(request: httpx.Request) -> httpx.Response:
             url = str(request.url)
             method = request.method
-            g = "http://gateway:8200"
-            a = "http://agent:8100"
+            g = gateway_url
+            a = agent_url
+            sid = session_id
+            uid = utterance_id
             if method == "POST" and url == f"{g}/auth/login":
                 return httpx.Response(
                     200,
@@ -419,45 +548,48 @@ class TestFullFlowNoApproval:
                     request=request,
                 )
             if method == "POST" and url == f"{g}/sessions":
-                return httpx.Response(201, json={"session_id": session_id}, request=request)
-            if method == "POST" and url == f"{g}/sessions/{session_id}/utterances":
+                return httpx.Response(201, json={"session_id": sid}, request=request)
+            if method == "POST" and url == f"{g}/sessions/{sid}/utterances":
                 return httpx.Response(
                     201,
                     json={
-                        "utterance": {"id": utterance_id, "text": "hi"},
+                        "utterance": {"id": uid, "text": "hi"},
                         "assistant_token": assistant_token,
                     },
                     request=request,
                 )
             if method == "POST" and url == f"{a}/threads":
-                return httpx.Response(200, json={"thread_id": session_id}, request=request)
-            if method == "POST" and url == f"{a}/threads/{session_id}/runs/stream":
+                return httpx.Response(200, json={"thread_id": sid}, request=request)
+            if method == "POST" and url == f"{a}/threads/{sid}/runs/stream":
                 return httpx.Response(200, content=sse_data, request=request)
-            return httpx.Response(404, json={"detail": "not found"}, request=request)
+            return httpx.Response(404, json={"code": "NOT_FOUND"}, request=request)
 
         return httpx.MockTransport(handler)
 
     @pytest.mark.parametrize(
-        "decision,expected_exit",
+        "decision_dict,expected_exit",
         [
-            ("ALLOW", mod.EXIT_COMPLETED),
-            ("COMPLETED", mod.EXIT_COMPLETED),
-            ("CLARIFY", mod.EXIT_CLARIFY),
-            ("REPLAN", mod.EXIT_REPLAN),
-            ("DENY", mod.EXIT_DENY),
+            (DECISION_ALLOW, mod.EXIT_ALLOW_READY),
+            (DECISION_REPLAN, mod.EXIT_REPLAN),
+            (DECISION_DENY, mod.EXIT_DENY),
         ],
     )
     def test_terminal_decisions(
         self,
-        decision: str,
+        decision_dict: dict,
         expected_exit: int,
         app_token: str,
         assistant_token: str,
         session_id: str,
         utterance_id: str,
     ):
-        transport = self._build_no_approval_responses(
-            app_token, assistant_token, session_id, utterance_id, decision
+        """Structured Decision dicts route to correct exit codes (no COMPLETED/ALLOWED aliases)."""
+        transport = self._build_no_approval_handler(
+            app_token,
+            assistant_token,
+            session_id,
+            utterance_id,
+            {"decision": decision_dict},
         )
         config = mod.Config(
             gateway_url="http://gateway:8200",
@@ -471,46 +603,136 @@ class TestFullFlowNoApproval:
             exit_code = mod.run(config, client, [])
         assert exit_code == expected_exit
 
-    def test_no_g6_g8_called_without_approval(
+    def test_allow_with_execution_is_completed(
         self,
         app_token: str,
         assistant_token: str,
         session_id: str,
         utterance_id: str,
     ):
-        """When L1 returns CLARIFY, no G6/G8 calls are made."""
-        called_urls: list[str] = []
+        """ALLOW + execution.status=EXECUTED → COMPLETED (L1 already executed green path)."""
+        transport = self._build_no_approval_handler(
+            app_token,
+            assistant_token,
+            session_id,
+            utterance_id,
+            {
+                "decision": DECISION_ALLOW,
+                "execution": EXECUTION_EXECUTED,
+            },
+        )
+        config = mod.Config(
+            gateway_url="http://gateway:8200",
+            agent_url="http://agent:8100",
+            customer_id="cus_test",
+            text="hi",
+            pin="123456",
+            request_id=str(uuid.uuid4()),
+        )
+        with httpx.Client(transport=transport) as client:
+            exit_code = mod.run(config, client, [])
+        assert exit_code == mod.EXIT_COMPLETED
 
-        def handler(request: httpx.Request) -> httpx.Response:
-            called_urls.append(str(request.url))
-            url = str(request.url)
-            method = request.method
-            g = "http://gateway:8200"
-            a = "http://agent:8100"
-            if method == "POST" and url == f"{g}/auth/login":
-                return httpx.Response(
-                    200,
-                    json={"app_token": app_token, "customer": {"customer_id": "x"}},
-                    request=request,
-                )
-            if method == "POST" and url == f"{g}/sessions":
-                return httpx.Response(201, json={"session_id": session_id}, request=request)
-            if method == "POST" and url == f"{g}/sessions/{session_id}/utterances":
-                return httpx.Response(
-                    201,
-                    json={"utterance": {"id": utterance_id}, "assistant_token": assistant_token},
-                    request=request,
-                )
-            if method == "POST" and url == f"{a}/threads":
-                return httpx.Response(200, json={"thread_id": session_id}, request=request)
-            if method == "POST" and url == f"{a}/threads/{session_id}/runs/stream":
-                sse = _sse_bytes(
-                    ("values", json.dumps({"decision": "CLARIFY"})),
-                    ("messages", json.dumps([{"type": "ai", "content": "请补充"}])),
-                )
-                return httpx.Response(200, content=sse, request=request)
-            return httpx.Response(404, json={"detail": "not found"}, request=request)
+    def test_allow_without_execution_is_allow_ready(
+        self,
+        app_token: str,
+        assistant_token: str,
+        session_id: str,
+        utterance_id: str,
+    ):
+        """ALLOW without execution → ALLOW_READY (T1 does not execute)."""
+        transport = self._build_no_approval_handler(
+            app_token,
+            assistant_token,
+            session_id,
+            utterance_id,
+            {"decision": DECISION_ALLOW},
+        )
+        config = mod.Config(
+            gateway_url="http://gateway:8200",
+            agent_url="http://agent:8100",
+            customer_id="cus_test",
+            text="hi",
+            pin="123456",
+            request_id=str(uuid.uuid4()),
+        )
+        with httpx.Client(transport=transport) as client:
+            exit_code = mod.run(config, client, [])
+        assert exit_code == mod.EXIT_ALLOW_READY
 
+    def test_repr_decision_is_unknown(
+        self,
+        app_token: str,
+        assistant_token: str,
+        session_id: str,
+        utterance_id: str,
+    ):
+        """A Pydantic repr string must NOT be regex-parsed to guess a decision."""
+        transport = self._build_no_approval_handler(
+            app_token,
+            assistant_token,
+            session_id,
+            utterance_id,
+            {"decision": DECISION_REPR},
+        )
+        config = mod.Config(
+            gateway_url="http://gateway:8200",
+            agent_url="http://agent:8100",
+            customer_id="cus_test",
+            text="hi",
+            pin="123456",
+            request_id=str(uuid.uuid4()),
+        )
+        with httpx.Client(transport=transport) as client:
+            exit_code = mod.run(config, client, [])
+        assert exit_code == mod.EXIT_UNKNOWN
+
+    def test_unknown_decision_value_is_unknown(
+        self,
+        app_token: str,
+        assistant_token: str,
+        session_id: str,
+        utterance_id: str,
+    ):
+        """An unrecognised decision string → UNKNOWN (no guesswork)."""
+        transport = self._build_no_approval_handler(
+            app_token,
+            assistant_token,
+            session_id,
+            utterance_id,
+            {"decision": "SOME_FUTURE_VALUE"},
+        )
+        config = mod.Config(
+            gateway_url="http://gateway:8200",
+            agent_url="http://agent:8100",
+            customer_id="cus_test",
+            text="hi",
+            pin="123456",
+            request_id=str(uuid.uuid4()),
+        )
+        with httpx.Client(transport=transport) as client:
+            exit_code = mod.run(config, client, [])
+        assert exit_code == mod.EXIT_UNKNOWN
+
+    def test_clarify_via_state_field(
+        self,
+        app_token: str,
+        assistant_token: str,
+        session_id: str,
+        utterance_id: str,
+    ):
+        """clarification_id in values → EXIT_CLARIFY (PRD §6.1 state fields)."""
+        transport = self._build_no_approval_handler(
+            app_token,
+            assistant_token,
+            session_id,
+            utterance_id,
+            {
+                "decision": None,
+                "clarification_id": "clf_01",
+                "clarification": {"question": "请问转给谁？"},
+            },
+        )
         config = mod.Config(
             gateway_url="http://gateway:8200",
             agent_url="http://agent:8100",
@@ -519,24 +741,106 @@ class TestFullFlowNoApproval:
             pin="123456",
             request_id=str(uuid.uuid4()),
         )
-        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        with httpx.Client(transport=transport) as client:
             exit_code = mod.run(config, client, [])
         assert exit_code == mod.EXIT_CLARIFY
-        # No confirm, reject, execute calls.
-        for u in called_urls:
-            assert "/approvals/" not in u or "/approvals" not in u
+
+    def test_no_g6_g8_called_without_approval(
+        self,
+        app_token: str,
+        assistant_token: str,
+        session_id: str,
+        utterance_id: str,
+    ):
+        """When L1 returns REPLAN, no G6/G8 calls are made."""
+        transport = self._build_no_approval_handler(
+            app_token,
+            assistant_token,
+            session_id,
+            utterance_id,
+            {"decision": DECISION_REPLAN},
+            messages_body=[{"type": "ai", "content": "请调整金额"}],
+        )
+        config = mod.Config(
+            gateway_url="http://gateway:8200",
+            agent_url="http://agent:8100",
+            customer_id="cus_test",
+            text="转账",
+            pin="123456",
+            request_id=str(uuid.uuid4()),
+        )
+        with httpx.Client(transport=transport) as client:
+            exit_code = mod.run(config, client, [])
+
+        assert exit_code == mod.EXIT_REPLAN
+        # Transport is consumed; verify via URL capture in the handler
+        # (the parametrised handler above doesn't capture URLs, so we rebuild
+        # with a capturing version).
+        called: list[str] = []
+
+        def cap_handler(request: httpx.Request) -> httpx.Response:
+            called.append(str(request.url))
+            # Minimal responses
+            url = str(request.url)
+            method = request.method
+            g = "http://gateway:8200"
+            a = "http://agent:8100"
+            sid = session_id
+            uid = utterance_id
+            if method == "POST" and url == f"{g}/auth/login":
+                return httpx.Response(
+                    200,
+                    json={"app_token": app_token, "customer": {"customer_id": "x"}},
+                    request=request,
+                )
+            if method == "POST" and url == f"{g}/sessions":
+                return httpx.Response(201, json={"session_id": sid}, request=request)
+            if method == "POST" and url == f"{g}/sessions/{sid}/utterances":
+                return httpx.Response(
+                    201,
+                    json={"utterance": {"id": uid}, "assistant_token": assistant_token},
+                    request=request,
+                )
+            if method == "POST" and url == f"{a}/threads":
+                return httpx.Response(200, json={"thread_id": sid}, request=request)
+            if method == "POST" and url == f"{a}/threads/{sid}/runs/stream":
+                sse = _sse_bytes(
+                    ("values", json.dumps({"decision": DECISION_REPLAN})),
+                    ("messages", json.dumps([{"type": "ai", "content": "请调整金额"}])),
+                )
+                return httpx.Response(200, content=sse, request=request)
+            return httpx.Response(404, json={"code": "NOT_FOUND"}, request=request)
+
+        config2 = mod.Config(
+            gateway_url="http://gateway:8200",
+            agent_url="http://agent:8100",
+            customer_id="cus_test",
+            text="转账",
+            pin="123456",
+            request_id=str(uuid.uuid4()),
+        )
+        with httpx.Client(transport=httpx.MockTransport(cap_handler)) as client:
+            mod.run(config2, client, [])
+
+        for u in called:
             assert "/confirm" not in u
             assert "/execute" not in u
+            # G9 is not called (no approval_id)
+            assert "/approvals/" not in u
 
 
 class TestErrorHandling:
     """HTTP errors and SSE error events are handled correctly."""
 
     def test_g1_unauthorized(self, fake_token: str):
-        """G1 returning 401 yields HTTP_FAILURE."""
+        """G1 returning 401 yields HTTP_FAILURE, no raw body leaked."""
 
         def handler(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(401, json={"detail": "Bad PIN"}, request=request)
+            return httpx.Response(
+                401,
+                json={"code": "BAD_PIN", "detail": "Bad PIN"},
+                request=request,
+            )
 
         config = mod.Config(
             gateway_url="http://gateway:8200",
@@ -546,9 +850,80 @@ class TestErrorHandling:
             pin="wrong",
             request_id=str(uuid.uuid4()),
         )
+        events: list[mod.SanitisedEvent] = []
         with httpx.Client(transport=httpx.MockTransport(handler)) as client:
-            exit_code = mod.run(config, client, [])
+            exit_code = mod.run(config, client, events)
+
         assert exit_code == mod.EXIT_HTTP_FAILURE
+        # Error detail must not contain raw response text.
+        for e in events:
+            if e.kind == "error":
+                detail = str(e.detail)
+                assert "Bad PIN" not in detail, f"raw body leaked: {detail}"
+                assert "code=BAD_PIN" in detail
+
+    def test_non_200_sse_stream_reads_body_safely(
+        self,
+        app_token: str,
+        assistant_token: str,
+        session_id: str,
+        utterance_id: str,
+    ):
+        """Non-200 SSE stream reads body cleanly without hanging or leaking."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            url = str(request.url)
+            method = request.method
+            g = "http://gateway:8200"
+            a = "http://agent:8100"
+            sid = session_id
+            uid = utterance_id
+            if method == "POST" and url == f"{g}/auth/login":
+                return httpx.Response(
+                    200,
+                    json={"app_token": app_token, "customer": {"customer_id": "x"}},
+                    request=request,
+                )
+            if method == "POST" and url == f"{g}/sessions":
+                return httpx.Response(201, json={"session_id": sid}, request=request)
+            if method == "POST" and url == f"{g}/sessions/{sid}/utterances":
+                return httpx.Response(
+                    201,
+                    json={"utterance": {"id": uid}, "assistant_token": assistant_token},
+                    request=request,
+                )
+            if method == "POST" and url == f"{a}/threads":
+                return httpx.Response(200, json={"thread_id": sid}, request=request)
+            if method == "POST" and url == f"{a}/threads/{sid}/runs/stream":
+                # Return 503 with a real ByteStream (not static bytes).
+                body = b'{"code": "AGENT_UNAVAILABLE", "detail": "L1 not ready"}'
+                return httpx.Response(
+                    503,
+                    content=body,
+                    headers={"Content-Type": "application/json"},
+                    request=request,
+                )
+            return httpx.Response(404, json={"code": "NOT_FOUND"}, request=request)
+
+        config = mod.Config(
+            gateway_url="http://gateway:8200",
+            agent_url="http://agent:8100",
+            customer_id="cus_test",
+            text="hi",
+            pin="123456",
+            request_id=str(uuid.uuid4()),
+        )
+        events: list[mod.SanitisedEvent] = []
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+            exit_code = mod.run(config, client, events)
+
+        assert exit_code == mod.EXIT_HTTP_FAILURE
+        # Error must contain the code, not raw body text.
+        for e in events:
+            if e.kind == "error":
+                detail = str(e.detail)
+                assert "AGENT_UNAVAILABLE" in detail
+                assert "not ready" not in detail, f"raw body leaked: {detail}"
 
     def test_sse_error_event_yields_unknown(
         self, app_token: str, assistant_token: str, session_id: str, utterance_id: str
@@ -560,6 +935,8 @@ class TestErrorHandling:
             method = request.method
             g = "http://gateway:8200"
             a = "http://agent:8100"
+            sid = session_id
+            uid = utterance_id
             if method == "POST" and url == f"{g}/auth/login":
                 return httpx.Response(
                     200,
@@ -567,21 +944,21 @@ class TestErrorHandling:
                     request=request,
                 )
             if method == "POST" and url == f"{g}/sessions":
-                return httpx.Response(201, json={"session_id": session_id}, request=request)
-            if method == "POST" and url == f"{g}/sessions/{session_id}/utterances":
+                return httpx.Response(201, json={"session_id": sid}, request=request)
+            if method == "POST" and url == f"{g}/sessions/{sid}/utterances":
                 return httpx.Response(
                     201,
-                    json={"utterance": {"id": utterance_id}, "assistant_token": assistant_token},
+                    json={"utterance": {"id": uid}, "assistant_token": assistant_token},
                     request=request,
                 )
             if method == "POST" and url == f"{a}/threads":
-                return httpx.Response(200, json={"thread_id": session_id}, request=request)
-            if method == "POST" and url == f"{a}/threads/{session_id}/runs/stream":
+                return httpx.Response(200, json={"thread_id": sid}, request=request)
+            if method == "POST" and url == f"{a}/threads/{sid}/runs/stream":
                 sse = _sse_bytes(
                     ("error", json.dumps({"message": "LLM failure", "type": "RuntimeError"}))
                 )
                 return httpx.Response(200, content=sse, request=request)
-            return httpx.Response(404, json={"detail": "not found"}, request=request)
+            return httpx.Response(404, json={"code": "NOT_FOUND"}, request=request)
 
         config = mod.Config(
             gateway_url="http://gateway:8200",
@@ -599,33 +976,168 @@ class TestErrorHandling:
         self, app_token: str, assistant_token: str, session_id: str, utterance_id: str
     ):
         """Event trace must not contain synthetic secrets."""
-        self.maxDiff = None  # noqa
+        transport = TestFullFlowNoApproval()._build_no_approval_handler(
+            app_token,
+            assistant_token,
+            session_id,
+            utterance_id,
+            {"decision": DECISION_ALLOW},
+        )
+        config = mod.Config(
+            gateway_url="http://gateway:8200",
+            agent_url="http://agent:8100",
+            customer_id="cus_test",
+            text="hi",
+            pin="123456",
+            request_id=str(uuid.uuid4()),
+        )
+        with httpx.Client(transport=transport) as client:
+            events: list[mod.SanitisedEvent] = []
+            exit_code = mod.run(config, client, events)
+
+        assert exit_code == mod.EXIT_ALLOW_READY
+        serialised = json.dumps(
+            [{"kind": e.kind, "detail": e.detail} for e in events],
+            default=str,
+        )
+        assert "Bearer eyJ" not in serialised, f"JWT leaked: {serialised[:200]}"
+        assert app_token not in serialised, f"app_token leaked: {serialised[:200]}"
+        assert assistant_token not in serialised, f"assistant_token leaked: {serialised[:200]}"
+
+    def test_no_secrets_in_out_file(
+        self, app_token: str, assistant_token: str, session_id: str, utterance_id: str
+    ):
+        """--out file must not contain synthetic secrets."""
+        transport = TestFullFlowNoApproval()._build_no_approval_handler(
+            app_token,
+            assistant_token,
+            session_id,
+            utterance_id,
+            {"decision": DECISION_ALLOW},
+        )
+        with tempfile.NamedTemporaryFile(mode="w+", suffix=".json", delete=False) as tf:
+            out_path = tf.name
+
+        try:
+            config = mod.Config(
+                gateway_url="http://gateway:8200",
+                agent_url="http://agent:8100",
+                customer_id="cus_test",
+                text="hi",
+                pin="123456",
+                out_path=out_path,
+                request_id=str(uuid.uuid4()),
+            )
+            with httpx.Client(transport=transport) as client:
+                events: list[mod.SanitisedEvent] = []
+                exit_code = mod.run(config, client, events)
+
+            # Replicate main()'s trace writing.
+            trace: dict = {
+                "config": {"customer_id": config.customer_id, "text": config.text},
+                "exit_code": exit_code,
+                "exit_label": mod.EXIT_LABELS.get(exit_code, "UNKNOWN"),
+                "events": [{"kind": e.kind, "detail": e.detail} for e in events],
+            }
+            serialised = json.dumps(trace, indent=2, ensure_ascii=False, default=str)
+            mod._ensure_no_secrets(serialised)
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(serialised)
+
+            with open(out_path, encoding="utf-8") as f:
+                content = f.read()
+            assert "Bearer eyJ" not in content, f"JWT leaked in --out: {content[:200]}"
+            assert app_token not in content, f"app_token leaked in --out: {content[:200]}"
+            assert assistant_token not in content, (
+                f"assistant_token leaked in --out: {content[:200]}"
+            )
+            # Must contain expected keys.
+            trace_loaded = json.loads(content)
+            assert trace_loaded["exit_label"] == "ALLOW_READY"
+            assert len(trace_loaded["events"]) > 0
+        finally:
+            os.unlink(out_path)
+
+    def test_out_file_contains_panel_when_approval(
+        self,
+        app_token: str,
+        assistant_token: str,
+        session_id: str,
+        utterance_id: str,
+        approval_id: str,
+    ):
+        """--out file contains the G9 panel when approval is required."""
+        sse = _sse_bytes(
+            (
+                "updates",
+                json.dumps({"__interrupt__": [{"value": {"approval_id": approval_id}}]}),
+            ),
+            ("values", json.dumps({"decision": DECISION_REQUIRE_APPROVAL})),
+            ("messages", json.dumps([{"type": "ai", "content": "请确认"}])),
+        )
+        handler = _FiveStepHandler(
+            app_token, assistant_token, session_id, utterance_id, approval_id, sse
+        )
+        transport = httpx.MockTransport(handler)
+
+        with tempfile.NamedTemporaryFile(mode="w+", suffix=".json", delete=False) as tf:
+            out_path = tf.name
+
+        try:
+            config = mod.Config(
+                gateway_url="http://gateway:8200",
+                agent_url="http://agent:8100",
+                customer_id="cus_test",
+                text="转800元给李四",
+                pin="123456",
+                out_path=out_path,
+                request_id=str(uuid.uuid4()),
+            )
+            with httpx.Client(transport=transport) as client:
+                events: list[mod.SanitisedEvent] = []
+                exit_code = mod.run(config, client, events)
+
+            assert exit_code == mod.EXIT_PENDING_APPROVAL
+
+            # Replicate main()'s trace writing.
+            trace: dict = {
+                "config": {"customer_id": config.customer_id, "text": config.text},
+                "exit_code": exit_code,
+                "exit_label": mod.EXIT_LABELS.get(exit_code, "UNKNOWN"),
+                "events": [{"kind": e.kind, "detail": e.detail} for e in events],
+            }
+            serialised = json.dumps(trace, indent=2, ensure_ascii=False, default=str)
+            mod._ensure_no_secrets(serialised)
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(serialised)
+
+            with open(out_path, encoding="utf-8") as f:
+                trace_loaded = json.load(f)
+            assert trace_loaded["exit_label"] == "PENDING_APPROVAL"
+            # Approval panel must be in the trace.
+            panel_events = [
+                e
+                for e in trace_loaded["events"]
+                if e.get("kind") == "result"
+                and isinstance(e.get("detail"), dict)
+                and e["detail"].get("event") == "approval_panel"
+            ]
+            assert len(panel_events) == 1
+            assert panel_events[0]["detail"]["panel"]["approval_id"] == approval_id
+        finally:
+            os.unlink(out_path)
+
+    def test_connection_error_clean_exit(
+        self,
+        app_token: str,
+        assistant_token: str,
+        session_id: str,
+        utterance_id: str,
+    ):
+        """httpx.ConnectError → EXIT_HTTP_FAILURE with clean message, no traceback."""
 
         def handler(request: httpx.Request) -> httpx.Response:
-            url = str(request.url)
-            method = request.method
-            g = "http://gateway:8200"
-            a = "http://agent:8100"
-            if method == "POST" and url == f"{g}/auth/login":
-                return httpx.Response(
-                    200,
-                    json={"app_token": app_token, "customer": {"customer_id": "x"}},
-                    request=request,
-                )
-            if method == "POST" and url == f"{g}/sessions":
-                return httpx.Response(201, json={"session_id": session_id}, request=request)
-            if method == "POST" and url == f"{g}/sessions/{session_id}/utterances":
-                return httpx.Response(
-                    201,
-                    json={"utterance": {"id": utterance_id}, "assistant_token": assistant_token},
-                    request=request,
-                )
-            if method == "POST" and url == f"{a}/threads":
-                return httpx.Response(200, json={"thread_id": session_id}, request=request)
-            if method == "POST" and url == f"{a}/threads/{session_id}/runs/stream":
-                sse = _sse_bytes(("values", json.dumps({"decision": "ALLOW"})))
-                return httpx.Response(200, content=sse, request=request)
-            return httpx.Response(404, json={"detail": "not found"}, request=request)
+            raise httpx.ConnectError("Connection refused")
 
         config = mod.Config(
             gateway_url="http://gateway:8200",
@@ -635,18 +1147,17 @@ class TestErrorHandling:
             pin="123456",
             request_id=str(uuid.uuid4()),
         )
+        events: list[mod.SanitisedEvent] = []
         with httpx.Client(transport=httpx.MockTransport(handler)) as client:
-            events: list[mod.SanitisedEvent] = []
             exit_code = mod.run(config, client, events)
 
-        assert exit_code == mod.EXIT_COMPLETED
-        serialised = json.dumps(
-            [{"kind": e.kind, "detail": e.detail} for e in events],
-            default=str,
-        )
-        assert "Bearer eyJ" not in serialised, f"JWT leaked: {serialised[:200]}"
-        assert app_token not in serialised, f"app_token leaked: {serialised[:200]}"
-        assert assistant_token not in serialised, f"assistant_token leaked: {serialised[:200]}"
+        assert exit_code == mod.EXIT_HTTP_FAILURE
+        # Error must be a clean message, not a traceback.
+        for e in events:
+            if e.kind == "error":
+                detail = str(e.detail)
+                assert "ConnectError" in detail
+                assert "Traceback" not in detail
 
 
 class TestCLI:
@@ -667,6 +1178,27 @@ class TestCLI:
         assert config.customer_id == "cus_1"
         assert config.text == "hi"
         assert config.pin == "1234"
+
+    def test_pin_from_getpass(self, monkeypatch):
+        """When --pin is omitted, getpass is called."""
+        called_with: list[str] = []
+
+        def fake_getpass(prompt: str) -> str:
+            called_with.append(prompt)
+            return "secret-pin"
+
+        monkeypatch.setattr("getpass.getpass", fake_getpass)
+        config = mod._parse_args(["--customer-id", "cus_1", "--text", "hi"])
+        assert config.pin == "secret-pin"
+        assert len(called_with) == 1
+        assert "cus_1" in called_with[0]
+
+    def test_pin_empty_rejected(self, monkeypatch):
+        """Empty PIN from getpass → CONFIG_ERROR."""
+        monkeypatch.setattr("getpass.getpass", lambda _: "")
+        with pytest.raises(SystemExit) as exc:
+            mod._parse_args(["--customer-id", "cus_1", "--text", "hi"])
+        assert exc.value.code == mod.EXIT_CONFIG_ERROR
 
     def test_default_urls(self):
         config = mod._parse_args(["--customer-id", "cus_1", "--text", "hi", "--pin", "1234"])
@@ -714,3 +1246,64 @@ class TestSanitise:
         assert result["Authorization"] == "***REDACTED***"
         assert result["X-Service-Token"] == "***REDACTED***"
         assert result["Content-Type"] == "application/json"
+
+    def test_safe_error_body_extracts_code(self):
+        """_safe_error_body returns code when JSON body has it."""
+        resp = httpx.Response(
+            422,
+            json={"code": "INVALID_STATE", "detail": "plan already executed"},
+            request=httpx.Request("POST", "http://g/plans/pln_1/execute"),
+        )
+        result = mod._safe_error_body(resp)
+        assert "422" in result
+        assert "code=INVALID_STATE" in result
+        assert "plan already executed" not in result  # raw detail not echoed
+
+    def test_safe_error_body_no_code(self):
+        """_safe_error_body shows only status when body has no code."""
+        resp = httpx.Response(
+            500,
+            content=b"Internal Server Error",
+            headers={"Content-Type": "text/plain"},
+            request=httpx.Request("GET", "http://g/"),
+        )
+        result = mod._safe_error_body(resp)
+        assert result == "HTTP 500"
+
+    def test_resolve_decision_structured_dict(self):
+        """Structured Decision dict is parsed correctly."""
+        dec_str, plan_id, exec_dict = mod._resolve_decision(
+            {"decision": DECISION_ALLOW, "execution": None}
+        )
+        assert dec_str == "ALLOW"
+        assert plan_id == "pln_01"
+        assert exec_dict is None
+
+    def test_resolve_decision_structured_with_execution(self):
+        """Structured Decision dict + execution dict → both returned."""
+        dec_str, plan_id, exec_dict = mod._resolve_decision(
+            {"decision": DECISION_ALLOW, "execution": EXECUTION_EXECUTED}
+        )
+        assert dec_str == "ALLOW"
+        assert exec_dict is not None
+        assert exec_dict["status"] == "EXECUTED"
+
+    def test_resolve_decision_repr_is_unknown(self):
+        """Repr string → UNKNOWN (never parsed)."""
+        dec_str, plan_id, exec_dict = mod._resolve_decision({"decision": DECISION_REPR})
+        assert dec_str == "UNKNOWN"
+        assert exec_dict is None
+
+    def test_resolve_decision_none_is_unknown(self):
+        """None/missing → UNKNOWN."""
+        dec_str, _pid, exec_dict = mod._resolve_decision({})
+        assert dec_str == "UNKNOWN"
+        assert exec_dict is None
+
+    def test_resolve_decision_bare_enum_string(self):
+        """Bare enum-member string is accepted."""
+        dec_str, _pid, _exec = mod._resolve_decision({"decision": "DENY"})
+        assert dec_str == "DENY"
+
+
+import sys  # noqa: E402 (used in test_panel_visible_in_stdout above)
