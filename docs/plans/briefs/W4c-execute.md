@@ -278,7 +278,7 @@ G8 每条写路径必须在**同一连接、同一顺序**取得行锁；G5 只�
 - `Makefile` 新增（仿 `test-w3b`）：
   ```make
   test-w4c:
-  	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w4c -q
+	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w4c -q
   ```
 - `.github/workflows/checks.yml` 的 p1-postgres job 在既有 `make test-w3b`（或相邻专项）之后追加一行 `make test-w4c`（不删、不改其它行、不改 job 名）。
 

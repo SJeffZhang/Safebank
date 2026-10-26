@@ -1,9 +1,9 @@
 # W4c Execute — Independent Code Review
 
-**Reviewer**: Claude (DeepSeek V4 Pro), 2026-10-25  
-**Scope**: `services/gateway/app/api/execution.py`, `services/gateway/app/state.py` (relevant CAS), `services/gateway/app/execution/replay.py`, migration 0003, all 13 test files in `tests/gateway/w4c/db/`  
-**Task spec**: `docs/plans/briefs/W4c-execute.md` (340 lines)  
-**Progress log**: `docs/progress/W4c-execute.md` (267 lines)  
+**Reviewer**: Claude (DeepSeek V4 Pro), 2026-10-25
+**Scope**: `services/gateway/app/api/execution.py`, `services/gateway/app/state.py` (relevant CAS), `services/gateway/app/execution/replay.py`, migration 0003, all 13 test files in `tests/gateway/w4c/db/`
+**Task spec**: `docs/plans/briefs/W4c-execute.md` (340 lines)
+**Progress log**: `docs/progress/W4c-execute.md` (267 lines)
 **Verdict**: **REQUEST_CHANGES** — 2 P1, 3 P2; no P0
 
 ---
@@ -130,8 +130,8 @@ All 8 review criteria are satisfied for the normal execution path. The two P1 fi
 **Recommended fix order**: (1) Fix P1-2 first (replace `attempt=1` with `exec_identity.attempt` at line 415) — this is a one-line change with no behavioral impact on the current callers. (2) Fix P1-1 (add STATE_CHANGED check in the resume `except L3BusinessError` block at line 864-869, route to `_handle_state_changed`). (3) Add a new test in `test_g8_resume.py` for the resume + STATE_CHANGED scenario (simulate L3 returning STATE_CHANGED on attempt 2 by bumping state_version before the resumed execute).
 ## 复审（修复轮 1）
 
-**Reviewer**: Claude (DeepSeek V4 Pro), 2026-10-26  
-**Scope**: `git diff 95225bc..dbb5426 -- services tests/gateway/w4c`  
+**Reviewer**: Claude (DeepSeek V4 Pro), 2026-10-26
+**Scope**: `git diff 95225bc..dbb5426 -- services tests/gateway/w4c`
 **Verdict**: **APPROVE** — all 4 findings addressed; no new P0/P1
 
 ### P1-1: Resume STATE_CHANGED enters `_handle_state_changed` → ADDRESSED
