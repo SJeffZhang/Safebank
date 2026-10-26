@@ -118,6 +118,8 @@ def _wrap_at(node: Any, pointer: str, source: str) -> None:
     if isinstance(current, dict):
         if leaf not in current:
             raise ValueError(f"JSON pointer {pointer!r} not found")
+        if current[leaf] is None:
+            return
         if not isinstance(current[leaf], str):
             raise ValueError(f"JSON pointer {pointer!r} does not reference a string value")
         current[leaf] = wrap_untrusted(current[leaf], source)
@@ -128,6 +130,8 @@ def _wrap_at(node: Any, pointer: str, source: str) -> None:
         index = int(leaf)
         if not 0 <= index < len(current):
             raise ValueError(f"JSON pointer {pointer!r} index {index} out of range")
+        if current[index] is None:
+            return
         if not isinstance(current[index], str):
             raise ValueError(f"JSON pointer {pointer!r} does not reference a string value")
         current[index] = wrap_untrusted(current[index], source)
