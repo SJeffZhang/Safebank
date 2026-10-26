@@ -135,9 +135,18 @@ test-w4b2c:
 	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w4b2c -q
 
 .PHONY: test-w3b
+.PHONY: test-w3b
 test-w3b:
 	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w3b -q
 
 .PHONY: test-w4c
 test-w4c:
 	GATEWAY_DB_TESTS=1 OBLIGATIONS_DB_TESTS=1 .venv/bin/pytest tests/gateway/w4c -q
+
+.PHONY: try-agent
+try-agent:
+	docker compose exec frontend python -m scripts.try_agent $(ARGS)
+
+.PHONY: test-try-agent
+test-try-agent:
+	.venv/bin/pytest tests/try_agent -q
