@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import asyncio
 
-from sqlalchemy import select
+from app import models as m
+from sqlalchemy import func, select
 from sqlalchemy.pool import NullPool
 
 from services.gateway.app import tables as t
@@ -49,10 +50,18 @@ def test_g8_allow_executes_once(app_config, obligations_db):
             assert row[0] == "FROZEN", f"expected FROZEN, got {row[0]}"
 
             # 3. Same request_id again → 200, no double execution.
-            #    Proved by checking the card is still just FROZEN (not
-            #    a second transition that would change it to something else).
+            #    Proved by checking real L3 plan_executions — only 1 row.
             resp2 = await ctx.test_app.client.post(url, json=body, headers=ctx.headers)
             assert resp2.status_code == 200
+
+            # Strengthened idempotency: L3 plan_executions count == 1.
+            async with ctx.l3_admin.connect() as conn:
+                count = await conn.scalar(
+                    select(func.count()).select_from(m.plan_executions).where(
+                        m.plan_executions.c.plan_id == ctx.plan_id
+                    )
+                )
+            assert count == 1, f"L3 plan_executions count={count}, expected 1"
 
     asyncio.run(run())
 

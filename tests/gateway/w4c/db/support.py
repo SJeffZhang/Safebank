@@ -18,6 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.pool import NullPool
 
 from services.gateway.app.db import engine as gw_engine
+from services.gateway.app import locks
 from tests.gateway.w3a.db.test_real_preflight import _serve_l3
 from tests.gateway.w3b.db.conftest import (
     _seed_auth,
@@ -120,6 +121,7 @@ async def allow_plan_ctx(app_config, obligations_db):
 
     admin, runtime, l3 = await _serve_l3(obligations_db)
     fastapi_app.state.l3 = l3
+    locks.configure(fastapi_app.state.db, max_executions=4)
 
     sid = "ses_w4c_allow"
     jti = "jti-w4c-allow"
