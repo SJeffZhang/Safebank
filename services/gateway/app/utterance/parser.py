@@ -98,6 +98,22 @@ _CN_DIGIT_V = {
 }
 
 
+_PAYEE_NAME_RE = re.compile(r"^[一-鿿·]{1,8}$")
+_PAYEE_NAME_META_RE = re.compile(r"是什么|什么意思|怎么|能不能|可以吗|可行吗|行吗|吗|呢|啥")
+_PAYEE_NAME_ACTION_RE = re.compile(r"转|给|冻结|关闭|开通|打开|开启|关掉|取消|赎回|申购|新增|添加")
+
+
+def _valid_payee_name(name: str) -> bool:
+    """Reject non-name payloads masquerading as payee names in add_payee clauses."""
+    if not _PAYEE_NAME_RE.fullmatch(name):
+        return False
+    if _PAYEE_NAME_META_RE.search(name):
+        return False
+    if _PAYEE_NAME_ACTION_RE.search(name):
+        return False
+    return True
+
+
 def _parse_chinese_numeral(text: str) -> int | None:
     """Parse a strict Chinese numeral (no 零 gaps, no mixed scripts)."""
     if not text or "零" in text:
@@ -105,6 +121,8 @@ def _parse_chinese_numeral(text: str) -> int | None:
     total = 0
     section = 0  # accumulates values under 万
     i = 0
+    prev_char = ""
+    prev_big_mult = False  # True after digit×千/万 — lone digit is then ambiguous
     while i < len(text):
         c = text[i]
         if c in _CN_DIGIT_V:
@@ -117,12 +135,23 @@ def _parse_chinese_numeral(text: str) -> int | None:
                     section = (section + digit) * 10000
                     total += section
                     section = 0
+                    prev_big_mult = True
                 else:
                     section += digit * mult_v
+                    if mult_c in {"千"}:
+                        prev_big_mult = True
+                    else:
+                        prev_big_mult = False
             else:
+                if prev_big_mult:
+                    return None  # lone digit after 千/万 — ambiguous abbreviation
                 section += digit
+                prev_big_mult = False
         elif c == "十":
+            if prev_char == "十":
+                return None  # repeated 十 — not a valid numeral
             section += 10  # implicit 一
+            prev_big_mult = False
         elif c in {"百", "千"}:
             return None  # 百/千 without preceding digit — ambiguous
         elif c == "万":
@@ -131,8 +160,10 @@ def _parse_chinese_numeral(text: str) -> int | None:
             section *= 10000
             total += section
             section = 0
+            prev_big_mult = True
         else:
             return None
+        prev_char = c
         i += 1
     result = total + section
     return result if result > 0 else None
@@ -363,11 +394,17 @@ def _clause(clause: str) -> Command | None:
     add_verb = _verbs("add_payee")
     m = re.fullmatch(rf"({add_verb})(?P<name>.+)", clause)
     if m:
-        return Command("add_payee", target=m["name"].strip())
+        name = m["name"].strip()
+        if not _valid_payee_name(name):
+            return None
+        return Command("add_payee", target=name)
     # add_payee: 把-name-verb pattern  (把李阿姨加为收款人)
     m = re.fullmatch(rf"把(?P<name>.+?)({add_verb})", clause)
     if m:
-        return Command("add_payee", target=m["name"].strip())
+        name = m["name"].strip()
+        if not _valid_payee_name(name):
+            return None
+        return Command("add_payee", target=name)
     # add_payee property clauses: only valid alongside an add_payee main clause
     m = re.fullmatch(r"(?:账号|卡号)(?P<acct>\d{8,})", clause)
     if m:
