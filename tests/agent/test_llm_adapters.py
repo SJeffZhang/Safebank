@@ -1786,18 +1786,16 @@ def test_empty_span_triggers_retry():
 
 def test_channel_verbs_match_intent_lexicon_yaml():
     """Agent's _CHANNEL_VERBS must stay in sync with intent_lexicon.yaml update_card_controls."""
-    import yaml
     from pathlib import Path
 
+    import yaml
+
     yaml_path = (
-        Path(__file__).parent.parent.parent
-        / "services/gateway/policies/intent_lexicon.yaml"
+        Path(__file__).parent.parent.parent / "services/gateway/policies/intent_lexicon.yaml"
     )
     with open(yaml_path) as f:
         lexicon = yaml.safe_load(f)
     yaml_verbs = tuple(lexicon["actions"]["update_card_controls"])
     from services.agent.app.llm.plan import _CHANNEL_VERBS
 
-    assert _CHANNEL_VERBS == yaml_verbs, (
-        f"Agent verbs {_CHANNEL_VERBS} != yaml verbs {yaml_verbs}"
-    )
+    assert _CHANNEL_VERBS == yaml_verbs, f"Agent verbs {_CHANNEL_VERBS} != yaml verbs {yaml_verbs}"
