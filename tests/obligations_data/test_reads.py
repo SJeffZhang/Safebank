@@ -265,6 +265,88 @@ def test_r7_pagination_respects_limit(obligations_db):
     asyncio.run(check())
 
 
+def test_r7_last_run_non_none_when_runs_exist(obligations_db):
+    """When an instruction_run record exists for si_zs_mom, last_run must be non-None."""
+
+    async def check():
+        from datetime import datetime as dtm
+
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+            from app import models as m
+
+            await conn.execute(
+                m.instruction_runs.insert().values(
+                    id="run_zs_mom_1",
+                    customer_id="cus_zs",
+                    account_id="acc_zs_chk",
+                    kind="SCHEDULED_TRANSFER",
+                    instruction_id="si_zs_mom",
+                    due_at=dtm.fromisoformat("2026-10-05T06:00:00+08:00"),
+                    event_id="evt_run_zs_mom_1",
+                    status="FAILED_INSUFFICIENT",
+                    code="INSUFFICIENT_FUNDS",
+                    amount_cents=100000,
+                    billing_id=None,
+                )
+            )
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            r = await _read(client, "list_scheduled", {"status": "ALL", "limit": 50})
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert len(body["items"]) == 1
+            item = body["items"][0]
+            assert item["id"] == "si_zs_mom"
+            last = item["last_run"]
+            assert last is not None
+            assert last["status"] == "FAILED_INSUFFICIENT"
+            assert last["code"] == "INSUFFICIENT_FUNDS"
+            assert last["due_at"] == "2026-10-04T22:00:00Z"
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r7_cross_tool_cursor_rejected(obligations_db):
+    """A cursor from list_subscriptions must be rejected when used with list_scheduled."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            # Get a list_subscriptions cursor.
+            r1 = await _read(client, "list_subscriptions", {"status": "ALL", "limit": 1})
+            assert r1.status_code == 200, r1.text
+            b1 = r1.json()
+            assert b1["next_cursor"] is not None
+            # Reuse it with list_scheduled — must be rejected.
+            r2 = await _read(
+                client,
+                "list_scheduled",
+                {"status": "ALL", "limit": 50, "cursor": b1["next_cursor"]},
+            )
+            assert r2.status_code == 422, r2.text
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
 # ─── R10 list_subscriptions ───
 
 
@@ -519,6 +601,71 @@ def test_r10_annualization_weekly_monthly(obligations_db):
             # Expected total_annual = (3000+1500+2100+19900)*12 + 52000 = 318000 + 52000 = 370000
             assert body["total_monthly_cents"] == 30833
             assert body["total_annual_cents"] == 370000
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r10_pagination_respects_limit(obligations_db):
+    """With limit=1 the result has next_cursor; reusing it returns the remaining items."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            r1 = await _read(client, "list_subscriptions", {"status": "ALL", "limit": 1})
+            assert r1.status_code == 200, r1.text
+            b1 = r1.json()
+            assert len(b1["items"]) == 1
+            assert b1["next_cursor"] is not None
+            r2 = await _read(
+                client,
+                "list_subscriptions",
+                {"status": "ALL", "limit": 50, "cursor": b1["next_cursor"]},
+            )
+            assert r2.status_code == 200, r2.text
+            b2 = r2.json()
+            assert len(b2["items"]) == 3
+            assert b2["next_cursor"] is None
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r10_empty_collection_returns_empty_list(obligations_db):
+    """cus_sb has no subscriptions; querying as cus_sb must return empty items."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            r = await client.post(
+                "/internal/read/list_subscriptions",
+                json={"args": {"status": "ALL", "limit": 50}, "customer_id": "cus_sb"},
+                headers={"X-Service-Token": SERVICE_TOKEN},
+                timeout=10.0,
+            )
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["items"] == []
+            assert body["total_monthly_cents"] == 0
+            assert body["total_annual_cents"] == 0
         await admin.dispose()
         await runtime.dispose()
 
