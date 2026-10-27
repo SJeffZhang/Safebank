@@ -1490,3 +1490,314 @@ def test_plan_retries_on_missing_rationale():
     assert len(scripted.requests) == 2
     human = body_of(scripted, 1)["messages"][1]["content"]
     assert "rationale" in human
+
+
+# ── channel source verb validation ──
+
+
+def _card_controls_state(text="关掉我卡的线上支付"):
+    return {
+        "customer_id": "cus_a",
+        "session_id": "ses_a",
+        "utterances": [UtteranceRef(id="utt_typed", kind="typed", text=text)],
+        "understanding": Understanding(intents=["update_card_controls"], needs_write=True),
+        "reads": [
+            ReadRecord(
+                tool="get_cards",
+                source_ref="src_cards",
+                data={"items": [{"id": "crd_zs_1", "alias": "尾号1234"}]},
+            )
+        ],
+    }
+
+
+def test_channel_span_missing_verb_triggers_retry():
+    """online=false with span covering only channel name → retry → success on second attempt."""
+    state = _card_controls_state()
+    # First attempt: online span [5,7] = "线上" (no verb)
+    bad = {
+        "intents": ["update_card_controls"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "update_card_controls",
+                "args": {
+                    "card_id": "crd_zs_1",
+                    "online": "OFF",
+                    "overseas": "KEEP",
+                    "atm": "KEEP",
+                    "quickpass": "KEEP",
+                },
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "card_id",
+                        "source": {"kind": "read", "ref": "src_cards", "pointer": "/items/0/id"},
+                    },
+                    {
+                        "param": "online",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [5, 7]},
+                    },
+                ],
+            }
+        ],
+        "rationale": "test",
+    }
+    # Second attempt: online span [0,9] = "关掉我卡的线上" (has verb 关掉)
+    good = {
+        "intents": ["update_card_controls"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "update_card_controls",
+                "args": {
+                    "card_id": "crd_zs_1",
+                    "online": "OFF",
+                    "overseas": "KEEP",
+                    "atm": "KEEP",
+                    "quickpass": "KEEP",
+                },
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "card_id",
+                        "source": {"kind": "read", "ref": "src_cards", "pointer": "/items/0/id"},
+                    },
+                    {
+                        "param": "online",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [0, 9]},
+                    },
+                ],
+            }
+        ],
+        "rationale": "test",
+    }
+    scripted = ScriptedLLM(
+        [
+            tool_response("submit_action_plan", bad),
+            tool_response("submit_action_plan", good),
+        ]
+    )
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    draft = PlanAdapter(llm)(state, ctx())
+    assert len(scripted.requests) == 2
+    human = body_of(scripted, 1)["messages"][1]["content"]
+    assert "动作词" in human
+    assert draft.steps[0].args.online is False
+
+
+def test_channel_span_with_verb_passes_first_time():
+    """online=false with span covering verb+channel name → passes on first attempt."""
+    state = _card_controls_state()
+    plan = {
+        "intents": ["update_card_controls"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "update_card_controls",
+                "args": {
+                    "card_id": "crd_zs_1",
+                    "online": "OFF",
+                    "overseas": "KEEP",
+                    "atm": "KEEP",
+                    "quickpass": "KEEP",
+                },
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "card_id",
+                        "source": {"kind": "read", "ref": "src_cards", "pointer": "/items/0/id"},
+                    },
+                    {
+                        "param": "online",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [0, 9]},
+                    },
+                ],
+            }
+        ],
+        "rationale": "test",
+    }
+    scripted = ScriptedLLM([tool_response("submit_action_plan", plan)])
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    draft = PlanAdapter(llm)(state, ctx())
+    assert len(scripted.requests) == 1
+    assert draft.steps[0].args.online is False
+
+
+def test_channel_span_overseas_with_verb_passes():
+    """overseas=true with span '开通境外支付' (has verb 开通) → passes first time."""
+    state = _card_controls_state("把尾号1234的卡开通境外支付")
+    plan = {
+        "intents": ["update_card_controls"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "update_card_controls",
+                "args": {
+                    "card_id": "crd_zs_1",
+                    "online": "KEEP",
+                    "overseas": "ON",
+                    "atm": "KEEP",
+                    "quickpass": "KEEP",
+                },
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "card_id",
+                        "source": {"kind": "read", "ref": "src_cards", "pointer": "/items/0/id"},
+                    },
+                    {
+                        "param": "overseas",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [4, 14]},
+                    },
+                ],
+            }
+        ],
+        "rationale": "test",
+    }
+    # Span [4,14] = "开通境外支付" contains verb "开通"
+    scripted = ScriptedLLM([tool_response("submit_action_plan", plan)])
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    draft = PlanAdapter(llm)(state, ctx())
+    assert len(scripted.requests) == 1
+    assert draft.steps[0].args.overseas is True
+
+
+def test_channel_keep_no_source_ok():
+    """Channel param set to KEEP with no source declaration passes."""
+    state = _card_controls_state()
+    plan = {
+        "intents": ["update_card_controls"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "update_card_controls",
+                "args": {
+                    "card_id": "crd_zs_1",
+                    "online": "OFF",
+                    "overseas": "KEEP",
+                    "atm": "KEEP",
+                    "quickpass": "KEEP",
+                },
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "card_id",
+                        "source": {"kind": "read", "ref": "src_cards", "pointer": "/items/0/id"},
+                    },
+                    {
+                        "param": "online",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [0, 9]},
+                    },
+                ],
+            }
+        ],
+        "rationale": "test",
+    }
+    scripted = ScriptedLLM([tool_response("submit_action_plan", plan)])
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    draft = PlanAdapter(llm)(state, ctx())
+    assert len(scripted.requests) == 1
+
+
+def test_empty_span_triggers_retry():
+    """Empty span [0,0] → retry with feedback → success on second attempt."""
+    state = {
+        "customer_id": "cus_a",
+        "session_id": "ses_a",
+        "utterances": [
+            UtteranceRef(
+                id="utt_typed",
+                kind="typed",
+                text="把李阿姨加为收款人，卡号6222021234567890",
+            )
+        ],
+        "understanding": Understanding(intents=["add_payee"], needs_write=True),
+        "reads": [],
+    }
+    # text: 把[0]李[1]阿[2]姨[3]加[4]为[5]收[6]款[7]人[8]，[9]卡[10]号[11]6[12]...0[27]
+    bad = {
+        "intents": ["add_payee"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "add_payee",
+                "args": {
+                    "name": "李阿姨",
+                    "account_no": "6222021234567890",
+                    "bank_name": "工商银行",
+                    "phone": "__NULL__",
+                    "alias": "__NULL__",
+                },
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "name",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [0, 0]},
+                    },
+                    {
+                        "param": "account_no",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [11, 28]},
+                    },
+                ],
+            }
+        ],
+        "rationale": "test",
+    }
+    good = {
+        "intents": ["add_payee"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "add_payee",
+                "args": {
+                    "name": "李阿姨",
+                    "account_no": "6222021234567890",
+                    "bank_name": "工商银行",
+                    "phone": "__NULL__",
+                    "alias": "__NULL__",
+                },
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "name",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [1, 4]},
+                    },
+                    {
+                        "param": "account_no",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [11, 28]},
+                    },
+                ],
+            }
+        ],
+        "rationale": "test",
+    }
+    scripted = ScriptedLLM(
+        [
+            tool_response("submit_action_plan", bad),
+            tool_response("submit_action_plan", good),
+        ]
+    )
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    draft = PlanAdapter(llm)(state, ctx())
+    assert len(scripted.requests) == 2
+    assert draft.steps[0].args.name == "李阿姨"
+
+
+def test_channel_verbs_match_intent_lexicon_yaml():
+    """Agent's _CHANNEL_VERBS must stay in sync with intent_lexicon.yaml update_card_controls."""
+    import yaml
+    from pathlib import Path
+
+    yaml_path = (
+        Path(__file__).parent.parent.parent
+        / "services/gateway/policies/intent_lexicon.yaml"
+    )
+    with open(yaml_path) as f:
+        lexicon = yaml.safe_load(f)
+    yaml_verbs = tuple(lexicon["actions"]["update_card_controls"])
+    from services.agent.app.llm.plan import _CHANNEL_VERBS
+
+    assert _CHANNEL_VERBS == yaml_verbs, (
+        f"Agent verbs {_CHANNEL_VERBS} != yaml verbs {yaml_verbs}"
+    )
