@@ -6,7 +6,7 @@ actions:
   unfreeze_card: [解冻]
   report_card_lost: [挂失]
   update_card_limits: [限额]
-  update_card_controls: [关闭, 开启, 关掉, 打开]
+  update_card_controls: [关闭, 开启, 关掉, 打开, 开通]
   cancel_subscription: [取消订阅, 取消闲置订阅, 取消没用的订阅, 订阅取消掉]
   cancel_scheduled: [取消定时, 取消自动转账]
   subscribe_product: [买, 申购, 购买]

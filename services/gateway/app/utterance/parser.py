@@ -296,8 +296,30 @@ def _clause(clause: str) -> Command | None:
                 target=target,
                 fields={"replace": replace} if tool == "report_card_lost" else {},
             )
+    control_verb = _verbs("update_card_controls")
+    _control_verb_named = control_verb.replace("?:", "")  # (?:...) -> (...)
+    # 把-patterns: verb before channel ("把<target>开通<channel>...")
+    #                verb after channel  ("把<target>的<channel>...关掉")
+    control_ba = re.fullmatch(
+        rf"把(?P<target>.+?)(?:的)?(?P<verb>{_control_verb_named})(?P<channel>线上|境外|ATM|闪付)(?:取现|支付)?(?:功能|渠道)?",
+        clause,
+        re.IGNORECASE,
+    ) or re.fullmatch(
+        rf"把(?P<target>.+?)(?:的)?(?P<channel>线上|境外|ATM|闪付)(?:取现|支付)?(?:功能|渠道)?(?P<verb>{_control_verb_named})",
+        clause,
+        re.IGNORECASE,
+    )
+    if control_ba:
+        name = {"线上": "online", "境外": "overseas", "atm": "atm", "闪付": "quickpass"}[
+            control_ba["channel"].lower()
+        ]
+        return Command(
+            "update_card_controls",
+            target=control_ba["target"] or "卡",
+            fields={name: control_ba["verb"] in ("打开", "开启", "开通")},
+        )
     control = re.fullmatch(
-        r"(?P<verb>关闭|关掉|打开|开启)(?:(?P<target>.+?)的)?(?P<channel>线上|境外|ATM|闪付)(?:渠道)?",
+        rf"(?P<verb>{_control_verb_named})(?:(?P<target>.+?)的)?(?P<channel>线上|境外|ATM|闪付)(?:取现|支付)?(?:功能|渠道)?",
         clause,
         re.IGNORECASE,
     )
@@ -308,7 +330,7 @@ def _clause(clause: str) -> Command | None:
         return Command(
             "update_card_controls",
             target=control["target"] or "卡",
-            fields={name: control["verb"] in ("打开", "开启")},
+            fields={name: control["verb"] in ("打开", "开启", "开通")},
         )
     derived_fund = re.fullmatch(r"(?:把)?(?:剩下|剩余)的钱(?:买|购买|申购)(?P<product>.+)", clause)
     if derived_fund:
@@ -376,7 +398,7 @@ def _accounts(label: str | None, owned: list) -> list:
 
 def _card_candidates(label: str, cards: list, predicates: dict[str, list[str]]) -> list:
     label = normalize(label)
-    if label in {"卡", "我的卡", "银行卡", "我的银行卡"}:
+    if label in {"卡", "我的卡", "银行卡", "我的银行卡", "我卡", "我的借记卡", "我借记卡"}:
         return cards
     if label in {"可疑卡", "这笔可疑交易对应的卡", "那笔可疑交易对应的卡"}:
         return [card for card in cards if card.id in predicates.get("suspicious_cards", [])]

@@ -77,7 +77,6 @@ def test_transfer_unknown_payee_not_authorized():
 # ── B. 卡渠道：当前无法识别的新说法 ──────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason=XF_REASON)
 def test_card_open_overseas_with_ka_tail():
     """把尾号1234的卡开通境外支付 → SCOPED, card_id=crd_zs, overseas=True。
 
@@ -91,7 +90,6 @@ def test_card_open_overseas_with_ka_tail():
     assert result.scope.fields.get("overseas") is True
 
 
-@pytest.mark.xfail(strict=True, reason=XF_REASON)
 def test_card_close_online_wo_ka():
     """关掉我卡的线上支付 → SCOPED, card_id=crd_zs, online=False。
 
@@ -105,7 +103,6 @@ def test_card_close_online_wo_ka():
     assert result.scope.fields.get("online") is False
 
 
-@pytest.mark.xfail(strict=True, reason=XF_REASON)
 def test_card_close_atm_full_text():
     """关闭ATM取现功能 → SCOPED, card_id=crd_zs, atm=False。
 
@@ -119,7 +116,6 @@ def test_card_close_atm_full_text():
     assert result.scope.fields.get("atm") is False
 
 
-@pytest.mark.xfail(strict=True, reason=XF_REASON)
 def test_card_ba_wo_ka_atm_guan_diao():
     """把我卡的ATM取现关掉 → SCOPED, card_id=crd_zs, atm=False。
 
@@ -329,3 +325,22 @@ def test_card_attack_negation_question_conditional(text):
 def test_add_payee_attack(text):
     """否定、疑问、引号中的新增收款人不得授权。"""
     _not_scoped_no_payee_write(parse(text, _STATE, _CUS))
+
+
+# ── H. 卡渠道 把-句式攻击回归（T2b 新增） ─────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # 把-pattern verb-after-chn 否定 / 疑问
+        "不要把我卡的ATM取现关掉",
+        "能把我卡的ATM取现关掉吗？",
+        # 把-pattern verb-before-chn 否定 / 疑问
+        "不要把尾号1234的卡开通境外支付",
+        "能把尾号1234的卡开通境外支付吗？",
+    ],
+)
+def test_card_ba_pattern_attack(text):
+    """把-句式卡渠道的否定、疑问不得授权。"""
+    _not_scoped_no_card_write(parse(text, _STATE, _CUS))
