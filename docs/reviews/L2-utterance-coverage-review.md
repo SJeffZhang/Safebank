@@ -1,8 +1,8 @@
 # L2 Utterance Coverage 安全评审报告
 
-**评审范围**: 54d08b4..8629cce (三提交: T2a 转账 + T2b 卡渠道 + T2c 新增收款人)  
-**评审者**: 独立只读安全评审 (DeepSeek)  
-**日期**: 2026-10-27  
+**评审范围**: 54d08b4..8629cce (三提交: T2a 转账 + T2b 卡渠道 + T2c 新增收款人)
+**评审者**: 独立只读安全评审 (DeepSeek)
+**日期**: 2026-10-27
 **结论**: REQUEST_CHANGES (P1 × 2, P2 × 5)
 
 ---
@@ -223,7 +223,7 @@ if m:
         return None
     return Command("add_payee", target=name)
 
-# After line 369 (把-name-verb pattern):  
+# After line 369 (把-name-verb pattern):
 m = re.fullmatch(rf"把(?P<name>.+?)({add_verb})", clause)
 if m:
     name = m["name"].strip()
@@ -237,9 +237,9 @@ P2-1/P2-2/P2-3: 在 `_parse_chinese_numeral` 遇到单数字跟在百/千/十后
 
 ## 修复复审（ec4b7aa..206d4e0）
 
-**复审者**: 独立只读安全复审 (DeepSeek)  
-**日期**: 2026-10-27  
-**范围**: `services/gateway/app/utterance/parser.py` 与 `tests/gateway/w1/test_parser_coverage.py`  
+**复审者**: 独立只读安全复审 (DeepSeek)
+**日期**: 2026-10-27
+**范围**: `services/gateway/app/utterance/parser.py` 与 `tests/gateway/w1/test_parser_coverage.py`
 **基线断言**: 协调者换回 8629cce parser.py 时新增攻击测试 5 failed，修复后 make test-w1 1747 passed，lint OK。
 
 ---

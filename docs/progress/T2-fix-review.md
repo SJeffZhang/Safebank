@@ -1,8 +1,8 @@
 # L2 Utterance Coverage 评审修复
 
-**日期**: 2026-10-27  
-**分支**: feat/l2-utterance-coverage  
-**评审报告**: docs/reviews/L2-utterance-coverage-review.md (REQUEST_CHANGES)  
+**日期**: 2026-10-27
+**分支**: feat/l2-utterance-coverage
+**评审报告**: docs/reviews/L2-utterance-coverage-review.md (REQUEST_CHANGES)
 **结论**: ✅ 全部修复
 
 ## 修复内容
