@@ -153,7 +153,7 @@ def money_cents(text: str) -> int | None:
         if value is None:
             return None
         value = Decimal(value)
-    elif not value_str.isdigit():
+    elif not value_str.isdigit() and not re.fullmatch(r"\d+(?:\.\d{1,2})?", value_str):
         return None  # bare multiplier (千/百/etc.) or mixed-script — not a valid amount
     else:
         value = Decimal(value_str)
