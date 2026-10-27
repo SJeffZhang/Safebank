@@ -51,12 +51,11 @@ def spending_summary(
             return date(year - 1, 12, 1)
         return date(year, mon - 1, 1)
 
-    prev_ym = f"{_prev_month_start():%Y-%m}"
-
     # Build daily buckets for target month.
     days_in_month: dict[date, int] = defaultdict(int)
 
-    # Category aggregates: {category_name -> {month:{amount_cents, count}, prev:{amount_cents, count}}}
+    # Category aggregates:
+    # {category_name -> {month:{amount_cents, count}, prev:{amount_cents, count}}}
     cat_amt: dict[str, dict[str, int]] = defaultdict(
         lambda: defaultdict(int)  # keys: "cur", "prev"
     )

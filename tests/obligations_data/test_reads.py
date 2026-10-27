@@ -8,6 +8,8 @@ test_obligations_data.py. Tests are executed with make test-obligations.
 import asyncio
 import socket
 import threading
+from datetime import UTC
+from datetime import datetime as dtm
 
 import httpx
 import pytest
@@ -1054,9 +1056,6 @@ def test_r11_days_31_invalid(obligations_db):
 
 
 # ─── R4 get_spending_summary ───
-
-from datetime import UTC
-from datetime import datetime as dtm
 
 tz_utc = UTC
 
