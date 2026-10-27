@@ -60,6 +60,13 @@ def _route_gather(state: AgentState) -> str:
     return "plan"
 
 
+def _route_plan_after(state: AgentState) -> str:
+    clarification = state.get("clarification") or {}
+    if clarification.get("source") == "l1_exhausted":
+        return "respond"
+    return "evaluate"
+
+
 def _route_evaluate(state: AgentState) -> str:
     decision = state.get("decision")
     if decision is None:
@@ -231,7 +238,7 @@ def build_graph(ports: Ports, checkpointer: BaseCheckpointSaver) -> CompiledStat
     builder.add_conditional_edges("gather", _route_gather, {"respond": "respond", "plan": "plan"})
     builder.add_conditional_edges(
         "plan",
-        _route_plan,
+        _route_plan_after,
         {"evaluate": "evaluate", "respond": "respond"},
     )
     builder.add_conditional_edges(
@@ -650,9 +657,7 @@ def build_gateway_graph(
 
     def _route_plan(state: AgentState) -> str:
         """Route plan node: exhausted-clarify → respond, normal → evaluate."""
-        if state.get("plan_exhausted_clarify"):
-            return "respond"
-        return "evaluate"
+        return _route_plan_after(state)
 
     # ── gather node (with optional gateway read bridge P1-3) ───────────
 
@@ -711,7 +716,6 @@ def build_gateway_graph(
             return {
                 "reply_draft": f"请提供以下信息：{'、'.join(ec.labels)}。",
                 "clarification": {"required_fields": ec.labels, "source": "l1_exhausted"},
-                "plan_exhausted_clarify": True,
             }
         if draft is None:
             raise PortFailure("plan port returned None")
