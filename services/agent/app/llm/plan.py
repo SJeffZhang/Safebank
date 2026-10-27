@@ -66,6 +66,56 @@ class ReferenceError(Exception):
         self.problems = problems
 
 
+class ExhaustedClarify(Exception):
+    """Retries exhausted and all remaining problems are user-only missing params.
+
+    Raised instead of ``ReferenceError`` so the plan graph node can route to
+    a clarification response instead of propagating the error.
+    """
+
+    def __init__(self, fields: list[str], labels: list[str]) -> None:
+        super().__init__("；".join(labels))
+        self.fields = fields
+        self.labels = labels
+
+
+# Params whose value can ONLY come from user input (not from gather reads).
+# When retries are exhausted and all remaining problems are {param}=__NULL__ / ""
+# for these params, the plan node produces a clarification instead of an error.
+_USER_ONLY_PARAMS: frozenset[str] = frozenset({"name", "account_no", "bank_name", "amount_cents"})
+
+# Chinese labels for user-only params (used in clarification text).
+_PARAM_LABELS: dict[str, str] = {
+    "name": "收款人姓名",
+    "account_no": "收款账号",
+    "bank_name": "开户银行",
+    "amount_cents": "转账金额",
+}
+
+
+def _exhausted_clarify_fields(
+    val_problems: list[str],
+) -> list[str] | None:
+    """Return the list of missing user-only field names if ALL val_problems are user-only.
+
+    Returns None if any problem is NOT a user-only missing-param issue
+    (e.g. ID prefix error) — in that case the caller should raise normally.
+    """
+    import re
+
+    fields: list[str] = []
+    for problem in val_problems:
+        m = re.match(r"steps\[\d+\]\.(\w+):\s*必填参数不能为 __NULL__ 或空字符串", problem)
+        if not m:
+            return None  # not a missing-param problem (e.g. ID prefix error)
+        field = m.group(1)
+        if field not in _USER_ONLY_PARAMS:
+            return None  # a required param but not user-only (e.g. from_account_id)
+        if field not in fields:
+            fields.append(field)
+    return fields if fields else None
+
+
 # Directly copyable identifiers/text whose value must equal the slice/pointer value verbatim.
 # Computed/normalized strings (dates, enum names, decimals) are excluded so they are not
 # false-rejected by a byte-wise equality that the frozen contract does not itself require.
@@ -375,6 +425,13 @@ class PlanAdapter:
                 return draft
             except ReferenceError as exc:
                 if attempt == self._max_retries:
+                    # If ALL remaining problems are user-only missing params,
+                    # produce a clarification instead of propagating the error.
+                    if not ref_problems and not sem_problems and not ch_problems:
+                        fields = _exhausted_clarify_fields(val_problems)
+                        if fields is not None:
+                            labels = [_PARAM_LABELS[f] for f in fields]
+                            raise ExhaustedClarify(fields, labels) from exc
                     raise
                 note = f"计划未通过本地校验：{'；'.join(exc.problems)}；请修正后重新生成。"
             except (LlmToolError, ValidationError, ValueError) as exc:
