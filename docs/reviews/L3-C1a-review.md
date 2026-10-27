@@ -1,9 +1,9 @@
 # L3-C1a 独立评审：R7 list_scheduled 与 R10 list_subscriptions
 
-**评审范围**：54d08b4..c41c29c  
-**评审文件**：`services/bank-backend/app/reads.py`、`tests/obligations_data/test_reads.py`  
-**评审日期**：2026-10-27  
-**评审方式**：只读静态核对  
+**评审范围**：54d08b4..c41c29c
+**评审文件**：`services/bank-backend/app/reads.py`、`tests/obligations_data/test_reads.py`
+**评审日期**：2026-10-27
+**评审方式**：只读静态核对
 **审查者**：DeepSeek 只读 worker
 
 ---
