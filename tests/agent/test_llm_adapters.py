@@ -1890,12 +1890,12 @@ def test_channel_verbs_match_intent_lexicon_yaml():
     yaml_verbs = tuple(lexicon["actions"]["update_card_controls"])
     assert _CHANNEL_VERBS == yaml_verbs, f"Agent verbs {_CHANNEL_VERBS} != yaml verbs {yaml_verbs}"
     # Direction mapping: true ↔ 开-class, false ↔ 关-class
-    assert _CHANNEL_TRUE_VERBS == frozenset(
-        {"开启", "打开", "开通"}
-    ), f"TRUE verbs mismatch: {_CHANNEL_TRUE_VERBS}"
-    assert _CHANNEL_FALSE_VERBS == frozenset(
-        {"关闭", "关掉"}
-    ), f"FALSE verbs mismatch: {_CHANNEL_FALSE_VERBS}"
+    assert _CHANNEL_TRUE_VERBS == frozenset({"开启", "打开", "开通"}), (
+        f"TRUE verbs mismatch: {_CHANNEL_TRUE_VERBS}"
+    )
+    assert _CHANNEL_FALSE_VERBS == frozenset({"关闭", "关掉"}), (
+        f"FALSE verbs mismatch: {_CHANNEL_FALSE_VERBS}"
+    )
     # Every verb must appear in exactly one direction set
     all_verbs = set(_CHANNEL_VERBS)
     assert _CHANNEL_TRUE_VERBS | _CHANNEL_FALSE_VERBS == all_verbs, "verbs not fully partitioned"
