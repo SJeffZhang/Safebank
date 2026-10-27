@@ -1715,7 +1715,7 @@ def test_empty_span_triggers_retry():
         "understanding": Understanding(intents=["add_payee"], needs_write=True),
         "reads": [],
     }
-    # text: 把[0]李[1]阿[2]姨[3]加[4]为[5]收[6]款[7]人[8]，[9]卡[10]号[11]6[12]...0[27]
+    # text: 把[0]李[1]阿[2]姨[3]加[4]为[5]收[6]款[7]人[8]，[9]卡[10]号[11]6[12]2[13]2[14]...0[27]
     bad = {
         "intents": ["add_payee"],
         "steps": [
@@ -1737,7 +1737,7 @@ def test_empty_span_triggers_retry():
                     },
                     {
                         "param": "account_no",
-                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [11, 28]},
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [12, 28]},
                     },
                 ],
             }
@@ -1765,7 +1765,7 @@ def test_empty_span_triggers_retry():
                     },
                     {
                         "param": "account_no",
-                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [11, 28]},
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [12, 28]},
                     },
                 ],
             }
