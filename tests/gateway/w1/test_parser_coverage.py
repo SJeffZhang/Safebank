@@ -408,3 +408,10 @@ def test_chinese_numeral_full_form_authorized():
     assert len(result.scope.transfers) == 1
     assert result.scope.transfers[0].target_fingerprint == "fp_ww"
     assert result.scope.transfers[0].amount_cents == 350000
+
+
+@pytest.mark.parametrize("text", ["新增收款人王五吧", "新增收款人李阿姨嘛"])
+def test_add_payee_trailing_particle_not_authorized(text):
+    """Re-review P2: sentence-final particles 吧/嘛 must not become part of a payee name."""
+    result = parse(text, bank_state(), "cus_zs")
+    assert result.status != "SCOPED"

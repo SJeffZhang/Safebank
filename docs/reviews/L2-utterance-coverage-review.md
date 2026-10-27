@@ -233,3 +233,95 @@ if m:
 ```
 
 P2-1/P2-2/P2-3: 在 `_parse_chinese_numeral` 遇到单数字跟在百/千/十后但非个位段首时返回 None（加歧义检测）。
+---
+
+## 修复复审（ec4b7aa..206d4e0）
+
+**复审者**: 独立只读安全复审 (DeepSeek)  
+**日期**: 2026-10-27  
+**范围**: `services/gateway/app/utterance/parser.py` 与 `tests/gateway/w1/test_parser_coverage.py`  
+**基线断言**: 协调者换回 8629cce parser.py 时新增攻击测试 5 failed，修复后 make test-w1 1747 passed，lint OK。
+
+---
+
+### 修复清单逐条核对
+
+| ID | 问题 | 修复方式 | 结论 |
+|---|---|---|---|
+| **P1-1** | add_payee verb-prefix 元语言旁路 | `_valid_payee_name(name)` 三重守卫（CJK 1–8 字 + 元语言词 + 动作动词）后调用 `_clause` 第 398 行 | **ADDRESSED** |
+| **P1-2** | add_payee 把-句式元语言旁路 | 同一 `_valid_payee_name` 在第 405 行守卫 | **ADDRESSED** |
+| **P2-1** | `三千五` → 3005 | `prev_big_mult` 标志：千/万 后遇无单位数字 → `return None` | **ADDRESSED** |
+| **P2-2** | `两万五` → 20005 | 同上——万之后 `prev_big_mult=True`，五 → None | **ADDRESSED** |
+| **P2-3** | `十十` → 20 | `prev_char == "十"` 时遇第二个十 → `return None` | **ADDRESSED** |
+| **P2-4** | 无逗号 add_payee 吞并 | `_PAYEE_NAME_ACTION_RE` 含 `转\|给`，合并名 `李阿姨给王五转三千元` → 拒止 | **ADDRESSED** |
+| **P2-5** | 缺元语言测试 | 新增 `test_add_payee_no_authorize_meta_and_merge`（4 参数化用例）+ `test_chinese_numeral_ambiguous_not_authorized`（3 用例）+ `test_chinese_numeral_full_form_authorized` | **ADDRESSED** |
+
+---
+
+### 攻击者视角探测
+
+#### 1. 收款人名白名单（1–8 汉字或·）+ 元语言/动作动词拒止
+
+以协调者断言为事实基础（1747 passed），结合代码静态追踪逐一判读：
+
+| 探针输入 | 子句名 | `_PAYEE_NAME_RE` | `_PAYEE_NAME_META_RE` | `_PAYEE_NAME_ACTION_RE` | 预期 | 实际 |
+|---|---|---|---|---|---|---|
+| `新增收款人李给王转三千` | `李给王转三千` | ✓ 5 字 | ✗ | **✗** `转` `给` 命中 | 拒止 | 拒止 ✓ |
+| `新增收款人王五吧` | `王五吧` | ✓ 3 字 | ✗（`吧` 不在元语言表） | ✗ | **需细查** | 通过（名=王五吧） |
+| `新增收款人欧阳·娜娜` | `欧阳·娜娜` | ✓ 6 字含 `·` | ✗ | ✗ | 通过 | 通过 ✓ |
+| `新增收款人阿姨` | `阿姨` | ✓ 2 字 | ✗ | ✗ | 通过 | 通过 ✓ |
+
+**`王五吧` 细查**：`_PAYEE_NAME_META_RE` 收录 `吗\|呢\|啥` 但**不收 `吧`**。中文中 `吧` 与 `吗` 功能对称，同为句末疑问/建议助词。「新增收款人王五吧」最自然的解读是 "要不加王五为收款人？"——payee_name 应为 `王五` 而非 `王五吧`。
+
+**风险评估**：该路径不产生资金绕过（add_payee 不涉及金额），危害限于收款人列表中出现含语气词的错误名称。用户可在确认面板发现并修正。**定级 P2**（名净度，非安全绕过）。
+
+#### 2. 中文数字解析
+
+| 探针 | 追踪 | 预期 | 结论 |
+|---|---|---|---|
+| `三千五百` | 三×千→3000 + 五×百→500 = 3500 | 3500 (350000 分) | ✓ |
+| `一万零五十` | 首字检测 `零` → `return None` | None | ✓ |
+| `两千零五` | 同上 | None | ✓ |
+| `十五` | 十→section=10 + 五→section+=5=15 | 15 (1500 分) | ✓ |
+| `一百一十` | 一×百→100 + 一×十→10 = 110 | 110 (11000 分) | ✓ |
+| `三千五` | 三×千→3000, prev_big_mult=True; 五→prev_big_mult → None | None | ✓ |
+| `两万五` | 二×万→20000, prev_big_mult=True; 五→prev_big_mult → None | None | ✓ |
+| `十十` | 十→section=10, prev_char="十"; 十→prev_char=="十" → None | None | ✓ |
+
+**无偏差**。所有完整写法正确解析，所有口语省略与非法形式正确拒止。
+
+#### 3. 整句级集成一致性
+
+- `给王五转三千五百元` → SCOPED, 350000 分（正例测试 `test_chinese_numeral_full_form_authorized`）✓
+- `给王五转三千五` → not SCOPED（拒止测试 `test_chinese_numeral_ambiguous_not_authorized`）✓
+- `给王五转两万五` → not SCOPED ✓
+- `给王五转十十元` → not SCOPED ✓
+
+---
+
+### 代码质量
+
+- `_valid_payee_name` 三守卫（长度/字符集 → 元语言 → 动作动词）**fail-closed**：任何一条失败 → `return None` → parse 返回 `Parsed()` (INTENT_UNCLEAR)。无部分授权路径。✓
+- `_parse_chinese_numeral` 的 `prev_big_mult` 和 `prev_char` 仅用于拒止，**不用于猜测歧义值**——遇到歧义返回 None 而非尝试猜测。符合「不猜测、不授权歧义金额」原则。✓
+- `_PAYEE_NAME_ACTION_RE` 既解决 P1（元语言）又同时解决 P2-4（无逗号吞并）——**以单一守卫覆盖两个独立攻击面**。✓
+- 测试覆盖：新攻击回归 7 条参数化无授权断言 + 1 条正例精确断言，无旧测试被删或放宽。✓
+
+---
+
+### 结论
+
+**APPROVE** — 无 P0/P1 残留。
+
+7 条评审发现全部 **ADDRESSED**。P1-1/P1-2（元语言→指令）经三重守卫闭合；P2-1/P2-2/P2-3（中文数字歧义）经符号级歧义检测拒止；P2-4（无逗号吞并）由同一动作动词守卫覆盖；P2-5（缺测试）已补 8 条断言。
+
+**P2 新增 1 条**（不阻塞合并）：
+
+| ID | 问题 | 详情 |
+|---|---|---|
+| **P2-6** | `吧` 不在句末助词拒止表 | `新增收款人王五吧` → name=`王五吧`（应为 `王五`）。`_PAYEE_NAME_META_RE` 含 `吗\|呢\|啥` 但不含 `吧`。建议加 `吧\|呀\|哦\|哟`（句末疑问/建议助词，非名组成部分）。无资金绕过风险，仅名净度。 |
+
+修复方式（≤3 行）：
+
+```python
+_PAYEE_NAME_META_RE = re.compile(r"是什么|什么意思|怎么|能不能|可以吗|可行吗|行吗|[吗呢啥吧呀哦哟]")
+```
