@@ -1490,3 +1490,413 @@ def test_plan_retries_on_missing_rationale():
     assert len(scripted.requests) == 2
     human = body_of(scripted, 1)["messages"][1]["content"]
     assert "rationale" in human
+
+
+# ── channel source verb validation ──
+
+
+def _card_controls_state(text="关掉我卡的线上支付"):
+    return {
+        "customer_id": "cus_a",
+        "session_id": "ses_a",
+        "utterances": [UtteranceRef(id="utt_typed", kind="typed", text=text)],
+        "understanding": Understanding(intents=["update_card_controls"], needs_write=True),
+        "reads": [
+            ReadRecord(
+                tool="get_cards",
+                source_ref="src_cards",
+                data={"items": [{"id": "crd_zs_1", "alias": "尾号1234"}]},
+            )
+        ],
+    }
+
+
+def test_channel_span_too_wide_triggers_retry():
+    """online=false with span covering verb+extra text → retry → exact verb span succeeds."""
+    # text: 关掉我卡的线上支付
+    #  关[0]掉[1]我[2]卡[3]的[4]线[5]上[6]支[7]付[8]
+    state = _card_controls_state()
+    # First attempt: online span [0,7]="关掉我卡的线上" (contains verb but too wide)
+    bad = {
+        "intents": ["update_card_controls"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "update_card_controls",
+                "args": {
+                    "card_id": "crd_zs_1",
+                    "online": "OFF",
+                    "overseas": "KEEP",
+                    "atm": "KEEP",
+                    "quickpass": "KEEP",
+                },
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "card_id",
+                        "source": {"kind": "read", "ref": "src_cards", "pointer": "/items/0/id"},
+                    },
+                    {
+                        "param": "online",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [0, 7]},
+                    },
+                ],
+            }
+        ],
+        "rationale": "test_span_too_wide",
+    }
+    # Second attempt: online span [0,2] = "关掉" (exact verb, correct direction)
+    good = {
+        "intents": ["update_card_controls"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "update_card_controls",
+                "args": {
+                    "card_id": "crd_zs_1",
+                    "online": "OFF",
+                    "overseas": "KEEP",
+                    "atm": "KEEP",
+                    "quickpass": "KEEP",
+                },
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "card_id",
+                        "source": {"kind": "read", "ref": "src_cards", "pointer": "/items/0/id"},
+                    },
+                    {
+                        "param": "online",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [0, 2]},
+                    },
+                ],
+            }
+        ],
+        "rationale": "test_exact_verb",
+    }
+    scripted = ScriptedLLM(
+        [
+            tool_response("submit_action_plan", bad),
+            tool_response("submit_action_plan", good),
+        ]
+    )
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    draft = PlanAdapter(llm)(state, ctx())
+    assert len(scripted.requests) == 2
+    human = body_of(scripted, 1)["messages"][1]["content"]
+    assert "动作词" in human
+    assert draft.steps[0].args.online is False
+
+
+def test_channel_span_exact_verb_passes_first_time():
+    """online=false with span exactly '关掉' → passes on first attempt."""
+    # text: 关掉我卡的线上支付
+    #  关[0]掉[1] — span [0,2] = "关掉" exact verb, direction matches
+    state = _card_controls_state()
+    plan = {
+        "intents": ["update_card_controls"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "update_card_controls",
+                "args": {
+                    "card_id": "crd_zs_1",
+                    "online": "OFF",
+                    "overseas": "KEEP",
+                    "atm": "KEEP",
+                    "quickpass": "KEEP",
+                },
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "card_id",
+                        "source": {"kind": "read", "ref": "src_cards", "pointer": "/items/0/id"},
+                    },
+                    {
+                        "param": "online",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [0, 2]},
+                    },
+                ],
+            }
+        ],
+        "rationale": "test",
+    }
+    scripted = ScriptedLLM([tool_response("submit_action_plan", plan)])
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    draft = PlanAdapter(llm)(state, ctx())
+    assert len(scripted.requests) == 1
+    assert draft.steps[0].args.online is False
+
+
+def test_channel_span_overseas_with_verb_passes():
+    """overseas=true with span exactly '开通' → passes first time."""
+    # text: 把尾号1234的卡开通境外支付
+    #  把[0]尾[1]号[2]1[3]2[4]3[5]4[6]的[7]卡[8]开[9]通[10]境[11]外[12]支[13]付[14]
+    # span [9,11] = "开通" exact verb, direction matches
+    state = _card_controls_state("把尾号1234的卡开通境外支付")
+    plan = {
+        "intents": ["update_card_controls"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "update_card_controls",
+                "args": {
+                    "card_id": "crd_zs_1",
+                    "online": "KEEP",
+                    "overseas": "ON",
+                    "atm": "KEEP",
+                    "quickpass": "KEEP",
+                },
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "card_id",
+                        "source": {"kind": "read", "ref": "src_cards", "pointer": "/items/0/id"},
+                    },
+                    {
+                        "param": "overseas",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [9, 11]},
+                    },
+                ],
+            }
+        ],
+        "rationale": "test",
+    }
+    scripted = ScriptedLLM([tool_response("submit_action_plan", plan)])
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    draft = PlanAdapter(llm)(state, ctx())
+    assert len(scripted.requests) == 1
+    assert draft.steps[0].args.overseas is True
+
+
+def test_channel_keep_no_source_ok():
+    """Channel param set to KEEP with no source declaration passes."""
+    state = _card_controls_state()
+    plan = {
+        "intents": ["update_card_controls"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "update_card_controls",
+                "args": {
+                    "card_id": "crd_zs_1",
+                    "online": "OFF",
+                    "overseas": "KEEP",
+                    "atm": "KEEP",
+                    "quickpass": "KEEP",
+                },
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "card_id",
+                        "source": {"kind": "read", "ref": "src_cards", "pointer": "/items/0/id"},
+                    },
+                    {
+                        "param": "online",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [0, 2]},
+                    },
+                ],
+            }
+        ],
+        "rationale": "test",
+    }
+    scripted = ScriptedLLM([tool_response("submit_action_plan", plan)])
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    PlanAdapter(llm)(state, ctx())
+    assert len(scripted.requests) == 1
+
+
+def test_empty_span_triggers_retry():
+    """Empty span [0,0] → retry with feedback → success on second attempt."""
+    state = {
+        "customer_id": "cus_a",
+        "session_id": "ses_a",
+        "utterances": [
+            UtteranceRef(
+                id="utt_typed",
+                kind="typed",
+                text="把李阿姨加为收款人，卡号6222021234567890",
+            )
+        ],
+        "understanding": Understanding(intents=["add_payee"], needs_write=True),
+        "reads": [],
+    }
+    # text: 把[0]李[1]阿[2]姨[3]加[4]为[5]收[6]款[7]人[8]，[9]卡[10]号[11]6[12]2[13]2[14]...0[27]
+    bad = {
+        "intents": ["add_payee"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "add_payee",
+                "args": {
+                    "name": "李阿姨",
+                    "account_no": "6222021234567890",
+                    "bank_name": "工商银行",
+                    "phone": "__NULL__",
+                    "alias": "__NULL__",
+                },
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "name",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [0, 0]},
+                    },
+                    {
+                        "param": "account_no",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [12, 28]},
+                    },
+                ],
+            }
+        ],
+        "rationale": "test",
+    }
+    good = {
+        "intents": ["add_payee"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "add_payee",
+                "args": {
+                    "name": "李阿姨",
+                    "account_no": "6222021234567890",
+                    "bank_name": "工商银行",
+                    "phone": "__NULL__",
+                    "alias": "__NULL__",
+                },
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "name",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [1, 4]},
+                    },
+                    {
+                        "param": "account_no",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [12, 28]},
+                    },
+                ],
+            }
+        ],
+        "rationale": "test",
+    }
+    scripted = ScriptedLLM(
+        [
+            tool_response("submit_action_plan", bad),
+            tool_response("submit_action_plan", good),
+        ]
+    )
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    draft = PlanAdapter(llm)(state, ctx())
+    assert len(scripted.requests) == 2
+    assert draft.steps[0].args.name == "李阿姨"
+
+
+def test_channel_span_wrong_direction_triggers_retry():
+    """overseas=false with span exactly '开通' (开-class verb) → retry → correct."""
+    # text: 把尾号1234的卡开通境外支付
+    #  开[9]通[10] — span [9,11] = "开通" exact verb, but direction is wrong
+    # (开通 is a true-class verb, but overseas=false needs a false-class verb)
+    state = _card_controls_state("把尾号1234的卡开通境外支付")
+    # First attempt: overseas=false with span "开通" — wrong direction
+    bad = {
+        "intents": ["update_card_controls"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "update_card_controls",
+                "args": {
+                    "card_id": "crd_zs_1",
+                    "online": "KEEP",
+                    "overseas": "OFF",
+                    "atm": "KEEP",
+                    "quickpass": "KEEP",
+                },
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "card_id",
+                        "source": {"kind": "read", "ref": "src_cards", "pointer": "/items/0/id"},
+                    },
+                    {
+                        "param": "overseas",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [9, 11]},
+                    },
+                ],
+            }
+        ],
+        "rationale": "wrong_direction",
+    }
+    # Second attempt: overseas=false with span [7,9]="关闭" — but "关闭" is not in this text...
+    # Let's use online=true with span [9,11]="开通" instead, which is direction-correct.
+    good = {
+        "intents": ["update_card_controls"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "update_card_controls",
+                "args": {
+                    "card_id": "crd_zs_1",
+                    "online": "KEEP",
+                    "overseas": "ON",
+                    "atm": "KEEP",
+                    "quickpass": "KEEP",
+                },
+                "depends_on": [],
+                "arg_sources": [
+                    {
+                        "param": "card_id",
+                        "source": {"kind": "read", "ref": "src_cards", "pointer": "/items/0/id"},
+                    },
+                    {
+                        "param": "overseas",
+                        "source": {"kind": "utterance", "ref": "utt_typed", "span": [9, 11]},
+                    },
+                ],
+            }
+        ],
+        "rationale": "corrected_direction",
+    }
+    scripted = ScriptedLLM(
+        [
+            tool_response("submit_action_plan", bad),
+            tool_response("submit_action_plan", good),
+        ]
+    )
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    draft = PlanAdapter(llm)(state, ctx())
+    assert len(scripted.requests) == 2
+    human = body_of(scripted, 1)["messages"][1]["content"]
+    assert "方向" in human
+    assert draft.steps[0].args.overseas is True
+
+
+def test_channel_verbs_match_intent_lexicon_yaml():
+    """Agent's _CHANNEL_VERBS must stay in sync with intent_lexicon.yaml update_card_controls.
+    Direction-aware sets must reflect the semantic split from the lexicon verbs."""
+    from pathlib import Path
+
+    import yaml
+
+    from services.agent.app.llm.plan import (
+        _CHANNEL_FALSE_VERBS,
+        _CHANNEL_TRUE_VERBS,
+        _CHANNEL_VERBS,
+    )
+
+    yaml_path = (
+        Path(__file__).parent.parent.parent / "services/gateway/policies/intent_lexicon.yaml"
+    )
+    with open(yaml_path) as f:
+        lexicon = yaml.safe_load(f)
+    yaml_verbs = tuple(lexicon["actions"]["update_card_controls"])
+    assert _CHANNEL_VERBS == yaml_verbs, f"Agent verbs {_CHANNEL_VERBS} != yaml verbs {yaml_verbs}"
+    # Direction mapping: true ↔ 开-class, false ↔ 关-class
+    assert _CHANNEL_TRUE_VERBS == frozenset({"开启", "打开", "开通"}), (
+        f"TRUE verbs mismatch: {_CHANNEL_TRUE_VERBS}"
+    )
+    assert _CHANNEL_FALSE_VERBS == frozenset({"关闭", "关掉"}), (
+        f"FALSE verbs mismatch: {_CHANNEL_FALSE_VERBS}"
+    )
+    # Every verb must appear in exactly one direction set
+    all_verbs = set(_CHANNEL_VERBS)
+    assert _CHANNEL_TRUE_VERBS | _CHANNEL_FALSE_VERBS == all_verbs, "verbs not fully partitioned"
+    assert not (_CHANNEL_TRUE_VERBS & _CHANNEL_FALSE_VERBS), "verbs overlap between directions"
