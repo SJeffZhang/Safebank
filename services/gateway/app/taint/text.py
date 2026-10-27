@@ -26,7 +26,12 @@ def matches(value, text: str, param: str, state, customer_id: str | None = None)
         raw = re.sub(r"^(人民币|CNY|RMB|¥|￥)", "", raw, flags=re.I)
         raw = re.sub(r"(元|块钱|块)$", "", raw)
         if not re.fullmatch(r"[0-9]+(?:\.[0-9]{1,2})?", raw):
-            return False
+            # Fallback: reuse G3 parser's Chinese numeral support.  Colloquial
+            # abbreviations (三千五, 两万五) return None and stay unknown.
+            from ..utterance.parser import money_cents as parse_money
+
+            parsed = parse_money(text)
+            return parsed is not None and parsed == value
         try:
             return Decimal(raw) * 100 == value
         except InvalidOperation:
