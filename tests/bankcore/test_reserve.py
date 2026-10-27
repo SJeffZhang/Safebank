@@ -875,3 +875,34 @@ def test_inactive_billing_is_not_reserved_but_billing_stays():
     assert report.obligations == ()
     assert report.total_reserve_cents == 0
     assert "bill_video" in state.obligations.billings
+
+
+# ---- upcoming_window validation ----
+
+
+@pytest.mark.parametrize("days", [0, -1, 31, 365, 7.0, True, "7", None])
+def test_upcoming_window_rejects_invalid_days(days):
+    with pytest.raises(ValueError, match="1.*30"):
+        bankcore.upcoming_window(raw_projection_state(), days=days)
+
+
+def test_upcoming_window_rejects_null_obligations():
+    state = base_state()
+    with pytest.raises(ValueError, match="not loaded"):
+        bankcore.upcoming_window(state, days=7)
+
+
+def test_upcoming_window_rejects_incomplete_coverage():
+    state = raw_projection_state(covered=("cus_a",))
+    with pytest.raises(ValueError, match="coverage"):
+        bankcore.upcoming_window(state, days=7)
+
+
+def test_upcoming_window_rejects_unknown_account():
+    with pytest.raises(ValueError):
+        bankcore.upcoming_window(raw_projection_state(), days=7, account_id="acc_missing")
+
+
+def test_upcoming_window_rejects_internal_account():
+    with pytest.raises(ValueError):
+        bankcore.upcoming_window(raw_projection_state(), days=7, account_id="acc_seed_equity")

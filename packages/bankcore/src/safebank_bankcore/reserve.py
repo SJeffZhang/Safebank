@@ -54,6 +54,12 @@ class ShortfallReport:
     obligations: tuple[Obligation, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class UpcomingWindow:
+    accounts: Mapping[str, AccountProjection]
+    obligations: tuple[Obligation, ...]
+
+
 def _business_time(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("obligation timestamps must include a timezone")
@@ -317,6 +323,58 @@ def _raw_obligations(
     return result
 
 
+def _compute_window(
+    state: BankState, days: int, *, account_id: str | None = None
+) -> tuple[tuple[Obligation, ...], dict[str, AccountProjection]]:
+    """Shared computation core used by projected_shortfall and upcoming_window.
+
+    Validates snapshot coverage, expands raw obligations in (start, end], sorts,
+    and computes per-account reserve / shortfall / max_outflow.
+    When *account_id* is given only that account's obligations and projection
+    are returned; unknown or internal account IDs are rejected.
+    """
+    snapshot = state.obligations
+    if snapshot is None:
+        raise ValueError("obligations were not loaded; cannot project reserves")
+    if set(snapshot.covered_customer_ids) != set(state.versions):
+        raise ValueError("obligation coverage does not match state versions")
+    start = _business_time(state.sim_now)
+    end = start + timedelta(days=days)
+    obligations = _raw_obligations(state, snapshot, start, end)
+    obligations.sort(key=lambda item: (item.due_at, item.rank, item.id))
+
+    if account_id is not None:
+        _customer_account(state, account_id)
+        obligations = [o for o in obligations if o.account_id == account_id]
+        account_ids: set[str] = {account_id}
+    else:
+        account_ids = {
+            aid for aid, acct in state.accounts.items() if acct.customer_id is not None
+        }
+
+    available = {
+        aid: _customer_account(state, aid).available_cents
+        for aid in sorted(account_ids)
+    }
+    prefixes: dict[str, int] = dict.fromkeys(available, 0)
+    reserves: dict[str, int] = dict.fromkeys(available, 0)
+    for item in obligations:
+        if item.account_id not in prefixes:
+            continue
+        prefixes[item.account_id] += item.delta_cents
+        reserves[item.account_id] = max(reserves[item.account_id], -prefixes[item.account_id])
+
+    accounts = {
+        aid: AccountProjection(
+            reserve_cents=reserves[aid],
+            shortfall_cents=max(0, reserves[aid] - amount),
+            max_outflow_cents=amount - reserves[aid],
+        )
+        for aid, amount in available.items()
+    }
+    return tuple(obligations), accounts
+
+
 def projected_shortfall(state: BankState, *, days: int = 7) -> ShortfallReport:
     """Compute per-account prefix reserves from a complete seven-day BankState.
 
@@ -332,37 +390,33 @@ def projected_shortfall(state: BankState, *, days: int = 7) -> ShortfallReport:
     """
     if type(days) is not int or days != 7:
         raise ValueError("projected_shortfall supports only integer days=7")
-    snapshot = state.obligations
-    if snapshot is None:
-        raise ValueError("obligations were not loaded; cannot project reserves")
-    if set(snapshot.covered_customer_ids) != set(state.versions):
-        raise ValueError("obligation coverage does not match state versions")
-    start = _business_time(state.sim_now)
-    end = start + timedelta(days=days)
-    obligations = _raw_obligations(state, snapshot, start, end)
-    obligations.sort(key=lambda item: (item.due_at, item.rank, item.id))
-
-    available = {
-        account_id: _customer_account(state, account_id).available_cents
-        for account_id, account in sorted(state.accounts.items())
-        if account.customer_id is not None
-    }
-    prefixes = dict.fromkeys(available, 0)
-    reserves = dict.fromkeys(available, 0)
-    for item in obligations:
-        prefixes[item.account_id] += item.delta_cents
-        reserves[item.account_id] = max(reserves[item.account_id], -prefixes[item.account_id])
-    accounts = {
-        account_id: AccountProjection(
-            reserve_cents=reserves[account_id],
-            shortfall_cents=max(0, reserves[account_id] - amount),
-            max_outflow_cents=amount - reserves[account_id],
-        )
-        for account_id, amount in available.items()
-    }
+    obligations, accounts = _compute_window(state, days=7)
     return ShortfallReport(
         accounts=MappingProxyType(accounts),
         total_shortfall_cents=sum(item.shortfall_cents for item in accounts.values()),
         total_reserve_cents=sum(item.reserve_cents for item in accounts.values()),
-        obligations=tuple(obligations),
+        obligations=obligations,
+    )
+
+
+def upcoming_window(
+    state: BankState, *, days: int, account_id: str | None = None
+) -> UpcomingWindow:
+    """Project obligations over a configurable 1–30 day window.
+
+    Uses the same raw obligation snapshot, business-timezone normalization,
+    recurrence rules and per-account reserve / max_outflow arithmetic as
+    ``projected_shortfall``, but accepts any integer *days* in [1, 30].
+
+    When *account_id* is given only that account's obligations and projection
+    are included; an unknown, missing or internal account ID raises ValueError.
+
+    ``max_outflow_cents`` may be negative and is reported as-is (not clamped).
+    """
+    if type(days) is not int or not 1 <= days <= 30:
+        raise ValueError("upcoming_window requires integer days in [1, 30]")
+    obligations, accounts = _compute_window(state, days=days, account_id=account_id)
+    return UpcomingWindow(
+        accounts=MappingProxyType(accounts),
+        obligations=obligations,
     )
