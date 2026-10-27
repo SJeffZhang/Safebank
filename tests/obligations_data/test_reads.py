@@ -14,11 +14,29 @@ import pytest
 import uvicorn
 from app.db import engine
 from app.main import create_app
+from sqlalchemy import text as sa_text
 from sqlalchemy.pool import NullPool
 
 from tests.obligations_data.fixtures import KEY, NOW, install_core, install_obligations
 
 SERVICE_TOKEN = "obligations-test-token"
+
+
+@pytest.fixture(autouse=True)
+def clean_database(obligations_db):
+    """Truncate every application table before each test for an isolated dataset."""
+
+    async def _truncate():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            from app import models as m
+
+            names = ",".join(m.metadata.tables)
+            await conn.execute(sa_text(f"TRUNCATE {names} CASCADE"))
+        await admin.dispose()
+
+    asyncio.run(_truncate())
+    yield
 
 
 def free_port() -> int:
@@ -34,16 +52,17 @@ def _serve(app, port):
     return server
 
 
-def _read(client, tool, args, *, auth=SERVICE_TOKEN, timeout=10.0):
+def _read(client, tool, args, *, customer_id="cus_zs", auth=SERVICE_TOKEN, timeout=10.0):
     return client.post(
-        "/internal/read",
-        json={"tool": tool, "args": args, "customer_id": "cus_zs"},
+        f"/internal/read/{tool}",
+        json={"args": args, "customer_id": customer_id},
         headers={"X-Service-Token": auth},
         timeout=timeout,
     )
 
 
 # ─── fixture helpers ───
+
 
 async def _prepare_app(obligations_db) -> tuple:
     """Install core + obligations and return (app, port, admin_engine)."""
@@ -62,7 +81,11 @@ async def _await_app(client, port):
     """Wait for uvicorn to become ready."""
     for _ in range(40):
         try:
-            r = await client.get(f"http://127.0.0.1:{port}/health", timeout=2.0)
+            r = await client.get(
+                f"http://127.0.0.1:{port}/health",
+                headers={"X-Service-Token": SERVICE_TOKEN},
+                timeout=2.0,
+            )
             if r.status_code == 200:
                 return
         except httpx.TransportError:
@@ -141,8 +164,8 @@ def test_r7_cross_customer_invisible(obligations_db):
             await _await_app(client, port)
             # Request as cus_ls — they have zero scheduled instructions in fixtures.
             r = await client.post(
-                "/internal/read",
-                json={"tool": "list_scheduled", "args": {"status": "ALL", "limit": 50}, "customer_id": "cus_ls"},
+                "/internal/read/list_scheduled",
+                json={"args": {"status": "ALL", "limit": 50}, "customer_id": "cus_ls"},
                 headers={"X-Service-Token": SERVICE_TOKEN},
                 timeout=10.0,
             )
@@ -168,7 +191,9 @@ def test_r7_invalid_cursor_returns_422(obligations_db):
         _serve(app, port)
         async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
             await _await_app(client, port)
-            r = await _read(client, "list_scheduled", {"status": "ALL", "limit": 50, "cursor": "garbage"})
+            r = await _read(
+                client, "list_scheduled", {"status": "ALL", "limit": 50, "cursor": "garbage"}
+            )
             assert r.status_code == 422, r.text
         await admin.dispose()
         await runtime.dispose()
@@ -182,9 +207,39 @@ def test_r7_pagination_respects_limit(obligations_db):
     async def check():
         admin = engine(obligations_db.admin_url, poolclass=NullPool)
         runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        from datetime import datetime
+        from datetime import time as dt_time
+
         async with admin.begin() as conn:
             await install_core(conn)
             await install_obligations(conn)
+            # Add a second scheduled instruction so there's >1 item for pagination.
+            from app import models as m
+
+            await conn.execute(
+                m.standing_instructions.insert().values(
+                    id="si_zs_rent",
+                    kind="SCHEDULED_TRANSFER",
+                    customer_id="cus_zs",
+                    status="ACTIVE",
+                    amount_type="FIXED",
+                    recurrence="PERIODIC",
+                    from_account_id="acc_zs_chk",
+                    payee_id="pye_zs_wwu",
+                    to_account_id=None,
+                    amount_cents=50000,
+                    period="MONTHLY",
+                    anchor_day=10,
+                    weekday=None,
+                    time_of_day=dt_time(9, 0),
+                    next_run_at=datetime.fromisoformat("2026-11-10T09:00:00+08:00"),
+                    end_at=None,
+                    priority="NORMAL",
+                    grant_scope_hash="0" * 64,
+                    source_plan_id="pln_seed",
+                    created_at=NOW,
+                )
+            )
         app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
         port = free_port()
         _serve(app, port)
@@ -195,10 +250,14 @@ def test_r7_pagination_respects_limit(obligations_db):
             b1 = r1.json()
             assert len(b1["items"]) == 1
             assert b1["next_cursor"] is not None
-            r2 = await _read(client, "list_scheduled", {"status": "ALL", "limit": 50, "cursor": b1["next_cursor"]})
+            r2 = await _read(
+                client,
+                "list_scheduled",
+                {"status": "ALL", "limit": 50, "cursor": b1["next_cursor"]},
+            )
             assert r2.status_code == 200, r2.text
             b2 = r2.json()
-            assert b2["items"] == []
+            assert len(b2["items"]) == 1
             assert b2["next_cursor"] is None
         await admin.dispose()
         await runtime.dispose()
@@ -210,7 +269,7 @@ def test_r7_pagination_respects_limit(obligations_db):
 
 
 def test_r10_returns_subscriptions_with_totals(obligations_db):
-    """cus_zs has 5 ACTIVE subscriptions; totals should sum only ACTIVE ones."""
+    """cus_zs has 4 ACTIVE subscriptions (si_zs_video, si_zs_music, si_zs_cloud, si_zs_gym)."""
 
     async def check():
         admin = engine(obligations_db.admin_url, poolclass=NullPool)
@@ -226,26 +285,23 @@ def test_r10_returns_subscriptions_with_totals(obligations_db):
             r = await _read(client, "list_subscriptions", {"status": "ALL", "limit": 50})
             assert r.status_code == 200, r.text
             body = r.json()
-            assert len(body["items"]) == 5
+            assert len(body["items"]) == 4
 
             ids = {i["instruction_id"] for i in body["items"]}
-            assert ids == {"si_zs_video", "si_zs_music", "si_zs_cloud", "si_zs_gym", "si_zs_mom"}
+            assert ids == {"si_zs_video", "si_zs_music", "si_zs_cloud", "si_zs_gym"}
 
-            # All ACTIVE → totals equal sum of all
             nb = body["normalization_basis"]
             assert nb["weekly_to_annual_factor"] == 52
             assert nb["monthly_to_annual_factor"] == 12
             assert nb["annual_to_monthly"] == "floor_div_12"
 
-            # expected: video=3000×12=36000, music=1500×12=18000, cloud=2100*12=25200, gym=19900*12=238800, mom is SCHEDULED_TRANSFER not in subscriptions
-            # Wait — si_zs_mom is ScheduledInstruction, not MerchantMandate. Let me check:
-            # In _derive_views, ScheduledInstruction → instructions list (ScheduledView)
-            # MerchantMandate → subscriptions list (SubscriptionView)
-            # So si_zs_mom is NOT in subscriptions. Only 4 subscriptions.
-            # Actually I need to re-count. The fixtures have si_zs_video, si_zs_music, si_zs_cloud,
-            # si_zs_gym all as MerchantMandate → subscription list has 4 items.
-            await admin.dispose()
-            await runtime.dispose()
+            # All 4 ACTIVE: video=3000, music=1500, cloud=2100, gym=19900 (all MONTHLY)
+            # total_monthly = 3000+1500+2100+19900 = 26500
+            # total_annual = 26500×12 = 318000
+            assert body["total_monthly_cents"] == 26500
+            assert body["total_annual_cents"] == 318000
+        await admin.dispose()
+        await runtime.dispose()
 
     asyncio.run(check())
 
@@ -261,6 +317,7 @@ def test_r10_totals_only_active(obligations_db):
             await install_obligations(conn)
             # Mark si_zs_video as DELETED
             from app import models as m
+
             await conn.execute(
                 m.standing_instructions.update()
                 .where(m.standing_instructions.c.id == "si_zs_video")
@@ -274,8 +331,8 @@ def test_r10_totals_only_active(obligations_db):
             r = await _read(client, "list_subscriptions", {"status": "ALL", "limit": 50})
             assert r.status_code == 200, r.text
             body = r.json()
-            # 5 total items, 1 DELETED + 4 ACTIVE
-            assert len(body["items"]) == 5
+            # 4 total items (1 DELETED + 3 ACTIVE)
+            assert len(body["items"]) == 4
             statuses = {i["status"] for i in body["items"]}
             assert statuses == {"ACTIVE", "DELETED"}
 
@@ -298,6 +355,7 @@ def test_r10_status_filter_deleted(obligations_db):
             await install_core(conn)
             await install_obligations(conn)
             from app import models as m
+
             await conn.execute(
                 m.standing_instructions.update()
                 .where(m.standing_instructions.c.id == "si_zs_video")
@@ -361,7 +419,9 @@ def test_r10_invalid_cursor_returns_422(obligations_db):
         _serve(app, port)
         async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
             await _await_app(client, port)
-            r = await _read(client, "list_subscriptions", {"status": "ALL", "limit": 50, "cursor": "bad"})
+            r = await _read(
+                client, "list_subscriptions", {"status": "ALL", "limit": 50, "cursor": "bad"}
+            )
             assert r.status_code == 422, r.text
         await admin.dispose()
         await runtime.dispose()
@@ -375,15 +435,22 @@ def test_r10_annualization_weekly_monthly(obligations_db):
     async def check():
         admin = engine(obligations_db.admin_url, poolclass=NullPool)
         runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        from datetime import datetime
         from datetime import time as dt_time
+
         async with admin.begin() as conn:
             await install_core(conn)
             await install_obligations(conn)
             from app import models as m
+
             # Insert a WEEKLY merchant and billing + mandate
             await conn.execute(
                 m.merchants.insert().values(
-                    id="mer_weekly", name="周卡服务", mcc="5817", category="娱乐", usage_expected=False
+                    id="mer_weekly",
+                    name="周卡服务",
+                    mcc="5817",
+                    category="娱乐",
+                    usage_expected=False,
                 )
             )
             await conn.execute(
@@ -397,7 +464,7 @@ def test_r10_annualization_weekly_monthly(obligations_db):
                     anchor_day=None,
                     weekday=1,
                     time_of_day=dt_time(6, 0),
-                    next_due_at="2026-10-20T06:00:00+08:00",
+                    next_due_at=datetime.fromisoformat("2026-10-20T06:00:00+08:00"),
                     active=True,
                     created_at=NOW,
                 )
@@ -434,8 +501,8 @@ def test_r10_annualization_weekly_monthly(obligations_db):
             r = await _read(client, "list_subscriptions", {"status": "ALL", "limit": 50})
             assert r.status_code == 200, r.text
             body = r.json()
-            # 5 old + 1 new = 6
-            assert len(body["items"]) == 6
+            # 4 original + 1 new weekly = 5
+            assert len(body["items"]) == 5
 
             # Find the WEEKLY item
             weekly = [i for i in body["items"] if i["period"] == "WEEKLY"]
@@ -445,7 +512,8 @@ def test_r10_annualization_weekly_monthly(obligations_db):
             assert w["annual_cost_cents"] == 1000 * 52  # = 52000
 
             # Totals: ACTIVE subscriptions now 5 old + 1 new
-            # MONTHLY: 3000+1500+2100+19900 = 26500 (only the original 4, mom is ScheduledInstruction)
+            # MONTHLY: 3000+1500+2100+19900 = 26500 (only original 4; mom is
+            # ScheduledInstruction, not in subscriptions)
             # WEEKLY: monthly = floor(1000*52/12) = floor(52000/12) = 4333
             # Expected total_monthly = 26500 + 4333 = 30833
             # Expected total_annual = (3000+1500+2100+19900)*12 + 52000 = 318000 + 52000 = 370000
