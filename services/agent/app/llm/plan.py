@@ -46,9 +46,10 @@ _SYSTEM = (
     "付款账户未指定时，若已读数据中恰好有一个可用付款账户则用其 id 并以 read 来源引用；"
     "多个或零个账户时不要编造、不要空串。"
     "update_card_controls 的渠道开关（online/overseas/atm/quickpass）若从用户原话取值，"
-    "utterance span 必须同时覆盖动作词（关闭/关掉/打开/开启/开通）及渠道名，"
-    "例如「关掉我卡的线上支付」中 online 的 span 应覆盖「关掉…线上」或整段；"
-    "不得让 span 只覆盖渠道名（如「线上」「境外」）。"
+    "utterance span 必须恰好对应动作词本身（关闭/关掉/开启/打开/开通），"
+    "不要包含渠道名或其他文字；例如「关掉我卡的线上支付」中 online=false 的 span 只对应"
+    "「关掉」两个字（[0,2)），「开通境外支付」中 overseas=true 的 span 只对应「开通」；"
+    "方向必须一致：true 用开类动词（开启/打开/开通），false 用关类动词（关闭/关掉）。"
     "update_card_controls 的渠道参数值为 KEEP 时不要声明来源。"
 )
 
@@ -130,6 +131,13 @@ _CHANNEL_PARAMS: frozenset[str] = frozenset({"online", "overseas", "atm", "quick
 # Must stay in sync with services/gateway/policies/intent_lexicon.yaml update_card_controls.
 _CHANNEL_VERBS: tuple[str, ...] = ("关闭", "开启", "关掉", "打开", "开通")
 
+# Direction-aware verb sets for channel switch span validation.
+# The span text (normalized) must exactly equal one of these words.
+# Direction mapping must stay consistent with services/gateway/app/taint/text.py
+# matches() boolean sets.
+_CHANNEL_TRUE_VERBS: frozenset[str] = frozenset({"开启", "打开", "开通"})
+_CHANNEL_FALSE_VERBS: frozenset[str] = frozenset({"关闭", "关掉"})
+
 
 def _required_value_problems(draft: PlanDraft, state: AgentState) -> list[str]:
     """Catch required params filled with __NULL__, empty, or wrong id prefix.
@@ -209,13 +217,16 @@ def _semantic_problems(draft: PlanDraft, state: AgentState) -> list[str]:
 
 
 def _channel_source_problems(draft: PlanDraft, state: AgentState) -> list[str]:
-    """Catch update_card_controls utterance spans that don't cover a channel verb.
+    """Catch update_card_controls utterance spans that don't match a direction-aware verb.
 
-    Live evidence: the model outputs online=false with span covering only 「线上」
-    (the channel name), but L2 requires the span to include an action verb
-    (关闭/关掉/打开/开启/开通) to authorise the change.  This check gives the
-    model a bounded local retry instead of a late L2 UNKNOWN_SENSITIVE_ARG.
+    L2 taint/text.py matches() normalizes the span text (NFKC, strip whitespace+Cf)
+    and checks exact set membership.  So L1 must also normalize and require the span
+    to be exactly one verb word with correct true↔开 / false↔关 direction.
+    A span that covers extra text (e.g. 「关掉我卡的线上」instead of just 「关掉」)
+    will fail L2 even if the verb is inside it.
     """
+    import unicodedata
+
     utterances = state.get("utterances", [])
     utt_by_id = {u.id: u for u in utterances}
     problems: list[str] = []
@@ -239,12 +250,35 @@ def _channel_source_problems(draft: PlanDraft, state: AgentState) -> list[str]:
             if not (0 <= span[0] < span[1] <= len(text)):
                 continue  # caught by _reference_problems
             span_text = text[span[0] : span[1]]
-            if not any(verb in span_text for verb in _CHANNEL_VERBS):
-                problems.append(
-                    f"steps[{index}].{source.param}: utterance span 只覆盖了渠道名"
-                    f"「{span_text}」，未包含动作词（关闭/关掉/打开/开启/开通），"
-                    "请把 span 扩展为覆盖动作词及渠道名，例如「关掉…线上」或整段"
-                )
+            # Normalize the same way L2 does in taint/text.py normalize():
+            # NFKC, strip whitespace and Cf category chars (zero-width etc.).
+            normalized = "".join(
+                c
+                for c in unicodedata.normalize("NFKC", span_text)
+                if not c.isspace() and unicodedata.category(c) != "Cf"
+            )
+            expected_set = _CHANNEL_TRUE_VERBS if value is True else _CHANNEL_FALSE_VERBS
+            if normalized not in expected_set:
+                if normalized in _CHANNEL_TRUE_VERBS or normalized in _CHANNEL_FALSE_VERBS:
+                    problems.append(
+                        f"steps[{index}].{source.param}: span 文本「{span_text}」动作词方向与参数值"
+                        f"不一致（true 须开类动词如开启/打开，false 须关类动词如关闭/关掉），"
+                        "请修正为方向一致的动词"
+                    )
+                elif any(verb in span_text for verb in _CHANNEL_VERBS):
+                    problems.append(
+                        f"steps[{index}].{source.param}: span 覆盖了动作词但包含多余文字"
+                        f"「{span_text}」，渠道开关参数的 span 只框住动作词本身，"
+                        f"例如「关掉我卡的线上支付」中 online 的 span 只对应「关掉」两个字；"
+                        "L2 要求 span 文本恰好等于一个动词"
+                    )
+                else:
+                    problems.append(
+                        f"steps[{index}].{source.param}: span 文本「{span_text}」不含有效动作词，"
+                        "渠道开关参数的 span 须恰好框住一个动作词"
+                        "（关闭/关掉/开启/打开/开通），"
+                        "例如「关掉我卡的线上支付」中 online 的 span 只对应「关掉」两个字"
+                    )
     return problems
 
 
