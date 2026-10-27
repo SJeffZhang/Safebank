@@ -11,7 +11,6 @@ from collections import defaultdict
 from datetime import date, datetime
 
 from safebank_contracts.state import BankState
-from safebank_contracts.views import READ_RESULTS
 
 # The 8 category buckets defined in PRD §5.2.
 CATEGORIES = ("", "餐饮", "交通", "购物", "娱乐", "生活服务", "数码", "健身", "其他")
@@ -78,7 +77,11 @@ def spending_summary(
         if tx.status != "POSTED":
             continue
 
-        local_ts = tx.occurred_at.astimezone(tz) if tx.occurred_at.tzinfo else tx.occurred_at.replace(tzinfo=tz)
+        local_ts = (
+            tx.occurred_at.astimezone(tz)
+            if tx.occurred_at.tzinfo
+            else tx.occurred_at.replace(tzinfo=tz)
+        )
 
         if tx.kind in _CONSUMPTION_KINDS:
             cat = tx.category or ""
@@ -90,7 +93,10 @@ def spending_summary(
                 cat_amt[cat]["cur"] += tx.amount_cents
                 total_cents += tx.amount_cents
                 days_in_month[local_ts.date()] += tx.amount_cents
-            elif local_ts.year == _prev_month_start().year and local_ts.month == _prev_month_start().month:
+            elif (
+                local_ts.year == _prev_month_start().year
+                and local_ts.month == _prev_month_start().month
+            ):
                 cat_amt[cat]["prev"] += tx.amount_cents
                 prev_total_cents += tx.amount_cents
         elif tx.kind in _TRANSFER_OUT_KINDS and tx.direction == "OUT":
@@ -121,10 +127,7 @@ def spending_summary(
         mom_change_bp = int(round(mom_change_cents / prev_total_cents * 10000))
 
     # Daily breakdown (sorted by date).
-    daily = [
-        dict(date=d, amount_cents=amt)
-        for d, amt in sorted(days_in_month.items())
-    ]
+    daily = [dict(date=d, amount_cents=amt) for d, amt in sorted(days_in_month.items())]
 
     return dict(
         month=month,
