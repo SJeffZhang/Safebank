@@ -29,6 +29,7 @@ from services.agent.app.graph.state import (
     AgentState,
     DecisionValue,
 )
+from services.agent.app.llm.plan import ExhaustedClarify
 
 # Lazy-imported inside build_gateway_graph to avoid circular import with
 # gateway.client → graph.state → graph.__init__ → graph.graph.
@@ -228,7 +229,11 @@ def build_graph(ports: Ports, checkpointer: BaseCheckpointSaver) -> CompiledStat
         "understand", _route_understand, {"respond": "respond", "gather": "gather"}
     )
     builder.add_conditional_edges("gather", _route_gather, {"respond": "respond", "plan": "plan"})
-    builder.add_edge("plan", "evaluate")
+    builder.add_conditional_edges(
+        "plan",
+        _route_plan,
+        {"evaluate": "evaluate", "respond": "respond"},
+    )
     builder.add_conditional_edges(
         "evaluate",
         _route_evaluate,
@@ -643,6 +648,12 @@ def build_gateway_graph(
         # Normal 200 / 202 UNKNOWN → respond (LLM or fixed template)
         return "respond"
 
+    def _route_plan(state: AgentState) -> str:
+        """Route plan node: exhausted-clarify → respond, normal → evaluate."""
+        if state.get("plan_exhausted_clarify"):
+            return "respond"
+        return "evaluate"
+
     # ── gather node (with optional gateway read bridge P1-3) ───────────
 
     if gateway_read_client is not None:
@@ -773,7 +784,11 @@ def build_gateway_graph(
     builder.add_conditional_edges(
         "gather", _route_gather_gw, {"respond": "respond", "plan": "plan"}
     )
-    builder.add_edge("plan", "evaluate")
+    builder.add_conditional_edges(
+        "plan",
+        _route_plan,
+        {"evaluate": "evaluate", "respond": "respond"},
+    )
     # P1-1: clarify → respond (fixed draft, no LLM needed)
     builder.add_edge("clarify", "respond")
     builder.add_conditional_edges(
