@@ -150,3 +150,49 @@ def test_memo_account_number_requires_precise_yellow_warning_code():
         f.code.value == "MEMO_SENSITIVE_CONTENT" and f.effect.value == "RISK_YELLOW"
         for f in ctx.findings
     )
+
+
+# ── A: Chinese numeral amount provenance ────────────────────────────────────
+
+
+def test_chinese_numeral_amount_verified_via_money_cents():
+    """A: 三千元 → 300000 cents verified by money_cents fallback."""
+    s = step(amount_cents=300000, payee_id="pye_b")
+    s["arg_sources"] = [source("amount_cents", ref="utt_1", span=[0, 3])]
+    ctx = run([s], text="三千元")
+    assert ctx.provenance.arg_sources[s["step_id"]]["amount_cents"]["trust"] == "user"
+
+
+def test_chinese_abbreviated_amount_still_unknown():
+    """A: 三千五 (colloquial abbreviation) still NOT verified."""
+    s = step(amount_cents=350000, payee_id="pye_b")
+    s["arg_sources"] = [source("amount_cents", ref="utt_1", span=[0, 3])]
+    ctx = run([s], text="三千五")
+    assert any(f.code is Code.UNKNOWN_SENSITIVE_ARG for f in ctx.findings)
+
+
+# ── B: Boolean channel verb provenance ─────────────────────────────────────
+
+
+def test_card_control_close_verb_guan_diao_is_user_source():
+    """B: 关掉 as online=False verified via lexicon verbs."""
+    s = step("update_card_controls")
+    s["arg_sources"] = [source("online", ref="utt_1", span=[0, 2])]
+    ctx = run([s], text="关掉线上支付")
+    assert ctx.provenance.arg_sources[s["step_id"]]["online"]["trust"] == "user"
+
+
+def test_card_control_channel_name_is_not_bool_source():
+    """B: channel name '线上' is NOT a boolean value source."""
+    s = step("update_card_controls")
+    s["arg_sources"] = [source("online", ref="utt_1", span=[2, 4])]
+    ctx = run([s], text="关掉线上支付")
+    assert any(f.code is Code.UNKNOWN_SENSITIVE_ARG for f in ctx.findings)
+
+
+def test_negated_close_verb_not_user_source():
+    """B: 不要关掉 should NOT match as False source."""
+    s = step("update_card_controls")
+    s["arg_sources"] = [source("online", ref="utt_1", span=[0, 4])]
+    ctx = run([s], text="不要关掉线上支付")
+    assert any(f.code is Code.UNKNOWN_SENSITIVE_ARG for f in ctx.findings)

@@ -415,3 +415,67 @@ def test_add_payee_trailing_particle_not_authorized(text):
     """Re-review P2: sentence-final particles 吧/嘛 must not become part of a payee name."""
     result = parse(text, bank_state(), "cus_zs")
     assert result.status != "SCOPED"
+
+
+# ── K. bank_name scope (C) & generic payee name blacklist (④) ───────────────
+
+
+def test_add_payee_with_bank_name_in_scope():
+    """C: 「他行」should put bank_name into scope, so L1 plan is not scope-exceeded."""
+    result = parse(
+        "新增收款人李阿姨，账号6222020000004444，他行",
+        bank_state(),
+        "cus_zs",
+    )
+    assert result.status == "SCOPED"
+    assert "PAYEE_ADD" in result.scope.action_kinds
+    assert result.scope.fields.get("bank_name") == "他行"
+
+
+def test_add_payee_no_bank_name_when_not_present():
+    """C: without 他行/本行, bank_name must NOT appear in scope."""
+    result = parse(
+        "新增收款人李阿姨，账号6222020000004444",
+        bank_state(),
+        "cus_zs",
+    )
+    assert result.status == "SCOPED"
+    assert "bank_name" not in result.scope.fields
+
+
+def test_add_payee_benhang_in_scope():
+    """C: 「本行」should also put bank_name into scope."""
+    result = parse(
+        "新增收款人王叔叔，卡号6222020000005555，本行",
+        bank_state(),
+        "cus_zs",
+    )
+    assert result.status == "SCOPED"
+    assert result.scope.fields.get("bank_name") == "本行"
+
+
+def test_add_payee_generic_name_shou_kuan_ren_rejected():
+    """④: 新增收款人 (no name, '收款人' is a category word) must NOT be SCOPED."""
+    result = parse("新增收款人", bank_state(), "cus_zs")
+    assert result.status != "SCOPED"
+    assert "PAYEE_ADD" not in result.scope.action_kinds
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "新增收款人联系人",
+        "新增收款人账户",
+        "新增收款人账号",
+        "新增收款人卡",
+        "新增收款人银行卡",
+        "新增收款人对方",
+        "把收款人加为收款人",
+        "把联系人加为收款人",
+    ],
+)
+def test_add_payee_generic_name_blacklist_rejected(text):
+    """④: generic names (收款人/联系人/账户/账号/卡/银行卡/对方) rejected as payee names."""
+    result = parse(text, bank_state(), "cus_zs")
+    assert result.status != "SCOPED"
+    assert "PAYEE_ADD" not in result.scope.action_kinds
