@@ -493,3 +493,590 @@ def test_year_crossing_boundary():
     result = subject.spending_summary(state, customer_id="cus_a", month="2026-01")
     assert result["total_cents"] == 5000
     assert result["previous_total_cents"] == 3000
+
+
+# ─── detect_anomalies ───────────────────────────────────────────────
+
+
+def _anomaly_tx(**updates) -> Transaction:
+    """Minimal POSTED CARD_SPEND transaction for anomaly tests."""
+    values = dict(
+        id="tx_a1",
+        transfer_id="xfr_a1",
+        customer_id="cus_a",
+        account_id="acc_a",
+        direction="OUT",
+        kind="CARD_SPEND",
+        phase=Phase.POSTED,
+        status="POSTED",
+        amount_cents=50000,
+        balance_after_cents=550000,
+        available_after_cents=550000,
+        counterparty="merchant",
+        memo=None,
+        category="餐饮",
+        merchant_id="mer_1",
+        payee_id=None,
+        card_id="crd_1",
+        channel=None,
+        occurred_at=at("2026-10-15T12:00:00+08:00"),
+        sequence=1,
+    )
+    values.update(updates)
+    return Transaction(**values)
+
+
+def _detect(state, customer_id="cus_a", from_at=None, to_at=None, account_id=None):
+    """Shortcut for calling detect_anomalies."""
+    if from_at is None:
+        from_at = at("2026-09-01T00:00:00+08:00")
+    if to_at is None:
+        to_at = at("2026-11-01T00:00:00+08:00")
+    return subject.detect_anomalies(
+        state,
+        customer_id=customer_id,
+        from_at=from_at,
+        to_at=to_at,
+        account_id=account_id,
+    )
+
+
+def _codes(result, tx_id):
+    """Return the sorted codes list for *tx_id* in an anomalies result."""
+    for item in result["items"]:
+        if item["transaction"]["id"] == tx_id:
+            return sorted(item["codes"])
+    return []
+
+
+# ── ANOMALY_NIGHT_LARGE ──
+
+
+def test_night_large_triggers():
+    """Amount > 50,000 at 02:13 local time → flagged (night only; not new-merchant)."""
+    state = with_txns(
+        base_state(),
+        _anomaly_tx(
+            id="t_prior",
+            amount_cents=5000,
+            merchant_id="mer_night",
+            occurred_at=at("2026-09-01T10:00:00+08:00"),
+        ),
+        _anomaly_tx(
+            id="t1",
+            amount_cents=128000,
+            merchant_id="mer_night",
+            occurred_at=at("2026-09-07T02:13:00+08:00"),
+        ),
+    )
+    result = _detect(state, from_at=at("2026-09-01T00:00:00+08:00"))
+    codes = _codes(result, "t1")
+    assert "ANOMALY_NIGHT_LARGE" in codes
+    assert "ANOMALY_NEW_MERCHANT_LARGE" not in codes  # prior tx at same merchant
+
+    item = next(it for it in result["items"] if it["transaction"]["id"] == "t1")
+    assert item["evidence"]["threshold_cents"] == 50000
+    assert item["evidence"]["mean_cents"] is None
+
+
+def test_night_large_at_boundary_amount_50000_not_triggered():
+    """Exactly 50,000 is NOT > 50,000, so no flag."""
+    state = with_txns(
+        base_state(),
+        _anomaly_tx(
+            id="t1",
+            amount_cents=50000,
+            occurred_at=at("2026-09-07T02:13:00+08:00"),
+        ),
+    )
+    result = _detect(state)
+    assert _codes(result, "t1") == []
+
+
+def test_night_large_not_at_night():
+    """Same amount but at 12:00 → not flagged."""
+    state = with_txns(
+        base_state(),
+        _anomaly_tx(
+            id="t_prior",
+            amount_cents=5000,
+            merchant_id="mer_night",
+            occurred_at=at("2026-09-01T10:00:00+08:00"),
+        ),
+        _anomaly_tx(
+            id="t1",
+            amount_cents=128000,
+            merchant_id="mer_night",
+            occurred_at=at("2026-09-07T12:00:00+08:00"),
+        ),
+    )
+    result = _detect(state)
+    assert _codes(result, "t1") == []
+
+
+def test_night_large_at_0000_boundary():
+    """00:00 is in the night window."""
+    state = with_txns(
+        base_state(),
+        _anomaly_tx(
+            id="t1",
+            amount_cents=60000,
+            occurred_at=at("2026-09-07T00:00:00+08:00"),
+        ),
+    )
+    assert "ANOMALY_NIGHT_LARGE" in _codes(_detect(state), "t1")
+
+
+def test_night_large_at_0500_boundary():
+    """05:00 is NOT in the window (window is 00:00–04:59)."""
+    state = with_txns(
+        base_state(),
+        _anomaly_tx(
+            id="t1",
+            amount_cents=60000,
+            occurred_at=at("2026-09-07T05:00:00+08:00"),
+        ),
+    )
+    assert _codes(_detect(state), "t1") == []
+
+
+# ── ANOMALY_DUPLICATE ──
+
+
+def test_duplicate_triggers_second_only():
+    """Same card/merchant/amount within 5 min → second tx flagged, first not."""
+    state = with_txns(
+        base_state(),
+        _anomaly_tx(
+            id="t1",
+            amount_cents=26800,
+            merchant_id="mer_food",
+            occurred_at=at("2026-09-15T12:00:00+08:00"),
+        ),
+        _anomaly_tx(
+            id="t2",
+            amount_cents=26800,
+            merchant_id="mer_food",
+            occurred_at=at("2026-09-15T12:04:00+08:00"),
+        ),
+    )
+    result = _detect(state)
+    assert _codes(result, "t1") == []  # first is clean
+    assert "ANOMALY_DUPLICATE" in _codes(result, "t2")
+    item = next(it for it in result["items"] if it["transaction"]["id"] == "t2")
+    assert item["evidence"]["previous_transaction_id"] == "t1"
+    assert item["evidence"]["window_minutes"] == 4
+
+
+def test_duplicate_over_5_minutes_not_triggered():
+    """Same card/merchant/amount but >5 min apart → no flag."""
+    state = with_txns(
+        base_state(),
+        _anomaly_tx(
+            id="t1",
+            amount_cents=26800,
+            merchant_id="mer_food",
+            occurred_at=at("2026-09-15T12:00:00+08:00"),
+        ),
+        _anomaly_tx(
+            id="t2",
+            amount_cents=26800,
+            merchant_id="mer_food",
+            occurred_at=at("2026-09-15T12:06:00+08:00"),
+        ),
+    )
+    result = _detect(state)
+    assert _codes(result, "t2") == []
+
+
+def test_duplicate_different_amount_not_triggered():
+    """Same card/merchant but different amount → no flag."""
+    state = with_txns(
+        base_state(),
+        _anomaly_tx(
+            id="t1",
+            amount_cents=26800,
+            merchant_id="mer_food",
+            occurred_at=at("2026-09-15T12:00:00+08:00"),
+        ),
+        _anomaly_tx(
+            id="t2",
+            amount_cents=30000,
+            merchant_id="mer_food",
+            occurred_at=at("2026-09-15T12:03:00+08:00"),
+        ),
+    )
+    assert _codes(_detect(state), "t2") == []
+
+
+def test_duplicate_no_card_id_not_triggered():
+    """Duplicate check requires card_id."""
+    state = with_txns(
+        base_state(),
+        _anomaly_tx(
+            id="t1",
+            amount_cents=26800,
+            merchant_id="mer_food",
+            card_id=None,
+            occurred_at=at("2026-09-15T12:00:00+08:00"),
+        ),
+        _anomaly_tx(
+            id="t2",
+            amount_cents=26800,
+            merchant_id="mer_food",
+            card_id=None,
+            occurred_at=at("2026-09-15T12:03:00+08:00"),
+        ),
+    )
+    assert _codes(_detect(state), "t2") == []
+
+
+def test_duplicate_no_merchant_id_not_triggered():
+    """Duplicate check requires merchant_id."""
+    state = with_txns(
+        base_state(),
+        _anomaly_tx(
+            id="t1",
+            amount_cents=26800,
+            merchant_id=None,
+            occurred_at=at("2026-09-15T12:00:00+08:00"),
+        ),
+        _anomaly_tx(
+            id="t2",
+            amount_cents=26800,
+            merchant_id=None,
+            occurred_at=at("2026-09-15T12:03:00+08:00"),
+        ),
+    )
+    assert _codes(_detect(state), "t2") == []
+
+
+# ── ANOMALY_NEW_MERCHANT_LARGE ──
+
+
+def test_new_merchant_large_triggers():
+    """First transaction at merchant, >100,000 → flagged."""
+    state = with_txns(
+        base_state(),
+        _anomaly_tx(
+            id="t1",
+            amount_cents=349900,
+            merchant_id="mer_new",
+            occurred_at=at("2026-09-22T10:00:00+08:00"),
+        ),
+    )
+    result = _detect(state)
+    assert "ANOMALY_NEW_MERCHANT_LARGE" in _codes(result, "t1")
+    item = next(it for it in result["items"] if it["transaction"]["id"] == "t1")
+    assert item["evidence"]["threshold_cents"] == 100000
+
+
+def test_new_merchant_not_large_enough():
+    """First transaction at merchant but ≤100,000 → not flagged."""
+    state = with_txns(
+        base_state(),
+        _anomaly_tx(
+            id="t1",
+            amount_cents=100000,
+            merchant_id="mer_new",
+            occurred_at=at("2026-09-22T10:00:00+08:00"),
+        ),
+    )
+    assert _codes(_detect(state), "t1") == []
+
+
+def test_new_merchant_has_history():
+    """Prior tx at same merchant within 90 days → not new."""
+    state = with_txns(
+        base_state(),
+        _anomaly_tx(
+            id="t1",
+            amount_cents=5000,
+            merchant_id="mer_old",
+            occurred_at=at("2026-09-15T10:00:00+08:00"),
+        ),
+        _anomaly_tx(
+            id="t2",
+            amount_cents=200000,
+            merchant_id="mer_old",
+            occurred_at=at("2026-09-22T10:00:00+08:00"),
+        ),
+    )
+    assert _codes(_detect(state), "t2") == []
+
+
+def test_new_merchant_history_beyond_90_days():
+    """Prior tx at same merchant but >90 days ago → still 'new'."""
+    state = with_txns(
+        base_state(),
+        _anomaly_tx(
+            id="t1",
+            amount_cents=5000,
+            merchant_id="mer_old",
+            occurred_at=at("2026-06-01T10:00:00+08:00"),  # >90 days before t2
+        ),
+        _anomaly_tx(
+            id="t2",
+            amount_cents=200000,
+            merchant_id="mer_old",
+            occurred_at=at("2026-09-22T10:00:00+08:00"),
+        ),
+    )
+    assert "ANOMALY_NEW_MERCHANT_LARGE" in _codes(_detect(state), "t2")
+
+
+def test_new_merchant_no_merchant_id():
+    """Transaction without merchant_id cannot be new-merchant-large."""
+    state = with_txns(
+        base_state(),
+        _anomaly_tx(
+            id="t1",
+            amount_cents=200000,
+            merchant_id=None,
+            occurred_at=at("2026-09-22T10:00:00+08:00"),
+        ),
+    )
+    assert _codes(_detect(state), "t1") == []
+
+
+# ── ANOMALY_CATEGORY_OUTLIER ──
+
+
+def test_category_outlier_triggers():
+    """≥10 prior same-category txns, tx > μ + 3σ → flagged."""
+    txns = []
+    # 10 prior "餐饮" txns averaging ~10000 each, low variance
+    for i in range(10):
+        txns.append(
+            _anomaly_tx(
+                id=f"p{i}",
+                amount_cents=10000 + i * 10,  # 10000..10090, tight
+                category="餐饮",
+                occurred_at=at(f"2026-10-{(i+1):02d}T10:00:00+08:00"),
+            )
+        )
+    # Outlier: way above
+    txns.append(
+        _anomaly_tx(
+            id="t_out",
+            amount_cents=50000,  # well above μ+3σ (~10500)
+            category="餐饮",
+            occurred_at=at("2026-10-15T10:00:00+08:00"),
+        )
+    )
+    state = with_txns(base_state(), *txns)
+    result = _detect(state)
+    assert "ANOMALY_CATEGORY_OUTLIER" in _codes(result, "t_out")
+    item = next(it for it in result["items"] if it["transaction"]["id"] == "t_out")
+    assert item["evidence"]["baseline_count"] == 10
+    assert item["evidence"]["mean_cents"] is not None
+    assert item["evidence"]["threshold_cents"] is not None
+
+
+def test_category_outlier_not_enough_history():
+    """9 prior same-category txns → not flagged (<10 required)."""
+    txns = []
+    for i in range(9):
+        txns.append(
+            _anomaly_tx(
+                id=f"p{i}",
+                amount_cents=10000,
+                category="餐饮",
+                occurred_at=at(f"2026-10-{(i+1):02d}T10:00:00+08:00"),
+            )
+        )
+    txns.append(
+        _anomaly_tx(
+            id="t_out",
+            amount_cents=50000,
+            category="餐饮",
+            occurred_at=at("2026-10-15T10:00:00+08:00"),
+        )
+    )
+    state = with_txns(base_state(), *txns)
+    assert _codes(_detect(state), "t_out") == []
+
+
+def test_category_outlier_within_bounds():
+    """≥10 prior but tx amount is within μ+3σ → not flagged."""
+    txns = []
+    for i in range(10):
+        txns.append(
+            _anomaly_tx(
+                id=f"p{i}",
+                amount_cents=10000 + i * 10,  # 10000..10090, tight
+                category="餐饮",
+                occurred_at=at(f"2026-10-{(i+1):02d}T10:00:00+08:00"),
+            )
+        )
+    txns.append(
+        _anomaly_tx(
+            id="t_normal",
+            amount_cents=10010,  # within bounds (μ≈10045, σ≈29, μ+3σ≈10132)
+            category="餐饮",
+            occurred_at=at("2026-10-15T10:00:00+08:00"),
+        )
+    )
+    state = with_txns(base_state(), *txns)
+    assert _codes(_detect(state), "t_normal") == []
+
+
+def test_category_outlier_history_bounded_by_90_days():
+    """Prior txns >90 days old should not count toward baseline."""
+    txns = []
+    # 5 recent + 5 old (far enough) = only 5 count as baseline → not ≥10
+    for i in range(5):
+        txns.append(
+            _anomaly_tx(
+                id=f"recent{i}",
+                amount_cents=10000,
+                category="餐饮",
+                occurred_at=at(f"2026-10-{(i+1):02d}T10:00:00+08:00"),
+            )
+        )
+    for i in range(5):
+        txns.append(
+            _anomaly_tx(
+                id=f"old{i}",
+                amount_cents=10000,
+                category="餐饮",
+                occurred_at=at("2026-06-01T10:00:00+08:00"),
+            )
+        )
+    txns.append(
+        _anomaly_tx(
+            id="t_out",
+            amount_cents=50000,
+            category="餐饮",
+            occurred_at=at("2026-10-15T10:00:00+08:00"),
+        )
+    )
+    state = with_txns(base_state(), *txns)
+    assert _codes(_detect(state), "t_out") == []
+
+
+def test_category_outlier_different_category_not_counted():
+    """Only same-category prior txns count."""
+    txns = []
+    for i in range(10):
+        txns.append(
+            _anomaly_tx(
+                id=f"p{i}",
+                amount_cents=10000,
+                category="交通",
+                occurred_at=at(f"2026-10-{(i+1):02d}T10:00:00+08:00"),
+            )
+        )
+    txns.append(
+        _anomaly_tx(
+            id="t_out",
+            amount_cents=50000,
+            category="餐饮",
+            occurred_at=at("2026-10-15T10:00:00+08:00"),
+        )
+    )
+    state = with_txns(base_state(), *txns)
+    assert _codes(_detect(state), "t_out") == []
+
+
+# ── multi-signal / merge ──
+
+
+def test_multiple_signals_merged():
+    """A night-time large tx at a new merchant → both codes on one item."""
+    state = with_txns(
+        base_state(),
+        _anomaly_tx(
+            id="t1",
+            amount_cents=200000,
+            merchant_id="mer_night_new",
+            occurred_at=at("2026-09-07T02:13:00+08:00"),
+        ),
+    )
+    result = _detect(state)
+    codes = _codes(result, "t1")
+    assert "ANOMALY_NIGHT_LARGE" in codes
+    assert "ANOMALY_NEW_MERCHANT_LARGE" in codes
+
+
+# ── no future information leak ──
+
+
+def test_no_future_information_leak():
+    """A tx in the candidate window must not see later txns."""
+    # t1 is first-ever at merchant_old, small amount → clean
+    # t2 is large amount at same merchant → should NOT be "new" because t1 exists
+    # But t1 should NOT see t2's info (and t1 is clean anyway)
+    state = with_txns(
+        base_state(),
+        _anomaly_tx(
+            id="t1",
+            amount_cents=5000,
+            merchant_id="mer_both",
+            occurred_at=at("2026-10-10T10:00:00+08:00"),
+        ),
+        _anomaly_tx(
+            id="t2",
+            amount_cents=200000,
+            merchant_id="mer_both",
+            occurred_at=at("2026-10-15T10:00:00+08:00"),
+        ),
+    )
+    result = _detect(state)
+    # t1: not large, not new (the later t2 doesn't affect t1's check)
+    assert _codes(result, "t1") == []
+    # t2: large but merchant is not new (t1 existed)
+    assert _codes(result, "t2") == []
+
+
+# ── empty / no candidates ──
+
+
+def test_detect_anomalies_empty_range():
+    """No transactions in range → empty result."""
+    result = _detect(base_state(), from_at=at("2026-01-01T00:00:00+08:00"), to_at=at("2026-01-02T00:00:00+08:00"))
+    assert result["items"] == ()
+
+
+def test_detect_anomalies_wrong_customer():
+    """Transactions belong to cus_b, not cus_a."""
+    state = with_txns(
+        base_state(),
+        _anomaly_tx(
+            id="t1",
+            customer_id="cus_b",
+            account_id="acc_b",
+            amount_cents=128000,
+            occurred_at=at("2026-09-07T02:13:00+08:00"),
+        ),
+    )
+    assert _detect(state)["items"] == ()
+
+
+# ── account_id filter ──
+
+
+def test_detect_anomalies_account_filter():
+    """Filter by account_id — only anomalies from that account."""
+    state = with_account(base_state(), "acc_s", customer_id="cus_a")
+    state = with_txns(
+        state,
+        _anomaly_tx(
+            id="t_checked",
+            account_id="acc_a",
+            amount_cents=128000,
+            merchant_id="mer_night",
+            occurred_at=at("2026-09-07T02:13:00+08:00"),
+        ),
+        _anomaly_tx(
+            id="t_sav",
+            account_id="acc_s",
+            amount_cents=200000,
+            merchant_id="mer_new_sav",
+            occurred_at=at("2026-09-07T03:00:00+08:00"),
+        ),
+    )
+    filtered = _detect(state, account_id="acc_a")
+    ids = {it["transaction"]["id"] for it in filtered["items"]}
+    assert ids == {"t_checked"}
+    assert "t_sav" not in ids
