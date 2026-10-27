@@ -1696,7 +1696,7 @@ def test_channel_keep_no_source_ok():
     }
     scripted = ScriptedLLM([tool_response("submit_action_plan", plan)])
     llm = make_llm(api_key=API_KEY, http_client=scripted.client)
-    draft = PlanAdapter(llm)(state, ctx())
+    PlanAdapter(llm)(state, ctx())
     assert len(scripted.requests) == 1
 
 
