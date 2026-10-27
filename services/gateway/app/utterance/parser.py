@@ -359,6 +359,21 @@ def _clause(clause: str) -> Command | None:
     cancel_schedule = re.fullmatch(r"(?:取消定时|取消自动转账)(?P<target>.+)", clause)
     if cancel_schedule:
         return Command("cancel_scheduled", target=cancel_schedule["target"])
+    # add_payee: verb-prefix pattern  (新增收款人李阿姨)
+    add_verb = _verbs("add_payee")
+    m = re.fullmatch(rf"({add_verb})(?P<name>.+)", clause)
+    if m:
+        return Command("add_payee", target=m["name"].strip())
+    # add_payee: 把-name-verb pattern  (把李阿姨加为收款人)
+    m = re.fullmatch(rf"把(?P<name>.+?)({add_verb})", clause)
+    if m:
+        return Command("add_payee", target=m["name"].strip())
+    # add_payee property clauses: only valid alongside an add_payee main clause
+    m = re.fullmatch(r"(?:账号|卡号)(?P<acct>\d{8,})", clause)
+    if m:
+        return Command("_payee_attr", fields={"account_no": m["acct"]})
+    if clause in ("他行", "本行"):
+        return Command("_payee_attr", fields={"bank_name": clause})
     # Recognized future commands remain partial and always require a complete form.
     future = re.fullmatch(r"(?:明天|后天|定时)(?P<body>.+)", clause)
     monthly = re.fullmatch(r"每月\s*(?P<day>\d{1,2})\s*[号日](?:自动)?(?P<body>.+)", clause)
@@ -468,6 +483,8 @@ def scope_is_complete(scope: NormalizedScope) -> bool:
             return False
         if kind == "SCHEDULE_CANCEL" and not fields.get("instruction_id"):
             return False
+        if kind == "PAYEE_ADD" and not fields.get("payee_name"):
+            return False
     return True
 
 
@@ -489,6 +506,29 @@ def parse(
     commands = [_clause(clause) for clause in clauses]
     if any(command is None for command in commands):
         return Parsed()
+    # Merge add_payee + _payee_attr clauses: property clauses (账号/卡号 <digits>, 他行/本行)
+    # only valid alongside a single add_payee main clause.  Any other tool in the mix
+    # (or _payee_attr without add_payee) is rejected so unrelated commands don't leak.
+    if any(cmd.tool in ("add_payee", "_payee_attr") for cmd in commands):
+        payee_attrs: dict[str, Any] = {}
+        payee_main: Command | None = None
+        for cmd in commands:
+            if cmd.tool == "add_payee":
+                if payee_main is not None:
+                    return Parsed()  # duplicate add_payee
+                payee_main = cmd
+                cmd.fields.update(payee_attrs)
+            elif cmd.tool == "_payee_attr":
+                for k, v in cmd.fields.items():
+                    if k in payee_attrs and payee_attrs[k] != v:
+                        return Parsed()
+                    payee_attrs[k] = v
+            else:
+                return Parsed()  # unrelated clause mixed with add_payee
+        if payee_main is None:
+            return Parsed()  # _payee_attr without add_payee
+        payee_main.fields.update(payee_attrs)
+        commands = [c for c in commands if c.tool != "_payee_attr"]
     writes = [command for command in commands if command.tool not in {"read", "reserve"}]
     if not writes:
         return Parsed(status=ParseStatus.NO_WRITE)
@@ -702,6 +742,17 @@ def parse(
             if len(selected) != 1 or not put("instruction_id", selected[0].id):
                 return Parsed()
             kinds.append(action_kind(tool, {}, state).value)
+        elif tool == "add_payee":
+            name = (command.target or "").strip()
+            if not name:
+                return Parsed()
+            if not put("payee_name", name):
+                return Parsed()
+            account_no = command.fields.get("account_no")
+            if account_no:
+                if not put("account_no", account_no):
+                    return Parsed()
+            kinds.append("PAYEE_ADD")
     if len(result.required_fields) > 1 or (transfer_count > 1 and result.required_fields):
         return Parsed()  # No indexed slots exist in the frozen clarification model.
     source = next(iter(sources), None)

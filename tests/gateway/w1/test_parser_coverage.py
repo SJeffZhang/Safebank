@@ -133,7 +133,6 @@ def test_card_ba_wo_ka_atm_guan_diao():
 # ── C. 新增收款人：当前无对应 clause 模式 ────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason=XF_REASON)
 def test_add_payee_xin_zeng_shou_kuan_ren():
     """新增收款人李阿姨，账号6222020000004444，他行 → SCOPED, PAYEE_ADD。
 
@@ -151,7 +150,6 @@ def test_add_payee_xin_zeng_shou_kuan_ren():
     assert result.scope.fields.get("account_no") == "6222020000004444"
 
 
-@pytest.mark.xfail(strict=True, reason=XF_REASON)
 def test_add_payee_ba_X_jia_wei_shou_kuan_ren():
     """把李阿姨加为收款人，卡号6222020000004444 → SCOPED, PAYEE_ADD。
 
@@ -344,3 +342,25 @@ def test_add_payee_attack(text):
 def test_card_ba_pattern_attack(text):
     """把-句式卡渠道的否定、疑问不得授权。"""
     _not_scoped_no_card_write(parse(text, _STATE, _CUS))
+
+
+# ── I. 新增收款人攻击回归（T2c 新增） ──────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # 账号不完整（<8 位数字）
+        "新增收款人李阿姨，账号62220，他行",
+        "把李阿姨加为收款人，卡号1234567",
+        # 账号含非数字字符
+        "新增收款人李阿姨，账号6222020000004444abc",
+        "把李阿姨加为收款人，卡号6222020000004444x",
+        # 属性子句后接无关命令 — 不得部分授权
+        "新增收款人李阿姨，账号6222020000004444，顺便转他一万",
+        "把李阿姨加为收款人，卡号6222020000004444，再给王五转三千元",
+    ],
+)
+def test_add_payee_attack_boundary_and_mixed(text):
+    """不完整/含字母账号、属性从句后混入无关命令不得授权。"""
+    _not_scoped_no_payee_write(parse(text, _STATE, _CUS))
