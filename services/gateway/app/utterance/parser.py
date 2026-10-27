@@ -789,6 +789,10 @@ def parse(
             if account_no:
                 if not put("account_no", account_no):
                     return Parsed()
+            bank_name = command.fields.get("bank_name")
+            if bank_name:
+                if not put("bank_name", bank_name):
+                    return Parsed()
             kinds.append("PAYEE_ADD")
     if len(result.required_fields) > 1 or (transfer_count > 1 and result.required_fields):
         return Parsed()  # No indexed slots exist in the frozen clarification model.
