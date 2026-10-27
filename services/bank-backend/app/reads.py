@@ -6,6 +6,7 @@ from datetime import timedelta
 
 from safebank_bankcore.banking import card_view
 from safebank_bankcore.ids import digest
+from safebank_bankcore.reserve import upcoming_window
 from safebank_contracts.codes import Code
 from safebank_contracts.views import READ_RESULTS
 
@@ -19,6 +20,7 @@ SUPPORTED_READS = {
     "get_profile",
     "list_scheduled",
     "list_subscriptions",
+    "upcoming_charges",
 }
 
 
@@ -240,6 +242,89 @@ def read(state, tool, args, customer_id):
                 monthly_to_annual_factor=12,
                 annual_to_monthly="floor_div_12",
             ),
+        )
+    elif tool == "upcoming_charges":
+        try:
+            window = upcoming_window(state, days=args.days, account_id=args.account_id)
+        except ValueError as exc:
+            raise BankError(Code.NOT_FOUND, 404) from exc
+
+        snapshot = state.obligations
+        # Build lookup maps from the obligation snapshot
+        billings_map = dict(snapshot.billings) if snapshot else {}
+        mandates: dict[str, object] = {}
+        if snapshot:
+            for si in snapshot.standing_instructions.values():
+                if hasattr(si, "billing_id") and si.billing_id is not None:
+                    mandates[si.billing_id] = si
+        merchants_map = dict(snapshot.merchants) if snapshot else {}
+        targets_map = dict(snapshot.instruction_targets) if snapshot else {}
+
+        charges: list[dict] = []
+        scheduled: list[dict] = []
+        charges_total = 0
+        scheduled_total = 0
+
+        for obl in window.obligations:
+            if obl.rank == 4:
+                # Merchant billing
+                bill = billings_map.get(obl.id)
+                mandate = mandates.get(obl.id)
+                merchant_id = bill.merchant_id if bill else ""
+                merchant_name = (
+                    merchants_map[merchant_id].name
+                    if merchants_map and merchant_id and merchant_id in merchants_map
+                    else ""
+                )
+                max_amount = (
+                    mandate.max_amount_cents
+                    if mandate and hasattr(mandate, "max_amount_cents")
+                    else 0
+                )
+                charges.append(
+                    dict(
+                        billing_id=obl.id,
+                        instruction_id=getattr(mandate, "id", None) if mandate else None,
+                        account_id=obl.account_id,
+                        merchant_id=merchant_id,
+                        merchant_name=merchant_name,
+                        due_at=obl.due_at,
+                        amount_cents=abs(obl.delta_cents),
+                        max_amount_cents=max_amount,
+                    )
+                )
+                charges_total += abs(obl.delta_cents)
+            elif obl.rank == 3:
+                # Scheduled transfer
+                target = targets_map.get(obl.id)
+                target_display = ""
+                if target:
+                    target_display = target.target_account_id or target.target_customer_id or ""
+                scheduled.append(
+                    dict(
+                        instruction_id=obl.id,
+                        account_id=obl.account_id,
+                        target_display=target_display,
+                        due_at=obl.due_at,
+                        amount_cents=abs(obl.delta_cents),
+                    )
+                )
+                scheduled_total += abs(obl.delta_cents)
+
+        data = dict(
+            items=charges,
+            scheduled_items=scheduled,
+            charges_total_cents=charges_total,
+            scheduled_transfers_total_cents=scheduled_total,
+            reserve_total_cents=sum(a.reserve_cents for a in window.accounts.values()),
+            by_account=[
+                dict(
+                    account_id=aid,
+                    reserve_cents=a.reserve_cents,
+                    max_outflow_cents=a.max_outflow_cents,
+                )
+                for aid, a in sorted(window.accounts.items())
+            ],
         )
     else:
         raise BankError(Code.TOOL_NOT_ALLOWED, 403)
