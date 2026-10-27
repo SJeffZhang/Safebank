@@ -11,7 +11,15 @@ from safebank_contracts.views import READ_RESULTS
 
 from .errors import BankError
 
-SUPPORTED_READS = {"get_accounts", "list_payees", "get_transactions", "get_cards", "get_profile", "list_scheduled", "list_subscriptions"}
+SUPPORTED_READS = {
+    "get_accounts",
+    "list_payees",
+    "get_transactions",
+    "get_cards",
+    "get_profile",
+    "list_scheduled",
+    "list_subscriptions",
+}
 
 
 def mask(value):
