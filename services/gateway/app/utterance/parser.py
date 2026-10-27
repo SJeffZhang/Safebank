@@ -78,20 +78,118 @@ def _candidate(field_name: str, entity_id: str, label: str) -> dict[str, str]:
 
 
 # Money is a complete slot, not a numeric substring of an arbitrary sentence.
-MONEY = r"(?:(?:人民币|CNY)\s*)?\d+(?:\.\d{1,2})?\s*(?:元|角|分|块钱|块)?"
+_CN_NUM = r"[零〇一二两三四五六七八九十百千万]+"
+_CN_NUM_VALUE = r"\d+(?:\.\d{1,2})?|" + _CN_NUM
+MONEY = r"(?:(?:人民币|CNY)\s*)?(?:" + _CN_NUM_VALUE + r")\s*(?:元|角|分|块钱|块)?"
+
+_CN_DIGIT_V = {
+    "零": 0,
+    "〇": 0,
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+}
+
+
+_PAYEE_NAME_RE = re.compile(r"^[一-鿿·]{1,8}$")
+_PAYEE_NAME_META_RE = re.compile(r"是什么|什么意思|怎么|能不能|可以吗|可行吗|行吗|吗|呢|啥|吧|嘛")
+_PAYEE_NAME_ACTION_RE = re.compile(r"转|给|冻结|关闭|开通|打开|开启|关掉|取消|赎回|申购|新增|添加")
+
+
+def _valid_payee_name(name: str) -> bool:
+    """Reject non-name payloads masquerading as payee names in add_payee clauses."""
+    if not _PAYEE_NAME_RE.fullmatch(name):
+        return False
+    if _PAYEE_NAME_META_RE.search(name):
+        return False
+    if _PAYEE_NAME_ACTION_RE.search(name):
+        return False
+    return True
+
+
+def _parse_chinese_numeral(text: str) -> int | None:
+    """Parse a strict Chinese numeral (no 零 gaps, no mixed scripts)."""
+    if not text or "零" in text:
+        return None
+    total = 0
+    section = 0  # accumulates values under 万
+    i = 0
+    prev_char = ""
+    prev_big_mult = False  # True after digit×千/万 — lone digit is then ambiguous
+    while i < len(text):
+        c = text[i]
+        if c in _CN_DIGIT_V:
+            digit = _CN_DIGIT_V[c]
+            if i + 1 < len(text) and text[i + 1] in {"十", "百", "千", "万"}:
+                i += 1
+                mult_c = text[i]
+                mult_v = {"十": 10, "百": 100, "千": 1000, "万": 10000}[mult_c]
+                if mult_c == "万":
+                    section = (section + digit) * 10000
+                    total += section
+                    section = 0
+                    prev_big_mult = True
+                else:
+                    section += digit * mult_v
+                    if mult_c in {"千"}:
+                        prev_big_mult = True
+                    else:
+                        prev_big_mult = False
+            else:
+                if prev_big_mult:
+                    return None  # lone digit after 千/万 — ambiguous abbreviation
+                section += digit
+                prev_big_mult = False
+        elif c == "十":
+            if prev_char == "十":
+                return None  # repeated 十 — not a valid numeral
+            section += 10  # implicit 一
+            prev_big_mult = False
+        elif c in {"百", "千"}:
+            return None  # 百/千 without preceding digit — ambiguous
+        elif c == "万":
+            if section == 0:
+                return None
+            section *= 10000
+            total += section
+            section = 0
+            prev_big_mult = True
+        else:
+            return None
+        prev_char = c
+        i += 1
+    result = total + section
+    return result if result > 0 else None
+
+
+_MONEY_PATTERN = (
+    r"(?:(?:人民币|CNY)\s*)?(?P<value>" + _CN_NUM_VALUE + r")\s*(?P<unit>元|角|分|块钱|块)?"
+)
 
 
 def money_cents(text: str) -> int | None:
-    match = re.fullmatch(
-        r"(?:(?:人民币|CNY)\s*)?(?P<value>\d+(?:\.\d{1,2})?)\s*(?P<unit>元|角|分|块钱|块)?", text
-    )
+    match = re.fullmatch(_MONEY_PATTERN, text)
     if match is None:
         return None
+    value_str = match["value"]
+    if value_str[0] in _CN_DIGIT_V:
+        value = _parse_chinese_numeral(value_str)
+        if value is None:
+            return None
+        value = Decimal(value)
+    elif not value_str.isdigit() and not re.fullmatch(r"\d+(?:\.\d{1,2})?", value_str):
+        return None  # bare multiplier (千/百/etc.) or mixed-script — not a valid amount
+    else:
+        value = Decimal(value_str)
     grammar = LEXICON["grammar"]
-    cents = (
-        Decimal(match["value"])
-        * grammar["cents_per_unit"][match["unit"] or grammar["bare_money_unit"]]
-    )
+    cents = value * grammar["cents_per_unit"][match["unit"] or grammar["bare_money_unit"]]
     if cents != cents.to_integral_value() or not 0 < cents <= 2**63 - 1:
         return None
     return int(cents)
@@ -149,6 +247,7 @@ def _transfer_clause(clause: str) -> Command | None:
             return None
         source, clause = prefix["source"].strip(), prefix["body"]
     patterns = [
+        (rf"把\s*(?P<money>{MONEY})\s*(?:转给|转账给)\s*(?P<target>.+)", False),
         (rf"(?:给|向)(?P<target>.+?)(?:转账?|转入)?\s*(?P<money>{MONEY})", False),
         (rf"(?:转账?给|转给|转到|转入)(?P<target>.+?)\s*(?P<money>{MONEY})", False),
         (rf"转(?:账)?\s*(?P<money>{MONEY})(?:到|给)(?P<target>.+?)(?:应急)?", False),
@@ -228,8 +327,30 @@ def _clause(clause: str) -> Command | None:
                 target=target,
                 fields={"replace": replace} if tool == "report_card_lost" else {},
             )
+    control_verb = _verbs("update_card_controls")
+    _control_verb_named = control_verb.replace("?:", "")  # (?:...) -> (...)
+    # 把-patterns: verb before channel ("把<target>开通<channel>...")
+    #                verb after channel  ("把<target>的<channel>...关掉")
+    control_ba = re.fullmatch(
+        rf"把(?P<target>.+?)(?:的)?(?P<verb>{_control_verb_named})(?P<channel>线上|境外|ATM|闪付)(?:取现|支付)?(?:功能|渠道)?",
+        clause,
+        re.IGNORECASE,
+    ) or re.fullmatch(
+        rf"把(?P<target>.+?)(?:的)?(?P<channel>线上|境外|ATM|闪付)(?:取现|支付)?(?:功能|渠道)?(?P<verb>{_control_verb_named})",
+        clause,
+        re.IGNORECASE,
+    )
+    if control_ba:
+        name = {"线上": "online", "境外": "overseas", "atm": "atm", "闪付": "quickpass"}[
+            control_ba["channel"].lower()
+        ]
+        return Command(
+            "update_card_controls",
+            target=control_ba["target"] or "卡",
+            fields={name: control_ba["verb"] in ("打开", "开启", "开通")},
+        )
     control = re.fullmatch(
-        r"(?P<verb>关闭|关掉|打开|开启)(?:(?P<target>.+?)的)?(?P<channel>线上|境外|ATM|闪付)(?:渠道)?",
+        rf"(?P<verb>{_control_verb_named})(?:(?P<target>.+?)的)?(?P<channel>线上|境外|ATM|闪付)(?:取现|支付)?(?:功能|渠道)?",
         clause,
         re.IGNORECASE,
     )
@@ -240,7 +361,7 @@ def _clause(clause: str) -> Command | None:
         return Command(
             "update_card_controls",
             target=control["target"] or "卡",
-            fields={name: control["verb"] in ("打开", "开启")},
+            fields={name: control["verb"] in ("打开", "开启", "开通")},
         )
     derived_fund = re.fullmatch(r"(?:把)?(?:剩下|剩余)的钱(?:买|购买|申购)(?P<product>.+)", clause)
     if derived_fund:
@@ -269,6 +390,27 @@ def _clause(clause: str) -> Command | None:
     cancel_schedule = re.fullmatch(r"(?:取消定时|取消自动转账)(?P<target>.+)", clause)
     if cancel_schedule:
         return Command("cancel_scheduled", target=cancel_schedule["target"])
+    # add_payee: verb-prefix pattern  (新增收款人李阿姨)
+    add_verb = _verbs("add_payee")
+    m = re.fullmatch(rf"({add_verb})(?P<name>.+)", clause)
+    if m:
+        name = m["name"].strip()
+        if not _valid_payee_name(name):
+            return None
+        return Command("add_payee", target=name)
+    # add_payee: 把-name-verb pattern  (把李阿姨加为收款人)
+    m = re.fullmatch(rf"把(?P<name>.+?)({add_verb})", clause)
+    if m:
+        name = m["name"].strip()
+        if not _valid_payee_name(name):
+            return None
+        return Command("add_payee", target=name)
+    # add_payee property clauses: only valid alongside an add_payee main clause
+    m = re.fullmatch(r"(?:账号|卡号)(?P<acct>\d{8,})", clause)
+    if m:
+        return Command("_payee_attr", fields={"account_no": m["acct"]})
+    if clause in ("他行", "本行"):
+        return Command("_payee_attr", fields={"bank_name": clause})
     # Recognized future commands remain partial and always require a complete form.
     future = re.fullmatch(r"(?:明天|后天|定时)(?P<body>.+)", clause)
     monthly = re.fullmatch(r"每月\s*(?P<day>\d{1,2})\s*[号日](?:自动)?(?P<body>.+)", clause)
@@ -308,7 +450,7 @@ def _accounts(label: str | None, owned: list) -> list:
 
 def _card_candidates(label: str, cards: list, predicates: dict[str, list[str]]) -> list:
     label = normalize(label)
-    if label in {"卡", "我的卡", "银行卡", "我的银行卡"}:
+    if label in {"卡", "我的卡", "银行卡", "我的银行卡", "我卡", "我的借记卡", "我借记卡"}:
         return cards
     if label in {"可疑卡", "这笔可疑交易对应的卡", "那笔可疑交易对应的卡"}:
         return [card for card in cards if card.id in predicates.get("suspicious_cards", [])]
@@ -378,6 +520,8 @@ def scope_is_complete(scope: NormalizedScope) -> bool:
             return False
         if kind == "SCHEDULE_CANCEL" and not fields.get("instruction_id"):
             return False
+        if kind == "PAYEE_ADD" and not fields.get("payee_name"):
+            return False
     return True
 
 
@@ -399,6 +543,29 @@ def parse(
     commands = [_clause(clause) for clause in clauses]
     if any(command is None for command in commands):
         return Parsed()
+    # Merge add_payee + _payee_attr clauses: property clauses (账号/卡号 <digits>, 他行/本行)
+    # only valid alongside a single add_payee main clause.  Any other tool in the mix
+    # (or _payee_attr without add_payee) is rejected so unrelated commands don't leak.
+    if any(cmd.tool in ("add_payee", "_payee_attr") for cmd in commands):
+        payee_attrs: dict[str, Any] = {}
+        payee_main: Command | None = None
+        for cmd in commands:
+            if cmd.tool == "add_payee":
+                if payee_main is not None:
+                    return Parsed()  # duplicate add_payee
+                payee_main = cmd
+                cmd.fields.update(payee_attrs)
+            elif cmd.tool == "_payee_attr":
+                for k, v in cmd.fields.items():
+                    if k in payee_attrs and payee_attrs[k] != v:
+                        return Parsed()
+                    payee_attrs[k] = v
+            else:
+                return Parsed()  # unrelated clause mixed with add_payee
+        if payee_main is None:
+            return Parsed()  # _payee_attr without add_payee
+        payee_main.fields.update(payee_attrs)
+        commands = [c for c in commands if c.tool != "_payee_attr"]
     writes = [command for command in commands if command.tool not in {"read", "reserve"}]
     if not writes:
         return Parsed(status=ParseStatus.NO_WRITE)
@@ -612,6 +779,17 @@ def parse(
             if len(selected) != 1 or not put("instruction_id", selected[0].id):
                 return Parsed()
             kinds.append(action_kind(tool, {}, state).value)
+        elif tool == "add_payee":
+            name = (command.target or "").strip()
+            if not name:
+                return Parsed()
+            if not put("payee_name", name):
+                return Parsed()
+            account_no = command.fields.get("account_no")
+            if account_no:
+                if not put("account_no", account_no):
+                    return Parsed()
+            kinds.append("PAYEE_ADD")
     if len(result.required_fields) > 1 or (transfer_count > 1 and result.required_fields):
         return Parsed()  # No indexed slots exist in the frozen clarification model.
     source = next(iter(sources), None)
