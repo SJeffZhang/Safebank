@@ -348,14 +348,9 @@ def _compute_window(
         obligations = [o for o in obligations if o.account_id == account_id]
         account_ids: set[str] = {account_id}
     else:
-        account_ids = {
-            aid for aid, acct in state.accounts.items() if acct.customer_id is not None
-        }
+        account_ids = {aid for aid, acct in state.accounts.items() if acct.customer_id is not None}
 
-    available = {
-        aid: _customer_account(state, aid).available_cents
-        for aid in sorted(account_ids)
-    }
+    available = {aid: _customer_account(state, aid).available_cents for aid in sorted(account_ids)}
     prefixes: dict[str, int] = dict.fromkeys(available, 0)
     reserves: dict[str, int] = dict.fromkeys(available, 0)
     for item in obligations:

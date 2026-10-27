@@ -994,9 +994,14 @@ def test_upcoming_window_7_days_matches_projected_shortfall():
     ps = bankcore.projected_shortfall(state)
     uw = bankcore.upcoming_window(state, days=7)
     assert len(uw.obligations) == len(ps.obligations)
-    for u, p in zip(uw.obligations, ps.obligations):
+    for u, p in zip(uw.obligations, ps.obligations, strict=True):
         assert (u.due_at, u.rank, u.id, u.account_id, u.delta_cents) == (
-            p.due_at, p.rank, p.id, p.account_id, p.delta_cents)
+            p.due_at,
+            p.rank,
+            p.id,
+            p.account_id,
+            p.delta_cents,
+        )
     for aid in ps.accounts:
         assert uw.accounts[aid] == ps.accounts[aid]
     assert set(uw.accounts) == set(ps.accounts)
@@ -1091,7 +1096,7 @@ def test_upcoming_window_monthly_31_anchor_clips_to_feb_28():
 def test_upcoming_window_monthly_31_anchor_restores_after_nonleap_feb():
     """Verify Mar 31 is the next occurrence after Feb 28 (via scheduled_occurrences
     which supports wider windows)."""
-    billing = raw_billing(
+    _billing = raw_billing(
         anchor_day=31,
         time_of_day=time(6, 0),
         next_due_at=at("2025-02-28T06:00:00+08:00"),
@@ -1219,8 +1224,11 @@ def test_upcoming_window_account_filter_only_excludes_other_account_obligations(
         target_customer_id="cus_a",
     )
     state = raw_projection_state(
-        instructions=(raw_instruction(id="si_own", from_account_id="acc_s",
-                                     payee_id=None, to_account_id="acc_a"),),
+        instructions=(
+            raw_instruction(
+                id="si_own", from_account_id="acc_s", payee_id=None, to_account_id="acc_a"
+            ),
+        ),
         targets=(target,),
     )
     # Without filter: both acc_s debit (-1000) and acc_a credit (+1000)
@@ -1283,20 +1291,6 @@ def test_upcoming_window_weekly_keeps_monday_zero():
 
 def test_upcoming_window_end_at_respected():
     """A monthly billing with end_at should stop before end_at."""
-    state = raw_projection_state(
-        instructions=(),
-        mandates=(raw_mandate(),),
-        billings=(
-            raw_billing(
-                anchor_day=18,
-                time_of_day=time(6, 0),
-                next_due_at=at("2026-10-18T06:00:00+08:00"),
-            ),
-        ),
-        merchants=(raw_merchant(),),
-    )
-    # mandate has no end_at; billing has no end_at either
-    # Add end_at to the mandate
     mandate = raw_mandate(end_at=at("2026-10-18T06:00:00+08:00"))
     state2 = raw_projection_state(
         mandates=(mandate,),
