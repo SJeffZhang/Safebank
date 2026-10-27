@@ -1,0 +1,672 @@
+"""R7 list_scheduled and R10 list_subscriptions read tool acceptance tests.
+
+Uses the real obligations fixtures (install_core + install_obligations) against
+a tmpfs Postgres database served via HTTP, matching the pattern in
+test_obligations_data.py. Tests are executed with make test-obligations.
+"""
+
+import asyncio
+import socket
+import threading
+
+import httpx
+import pytest
+import uvicorn
+from app.db import engine
+from app.main import create_app
+from sqlalchemy import text as sa_text
+from sqlalchemy.pool import NullPool
+
+from tests.obligations_data.fixtures import KEY, NOW, install_core, install_obligations
+
+SERVICE_TOKEN = "obligations-test-token"
+
+
+@pytest.fixture(autouse=True)
+def clean_database(obligations_db):
+    """Truncate every application table before each test for an isolated dataset."""
+
+    async def _truncate():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            from app import models as m
+
+            names = ",".join(m.metadata.tables)
+            await conn.execute(sa_text(f"TRUNCATE {names} CASCADE"))
+        await admin.dispose()
+
+    asyncio.run(_truncate())
+    yield
+
+
+def free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def _serve(app, port):
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    return server
+
+
+def _read(client, tool, args, *, customer_id="cus_zs", auth=SERVICE_TOKEN, timeout=10.0):
+    return client.post(
+        f"/internal/read/{tool}",
+        json={"args": args, "customer_id": customer_id},
+        headers={"X-Service-Token": auth},
+        timeout=timeout,
+    )
+
+
+# ─── fixture helpers ───
+
+
+async def _prepare_app(obligations_db) -> tuple:
+    """Install core + obligations and return (app, port, admin_engine)."""
+    admin = engine(obligations_db.admin_url, poolclass=NullPool)
+    runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+    async with admin.begin() as conn:
+        await install_core(conn)
+        await install_obligations(conn)
+    app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+    port = free_port()
+    _serve(app, port)
+    return app, port, admin
+
+
+async def _await_app(client, port):
+    """Wait for uvicorn to become ready."""
+    for _ in range(40):
+        try:
+            r = await client.get(
+                f"http://127.0.0.1:{port}/health",
+                headers={"X-Service-Token": SERVICE_TOKEN},
+                timeout=2.0,
+            )
+            if r.status_code == 200:
+                return
+        except httpx.TransportError:
+            await asyncio.sleep(0.2)
+    raise RuntimeError("uvicorn listener never became ready")
+
+
+# ─── R7 list_scheduled ───
+
+
+def test_r7_returns_scheduled_transfers(obligations_db):
+    """cus_zs has one scheduled instruction (si_zs_mom MONTHLY 100000)."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            r = await _read(client, "list_scheduled", {"status": "ALL", "limit": 50})
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert len(body["items"]) == 1
+            item = body["items"][0]
+            assert item["id"] == "si_zs_mom"
+            assert item["amount_cents"] == 100000
+            assert item["period"] == "MONTHLY"
+            assert item["status"] == "ACTIVE"
+            assert item["last_run"] is None
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r7_status_filter_deleted_returns_empty(obligations_db):
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            r = await _read(client, "list_scheduled", {"status": "DELETED", "limit": 50})
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["items"] == []
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r7_cross_customer_invisible(obligations_db):
+    """cus_ls has no scheduled transfers; requesting as cus_zs must not return cus_ls data."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            # Request as cus_ls — they have zero scheduled instructions in fixtures.
+            r = await client.post(
+                "/internal/read/list_scheduled",
+                json={"args": {"status": "ALL", "limit": 50}, "customer_id": "cus_ls"},
+                headers={"X-Service-Token": SERVICE_TOKEN},
+                timeout=10.0,
+            )
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["items"] == []
+            # cus_zs's si_zs_mom must not appear.
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r7_invalid_cursor_returns_422(obligations_db):
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            r = await _read(
+                client, "list_scheduled", {"status": "ALL", "limit": 50, "cursor": "garbage"}
+            )
+            assert r.status_code == 422, r.text
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r7_pagination_respects_limit(obligations_db):
+    """With limit=1 the result has next_cursor; reusing it returns the remaining items."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        from datetime import datetime
+        from datetime import time as dt_time
+
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+            # Add a second scheduled instruction so there's >1 item for pagination.
+            from app import models as m
+
+            await conn.execute(
+                m.standing_instructions.insert().values(
+                    id="si_zs_rent",
+                    kind="SCHEDULED_TRANSFER",
+                    customer_id="cus_zs",
+                    status="ACTIVE",
+                    amount_type="FIXED",
+                    recurrence="PERIODIC",
+                    from_account_id="acc_zs_chk",
+                    payee_id="pye_zs_wwu",
+                    to_account_id=None,
+                    amount_cents=50000,
+                    period="MONTHLY",
+                    anchor_day=10,
+                    weekday=None,
+                    time_of_day=dt_time(9, 0),
+                    next_run_at=datetime.fromisoformat("2026-11-10T09:00:00+08:00"),
+                    end_at=None,
+                    priority="MEDIUM",
+                    grant_scope_hash="0" * 64,
+                    source_plan_id="pln_seed",
+                    created_at=NOW,
+                )
+            )
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            r1 = await _read(client, "list_scheduled", {"status": "ALL", "limit": 1})
+            assert r1.status_code == 200, r1.text
+            b1 = r1.json()
+            assert len(b1["items"]) == 1
+            assert b1["next_cursor"] is not None
+            r2 = await _read(
+                client,
+                "list_scheduled",
+                {"status": "ALL", "limit": 50, "cursor": b1["next_cursor"]},
+            )
+            assert r2.status_code == 200, r2.text
+            b2 = r2.json()
+            assert len(b2["items"]) == 1
+            assert b2["next_cursor"] is None
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r7_last_run_non_none_when_runs_exist(obligations_db):
+    """When an instruction_run record exists for si_zs_mom, last_run must be non-None."""
+
+    async def check():
+        from datetime import datetime as dtm
+
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+            from app import models as m
+
+            await conn.execute(
+                m.instruction_runs.insert().values(
+                    id="run_zs_mom_1",
+                    customer_id="cus_zs",
+                    account_id="acc_zs_chk",
+                    kind="SCHEDULED_TRANSFER",
+                    instruction_id="si_zs_mom",
+                    due_at=dtm.fromisoformat("2026-10-05T06:00:00+08:00"),
+                    event_id="evt_run_zs_mom_1",
+                    status="FAILED_INSUFFICIENT",
+                    code="INSUFFICIENT_FUNDS",
+                    amount_cents=100000,
+                    billing_id=None,
+                )
+            )
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            r = await _read(client, "list_scheduled", {"status": "ALL", "limit": 50})
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert len(body["items"]) == 1
+            item = body["items"][0]
+            assert item["id"] == "si_zs_mom"
+            last = item["last_run"]
+            assert last is not None
+            assert last["status"] == "FAILED_INSUFFICIENT"
+            assert last["code"] == "INSUFFICIENT_FUNDS"
+            assert last["due_at"] == "2026-10-04T22:00:00Z"
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r7_cross_tool_cursor_rejected(obligations_db):
+    """A cursor from list_subscriptions must be rejected when used with list_scheduled."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            # Get a list_subscriptions cursor.
+            r1 = await _read(client, "list_subscriptions", {"status": "ALL", "limit": 1})
+            assert r1.status_code == 200, r1.text
+            b1 = r1.json()
+            assert b1["next_cursor"] is not None
+            # Reuse it with list_scheduled — must be rejected.
+            r2 = await _read(
+                client,
+                "list_scheduled",
+                {"status": "ALL", "limit": 50, "cursor": b1["next_cursor"]},
+            )
+            assert r2.status_code == 422, r2.text
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+# ─── R10 list_subscriptions ───
+
+
+def test_r10_returns_subscriptions_with_totals(obligations_db):
+    """cus_zs has 4 ACTIVE subscriptions (si_zs_video, si_zs_music, si_zs_cloud, si_zs_gym)."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            r = await _read(client, "list_subscriptions", {"status": "ALL", "limit": 50})
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert len(body["items"]) == 4
+
+            ids = {i["instruction_id"] for i in body["items"]}
+            assert ids == {"si_zs_video", "si_zs_music", "si_zs_cloud", "si_zs_gym"}
+
+            nb = body["normalization_basis"]
+            assert nb["weekly_to_annual_factor"] == 52
+            assert nb["monthly_to_annual_factor"] == 12
+            assert nb["annual_to_monthly"] == "floor_div_12"
+
+            # All 4 ACTIVE: video=3000, music=1500, cloud=2100, gym=19900 (all MONTHLY)
+            # total_monthly = 3000+1500+2100+19900 = 26500
+            # total_annual = 26500×12 = 318000
+            assert body["total_monthly_cents"] == 26500
+            assert body["total_annual_cents"] == 318000
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r10_totals_only_active(obligations_db):
+    """Set one subscription to DELETED and verify totals exclude it."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+            # Mark si_zs_video as DELETED
+            from app import models as m
+
+            await conn.execute(
+                m.standing_instructions.update()
+                .where(m.standing_instructions.c.id == "si_zs_video")
+                .values(status="DELETED")
+            )
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            r = await _read(client, "list_subscriptions", {"status": "ALL", "limit": 50})
+            assert r.status_code == 200, r.text
+            body = r.json()
+            # 4 total items (1 DELETED + 3 ACTIVE)
+            assert len(body["items"]) == 4
+            statuses = {i["status"] for i in body["items"]}
+            assert statuses == {"ACTIVE", "DELETED"}
+
+            # Totals only for ACTIVE: music=1500 + cloud=2100 + gym=19900 = 23500
+            # Monthly: all MONTHLY, so monthly = 1500+2100+19900 = 23500
+            # Annual: 1500*12 + 2100*12 + 19900*12 = 18000+25200+238800 = 282000
+            assert body["total_monthly_cents"] == 23500
+            assert body["total_annual_cents"] == 282000
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r10_status_filter_deleted(obligations_db):
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+            from app import models as m
+
+            await conn.execute(
+                m.standing_instructions.update()
+                .where(m.standing_instructions.c.id == "si_zs_video")
+                .values(status="DELETED")
+            )
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            r = await _read(client, "list_subscriptions", {"status": "DELETED", "limit": 50})
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert len(body["items"]) == 1
+            assert body["items"][0]["instruction_id"] == "si_zs_video"
+            assert body["items"][0]["status"] == "DELETED"
+            # Totals only ACTIVE
+            assert body["total_monthly_cents"] == 1500 + 2100 + 19900
+            assert body["total_annual_cents"] == 1500 * 12 + 2100 * 12 + 19900 * 12
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r10_cross_customer_invisible(obligations_db):
+    """cus_ls subscriptions must not appear when querying as cus_zs."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            r = await _read(client, "list_subscriptions", {"status": "ALL", "limit": 50})
+            assert r.status_code == 200, r.text
+            body = r.json()
+            ids = {i["instruction_id"] for i in body["items"]}
+            assert "si_ls_video" not in ids
+            assert "si_ls_music" not in ids
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r10_invalid_cursor_returns_422(obligations_db):
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            r = await _read(
+                client, "list_subscriptions", {"status": "ALL", "limit": 50, "cursor": "bad"}
+            )
+            assert r.status_code == 422, r.text
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r10_annualization_weekly_monthly(obligations_db):
+    """Insert a WEEKLY billing and verify annual/monthly totals."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        from datetime import datetime
+        from datetime import time as dt_time
+
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+            from app import models as m
+
+            # Insert a WEEKLY merchant and billing + mandate
+            await conn.execute(
+                m.merchants.insert().values(
+                    id="mer_weekly",
+                    name="周卡服务",
+                    mcc="5817",
+                    category="娱乐",
+                    usage_expected=False,
+                )
+            )
+            await conn.execute(
+                m.merchant_billing.insert().values(
+                    id="bill_zs_weekly",
+                    customer_id="cus_zs",
+                    account_id="acc_zs_chk",
+                    merchant_id="mer_weekly",
+                    amount_cents=1000,
+                    period="WEEKLY",
+                    anchor_day=None,
+                    weekday=1,
+                    time_of_day=dt_time(6, 0),
+                    next_due_at=datetime.fromisoformat("2026-10-20T06:00:00+08:00"),
+                    active=True,
+                    created_at=NOW,
+                )
+            )
+            await conn.execute(
+                m.standing_instructions.insert().values(
+                    id="si_zs_weekly",
+                    kind="MERCHANT_MANDATE",
+                    customer_id="cus_zs",
+                    status="ACTIVE",
+                    from_account_id="acc_zs_chk",
+                    amount_type="DUES",
+                    recurrence="AS_PER_DUES",
+                    period=None,
+                    anchor_day=None,
+                    weekday=None,
+                    time_of_day=None,
+                    next_run_at=None,
+                    end_at=None,
+                    priority="HIGH",
+                    grant_scope_hash="0" * 64,
+                    source_plan_id="pln_seed",
+                    created_at=NOW,
+                    billing_id="bill_zs_weekly",
+                    merchant_id="mer_weekly",
+                    max_amount_cents=1200,
+                )
+            )
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            r = await _read(client, "list_subscriptions", {"status": "ALL", "limit": 50})
+            assert r.status_code == 200, r.text
+            body = r.json()
+            # 4 original + 1 new weekly = 5
+            assert len(body["items"]) == 5
+
+            # Find the WEEKLY item
+            weekly = [i for i in body["items"] if i["period"] == "WEEKLY"]
+            assert len(weekly) == 1
+            w = weekly[0]
+            assert w["instruction_id"] == "si_zs_weekly"
+            assert w["annual_cost_cents"] == 1000 * 52  # = 52000
+
+            # Totals: ACTIVE subscriptions now 5 old + 1 new
+            # MONTHLY: 3000+1500+2100+19900 = 26500 (only original 4; mom is
+            # ScheduledInstruction, not in subscriptions)
+            # WEEKLY: monthly = floor(1000*52/12) = floor(52000/12) = 4333
+            # Expected total_monthly = 26500 + 4333 = 30833
+            # Expected total_annual = (3000+1500+2100+19900)*12 + 52000 = 318000 + 52000 = 370000
+            assert body["total_monthly_cents"] == 30833
+            assert body["total_annual_cents"] == 370000
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r10_pagination_respects_limit(obligations_db):
+    """With limit=1 the result has next_cursor; reusing it returns the remaining items."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            r1 = await _read(client, "list_subscriptions", {"status": "ALL", "limit": 1})
+            assert r1.status_code == 200, r1.text
+            b1 = r1.json()
+            assert len(b1["items"]) == 1
+            assert b1["next_cursor"] is not None
+            r2 = await _read(
+                client,
+                "list_subscriptions",
+                {"status": "ALL", "limit": 50, "cursor": b1["next_cursor"]},
+            )
+            assert r2.status_code == 200, r2.text
+            b2 = r2.json()
+            assert len(b2["items"]) == 3
+            assert b2["next_cursor"] is None
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r10_empty_collection_returns_empty_list(obligations_db):
+    """cus_sb has no subscriptions; querying as cus_sb must return empty items."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            r = await client.post(
+                "/internal/read/list_subscriptions",
+                json={"args": {"status": "ALL", "limit": 50}, "customer_id": "cus_sb"},
+                headers={"X-Service-Token": SERVICE_TOKEN},
+                timeout=10.0,
+            )
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["items"] == []
+            assert body["total_monthly_cents"] == 0
+            assert body["total_annual_cents"] == 0
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
