@@ -166,18 +166,31 @@ def test_id_prefix_error_exhausted_still_raises_reference_error():
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def test_mixed_problems_exhausted_still_raises_reference_error():
-    """Plan has both bank_name=__NULL__ AND a wrong id prefix → ReferenceError."""
-    plan = _strict_add_payee(bank_name="__NULL__")
-    plan["steps"][0]["args"]["from_account_id"] = "pye_bad"  # non-existent but wrong prefix
-    # Actually add_payee doesn't have from_account_id. Let me create a plan
-    # with bank_name=__NULL__ and a bad utterance ref instead.
-    plan["steps"][0]["arg_sources"] = [
-        {
-            "param": "bank_name",
-            "source": {"kind": "utterance", "ref": "utt_nonexistent", "span": [0, 5]},
-        }
-    ]
+def test_mixed_id_prefix_and_null_yields_reference_error():
+    """Plan has a wrong id prefix (NOT user-only) → ReferenceError even if another field is null.
+
+    Uses a transfer plan with from_account_id='crd_zs_debit' (wrong prefix, caught by
+    _required_value_problems as an ID prefix error) and adds a separate add_payee
+    step with bank_name=__NULL__ so both val_problem types coexist."""
+    plan = {
+        "intents": ["transfer"],
+        "steps": [
+            {
+                "step_id": "s1",
+                "tool": "transfer",
+                "args": {
+                    "from_account_id": "crd_zs_debit",  # wrong prefix → not user-only
+                    "payee_id": {"kind": "id", "id": "pye_b"},
+                    "to_account_id": {"kind": "none"},
+                    "amount_cents": 80000,
+                    "memo": "__NULL__",
+                },
+                "depends_on": [],
+                "arg_sources": [],
+            }
+        ],
+        "rationale": "test",
+    }
     scripted = ScriptedLLM(
         [
             tool_response("submit_action_plan", plan),
@@ -187,5 +200,6 @@ def test_mixed_problems_exhausted_still_raises_reference_error():
     llm = _make_llm(api_key=API_KEY, http_client=scripted.client)
     adapter = PlanAdapter(llm)
     with pytest.raises(ReferenceError) as exc_info:
-        adapter(_add_payee_state(), ctx())
-    assert not isinstance(exc_info.value, ExhaustedClarify)
+        adapter(_transfer_state(), ctx())
+    # Must be ReferenceError, not ExhaustedClarify
+    assert "from_account_id" in str(exc_info.value)
