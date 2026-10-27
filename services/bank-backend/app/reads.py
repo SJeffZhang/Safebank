@@ -33,10 +33,11 @@ def require_account(state, account_id, customer_id):
             raise BankError(Code.NOT_FOUND, 404)
 
 
-def paginate(items, args, customer_id, key):
+def paginate(items, args, customer_id, key, tool):
     scope = digest(
         {
             "customer_id": customer_id,
+            "tool": tool,
             "query": args.model_dump(mode="json", exclude={"cursor", "limit"}),
         }
     )
@@ -118,7 +119,7 @@ def read(state, tool, args, customer_id):
                 for p in payees
                 if any(args.query in (value or "") for value in (p.name, p.alias, p.phone))
             ]
-        payees, cursor = paginate(payees, args, customer_id, lambda p: (p.id,))
+        payees, cursor = paginate(payees, args, customer_id, lambda p: (p.id,), "list_payees")
         data = dict(
             items=[
                 dict(
@@ -171,7 +172,7 @@ def read(state, tool, args, customer_id):
         }
         transactions.sort(key=lambda t: (t.occurred_at.isoformat(), t.id))
         transactions, cursor = paginate(
-            transactions, args, customer_id, lambda t: (t.occurred_at.isoformat(), t.id)
+            transactions, args, customer_id, lambda t: (t.occurred_at.isoformat(), t.id), "get_transactions"
         )
         data = dict(
             items=[
@@ -207,14 +208,14 @@ def read(state, tool, args, customer_id):
         )
     elif tool == "list_scheduled":
         items = [v for v in state.instructions if args.status == "ALL" or v.status == args.status]
-        items, cursor = paginate(items, args, customer_id, lambda v: (v.id,))
+        items, cursor = paginate(items, args, customer_id, lambda v: (v.id,), "list_scheduled")
         data = dict(
             items=[v.model_dump(mode="json") for v in items],
             next_cursor=cursor,
         )
     elif tool == "list_subscriptions":
         items = [v for v in state.subscriptions if args.status == "ALL" or v.status == args.status]
-        items, cursor = paginate(items, args, customer_id, lambda v: (v.billing_id,))
+        items, cursor = paginate(items, args, customer_id, lambda v: (v.billing_id,), "list_subscriptions")
         active = [v for v in state.subscriptions if v.status == "ACTIVE"]
         total_annual = sum(v.annual_cost_cents for v in active)
         total_monthly = 0
