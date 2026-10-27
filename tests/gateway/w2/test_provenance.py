@@ -196,3 +196,75 @@ def test_negated_close_verb_not_user_source():
     s["arg_sources"] = [source("online", ref="utt_1", span=[0, 4])]
     ctx = run([s], text="不要关掉线上支付")
     assert any(f.code is Code.UNKNOWN_SENSITIVE_ARG for f in ctx.findings)
+
+
+# ── P2-2: explicit bool verb classification ────────────────────────────────
+
+
+def test_every_lexicon_verb_classified_exactly_once():
+    """P2-2: each current lexicon verb maps to exactly one of true/false sets."""
+    from services.gateway.app.taint.text import _BOOL_FALSE_EXTRA, _BOOL_TRUE_EXTRA
+
+    assert _BOOL_TRUE_EXTRA & _BOOL_FALSE_EXTRA == frozenset(), (
+        f"verbs in both sets: {_BOOL_TRUE_EXTRA & _BOOL_FALSE_EXTRA}"
+    )
+    for verb in _BOOL_TRUE_EXTRA | _BOOL_FALSE_EXTRA:
+        assert verb, "empty verb in sets"
+
+
+def test_guan_le_classified_as_false():
+    """P2-2: '关了' (containing 关) is classified as false."""
+    from services.gateway.app.taint.text import _classify_verbs
+
+    true_set, false_set = _classify_verbs(["关闭", "开启", "关掉", "打开", "开通", "关了"])
+    assert "关了" in false_set
+    assert "关了" not in true_set
+    # Existing verbs still correctly classified
+    assert "关闭" in false_set
+    assert "关掉" in false_set
+    assert "开启" in true_set
+    assert "打开" in true_set
+    assert "开通" in true_set
+
+
+def test_unclassifiable_verb_raises():
+    """P2-2: a verb with neither 关/停 nor 开/启 raises ValueError."""
+    import pytest
+
+    from services.gateway.app.taint.text import _classify_verbs
+
+    with pytest.raises(ValueError, match="设置"):
+        _classify_verbs(["关闭", "设置"])
+
+
+def test_ambiguous_verb_raises():
+    """P2-2: a verb containing both classes raises ValueError."""
+    import pytest
+
+    from services.gateway.app.taint.text import _classify_verbs
+
+    with pytest.raises(ValueError, match="开关"):
+        _classify_verbs(["开关"])
+
+
+# ── P2-1: multi-amount span ─────────────────────────────────────────────────
+
+
+def test_multi_amount_span_matches_neither():
+    """P2-1: span covering two amounts ('三千元或五百元') must not match either.
+
+    The span covers both '三千元' (300000) and '五百元' (50000).
+    Neither should be verified as user — the span is ambiguous.
+    """
+    s1 = step(amount_cents=300000, payee_id="pye_b")
+    s1["arg_sources"] = [source("amount_cents", ref="utt_1", span=[0, 6])]
+    ctx1 = run([s1], text="三千元或五百元")
+
+    s2 = step(amount_cents=50000, payee_id="pye_b")
+    s2["arg_sources"] = [source("amount_cents", ref="utt_1", span=[0, 6])]
+    ctx2 = run([s2], text="三千元或五百元")
+
+    trust1 = ctx1.provenance.arg_sources[s1["step_id"]]["amount_cents"]["trust"]
+    trust2 = ctx2.provenance.arg_sources[s2["step_id"]]["amount_cents"]["trust"]
+    assert trust1 != "user", f"first amount unexpectedly verified as {trust1}"
+    assert trust2 != "user", f"second amount unexpectedly verified as {trust2}"

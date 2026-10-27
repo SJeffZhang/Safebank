@@ -19,6 +19,43 @@ def numbers(value: str) -> frozenset[str]:
     return frozenset(re.findall(r"[0-9]{8,}", normalize(value)))
 
 
+def _classify_verbs(verbs: list[str]) -> tuple[frozenset[str], frozenset[str]]:
+    """Pure: classify card-control verbs into (true_set, false_set).
+
+    Verbs containing 关/停 go to false; verbs containing 开/启 go to true.
+    A verb matching both classes or neither raises ValueError (fail-closed).
+    """
+    true_set: set[str] = set()
+    false_set: set[str] = set()
+    for v in verbs:
+        is_false = any(c in v for c in ("关", "停"))
+        is_true = any(c in v for c in ("开", "启"))
+        if is_true and is_false:
+            raise ValueError(
+                f"Ambiguous card-control verb '{v}': "
+                f"matches both true (开/启) and false (关/停) classes"
+            )
+        if is_true:
+            true_set.add(v)
+        elif is_false:
+            false_set.add(v)
+        else:
+            raise ValueError(
+                f"Unclassifiable card-control verb '{v}': contains neither 开/启 nor 关/停"
+            )
+    return frozenset(true_set), frozenset(false_set)
+
+
+def _classify_bool_verbs():
+    """Load card-control verbs from intent_lexicon.yaml and classify them."""
+    from ..utterance.parser import LEXICON
+
+    return _classify_verbs(LEXICON.get("actions", {}).get("update_card_controls", []))
+
+
+_BOOL_TRUE_EXTRA, _BOOL_FALSE_EXTRA = _classify_bool_verbs()
+
+
 def matches(value, text: str, param: str, state, customer_id: str | None = None) -> bool:
     raw = normalize(text)
     if param.endswith("_cents"):
@@ -37,18 +74,13 @@ def matches(value, text: str, param: str, state, customer_id: str | None = None)
         except InvalidOperation:
             return False
     if isinstance(value, bool):
-        # Load card-control verbs from the single source of truth (intent_lexicon.yaml)
-        # so provenance boolean matching stays in sync with G3 parser recognition.
-        # Non-channel booleans (补卡/不补卡/包括自己/etc) retain their hard-coded entries.
-        from ..utterance.parser import LEXICON
-
-        controls = LEXICON.get("actions", {}).get("update_card_controls", [])
-        true_extra = {v for v in controls if v not in ("关闭", "关掉")}
-        false_extra = {v for v in controls if v in ("关闭", "关掉")}
+        # Card-control verbs are classified at module-load time from the single
+        # source of truth (intent_lexicon.yaml).  Non-channel booleans (补卡/
+        # 不补卡/包括自己/etc) retain their hard-coded entries.
         return raw in (
-            {"true", "是", "开启", "打开", "开通", "补卡", "包括自己"} | true_extra
+            {"true", "是", "开启", "打开", "开通", "补卡", "包括自己"} | _BOOL_TRUE_EXTRA
             if value
-            else {"false", "否", "关闭", "关掉", "不补卡", "不包括自己"} | false_extra
+            else {"false", "否", "关闭", "关掉", "不补卡", "不包括自己"} | _BOOL_FALSE_EXTRA
         )
     if isinstance(value, str):
         if normalize(value) == raw:
