@@ -146,7 +146,7 @@ def test_add_payee_xin_zeng_shou_kuan_ren():
     )
     assert result.status == "SCOPED"
     assert "PAYEE_ADD" in result.scope.action_kinds
-    assert result.scope.fields.get("payee_name") == "李阿姨"
+    assert result.scope.fields.get("name") == "李阿姨"
     assert result.scope.fields.get("account_no") == "6222020000004444"
 
 
@@ -162,7 +162,7 @@ def test_add_payee_ba_X_jia_wei_shou_kuan_ren():
     )
     assert result.status == "SCOPED"
     assert "PAYEE_ADD" in result.scope.action_kinds
-    assert result.scope.fields.get("payee_name") == "李阿姨"
+    assert result.scope.fields.get("name") == "李阿姨"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

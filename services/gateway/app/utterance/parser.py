@@ -525,7 +525,7 @@ def scope_is_complete(scope: NormalizedScope) -> bool:
             return False
         if kind == "SCHEDULE_CANCEL" and not fields.get("instruction_id"):
             return False
-        if kind == "PAYEE_ADD" and not fields.get("payee_name"):
+        if kind == "PAYEE_ADD" and not fields.get("name"):
             return False
     return True
 
@@ -788,7 +788,7 @@ def parse(
             name = (command.target or "").strip()
             if not name:
                 return Parsed()
-            if not put("payee_name", name):
+            if not put("name", name):
                 return Parsed()
             account_no = command.fields.get("account_no")
             if account_no:
