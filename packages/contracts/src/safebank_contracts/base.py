@@ -28,6 +28,7 @@ def exact_int(value: Any) -> int:
 Int64 = Annotated[int, BeforeValidator(exact_int), Field(ge=-BIGINT_MAX - 1, le=BIGINT_MAX)]
 Cents = Annotated[Int64, Field(ge=0)]
 PositiveCents = Annotated[Cents, Field(gt=0, le=100_000_000)]
+SignedCents = Annotated[Int64, Field()]
 
 
 def decimal4(value: Any) -> Decimal:

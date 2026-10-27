@@ -17717,7 +17717,7 @@
                 "type": "string"
               },
               "max_outflow_cents": {
-                "ge": 0,
+                "ge": -9223372036854775808,
                 "le": 9223372036854775807,
                 "title": "Max Outflow Cents",
                 "type": "integer"
