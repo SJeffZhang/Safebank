@@ -37,10 +37,18 @@ def matches(value, text: str, param: str, state, customer_id: str | None = None)
         except InvalidOperation:
             return False
     if isinstance(value, bool):
+        # Load card-control verbs from the single source of truth (intent_lexicon.yaml)
+        # so provenance boolean matching stays in sync with G3 parser recognition.
+        # Non-channel booleans (补卡/不补卡/包括自己/etc) retain their hard-coded entries.
+        from ..utterance.parser import LEXICON
+
+        controls = LEXICON.get("actions", {}).get("update_card_controls", [])
+        true_extra = {v for v in controls if v not in ("关闭", "关掉")}
+        false_extra = {v for v in controls if v in ("关闭", "关掉")}
         return raw in (
-            {"true", "是", "开启", "打开", "补卡", "包括自己"}
+            {"true", "是", "开启", "打开", "开通", "补卡", "包括自己"} | true_extra
             if value
-            else {"false", "否", "关闭", "不补卡", "不包括自己"}
+            else {"false", "否", "关闭", "关掉", "不补卡", "不包括自己"} | false_extra
         )
     if isinstance(value, str):
         if normalize(value) == raw:
