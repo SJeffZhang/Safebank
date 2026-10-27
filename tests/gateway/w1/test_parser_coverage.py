@@ -364,3 +364,47 @@ def test_card_ba_pattern_attack(text):
 def test_add_payee_attack_boundary_and_mixed(text):
     """不完整/含字母账号、属性从句后混入无关命令不得授权。"""
     _not_scoped_no_payee_write(parse(text, _STATE, _CUS))
+
+
+# ── J. 评审修复：add_payee 元语言 / 金额边界 / 吞并（T2-fix） ────────────────
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # add_payee 元语言 — 不得授权
+        "新增收款人是什么意思",
+        "新增收款人怎么操作",
+        "把李阿姨加为收款人怎么操作",
+        # 无逗号 add_payee 吞并后续意图 — 不得授权
+        "新增收款人李阿姨给王五转三千元",
+    ],
+)
+def test_add_payee_no_authorize_meta_and_merge(text):
+    """add_payee 元语言问题、无逗号吞并后续意图均不得授权。"""
+    _not_scoped_no_payee_write(parse(text, _STATE, _CUS))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # 口语省略 — 不得授权
+        "给王五转三千五",
+        "给王五转两万五",
+        # 重复单位 — 不得授权
+        "给王五转十十元",
+    ],
+)
+def test_chinese_numeral_ambiguous_not_authorized(text):
+    """口语省略数字（三千五、两万五）和重复单位（十十）不得猜测授权。"""
+    _not_scoped_no_transfer(parse(text, _STATE, _CUS))
+
+
+def test_chinese_numeral_full_form_authorized():
+    """完整写法正确解析：给王五转三千五百元 = 350000 分。"""
+    result = parse("给王五转三千五百元", _STATE, _CUS)
+    assert result.status == "SCOPED"
+    assert result.scope.action_kinds == ("TRANSFER_EXTERNAL",)
+    assert len(result.scope.transfers) == 1
+    assert result.scope.transfers[0].target_fingerprint == "fp_ww"
+    assert result.scope.transfers[0].amount_cents == 350000
