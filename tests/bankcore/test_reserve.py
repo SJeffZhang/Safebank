@@ -906,3 +906,101 @@ def test_upcoming_window_rejects_unknown_account():
 def test_upcoming_window_rejects_internal_account():
     with pytest.raises(ValueError):
         bankcore.upcoming_window(raw_projection_state(), days=7, account_id="acc_seed_equity")
+
+
+# ---- upcoming_window window sizes ----
+
+
+def test_upcoming_window_1_day_excludes_obligation_beyond():
+    """Obligation at day+3 is outside a 1-day window."""
+    state = raw_projection_state(instructions=(raw_instruction(),))
+    result = bankcore.upcoming_window(state, days=1)
+    # NOW=2026-10-15T09:00; 1-day = through 10-16T09:00; si_1 at 10-18 is outside
+    assert result.obligations == ()
+    assert result.accounts["acc_a"].max_outflow_cents == 600000
+    assert result.accounts["acc_a"].reserve_cents == 0
+
+
+def test_upcoming_window_7_days_includes_once_obligation():
+    """A once instruction at +3d should land inside a 7-day window."""
+    state = raw_projection_state(instructions=(raw_instruction(),))
+    result = bankcore.upcoming_window(state, days=7)
+    assert len(result.obligations) == 1
+    assert result.obligations[0].id == "si_1"
+    assert result.obligations[0].delta_cents == -1000
+    assert result.accounts["acc_a"].reserve_cents == 1000
+    assert result.accounts["acc_a"].max_outflow_cents == 599000
+
+
+def test_upcoming_window_30_days_includes_once_obligation():
+    """Same once instruction also lands in a 30-day window."""
+    state = raw_projection_state(instructions=(raw_instruction(),))
+    result = bankcore.upcoming_window(state, days=30)
+    assert len(result.obligations) == 1
+    assert result.obligations[0].id == "si_1"
+    assert result.accounts["acc_a"].reserve_cents == 1000
+
+
+def test_upcoming_window_monthly_expands_more_in_30_days():
+    """Monthly billing: 1 in 7d, 1 in 30d (Nov 18 is outside 30d from Oct 15)."""
+    state = raw_projection_state(
+        instructions=(raw_instruction(),),
+        mandates=(raw_mandate(),),
+        billings=(raw_billing(),),
+        merchants=(raw_merchant(),),
+    )
+    r7 = bankcore.upcoming_window(state, days=7)
+    r30 = bankcore.upcoming_window(state, days=30)
+    bill7 = [o for o in r7.obligations if o.id == "bill_video"]
+    bill30 = [o for o in r30.obligations if o.id == "bill_video"]
+    assert len(bill7) == 1  # 10-18 inside 7d
+    # 30d from 10-15T09 → 11-14T09; Nov 18 is outside
+    assert len(bill30) == 1
+    assert r7.accounts["acc_a"].reserve_cents == 4000  # si_1 1000 + bill 3000
+    assert r30.accounts["acc_a"].reserve_cents == 4000
+
+
+def test_upcoming_window_monthly_two_occurrences_with_early_anchor():
+    """Monthly anchor=1 from Sep 1: Oct 1 excluded, Nov 1 inside 30d."""
+    state = raw_projection_state(
+        instructions=(),
+        mandates=(raw_mandate(),),
+        billings=(
+            raw_billing(
+                anchor_day=1,
+                time_of_day=time(6, 0),
+                next_due_at=at("2026-10-01T06:00:00+08:00"),
+            ),
+        ),
+        merchants=(raw_merchant(),),
+    )
+    r30 = bankcore.upcoming_window(state, days=30)
+    bills = [o for o in r30.obligations if o.id == "bill_video"]
+    assert len(bills) == 1
+    assert bills[0].due_at == at("2026-11-01T06:00:00+08:00")
+
+
+def test_upcoming_window_weekly_in_30_days():
+    """Weekly billing appears 4 times in 30 days (left-open start excludes NOW)."""
+    state = raw_projection_state(
+        mandates=(raw_mandate(),),
+        billings=(
+            raw_billing(
+                period="WEEKLY",
+                anchor_day=None,
+                weekday=3,
+                time_of_day=time(9, 0),
+                next_due_at=NOW,  # 2026-10-15T09:00 Thursday — excluded
+            ),
+        ),
+        merchants=(raw_merchant(),),
+    )
+    r30 = bankcore.upcoming_window(state, days=30)
+    weekly = [o for o in r30.obligations if o.id == "bill_video"]
+    assert [o.due_at.isoformat() for o in weekly] == [
+        "2026-10-22T09:00:00+08:00",
+        "2026-10-29T09:00:00+08:00",
+        "2026-11-05T09:00:00+08:00",
+        "2026-11-12T09:00:00+08:00",
+    ]
+    assert r30.accounts["acc_a"].reserve_cents == 12000  # 4×3000
