@@ -101,6 +101,9 @@ _CN_DIGIT_V = {
 _PAYEE_NAME_RE = re.compile(r"^[一-鿿·]{1,8}$")
 _PAYEE_NAME_META_RE = re.compile(r"是什么|什么意思|怎么|能不能|可以吗|可行吗|行吗|吗|呢|啥|吧|嘛")
 _PAYEE_NAME_ACTION_RE = re.compile(r"转|给|冻结|关闭|开通|打开|开启|关掉|取消|赎回|申购|新增|添加")
+_PAYEE_NAME_GENERIC_BLACKLIST = frozenset(
+    {"收款人", "联系人", "账户", "账号", "卡", "银行卡", "对方"}
+)
 
 
 def _valid_payee_name(name: str) -> bool:
@@ -110,6 +113,8 @@ def _valid_payee_name(name: str) -> bool:
     if _PAYEE_NAME_META_RE.search(name):
         return False
     if _PAYEE_NAME_ACTION_RE.search(name):
+        return False
+    if name in _PAYEE_NAME_GENERIC_BLACKLIST:
         return False
     return True
 
