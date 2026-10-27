@@ -11,7 +11,7 @@ from safebank_contracts.views import READ_RESULTS
 
 from .errors import BankError
 
-SUPPORTED_READS = {"get_accounts", "list_payees", "get_transactions", "get_cards", "get_profile"}
+SUPPORTED_READS = {"get_accounts", "list_payees", "get_transactions", "get_cards", "get_profile", "list_scheduled", "list_subscriptions"}
 
 
 def mask(value):
@@ -193,6 +193,39 @@ def read(state, tool, args, customer_id):
                 valid_until=customer.risk_valid_until,
             ),
             sim_now=state.sim_now,
+        )
+    elif tool == "list_scheduled":
+        items = [
+            v for v in state.instructions if args.status == "ALL" or v.status == args.status
+        ]
+        items, cursor = paginate(items, args, customer_id, lambda v: (v.id,))
+        data = dict(
+            items=[v.model_dump(mode="json") for v in items],
+            next_cursor=cursor,
+        )
+    elif tool == "list_subscriptions":
+        items = [
+            v for v in state.subscriptions if args.status == "ALL" or v.status == args.status
+        ]
+        items, cursor = paginate(items, args, customer_id, lambda v: (v.billing_id,))
+        active = [v for v in state.subscriptions if v.status == "ACTIVE"]
+        total_annual = sum(v.annual_cost_cents for v in active)
+        total_monthly = 0
+        for v in active:
+            if v.period == "MONTHLY":
+                total_monthly += v.amount_cents
+            elif v.period == "WEEKLY":
+                total_monthly += v.annual_cost_cents // 12
+        data = dict(
+            items=[v.model_dump(mode="json") for v in items],
+            next_cursor=cursor,
+            total_monthly_cents=total_monthly,
+            total_annual_cents=total_annual,
+            normalization_basis=dict(
+                weekly_to_annual_factor=52,
+                monthly_to_annual_factor=12,
+                annual_to_monthly="floor_div_12",
+            ),
         )
     else:
         raise BankError(Code.TOOL_NOT_ALLOWED, 403)
