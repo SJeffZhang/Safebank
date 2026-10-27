@@ -980,6 +980,334 @@ def test_upcoming_window_monthly_two_occurrences_with_early_anchor():
     assert bills[0].due_at == at("2026-11-01T06:00:00+08:00")
 
 
+# ---- upcoming_window consistency ----
+
+
+def test_upcoming_window_7_days_matches_projected_shortfall():
+    """upcoming_window(days=7) produces identical obligations and reserves."""
+    state = raw_projection_state(
+        instructions=(raw_instruction(),),
+        mandates=(raw_mandate(),),
+        billings=(raw_billing(),),
+        merchants=(raw_merchant(),),
+    )
+    ps = bankcore.projected_shortfall(state)
+    uw = bankcore.upcoming_window(state, days=7)
+    assert len(uw.obligations) == len(ps.obligations)
+    for u, p in zip(uw.obligations, ps.obligations):
+        assert (u.due_at, u.rank, u.id, u.account_id, u.delta_cents) == (
+            p.due_at, p.rank, p.id, p.account_id, p.delta_cents)
+    for aid in ps.accounts:
+        assert uw.accounts[aid] == ps.accounts[aid]
+    assert set(uw.accounts) == set(ps.accounts)
+
+
+def test_upcoming_window_7_days_matches_prd_complete():
+    """days=7 on the full PRD state matches projected_shortfall exactly."""
+    state = prd_raw_state()
+    payee = Payee(
+        id="pye_ww",
+        customer_id="cus_a",
+        name="王五",
+        alias=None,
+        phone=None,
+        bank_name="本行",
+        account_no="6222020000000003",
+        target_account_id="acc_b",
+        target_fingerprint="internal",
+        created_at=NOW - timedelta(days=10),
+    )
+    state = state.model_copy(update={"payees": {**state.payees, payee.id: payee}})
+    after, _, errors = apply_transfer(
+        state,
+        Transfer(
+            from_account_id="acc_a",
+            payee_id="pye_ww",
+            to_account_id=None,
+            amount_cents=300000,
+            memo=None,
+        ),
+        NOW,
+        Context("cus_a", "pln_prd", "s1"),
+    )
+    assert errors == ()
+    ps = bankcore.projected_shortfall(after)
+    uw = bankcore.upcoming_window(after, days=7)
+    assert uw.accounts["acc_a"].max_outflow_cents == ps.accounts["acc_a"].max_outflow_cents
+    assert uw.accounts["acc_a"].reserve_cents == ps.accounts["acc_a"].reserve_cents
+    assert [o.id for o in uw.obligations] == [o.id for o in ps.obligations]
+
+
+# ---- upcoming_window boundaries ----
+
+
+def test_upcoming_window_left_open_right_closed():
+    """Exclude obligation at start instant, include at end instant."""
+    end = NOW + timedelta(days=7)
+    state = raw_projection_state(
+        instructions=(),
+        mandates=(raw_mandate(), raw_mandate(id="si_end", billing_id="bill_end")),
+        billings=(
+            raw_billing(anchor_day=15, time_of_day=time(9, 0), next_due_at=NOW),
+            raw_billing(id="bill_end", anchor_day=22, time_of_day=time(9, 0), next_due_at=end),
+        ),
+        merchants=(raw_merchant(),),
+    )
+    r7 = bankcore.upcoming_window(state, days=7)
+    assert [(o.id, o.due_at) for o in r7.obligations] == [("bill_end", end)]
+
+
+def test_upcoming_window_0600_execution_samples_correct_hour():
+    """Obligation at 06:00 is correctly time-stamped."""
+    state = raw_projection_state(instructions=(raw_instruction(),))
+    r7 = bankcore.upcoming_window(state, days=7)
+    assert r7.obligations[0].due_at == at("2026-10-18T06:00:00+08:00")
+    assert r7.obligations[0].due_at.hour == 6
+
+
+# ---- upcoming_window month-end & leap year ----
+
+
+def test_upcoming_window_monthly_31_anchor_clips_to_feb_28():
+    """Anchor 31 in a non-leap February clips to Feb 28 at the correct time."""
+    state = raw_projection_state(
+        instructions=(),
+        mandates=(raw_mandate(),),
+        billings=(
+            raw_billing(
+                anchor_day=31,
+                time_of_day=time(6, 0),
+                next_due_at=at("2025-02-28T06:00:00+08:00"),
+            ),
+        ),
+        merchants=(raw_merchant(),),
+    )
+    shifted = state.model_copy(update={"sim_now": at("2025-02-27T00:00:00+08:00")})
+    r7 = bankcore.upcoming_window(shifted, days=7)
+    bills = [o for o in r7.obligations if o.id == "bill_video"]
+    assert [o.due_at.isoformat() for o in bills] == ["2025-02-28T06:00:00+08:00"]
+
+
+def test_upcoming_window_monthly_31_anchor_restores_after_nonleap_feb():
+    """Verify Mar 31 is the next occurrence after Feb 28 (via scheduled_occurrences
+    which supports wider windows)."""
+    billing = raw_billing(
+        anchor_day=31,
+        time_of_day=time(6, 0),
+        next_due_at=at("2025-02-28T06:00:00+08:00"),
+    )
+    start = at("2025-02-27T00:00:00+08:00")
+    end = at("2025-04-30T06:00:00+08:00")
+    schedule = ScheduledView(
+        id="si_test",
+        from_account_id="acc_a",
+        payee_id="pye_external",
+        to_account_id=None,
+        target_display="ext",
+        amount_cents=3000,
+        period="MONTHLY",
+        anchor_day=31,
+        weekday=None,
+        time_of_day="06:00",
+        next_run_at=at("2025-02-28T06:00:00+08:00"),
+        end_at=None,
+        status="ACTIVE",
+        last_run=None,
+    )
+    result = bankcore.scheduled_occurrences((schedule,), start, end)
+    assert [item.due_at.isoformat() for item in result] == [
+        "2025-02-28T06:00:00+08:00",
+        "2025-03-31T06:00:00+08:00",
+        "2025-04-30T06:00:00+08:00",
+    ]
+
+
+def test_upcoming_window_leap_year_feb_29():
+    """Anchor 31 clips to Feb 29 in a leap year."""
+    state = raw_projection_state(
+        instructions=(),
+        mandates=(raw_mandate(),),
+        billings=(
+            raw_billing(
+                anchor_day=31,
+                time_of_day=time(6, 0),
+                next_due_at=at("2024-01-31T06:00:00+08:00"),
+            ),
+        ),
+        merchants=(raw_merchant(),),
+    )
+    shifted = state.model_copy(update={"sim_now": at("2024-01-30T09:00:00+08:00")})
+    r30 = bankcore.upcoming_window(shifted, days=30)
+    bills = [o for o in r30.obligations if o.id == "bill_video"]
+    assert [o.due_at.isoformat() for o in bills] == [
+        "2024-01-31T06:00:00+08:00",
+        "2024-02-29T06:00:00+08:00",
+    ]
+
+
+# ---- upcoming_window negative max_outflow ----
+
+
+def test_upcoming_window_preserves_negative_max_outflow():
+    """When obligations exceed balance, max_outflow is negative, not clamped."""
+    state = raw_projection_state(
+        balance=2000,
+        mandates=(raw_mandate(),),
+        billings=(raw_billing(),),
+        merchants=(raw_merchant(),),
+    )
+    accounts = dict(state.accounts)
+    accounts["acc_a"] = accounts["acc_a"].model_copy(update={"debits_pending_cents": 500})
+    state = state.model_copy(update={"accounts": accounts})
+    r7 = bankcore.upcoming_window(state, days=7)
+    assert r7.accounts["acc_a"].max_outflow_cents == -1500
+    assert r7.accounts["acc_a"].shortfall_cents == 1500
+    assert r7.accounts["acc_a"].reserve_cents == 3000
+
+
+def test_upcoming_window_negative_max_outflow_not_clamped_at_zero():
+    """Even with a large exceeding obligation, max_outflow stays negative."""
+    state = raw_projection_state(
+        balance=500,
+        mandates=(raw_mandate(),),
+        billings=(raw_billing(amount_cents=10000),),
+        merchants=(raw_merchant(),),
+    )
+    r7 = bankcore.upcoming_window(state, days=7)
+    assert r7.accounts["acc_a"].max_outflow_cents == -9500
+    assert r7.accounts["acc_a"].shortfall_cents == 9500
+
+
+# ---- upcoming_window account filtering ----
+
+
+def test_upcoming_window_account_filter_only_returns_that_account():
+    """account_id='acc_a' excludes acc_s obligations and projections."""
+    state = raw_projection_state(
+        instructions=(raw_instruction(), raw_instruction(id="si_s", from_account_id="acc_s")),
+    )
+    ra = bankcore.upcoming_window(state, days=7, account_id="acc_a")
+    rs = bankcore.upcoming_window(state, days=7, account_id="acc_s")
+    assert len(ra.obligations) == 1
+    assert ra.obligations[0].account_id == "acc_a"
+    assert set(ra.accounts) == {"acc_a"}
+    assert ra.accounts["acc_a"].reserve_cents == 1000
+    assert "acc_s" not in ra.accounts
+
+    assert len(rs.obligations) == 1
+    assert rs.obligations[0].account_id == "acc_s"
+    assert set(rs.accounts) == {"acc_s"}
+    assert rs.accounts["acc_s"].reserve_cents == 1000
+
+
+def test_upcoming_window_account_filter_empty_result():
+    """Account with no obligations in window returns empty obligations."""
+    state = raw_projection_state(instructions=(raw_instruction(),))
+    r = bankcore.upcoming_window(state, days=1, account_id="acc_a")
+    assert r.obligations == ()
+    assert r.accounts["acc_a"].reserve_cents == 0
+    assert r.accounts["acc_a"].max_outflow_cents == 600000
+
+
+def test_upcoming_window_account_filter_only_excludes_other_account_obligations():
+    """Own-account credit to acc_a from acc_s still excluded when filter is acc_a."""
+    target = InstructionTarget(
+        instruction_id="si_own",
+        source_customer_id="cus_a",
+        ownership="OWN",
+        target_account_id="acc_a",
+        target_customer_id="cus_a",
+    )
+    state = raw_projection_state(
+        instructions=(raw_instruction(id="si_own", from_account_id="acc_s",
+                                     payee_id=None, to_account_id="acc_a"),),
+        targets=(target,),
+    )
+    # Without filter: both acc_s debit (-1000) and acc_a credit (+1000)
+    r_full = bankcore.upcoming_window(state, days=7)
+    assert len(r_full.obligations) == 2
+    # With acc_a filter: only the +1000 credit is for acc_a
+    ra = bankcore.upcoming_window(state, days=7, account_id="acc_a")
+    assert ra.obligations[0].account_id == "acc_a"
+    assert ra.obligations[0].delta_cents == 1000
+
+
+def test_upcoming_window_does_not_mutate_state():
+    state = raw_projection_state(
+        instructions=(raw_instruction(),),
+        mandates=(raw_mandate(),),
+        billings=(raw_billing(),),
+        merchants=(raw_merchant(),),
+    )
+    before = state.model_dump_json()
+    bankcore.upcoming_window(state, days=7)
+    bankcore.upcoming_window(state, days=30, account_id="acc_a")
+    assert state.model_dump_json() == before
+
+
+def test_upcoming_window_result_is_immutable():
+    state = raw_projection_state(instructions=(raw_instruction(),))
+    result = bankcore.upcoming_window(state, days=7)
+    with pytest.raises(TypeError):
+        result.accounts["acc_a"] = result.accounts["acc_a"]
+    with pytest.raises(FrozenInstanceError):
+        result.obligations[0].delta_cents = 0
+    with pytest.raises(FrozenInstanceError):
+        result.accounts["acc_a"].reserve_cents = 0
+
+
+def test_upcoming_window_weekly_keeps_monday_zero():
+    """Weekly billing with weekday=3 → Thursday due dates."""
+    state = raw_projection_state(
+        mandates=(raw_mandate(),),
+        billings=(
+            raw_billing(
+                period="WEEKLY",
+                anchor_day=None,
+                weekday=3,
+                time_of_day=time(9, 0),
+                next_due_at=at("2026-10-22T09:00:00+08:00"),
+            ),
+        ),
+        merchants=(raw_merchant(),),
+    )
+    r30 = bankcore.upcoming_window(state, days=30)
+    bills = [o for o in r30.obligations if o.id == "bill_video"]
+    assert [o.due_at.isoformat() for o in bills] == [
+        "2026-10-22T09:00:00+08:00",
+        "2026-10-29T09:00:00+08:00",
+        "2026-11-05T09:00:00+08:00",
+        "2026-11-12T09:00:00+08:00",
+    ]
+
+
+def test_upcoming_window_end_at_respected():
+    """A monthly billing with end_at should stop before end_at."""
+    state = raw_projection_state(
+        instructions=(),
+        mandates=(raw_mandate(),),
+        billings=(
+            raw_billing(
+                anchor_day=18,
+                time_of_day=time(6, 0),
+                next_due_at=at("2026-10-18T06:00:00+08:00"),
+            ),
+        ),
+        merchants=(raw_merchant(),),
+    )
+    # mandate has no end_at; billing has no end_at either
+    # Add end_at to the mandate
+    mandate = raw_mandate(end_at=at("2026-10-18T06:00:00+08:00"))
+    state2 = raw_projection_state(
+        mandates=(mandate,),
+        billings=(raw_billing(),),
+        merchants=(raw_merchant(),),
+    )
+    r7 = bankcore.upcoming_window(state2, days=7)
+    # mandate end_at = 10-18T06:00:00, obligation at that instant is included
+    assert len([o for o in r7.obligations if o.id == "bill_video"]) == 1
+
+
 def test_upcoming_window_weekly_in_30_days():
     """Weekly billing appears 4 times in 30 days (left-open start excludes NOW)."""
     state = raw_projection_state(
