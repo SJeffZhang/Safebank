@@ -172,7 +172,11 @@ def read(state, tool, args, customer_id):
         }
         transactions.sort(key=lambda t: (t.occurred_at.isoformat(), t.id))
         transactions, cursor = paginate(
-            transactions, args, customer_id, lambda t: (t.occurred_at.isoformat(), t.id), "get_transactions"
+            transactions,
+            args,
+            customer_id,
+            lambda t: (t.occurred_at.isoformat(), t.id),
+            "get_transactions",
         )
         data = dict(
             items=[
@@ -215,7 +219,9 @@ def read(state, tool, args, customer_id):
         )
     elif tool == "list_subscriptions":
         items = [v for v in state.subscriptions if args.status == "ALL" or v.status == args.status]
-        items, cursor = paginate(items, args, customer_id, lambda v: (v.billing_id,), "list_subscriptions")
+        items, cursor = paginate(
+            items, args, customer_id, lambda v: (v.billing_id,), "list_subscriptions"
+        )
         active = [v for v in state.subscriptions if v.status == "ACTIVE"]
         total_annual = sum(v.annual_cost_cents for v in active)
         total_monthly = 0
