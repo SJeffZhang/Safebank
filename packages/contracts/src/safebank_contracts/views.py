@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import Field, StrictBool, StrictInt, create_model
 
-from .base import Cents, Contract, Decimal4, Int64, Timestamp
+from .base import Cents, Contract, Decimal4, Int64, SignedCents, Timestamp
 from .enums import AccountType, CardStatus
 from .tools import Id, Period, ProductType
 
@@ -255,7 +255,7 @@ class ScheduledCharge(Contract):
 class AccountReserve(Contract):
     account_id: Id
     reserve_cents: Cents
-    max_outflow_cents: Cents
+    max_outflow_cents: SignedCents
 
 
 class Option(Contract):
