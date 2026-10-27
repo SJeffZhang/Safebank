@@ -276,7 +276,11 @@ def read(state, tool, args, customer_id):
                     if merchants_map and merchant_id and merchant_id in merchants_map
                     else ""
                 )
-                max_amount = mandate.max_amount_cents if mandate and hasattr(mandate, "max_amount_cents") else 0
+                max_amount = (
+                    mandate.max_amount_cents
+                    if mandate and hasattr(mandate, "max_amount_cents")
+                    else 0
+                )
                 charges.append(
                     dict(
                         billing_id=obl.id,

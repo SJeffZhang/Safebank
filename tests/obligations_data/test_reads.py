@@ -670,3 +670,384 @@ def test_r10_empty_collection_returns_empty_list(obligations_db):
         await runtime.dispose()
 
     asyncio.run(check())
+
+
+# ─── R11 upcoming_charges ───
+
+
+def test_r11_days_7_returns_charges_and_totals(obligations_db):
+    """cus_zs has 2 charges within 7-day window (video 10-18, music 10-20), no scheduled."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            r = await _read(client, "upcoming_charges", {"days": 7, "account_id": None})
+            assert r.status_code == 200, r.text
+            body = r.json()
+            items = body["items"]
+            assert len(items) == 2
+            billing_ids = {i["billing_id"] for i in items}
+            assert billing_ids == {"bill_zs_video", "bill_zs_music"}
+            for i in items:
+                assert i["account_id"] == "acc_zs_chk"
+                assert i["merchant_id"] in ("mer_video", "mer_music")
+                assert i["merchant_name"] in ("爱看视频", "乐听音乐")
+                assert i["due_at"] is not None
+                assert i["amount_cents"] in (3000, 1500)
+                assert i["max_amount_cents"] in (3600, 1800)
+            assert body["scheduled_items"] == []
+            assert body["charges_total_cents"] == 4500
+            assert body["scheduled_transfers_total_cents"] == 0
+            assert body["reserve_total_cents"] == 4500
+            by_account = {a["account_id"]: a for a in body["by_account"]}
+            assert set(by_account) == {"acc_zs_chk", "acc_zs_sav"}
+            assert by_account["acc_zs_chk"]["reserve_cents"] == 4500
+            assert by_account["acc_zs_chk"]["max_outflow_cents"] == 595500
+            assert by_account["acc_zs_sav"]["reserve_cents"] == 0
+            assert by_account["acc_zs_sav"]["max_outflow_cents"] == 2_000_000
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r11_days_1_returns_empty(obligations_db):
+    """No obligations fall within 1-day window (earliest due is 10-18)."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            r = await _read(client, "upcoming_charges", {"days": 1, "account_id": None})
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["items"] == []
+            assert body["scheduled_items"] == []
+            assert body["charges_total_cents"] == 0
+            assert body["scheduled_transfers_total_cents"] == 0
+            assert body["reserve_total_cents"] == 0
+            by_account = {a["account_id"]: a for a in body["by_account"]}
+            assert by_account["acc_zs_chk"]["reserve_cents"] == 0
+            assert by_account["acc_zs_chk"]["max_outflow_cents"] == 600_000
+            assert by_account["acc_zs_sav"]["reserve_cents"] == 0
+            assert by_account["acc_zs_sav"]["max_outflow_cents"] == 2_000_000
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r11_days_30_returns_all_charges_and_scheduled(obligations_db):
+    """All 4 charges + 1 scheduled transfer appear within 30-day window."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            r = await _read(client, "upcoming_charges", {"days": 30, "account_id": None})
+            assert r.status_code == 200, r.text
+            body = r.json()
+            items = body["items"]
+            assert len(items) == 4
+            billing_ids = {i["billing_id"] for i in items}
+            assert billing_ids == {"bill_zs_video", "bill_zs_music", "bill_zs_cloud", "bill_zs_gym"}
+            assert body["charges_total_cents"] == 26500
+            scheduled = body["scheduled_items"]
+            assert len(scheduled) == 1
+            assert scheduled[0]["instruction_id"] == "si_zs_mom"
+            assert scheduled[0]["amount_cents"] == 100_000
+            assert scheduled[0]["account_id"] == "acc_zs_chk"
+            assert body["scheduled_transfers_total_cents"] == 100_000
+            assert body["reserve_total_cents"] == 126_500
+            by_account = {a["account_id"]: a for a in body["by_account"]}
+            assert by_account["acc_zs_chk"]["reserve_cents"] == 126_500
+            assert by_account["acc_zs_chk"]["max_outflow_cents"] == 473_500
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r11_account_id_filter(obligations_db):
+    """account_id filters obligations to the specified account only."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            r = await _read(client, "upcoming_charges", {"days": 7, "account_id": "acc_zs_chk"})
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert len(body["items"]) == 2
+            assert body["charges_total_cents"] == 4500
+            by_account = {a["account_id"]: a for a in body["by_account"]}
+            assert set(by_account) == {"acc_zs_chk"}
+            assert by_account["acc_zs_chk"]["reserve_cents"] == 4500
+
+            r = await _read(client, "upcoming_charges", {"days": 7, "account_id": "acc_zs_sav"})
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["items"] == []
+            assert body["scheduled_items"] == []
+            assert body["charges_total_cents"] == 0
+            assert body["scheduled_transfers_total_cents"] == 0
+            assert body["reserve_total_cents"] == 0
+            by_account = {a["account_id"]: a for a in body["by_account"]}
+            assert set(by_account) == {"acc_zs_sav"}
+            assert by_account["acc_zs_sav"]["reserve_cents"] == 0
+            assert by_account["acc_zs_sav"]["max_outflow_cents"] == 2_000_000
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r11_cross_customer_account_id_rejected(obligations_db):
+    """Querying with another customer's account_id returns 404."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            r = await _read(client, "upcoming_charges", {"days": 7, "account_id": "acc_ls_chk"})
+            assert r.status_code == 404, r.text
+
+            r = await _read(
+                client, "upcoming_charges", {"days": 7, "account_id": "acc_nonexistent"}
+            )
+            assert r.status_code == 404, r.text
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r11_empty_obligations_zero_totals(obligations_db):
+    """cus_sb has no obligations; query returns empty lists and zero totals."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            r = await client.post(
+                "/internal/read/upcoming_charges",
+                json={"args": {"days": 7, "account_id": None}, "customer_id": "cus_sb"},
+                headers={"X-Service-Token": SERVICE_TOKEN},
+                timeout=10.0,
+            )
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["items"] == []
+            assert body["scheduled_items"] == []
+            assert body["charges_total_cents"] == 0
+            assert body["scheduled_transfers_total_cents"] == 0
+            assert body["reserve_total_cents"] == 0
+            by_account = {a["account_id"]: a for a in body["by_account"]}
+            assert by_account["acc_sb_chk"]["reserve_cents"] == 0
+            assert by_account["acc_sb_chk"]["max_outflow_cents"] == 3_000_000
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r11_shortfall_max_outflow_negative(obligations_db):
+    """Billing exceeding cus_ww balance (200k) → max_outflow_cents negative."""
+
+    async def check():
+        from datetime import time as dt_time
+
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+            from app import models as m
+
+            await conn.execute(
+                m.merchants.insert().values(
+                    id="mer_big",
+                    name="大额服务",
+                    mcc="5999",
+                    category="其他",
+                    usage_expected=False,
+                )
+            )
+            await conn.execute(
+                m.merchant_billing.insert().values(
+                    id="bill_ww_big",
+                    customer_id="cus_ww",
+                    account_id="acc_ww_chk",
+                    merchant_id="mer_big",
+                    amount_cents=250_000,
+                    period="MONTHLY",
+                    anchor_day=18,
+                    weekday=None,
+                    time_of_day=dt_time(6, 0),
+                    next_due_at=NOW.replace(day=18, hour=6, minute=0),
+                    active=True,
+                    created_at=NOW,
+                )
+            )
+            await conn.execute(
+                m.standing_instructions.insert().values(
+                    id="si_ww_big",
+                    kind="MERCHANT_MANDATE",
+                    customer_id="cus_ww",
+                    status="ACTIVE",
+                    from_account_id="acc_ww_chk",
+                    amount_type="DUES",
+                    recurrence="AS_PER_DUES",
+                    period=None,
+                    anchor_day=None,
+                    weekday=None,
+                    time_of_day=None,
+                    next_run_at=None,
+                    end_at=None,
+                    priority="HIGH",
+                    grant_scope_hash="0" * 64,
+                    source_plan_id="pln_seed",
+                    created_at=NOW,
+                    billing_id="bill_ww_big",
+                    merchant_id="mer_big",
+                    max_amount_cents=300_000,
+                )
+            )
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            r = await client.post(
+                "/internal/read/upcoming_charges",
+                json={"args": {"days": 7, "account_id": None}, "customer_id": "cus_ww"},
+                headers={"X-Service-Token": SERVICE_TOKEN},
+                timeout=10.0,
+            )
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert len(body["items"]) == 1
+            assert body["items"][0]["billing_id"] == "bill_ww_big"
+            assert body["items"][0]["amount_cents"] == 250_000
+            assert body["charges_total_cents"] == 250_000
+            by_account = {a["account_id"]: a for a in body["by_account"]}
+            assert by_account["acc_ww_chk"]["max_outflow_cents"] < 0
+            assert by_account["acc_ww_chk"]["max_outflow_cents"] == -50_000
+            assert by_account["acc_ww_chk"]["reserve_cents"] == 250_000
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r11_reserve_total_consistent_with_projected_shortfall(obligations_db):
+    """For days=7, reserve_total_cents equals the sum of by_account reserves."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            r = await _read(client, "upcoming_charges", {"days": 7, "account_id": None})
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["reserve_total_cents"] == 4500
+            by_account_sum = sum(a["reserve_cents"] for a in body["by_account"])
+            assert by_account_sum == body["reserve_total_cents"]
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r11_days_0_invalid(obligations_db):
+    """days=0 is below minimum (ge=1) → 422."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            r = await _read(client, "upcoming_charges", {"days": 0, "account_id": None})
+            assert r.status_code == 422, r.text
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r11_days_31_invalid(obligations_db):
+    """days=31 exceeds maximum (le=30) → 422."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+            r = await _read(client, "upcoming_charges", {"days": 31, "account_id": None})
+            assert r.status_code == 422, r.text
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
