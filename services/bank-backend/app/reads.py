@@ -35,7 +35,10 @@ def require_account(state, account_id, customer_id):
 
 def paginate(items, args, customer_id, key):
     scope = digest(
-        {"customer_id": customer_id, "query": args.model_dump(mode="json", exclude={"cursor"})}
+        {
+            "customer_id": customer_id,
+            "query": args.model_dump(mode="json", exclude={"cursor", "limit"}),
+        }
     )
     if args.cursor:
         try:
@@ -203,18 +206,14 @@ def read(state, tool, args, customer_id):
             sim_now=state.sim_now,
         )
     elif tool == "list_scheduled":
-        items = [
-            v for v in state.instructions if args.status == "ALL" or v.status == args.status
-        ]
+        items = [v for v in state.instructions if args.status == "ALL" or v.status == args.status]
         items, cursor = paginate(items, args, customer_id, lambda v: (v.id,))
         data = dict(
             items=[v.model_dump(mode="json") for v in items],
             next_cursor=cursor,
         )
     elif tool == "list_subscriptions":
-        items = [
-            v for v in state.subscriptions if args.status == "ALL" or v.status == args.status
-        ]
+        items = [v for v in state.subscriptions if args.status == "ALL" or v.status == args.status]
         items, cursor = paginate(items, args, customer_id, lambda v: (v.billing_id,))
         active = [v for v in state.subscriptions if v.status == "ACTIVE"]
         total_annual = sum(v.annual_cost_cents for v in active)
