@@ -20,7 +20,6 @@ from tests.gateway.w1.fixtures import bank_state
 XF_REASON = "T2 实现前"
 
 
-@pytest.mark.xfail(strict=True, reason=XF_REASON)
 def test_transfer_bang_wo_ba_amount_zhuan_gei_payee():
     """帮我把1000转给王五 → SCOPED, fp_ww, 100000 分。
 
@@ -35,7 +34,6 @@ def test_transfer_bang_wo_ba_amount_zhuan_gei_payee():
     assert result.scope.transfers[0].amount_cents == 100000
 
 
-@pytest.mark.xfail(strict=True, reason=XF_REASON)
 def test_transfer_gei_X_zhuan_chinese_numeral_yuan():
     """给王五转三千元 → SCOPED, fp_ww, 300000 分。
 
@@ -49,7 +47,6 @@ def test_transfer_gei_X_zhuan_chinese_numeral_yuan():
     assert result.scope.transfers[0].amount_cents == 300000
 
 
-@pytest.mark.xfail(strict=True, reason=XF_REASON)
 def test_transfer_zhuan_chinese_numeral_kuai_gei_payee():
     """转五百块给赵六 → SCOPED, fp_zl, 50000 分。
 

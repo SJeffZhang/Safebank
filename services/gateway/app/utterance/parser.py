@@ -78,20 +78,87 @@ def _candidate(field_name: str, entity_id: str, label: str) -> dict[str, str]:
 
 
 # Money is a complete slot, not a numeric substring of an arbitrary sentence.
-MONEY = r"(?:(?:人民币|CNY)\s*)?\d+(?:\.\d{1,2})?\s*(?:元|角|分|块钱|块)?"
+_CN_NUM = r"[零〇一二两三四五六七八九十百千万]+"
+_CN_NUM_VALUE = r"\d+(?:\.\d{1,2})?|" + _CN_NUM
+MONEY = r"(?:(?:人民币|CNY)\s*)?(?:" + _CN_NUM_VALUE + r")\s*(?:元|角|分|块钱|块)?"
+
+_CN_DIGIT_V = {
+    "零": 0,
+    "〇": 0,
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+}
+
+
+def _parse_chinese_numeral(text: str) -> int | None:
+    """Parse a strict Chinese numeral (no 零 gaps, no mixed scripts)."""
+    if not text or "零" in text:
+        return None
+    total = 0
+    section = 0  # accumulates values under 万
+    i = 0
+    while i < len(text):
+        c = text[i]
+        if c in _CN_DIGIT_V:
+            digit = _CN_DIGIT_V[c]
+            if i + 1 < len(text) and text[i + 1] in {"十", "百", "千", "万"}:
+                i += 1
+                mult_c = text[i]
+                mult_v = {"十": 10, "百": 100, "千": 1000, "万": 10000}[mult_c]
+                if mult_c == "万":
+                    section = (section + digit) * 10000
+                    total += section
+                    section = 0
+                else:
+                    section += digit * mult_v
+            else:
+                section += digit
+        elif c == "十":
+            section += 10  # implicit 一
+        elif c in {"百", "千"}:
+            return None  # 百/千 without preceding digit — ambiguous
+        elif c == "万":
+            if section == 0:
+                return None
+            section *= 10000
+            total += section
+            section = 0
+        else:
+            return None
+        i += 1
+    result = total + section
+    return result if result > 0 else None
+
+
+_MONEY_PATTERN = (
+    r"(?:(?:人民币|CNY)\s*)?(?P<value>" + _CN_NUM_VALUE + r")\s*(?P<unit>元|角|分|块钱|块)?"
+)
 
 
 def money_cents(text: str) -> int | None:
-    match = re.fullmatch(
-        r"(?:(?:人民币|CNY)\s*)?(?P<value>\d+(?:\.\d{1,2})?)\s*(?P<unit>元|角|分|块钱|块)?", text
-    )
+    match = re.fullmatch(_MONEY_PATTERN, text)
     if match is None:
         return None
+    value_str = match["value"]
+    if value_str[0] in _CN_DIGIT_V:
+        value = _parse_chinese_numeral(value_str)
+        if value is None:
+            return None
+        value = Decimal(value)
+    elif not value_str.isdigit():
+        return None  # bare multiplier (千/百/etc.) or mixed-script — not a valid amount
+    else:
+        value = Decimal(value_str)
     grammar = LEXICON["grammar"]
-    cents = (
-        Decimal(match["value"])
-        * grammar["cents_per_unit"][match["unit"] or grammar["bare_money_unit"]]
-    )
+    cents = value * grammar["cents_per_unit"][match["unit"] or grammar["bare_money_unit"]]
     if cents != cents.to_integral_value() or not 0 < cents <= 2**63 - 1:
         return None
     return int(cents)
@@ -149,6 +216,7 @@ def _transfer_clause(clause: str) -> Command | None:
             return None
         source, clause = prefix["source"].strip(), prefix["body"]
     patterns = [
+        (rf"把\s*(?P<money>{MONEY})\s*(?:转给|转账给)\s*(?P<target>.+)", False),
         (rf"(?:给|向)(?P<target>.+?)(?:转账?|转入)?\s*(?P<money>{MONEY})", False),
         (rf"(?:转账?给|转给|转到|转入)(?P<target>.+?)\s*(?P<money>{MONEY})", False),
         (rf"转(?:账)?\s*(?P<money>{MONEY})(?:到|给)(?P<target>.+?)(?:应急)?", False),
