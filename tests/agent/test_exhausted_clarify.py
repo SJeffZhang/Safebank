@@ -6,7 +6,6 @@ instead of raising ReferenceError.
 from __future__ import annotations
 
 import pytest
-from safebank_contracts.plan import PlanDraft
 
 from services.agent.app.graph.state import AgentContext, Understanding, UtteranceRef
 from services.agent.app.llm.client import make_llm as _make_llm
@@ -29,7 +28,9 @@ def _add_payee_state():
         "customer_id": "cus_a",
         "session_id": "ses_a",
         "utterances": [
-            UtteranceRef(id="utt_typed", kind="typed", text="把李阿姨加为收款人，卡号6222020000004444"),
+            UtteranceRef(
+                id="utt_typed", kind="typed", text="把李阿姨加为收款人，卡号6222020000004444"
+            ),
             UtteranceRef(id="utt_ctx", kind="context", text=""),
         ],
         "understanding": Understanding(intents=["add_payee"], needs_write=True),

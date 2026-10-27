@@ -694,7 +694,14 @@ def build_gateway_graph(
     # ── plan node ─────────────────────────────────────────────────────
 
     def plan(state: AgentState, runtime: Runtime[AgentContext]) -> dict:
-        draft = ports.plan(state, runtime.context)
+        try:
+            draft = ports.plan(state, runtime.context)
+        except ExhaustedClarify as ec:
+            return {
+                "reply_draft": f"请提供以下信息：{'、'.join(ec.labels)}。",
+                "clarification": {"required_fields": ec.labels, "source": "l1_exhausted"},
+                "plan_exhausted_clarify": True,
+            }
         if draft is None:
             raise PortFailure("plan port returned None")
         return {"plan_draft": draft}
