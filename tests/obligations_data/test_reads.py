@@ -1754,3 +1754,208 @@ def test_r5_timezone_aware(obligations_db):
         await runtime.dispose()
 
     asyncio.run(check())
+
+
+# ─── R9 detect_subscriptions ───
+
+
+async def _insert_mandate_with_merchant(
+    conn,
+    *,
+    tx_id,
+    xfer_id,
+    customer_id,
+    account_id,
+    amount_cents,
+    occurred_at,
+    balance_cents,
+    merchant_id,
+):
+    """Insert a MANDATE transfer + transaction (merchant subscription charge)."""
+    import uuid
+
+    from app import models as m
+
+    occurred = occurred_at.astimezone(tz_utc)
+    await conn.execute(
+        m.transfers.insert().values(
+            id=xfer_id,
+            debit_account_id=account_id,
+            credit_account_id="acc_external_clearing",
+            amount_cents=amount_cents,
+            code="MANDATE",
+            phase="POSTED",
+            plan_id="pln_seed",
+            step_id=str(uuid.uuid4()),
+            leg="DEBIT",
+            occurred_at=occurred,
+        )
+    )
+    await conn.execute(
+        m.transactions.insert().values(
+            id=tx_id,
+            transfer_id=xfer_id,
+            customer_id=customer_id,
+            account_id=account_id,
+            direction="OUT",
+            kind="MANDATE",
+            phase="POSTED",
+            status="POSTED",
+            amount_cents=amount_cents,
+            balance_after_cents=balance_cents,
+            available_after_cents=balance_cents,
+            counterparty="merchant",
+            category="生活服务",
+            merchant_id=merchant_id,
+            card_id=None,
+            occurred_at=occurred,
+        )
+    )
+
+
+def test_r9_detects_monthly_subscription(obligations_db):
+    """Three ~monthly MANDATE charges at one merchant → MONTHLY subscription."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        tz_plus8 = BUSINESS_TIMEZONE
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+
+            bal = 600_000
+            for occurred, tx_id, xfer_id in [
+                (dtm(2026, 7, 25, 6, 0, 0, tzinfo=tz_plus8), "tx_r9_a", "xfr_r9_a"),
+                (dtm(2026, 8, 25, 6, 0, 0, tzinfo=tz_plus8), "tx_r9_b", "xfr_r9_b"),
+                (dtm(2026, 9, 25, 6, 0, 0, tzinfo=tz_plus8), "tx_r9_c", "xfr_r9_c"),
+            ]:
+                bal -= 3_000
+                await _insert_mandate_with_merchant(
+                    conn,
+                    tx_id=tx_id,
+                    xfer_id=xfer_id,
+                    customer_id="cus_zs",
+                    account_id="acc_zs_chk",
+                    amount_cents=3_000,
+                    occurred_at=occurred,
+                    balance_cents=bal,
+                    merchant_id="mer_video",
+                )
+
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+
+            r = await _read(client, "detect_subscriptions", {"lookback_days": 180})
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert len(body["items"]) == 1
+            item = body["items"][0]
+            assert item["merchant_id"] == "mer_video"
+            assert item["period"] == "MONTHLY"
+            assert item["typical_amount_cents"] == 3000
+            assert item["occurrences"] == 3
+            assert item["annual_cost_cents"] == 36000
+            assert item["instruction_id"] == "si_zs_video"
+            assert item["billing_id"] == "bill_zs_video"
+            assert item["is_idle"] is False
+
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r9_non_periodic_merchant_not_counted(obligations_db):
+    """Irregular-interval MANDATE charges are not reported as a subscription."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        tz_plus8 = BUSINESS_TIMEZONE
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+
+            bal = 600_000
+            for occurred, tx_id, xfer_id in [
+                (dtm(2026, 7, 5, 6, 0, 0, tzinfo=tz_plus8), "tx_r9_irr_a", "xfr_r9_irr_a"),
+                (dtm(2026, 7, 15, 6, 0, 0, tzinfo=tz_plus8), "tx_r9_irr_b", "xfr_r9_irr_b"),
+                (dtm(2026, 7, 30, 6, 0, 0, tzinfo=tz_plus8), "tx_r9_irr_c", "xfr_r9_irr_c"),
+            ]:
+                bal -= 1_500
+                await _insert_mandate_with_merchant(
+                    conn,
+                    tx_id=tx_id,
+                    xfer_id=xfer_id,
+                    customer_id="cus_zs",
+                    account_id="acc_zs_chk",
+                    amount_cents=1_500,
+                    occurred_at=occurred,
+                    balance_cents=bal,
+                    merchant_id="mer_music",
+                )
+
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+
+            r = await _read(client, "detect_subscriptions", {"lookback_days": 180})
+            assert r.status_code == 200, r.text
+            assert r.json()["items"] == []
+
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r9_cross_customer_invisible(obligations_db):
+    """Recurring MANDATE charges for another customer never appear."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        tz_plus8 = BUSINESS_TIMEZONE
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+
+            bal = 1_200_000
+            for occurred, tx_id, xfer_id in [
+                (dtm(2026, 7, 25, 6, 0, 0, tzinfo=tz_plus8), "tx_r9_ls_a", "xfr_r9_ls_a"),
+                (dtm(2026, 8, 25, 6, 0, 0, tzinfo=tz_plus8), "tx_r9_ls_b", "xfr_r9_ls_b"),
+                (dtm(2026, 9, 25, 6, 0, 0, tzinfo=tz_plus8), "tx_r9_ls_c", "xfr_r9_ls_c"),
+            ]:
+                bal -= 3_000
+                await _insert_mandate_with_merchant(
+                    conn,
+                    tx_id=tx_id,
+                    xfer_id=xfer_id,
+                    customer_id="cus_ls",
+                    account_id="acc_ls_chk",
+                    amount_cents=3_000,
+                    occurred_at=occurred,
+                    balance_cents=bal,
+                    merchant_id="mer_video",
+                )
+
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+
+            r = await _read(client, "detect_subscriptions", {"lookback_days": 180})
+            assert r.status_code == 200, r.text
+            assert r.json()["items"] == []
+
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
