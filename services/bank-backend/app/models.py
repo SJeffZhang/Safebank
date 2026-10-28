@@ -567,3 +567,38 @@ Index(
     unique=True,
     postgresql_where=instruction_runs.c.transfer_id.isnot(None),
 )
+
+risk_assessments = Table(
+    "risk_assessments",
+    metadata,
+    idcol(primary_key=True),
+    Column(
+        "customer_id",
+        ForeignKey("customers.id", name="risk_assessments_customer_id_fkey"),
+        nullable=False,
+    ),
+    Column("questionnaire_id", String, nullable=False),
+    Column("answers", JSONB, nullable=False),
+    Column("score", Integer, nullable=False),
+    Column("level", String, nullable=False),
+    timestamp("assessed_at", nullable=False),
+    timestamp("valid_until", nullable=False),
+    Column("plan_id", String(256), nullable=False),
+    CheckConstraint("score BETWEEN 6 AND 24", name="risk_assessments_score_check"),
+    CheckConstraint("level IN ('R1','R2','R3','R4','R5')", name="risk_assessments_level_check"),
+    CheckConstraint("valid_until > assessed_at", name="risk_assessments_valid_until_check"),
+    CheckConstraint("questionnaire_id <> ''", name="risk_assessments_questionnaire_id_check"),
+    UniqueConstraint("plan_id", name="risk_assessments_plan_id_key"),
+)
+Index(
+    "risk_assessments_customer_time",
+    risk_assessments.c.customer_id,
+    risk_assessments.c.assessed_at,
+    risk_assessments.c.id,
+)
+Index(
+    "risk_assessments_customer_valid",
+    risk_assessments.c.customer_id,
+    risk_assessments.c.valid_until,
+    risk_assessments.c.id,
+)
