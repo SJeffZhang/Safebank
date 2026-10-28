@@ -183,7 +183,9 @@ async def install_demo(conn, fingerprint_key: str) -> dict[str, Any]:
 
 
 async def main() -> None:
-    db = engine(os.environ["BANK_DATABASE_URL"])
+    # Install-time data needs the owner role: the runtime role only reads merchants,
+    # billings and standing instructions.
+    db = engine(os.environ.get("BANK_MIGRATION_DATABASE_URL") or os.environ["BANK_DATABASE_URL"])
     try:
         async with db.begin() as conn:
             await conn.execute(text("SELECT pg_advisory_xact_lock(814001)"))
