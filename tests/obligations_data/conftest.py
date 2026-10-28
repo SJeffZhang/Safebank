@@ -153,3 +153,15 @@ def obligations_0002_db():
         yield db
     finally:
         subprocess.run(["docker", "rm", "-f", db.name], capture_output=True)
+
+
+@pytest.fixture(scope="session")
+def obligations_0003_db():
+    if os.getenv("OBLIGATIONS_DB_TESTS") != "1":
+        pytest.skip("requires isolated PostgreSQL; run make test-obligations")
+    db = _provision()
+    try:
+        _migrate(db, "0003_obligations")
+        yield db
+    finally:
+        subprocess.run(["docker", "rm", "-f", db.name], capture_output=True)

@@ -199,6 +199,7 @@ class BankState(Contract):
     products: tuple[ProductView, ...] = ()
     holdings: tuple[HoldingView, ...] = ()
     orders: tuple[FundOrderView, ...] = ()
+    splits: tuple[SplitView, ...] = ()
     dataset_revision: str = "p1_core_v1"
 
 
