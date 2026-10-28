@@ -7,7 +7,7 @@ from datetime import timedelta
 from safebank_bankcore.analytics import detect_anomalies, spending_summary
 from safebank_bankcore.banking import card_view
 from safebank_bankcore.ids import digest
-from safebank_bankcore.reserve import upcoming_window
+from safebank_bankcore.reserve import _business_time, upcoming_window
 from safebank_contracts.codes import Code
 from safebank_contracts.views import READ_RESULTS
 
@@ -80,7 +80,7 @@ def read(state, tool, args, customer_id):
                     (
                         t
                         for t in reversed(transactions)
-                        if t.occurred_at.astimezone(state.sim_now.tzinfo).date() <= date
+                        if _business_time(t.occurred_at).date() <= date
                     ),
                     None,
                 )
