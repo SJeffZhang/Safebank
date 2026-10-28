@@ -2,7 +2,7 @@
 
 import hashlib
 import hmac
-from datetime import timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from safebank_bankcore.ledger import account_deltas
@@ -24,12 +24,14 @@ from safebank_contracts.state import (
     Counters,
     Customer,
     DirectoryEntry,
+    InsertAssessment,
     InsertPayee,
     LedgerTransfer,
     Operation,
     OperationEvent,
     Payee,
     PostTransfer,
+    RiskAssessmentRecord,
     StateScope,
     Transaction,
     UpsertCard,
@@ -358,6 +360,26 @@ async def load_bank_state(conn, scope: StateScope, now, *, customer_id: str) -> 
             )
         ).mappings()
     ]
+    assessments = [
+        RiskAssessmentRecord(
+            id=r["id"],
+            customer_id=r["customer_id"],
+            questionnaire_id=r["questionnaire_id"],
+            answers=tuple(tuple(a) for a in r["answers"]),
+            score=r["score"],
+            level=r["level"],
+            assessed_at=r["assessed_at"],
+            valid_until=r["valid_until"].date(),
+            plan_id=r["plan_id"],
+        )
+        for r in (
+            await conn.execute(
+                select(m.risk_assessments)
+                .where(m.risk_assessments.c.customer_id == customer_id)
+                .order_by(m.risk_assessments.c.assessed_at.desc())
+            )
+        ).mappings()
+    ]
     versions = dict(
         (
             await conn.execute(
@@ -391,6 +413,7 @@ async def load_bank_state(conn, scope: StateScope, now, *, customer_id: str) -> 
         instructions=instructions,
         subscriptions=subscriptions,
         dataset_revision=clock["dataset_revision"],
+        assessments=tuple(assessments),
     )
 
 
@@ -449,6 +472,35 @@ async def persist(conn, effects) -> None:
                 m.outbox.insert().values(
                     event_id=effect.operation.event_id,
                     payload=effect.operation.model_dump(mode="json"),
+                )
+            )
+        elif isinstance(effect, InsertAssessment):
+            record = effect.record
+            valid_until = datetime.combine(
+                record.valid_until,
+                record.assessed_at.time(),
+                tzinfo=record.assessed_at.tzinfo,
+            )
+            await conn.execute(
+                m.risk_assessments.insert().values(
+                    id=record.id,
+                    customer_id=record.customer_id,
+                    questionnaire_id=record.questionnaire_id,
+                    answers=[[q, o] for q, o in record.answers],
+                    score=record.score,
+                    level=record.level,
+                    assessed_at=record.assessed_at,
+                    valid_until=valid_until,
+                    plan_id=record.plan_id,
+                )
+            )
+            await conn.execute(
+                update(m.customers)
+                .where(m.customers.c.id == record.customer_id)
+                .values(
+                    risk_level=int(record.level[1:]),
+                    risk_assessed_at=record.assessed_at,
+                    risk_valid_until=record.valid_until.isoformat(),
                 )
             )
         else:

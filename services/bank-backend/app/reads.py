@@ -8,6 +8,7 @@ from safebank_bankcore.banking import card_view
 from safebank_bankcore.ids import digest
 from safebank_bankcore.reserve import upcoming_window
 from safebank_contracts.codes import Code
+from safebank_contracts.risk_questionnaire import QUESTIONNAIRE
 from safebank_contracts.views import READ_RESULTS
 
 from .errors import BankError
@@ -18,6 +19,8 @@ SUPPORTED_READS = {
     "get_transactions",
     "get_cards",
     "get_profile",
+    "get_risk_profile",
+    "get_risk_questionnaire",
     "list_scheduled",
     "list_subscriptions",
     "upcoming_charges",
@@ -325,6 +328,34 @@ def read(state, tool, args, customer_id):
                 )
                 for aid, a in sorted(window.accounts.items())
             ],
+        )
+    elif tool == "get_risk_questionnaire":
+        questions = QUESTIONNAIRE["rq_v1"]
+        data = dict(
+            questionnaire_id="rq_v1",
+            questions=[
+                dict(
+                    id=q.id,
+                    prompt=q.prompt,
+                    options=[dict(id=o.id, label=o.label) for o in q.options],
+                )
+                for q in questions.values()
+            ],
+            validity_months=12,
+        )
+    elif tool == "get_risk_profile":
+        customer = state.customers[customer_id]
+        latest = state.assessments[0] if state.assessments else None
+        data = dict(
+            assessment_id=latest.id if latest else None,
+            level=customer.risk_level,
+            assessed_at=latest.assessed_at if latest else None,
+            valid_until=latest.valid_until if latest else None,
+            is_valid=(
+                customer.risk_level is not None
+                and customer.risk_valid_until is not None
+                and date.fromisoformat(customer.risk_valid_until) >= state.sim_now.date()
+            ),
         )
     else:
         raise BankError(Code.TOOL_NOT_ALLOWED, 403)
