@@ -353,6 +353,8 @@ def apply_schedule_transfer(state: BankState, args: Schedule, now: datetime, ctx
     due_at = _first_job_due(inst)
     job_id = derive(ctx.plan_id, ctx.step_id, "job")
     event_id = digest(["SCHEDULED_TRANSFER", inst.id, due_at.isoformat()])
+    # Plaintext, non-sensitive instruction reference; the historical
+    # "payload_ciphertext" contract field name is misleading (it is not encrypted).
     payload_data = f"{inst.id}|{inst.amount_cents}|{inst.from_account_id}"
     job = ScheduleEventJob(
         job_id=job_id,

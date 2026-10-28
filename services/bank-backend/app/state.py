@@ -474,7 +474,7 @@ async def persist(conn, effects) -> None:
                     kind=effect.kind,
                     rank=rank,
                     due_at=effect.due_at,
-                    immutable_payload={"ciphertext": effect.payload_ciphertext},
+                    immutable_payload={"payload": effect.payload_ciphertext},
                     payload_hash=effect.payload_hash,
                     source_id=effect.source_id,
                     period_key=effect.period_key,

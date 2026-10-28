@@ -267,6 +267,8 @@ class ScheduleEventJob(Contract):
     due_at: Timestamp
     source_id: Id
     period_key: str
+    # Plaintext, non-sensitive instruction reference (inst_id|amount|from_account);
+    # the "ciphertext" name is historical and misleading — kept frozen.
     payload_ciphertext: str
     payload_hash: str
 
