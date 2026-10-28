@@ -2,7 +2,7 @@
 
 import base64
 import json
-from datetime import timedelta
+from datetime import date, timedelta
 
 from safebank_bankcore.banking import card_view
 from safebank_bankcore.ids import digest
@@ -72,19 +72,19 @@ def read(state, tool, args, customer_id):
                 key=lambda t: t.sequence,
             )
             for day in range(args.history_days - 1, -1, -1):
-                date = state.sim_now.date() - timedelta(days=day)
+                day_date = state.sim_now.date() - timedelta(days=day)
                 last = next(
                     (
                         t
                         for t in reversed(transactions)
-                        if t.occurred_at.astimezone(state.sim_now.tzinfo).date() <= date
+                        if t.occurred_at.astimezone(state.sim_now.tzinfo).date() <= day_date
                     ),
                     None,
                 )
                 history.append(
                     dict(
                         account_id=account.id,
-                        date=date,
+                        date=day_date,
                         balance_cents=last.balance_after_cents if last else 0,
                         available_cents=last.available_after_cents if last else 0,
                     )
