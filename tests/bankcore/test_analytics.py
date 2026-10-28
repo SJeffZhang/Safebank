@@ -1632,3 +1632,33 @@ def test_r9_mandate_not_counted_as_usage():
     item = result["items"][0]
     assert item["is_idle"] is True
     assert item["usage_evidence"]["recent_usage_count"] == 0
+
+
+def test_r9_never_links_another_customers_subscription():
+    """Review P2: a mandate on another customer's account must not be linked."""
+    from safebank_contracts.views import SubscriptionView
+
+    state = with_txns(
+        base_state(),
+        _sub_tx("mer_gym", at("2026-07-25T06:00:00+08:00"), 19900, "1"),
+        _sub_tx("mer_gym", at("2026-08-25T06:00:00+08:00"), 19900, "2"),
+        _sub_tx("mer_gym", at("2026-09-25T06:00:00+08:00"), 19900, "3"),
+    )
+    foreign = SubscriptionView(
+        instruction_id="si_other",
+        billing_id="bil_other",
+        account_id="acc_b",
+        merchant_id="mer_gym",
+        merchant_name="gym",
+        period="MONTHLY",
+        amount_cents=19900,
+        max_amount_cents=19900,
+        next_due_at=at("2026-10-25T06:00:00+08:00"),
+        status="ACTIVE",
+        annual_cost_cents=238800,
+    )
+    state = state.model_copy(update={"subscriptions": (foreign,)})
+    result = subject.detect_subscriptions(state, customer_id="cus_a", lookback_days=180)
+    assert len(result["items"]) == 1
+    assert result["items"][0]["instruction_id"] is None
+    assert result["items"][0]["billing_id"] is None

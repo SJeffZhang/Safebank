@@ -430,6 +430,9 @@ def detect_subscriptions(
     # Build a merchant→instruction_id/billing_id map from state.subscriptions.
     sub_by_merchant: dict[str, dict] = {}
     for sub in state.subscriptions:
+        owner = state.accounts.get(sub.account_id)
+        if owner is None or owner.customer_id != customer_id:
+            continue  # never link another customer's mandate or bill
         if sub.status != "DELETED":
             sub_by_merchant[sub.merchant_id] = dict(
                 instruction_id=sub.instruction_id,
