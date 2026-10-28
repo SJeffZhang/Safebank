@@ -165,7 +165,26 @@ async def install_demo(conn, fingerprint_key: str) -> dict[str, Any]:
     for instruction in new_instructions:
         await conn.execute(m.standing_instructions.insert().values(**instruction))
 
+    # Already-installed customers keep their ledger (append-only), but payee creation
+    # times are reference data: converge them to the seed so a corrected seed takes
+    # effect on rerun (the new-payee rule reads this column).
+    synced_payees = 0
+    for payee in prepared["payees"]:
+        if payee["customer_id"] not in skipped_customer_ids:
+            continue
+        result = await conn.execute(
+            update(m.payees)
+            .where(
+                m.payees.c.id == payee["id"],
+                m.payees.c.customer_id == payee["customer_id"],
+                m.payees.c.created_at != payee["created_at"],
+            )
+            .values(created_at=payee["created_at"])
+        )
+        synced_payees += result.rowcount or 0
+
     return {
+        "synced_payees": synced_payees,
         "added_customers": len(new_customer_ids),
         "skipped_customers": sorted(skipped_customer_ids),
         "added_accounts": len(new_accounts),
@@ -208,7 +227,10 @@ async def main() -> None:
         )
     else:
         skipped = ", ".join(summary["skipped_customers"]) or "none"
-        print(f"Demo seed already installed (skipped customers: {skipped}); nothing changed")
+        print(
+            f"Demo seed already installed (skipped customers: {skipped}); "
+            f"payee creation times synced: {summary['synced_payees']}"
+        )
 
 
 if __name__ == "__main__":
