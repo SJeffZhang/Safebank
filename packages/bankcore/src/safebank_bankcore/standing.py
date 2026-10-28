@@ -45,7 +45,7 @@ from safebank_contracts.obligations import (
     ObligationSnapshot,
     ScheduledInstruction,
 )
-from safebank_contracts.plan import StepResult, Violation
+from safebank_contracts.plan import Violation
 from safebank_contracts.state import (
     BankState,
     InsertInstruction,
@@ -55,7 +55,6 @@ from safebank_contracts.state import (
     SetInstructionStatus,
 )
 from safebank_contracts.tools import Schedule
-from safebank_contracts.views import WRITE_RESULTS
 
 from .ids import derive, digest
 from .reserve import _business_time, _recurrences
@@ -374,7 +373,13 @@ def apply_schedule_transfer(state: BankState, args: Schedule, now: datetime, ctx
     effects: tuple = (
         InsertInstruction(instruction=inst, target=target),
         job,
-        _operation(now, ctx, "SCHEDULED_TRANSFER_CREATE", target=target_fp, amount=inst.amount_cents),
+        _operation(
+            now,
+            ctx,
+            "SCHEDULED_TRANSFER_CREATE",
+            target=target_fp,
+            amount=inst.amount_cents,
+        ),
     )
     return new_state, effects, ()
 

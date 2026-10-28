@@ -13,6 +13,7 @@ import pytest
 from safebank_bankcore.banking import Context
 from safebank_bankcore.standing import (
     InsertInstruction,
+    OperationEvent,
     ScheduleEventJob,
     SetInstructionStatus,
     _commitment_30d,
@@ -159,10 +160,14 @@ def test_create_once_instruction():
         ctx(),
     )
     assert not violations
-    assert len(effects) == 2
-    insert, job = effects
-    assert isinstance(insert, InsertInstruction)
-    assert isinstance(job, ScheduleEventJob)
+    inserts = [e for e in effects if isinstance(e, InsertInstruction)]
+    jobs = [e for e in effects if isinstance(e, ScheduleEventJob)]
+    ops = [e for e in effects if isinstance(e, OperationEvent)]
+    assert len(inserts) == 1
+    assert len(jobs) == 1
+    assert len(ops) == 1
+    insert, job = inserts[0], jobs[0]
+    assert ops[0].operation.action_kind == "SCHEDULED_TRANSFER_CREATE"
 
     inst = insert.instruction
     assert inst.status == "ACTIVE"
@@ -439,11 +444,14 @@ def test_cancel_scheduled_happy():
         ctx(),
     )
     assert not violations
-    assert len(effects) == 1
-    assert isinstance(effects[0], SetInstructionStatus)
-    assert effects[0].instruction_id == "si_1"
-    assert effects[0].old_status == "ACTIVE"
-    assert effects[0].new_status == "DELETED"
+    status = [e for e in effects if isinstance(e, SetInstructionStatus)]
+    ops = [e for e in effects if isinstance(e, OperationEvent)]
+    assert len(status) == 1
+    assert len(ops) == 1
+    assert ops[0].operation.action_kind == "SCHEDULED_CANCEL"
+    assert status[0].instruction_id == "si_1"
+    assert status[0].old_status == "ACTIVE"
+    assert status[0].new_status == "DELETED"
     assert new_state.obligations.standing_instructions["si_1"].status == "DELETED"
 
 
@@ -459,8 +467,8 @@ def test_cancel_already_deleted_no_op():
         ctx(),
     )
     assert not violations
-    # DELETED → no domain effects, StepResult produced as no_op=True
-    assert len(effects) == 1  # StepResult
+    # DELETED → no domain effects (including no OperationEvent)
+    assert not effects
     # State unchanged
     assert new_state.obligations.standing_instructions["si_1"].status == "DELETED"
 
@@ -533,11 +541,14 @@ def test_revoke_mandate_happy():
         ctx(),
     )
     assert not violations
-    assert len(effects) == 1
-    assert isinstance(effects[0], SetInstructionStatus)
-    assert effects[0].instruction_id == "si_video"
-    assert effects[0].old_status == "ACTIVE"
-    assert effects[0].new_status == "DELETED"
+    status = [e for e in effects if isinstance(e, SetInstructionStatus)]
+    ops = [e for e in effects if isinstance(e, OperationEvent)]
+    assert len(status) == 1
+    assert len(ops) == 1
+    assert ops[0].operation.action_kind == "MANDATE_REVOKE"
+    assert status[0].instruction_id == "si_video"
+    assert status[0].old_status == "ACTIVE"
+    assert status[0].new_status == "DELETED"
     # Mandate deleted
     assert new_state.obligations.standing_instructions["si_video"].status == "DELETED"
     # Billing preserved
@@ -556,8 +567,8 @@ def test_revoke_already_deleted_no_op():
         ctx(),
     )
     assert not violations
-    assert effects[0].result["no_op"] is True
-    assert effects[0].result["monthly_saving_cents"] == 0
+    # Already-DELETED mandate → no domain effects (including no OperationEvent)
+    assert not effects
     assert new_state.obligations.standing_instructions["si_video"].status == "DELETED"
 
 

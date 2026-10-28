@@ -372,9 +372,7 @@ def step_result(before, after, step, ctx, effects):
         )
         created = {"instruction_id": inst.id}
     elif step.tool == "cancel_scheduled":
-        result = dict(
-            instruction_id=args.instruction_id, status="DELETED", no_op=not bool(effects)
-        )
+        result = dict(instruction_id=args.instruction_id, status="DELETED", no_op=not bool(effects))
     elif step.tool == "cancel_subscription":
         inst = after.obligations.standing_instructions[args.instruction_id]
         billing = after.obligations.billings.get(inst.billing_id)
