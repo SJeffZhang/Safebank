@@ -371,7 +371,9 @@ def prepare_seed(
         if account_id not in account_ids:
             raise SeedError(f"billing {billing_id} references unknown account {account_id!r}")
         if accounts_by_id[account_id].get("customer_id") != customer_id:
-            raise SeedError(f"billing {billing_id} account {account_id} belongs to another customer")
+            raise SeedError(
+                f"billing {billing_id} account {account_id} belongs to another customer"
+            )
         amount = _require_int(billing.get("amount_cents"), f"billing {billing_id} amount_cents")
         if amount <= 0:
             raise SeedError(f"billing {billing_id} amount_cents must be positive")
@@ -401,7 +403,9 @@ def prepare_seed(
         si_id = item["id"]
         customer_id = item.get("customer_id")
         if customer_id not in customer_ids:
-            raise SeedError(f"standing_instruction {si_id} references unknown customer {customer_id!r}")
+            raise SeedError(
+                f"standing_instruction {si_id} references unknown customer {customer_id!r}"
+            )
         from_account_id = item.get("from_account_id")
         if from_account_id not in account_ids:
             raise SeedError(
@@ -409,7 +413,8 @@ def prepare_seed(
             )
         if accounts_by_id[from_account_id].get("customer_id") != customer_id:
             raise SeedError(
-                f"standing_instruction {si_id} account {from_account_id} belongs to another customer"
+                f"standing_instruction {si_id} account {from_account_id} "
+                "belongs to another customer"
             )
         payee_id = item.get("payee_id")
         to_account_id = item.get("to_account_id")
@@ -423,7 +428,9 @@ def prepare_seed(
             raise SeedError(
                 f"standing_instruction {si_id} references unknown account {to_account_id!r}"
             )
-        amount = _require_int(item.get("amount_cents"), f"standing_instruction {si_id} amount_cents")
+        amount = _require_int(
+            item.get("amount_cents"), f"standing_instruction {si_id} amount_cents"
+        )
         if amount <= 0:
             raise SeedError(f"standing_instruction {si_id} amount_cents must be positive")
         period = item.get("period")
@@ -447,7 +454,9 @@ def prepare_seed(
                 raise SeedError(f"standing_instruction {si_id} weekday must be 0..6")
         else:  # ONCE
             if day is not None or weekday is not None:
-                raise SeedError(f"standing_instruction {si_id} ONCE must not set day_of_month/weekday")
+                raise SeedError(
+                    f"standing_instruction {si_id} ONCE must not set day_of_month/weekday"
+                )
             anchor_day = None
             weekday = None
         next_run_at = item.get("next_run_at")

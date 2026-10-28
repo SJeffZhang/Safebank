@@ -5,14 +5,15 @@ import socket
 import threading
 
 import httpx
+import pytest
 import uvicorn
-from sqlalchemy import text
-from sqlalchemy.pool import NullPool
-
 from app.db import engine
 from app.main import create_app
 from app.seed import seed_core
 from app.seed_demo import install_demo
+from sqlalchemy import text
+from sqlalchemy.pool import NullPool
+
 from tests.obligations_data.fixtures import KEY
 
 SERVICE_TOKEN = "obligations-test-token"
@@ -45,9 +46,25 @@ def _serve(app, port):
 
 async def _row_counts(conn) -> dict[str, int]:
     return {
-        table: await conn.scalar(text(f"SELECT count(*) FROM {table}"))
-        for table in COUNTED_TABLES
+        table: await conn.scalar(text(f"SELECT count(*) FROM {table}")) for table in COUNTED_TABLES
     }
+
+
+@pytest.fixture(autouse=True)
+def clean_database(obligations_db):
+    """Truncate every application table so the test starts from an empty bank."""
+
+    async def _truncate():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            from app import models as m
+
+            names = ",".join(m.metadata.tables)
+            await conn.execute(text(f"TRUNCATE {names} CASCADE"))
+        await admin.dispose()
+
+    asyncio.run(_truncate())
+    yield
 
 
 def test_seed_demo_installs_alongside_p1(obligations_db):
@@ -70,9 +87,7 @@ def test_seed_demo_installs_alongside_p1(obligations_db):
                 )
             ).one()
             p1_sim_now = await conn.scalar(text("SELECT sim_now FROM clock WHERE id=1"))
-            p1_dataset = await conn.scalar(
-                text("SELECT dataset_revision FROM clock WHERE id=1")
-            )
+            p1_dataset = await conn.scalar(text("SELECT dataset_revision FROM clock WHERE id=1"))
             p1_acc_a_transfers = await conn.scalar(
                 text(
                     "SELECT count(*) FROM transfers "
@@ -130,9 +145,15 @@ def test_seed_demo_installs_alongside_p1(obligations_db):
 
             # Global ledger conservation.
             debits_posted = await conn.scalar(text("SELECT sum(debits_posted_cents) FROM accounts"))
-            credits_posted = await conn.scalar(text("SELECT sum(credits_posted_cents) FROM accounts"))
-            debits_pending = await conn.scalar(text("SELECT sum(debits_pending_cents) FROM accounts"))
-            credits_pending = await conn.scalar(text("SELECT sum(credits_pending_cents) FROM accounts"))
+            credits_posted = await conn.scalar(
+                text("SELECT sum(credits_posted_cents) FROM accounts")
+            )
+            debits_pending = await conn.scalar(
+                text("SELECT sum(debits_pending_cents) FROM accounts")
+            )
+            credits_pending = await conn.scalar(
+                text("SELECT sum(credits_pending_cents) FROM accounts")
+            )
             assert debits_posted == credits_posted
             assert (debits_pending or 0) == 0
             assert (credits_pending or 0) == 0

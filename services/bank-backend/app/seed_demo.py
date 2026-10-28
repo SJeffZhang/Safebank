@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select, text, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from . import models as m
 from .db import engine
@@ -127,7 +128,7 @@ async def install_demo(conn, fingerprint_key: str) -> dict[str, Any]:
     added_merchants = 0
     for merchant in prepared["merchants"]:
         result = await conn.execute(
-            m.merchants.insert().values(**merchant).on_conflict_do_nothing()
+            pg_insert(m.merchants).values(**merchant).on_conflict_do_nothing()
         )
         added_merchants += result.rowcount or 0
 
