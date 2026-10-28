@@ -17,7 +17,7 @@ Ambiguities noted for coordinator:
 
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from .calendar import is_trading_day, previous_trading_day
 from .nav import MIN_NAV
@@ -79,6 +79,10 @@ def _effective_nav_date(product: ProductDef, on_date: date) -> date:
 # ── recent_return_bp (explicit parameters – no default window) ─────────────
 
 
+# PRD 8.3: recent_return_bp uses the same 30-trading-day window as nav_history.
+RECENT_RETURN_WINDOW_TRADING_DAYS = 30
+
+
 def recent_return_bp(
     product: ProductDef,
     on_date: date,
@@ -87,7 +91,7 @@ def recent_return_bp(
     """Return the return over the last *window_trading_days* trading days in bp.
 
     ``(nav_latest - nav_earliest) / nav_earliest * 10000``, rounded to int
-    with ``round`` (banker's rounding).  ``nav_earliest`` is *window_trading_days*
+    with ROUND_HALF_UP.  ``nav_earliest`` is *window_trading_days*
     trading days before *on_date* (exclusive: the window spans exactly
     *window_trading_days* trading-day steps forward from the start date).
 
@@ -103,7 +107,7 @@ def recent_return_bp(
     if earliest_nav == 0:
         earliest_nav = MIN_NAV
     ratio = (latest_nav - earliest_nav) / earliest_nav
-    return int(round(ratio * 10000))
+    return int((ratio * 10000).quantize(Decimal(1), rounding=ROUND_HALF_UP))
 
 
 # ── R14: list_products ────────────────────────────────────────────────────
@@ -182,7 +186,9 @@ def compare_products(
                 "risk_label": p.risk_label,
                 "nav": p_nav,
                 "nav_date": nav_date,
-                "recent_return_bp": recent_return_bp(p, on_date, window_trading_days=20),
+                "recent_return_bp": recent_return_bp(
+                    p, on_date, window_trading_days=RECENT_RETURN_WINDOW_TRADING_DAYS
+                ),
                 "confirm_days": p.confirm_days,
                 "settle_days": p.settle_days,
                 "min_amount_cents": p.min_amount_cents,
@@ -227,7 +233,9 @@ def get_product(
         "risk_label": p.risk_label,
         "nav": p_nav,
         "nav_date": nav_date,
-        "recent_return_bp": recent_return_bp(p, on_date, window_trading_days=20),
+        "recent_return_bp": recent_return_bp(
+            p, on_date, window_trading_days=RECENT_RETURN_WINDOW_TRADING_DAYS
+        ),
         "confirm_days": p.confirm_days,
         "settle_days": p.settle_days,
         "min_amount_cents": p.min_amount_cents,
