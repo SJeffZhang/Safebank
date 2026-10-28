@@ -594,6 +594,7 @@ event_jobs = Table(
     CheckConstraint(EVENT_STATUS_CHECK, name="event_jobs_status_check"),
     CheckConstraint("rank >= 0", name="event_jobs_rank_check"),
     CheckConstraint("attempt_count >= 0", name="event_jobs_attempt_count_check"),
+    UniqueConstraint("payload_hash", name="event_jobs_payload_hash_key"),
     UniqueConstraint("source_id", "period_key", name="event_jobs_source_period_key"),
 )
 Index(

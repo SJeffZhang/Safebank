@@ -38,6 +38,8 @@ def _valid_row(**overrides) -> dict:
         due_at=_dt(2026, 11, 5, 6, 0, 0),
         immutable_payload=f'{{"si_id":"si_test_{n}","customer_id":"cus_zs"}}',
         payload_hash=f"{n:064x}",
+        source_id=f"si_test_{n}",
+        period_key="2026-11-05T06:00:00+08:00",
         status="PENDING",
         lease_until_wall=None,
         attempt_count=0,

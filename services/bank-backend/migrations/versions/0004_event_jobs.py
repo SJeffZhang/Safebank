@@ -45,6 +45,7 @@ def upgrade() -> None:
         sa.CheckConstraint(EVENT_STATUS_CHECK, name="event_jobs_status_check"),
         sa.CheckConstraint("rank >= 0", name="event_jobs_rank_check"),
         sa.CheckConstraint("attempt_count >= 0", name="event_jobs_attempt_count_check"),
+        sa.UniqueConstraint("payload_hash", name="event_jobs_payload_hash_key"),
         sa.UniqueConstraint("source_id", "period_key", name="event_jobs_source_period_key"),
     )
     op.create_index(
