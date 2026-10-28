@@ -567,3 +567,38 @@ Index(
     unique=True,
     postgresql_where=instruction_runs.c.transfer_id.isnot(None),
 )
+
+EVENT_KIND_CHECK = (
+    "kind IN ("
+    "'FUND_CONFIRM','FUND_SETTLE','FUND_EXPIRY',"
+    "'SCHEDULED_TRANSFER','MERCHANT_CHARGE','REMINDER','DEMO_EVENT'"
+    ")"
+)
+EVENT_STATUS_CHECK = "status IN ('PENDING','RUNNING','DONE','RETRYING')"
+
+event_jobs = Table(
+    "event_jobs",
+    metadata,
+    idcol(primary_key=True),
+    Column("kind", String, nullable=False),
+    Column("rank", Integer, nullable=False),
+    timestamp("due_at", nullable=False),
+    Column("immutable_payload", JSONB, nullable=False),
+    Column("payload_hash", String, nullable=False),
+    Column("status", String, nullable=False),
+    timestamp("lease_until_wall"),
+    Column("attempt_count", Integer, nullable=False, server_default="0"),
+    CheckConstraint(EVENT_KIND_CHECK, name="event_jobs_kind_check"),
+    CheckConstraint(EVENT_STATUS_CHECK, name="event_jobs_status_check"),
+    CheckConstraint("rank >= 0", name="event_jobs_rank_check"),
+    CheckConstraint("attempt_count >= 0", name="event_jobs_attempt_count_check"),
+    UniqueConstraint("payload_hash", name="event_jobs_payload_hash_key"),
+)
+Index(
+    "event_jobs_pending_due",
+    event_jobs.c.status,
+    event_jobs.c.due_at,
+    event_jobs.c.rank,
+    event_jobs.c.id,
+    postgresql_where=(event_jobs.c.status == "PENDING"),
+)
