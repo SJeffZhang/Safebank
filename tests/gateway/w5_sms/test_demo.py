@@ -76,9 +76,7 @@ def test_d0_login_wrong_secret_401(app_config):
 def test_d5_no_token_401(app_config):
     async def go():
         app = await build_demo_app(app_config)
-        r = await app.client.get(
-            "/demo/sms", params={"approval_id": "apv_1"}, headers=_d_headers()
-        )
+        r = await app.client.get("/demo/sms", params={"approval_id": "apv_1"}, headers=_d_headers())
         assert r.status_code == 401
 
     asyncio.run(go())
@@ -189,10 +187,16 @@ def test_g10_d5_g6_full_flow(app_config, caplog):
         db2 = engine(app.db_url, poolclass=NullPool)
         async with db2.connect() as conn:
             rows = (
-                await conn.execute(
-                    select(t.audit_events.c.payload).where(t.audit_events.c.customer_id == "cus_zs")
+                (
+                    await conn.execute(
+                        select(t.audit_events.c.payload).where(
+                            t.audit_events.c.customer_id == "cus_zs"
+                        )
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
         await db2.dispose()
         for payload in rows:
             assert code not in json.dumps(payload, ensure_ascii=False)
