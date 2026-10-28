@@ -5525,6 +5525,133 @@
           "title": "ScheduledView",
           "type": "object"
         },
+        "SplitItem": {
+          "additionalProperties": false,
+          "properties": {
+            "amount_cents": {
+              "ge": 0,
+              "le": 9223372036854775807,
+              "title": "Amount Cents",
+              "type": "integer"
+            },
+            "id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Id",
+              "type": "string"
+            },
+            "paid_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Paid At"
+            },
+            "payee_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Payee Id",
+              "type": "string"
+            },
+            "payee_name": {
+              "title": "Payee Name",
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "UNPAID",
+                "PAID"
+              ],
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "payee_id",
+            "payee_name",
+            "amount_cents",
+            "status",
+            "paid_at"
+          ],
+          "title": "SplitItem",
+          "type": "object"
+        },
+        "SplitView": {
+          "additionalProperties": false,
+          "properties": {
+            "account_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Account Id",
+              "type": "string"
+            },
+            "created_at": {
+              "format": "date-time",
+              "title": "Created At",
+              "type": "string"
+            },
+            "id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Id",
+              "type": "string"
+            },
+            "include_self": {
+              "title": "Include Self",
+              "type": "boolean"
+            },
+            "items": {
+              "items": {
+                "$ref": "#/$defs/SplitItem"
+              },
+              "title": "Items",
+              "type": "array"
+            },
+            "outstanding_cents": {
+              "ge": 0,
+              "le": 9223372036854775807,
+              "title": "Outstanding Cents",
+              "type": "integer"
+            },
+            "received_cents": {
+              "ge": 0,
+              "le": 9223372036854775807,
+              "title": "Received Cents",
+              "type": "integer"
+            },
+            "self_share_cents": {
+              "ge": 0,
+              "le": 9223372036854775807,
+              "title": "Self Share Cents",
+              "type": "integer"
+            },
+            "total_cents": {
+              "ge": 0,
+              "le": 9223372036854775807,
+              "title": "Total Cents",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "id",
+            "account_id",
+            "total_cents",
+            "include_self",
+            "self_share_cents",
+            "received_cents",
+            "outstanding_cents",
+            "created_at",
+            "items"
+          ],
+          "title": "SplitView",
+          "type": "object"
+        },
         "SubscriptionView": {
           "additionalProperties": false,
           "properties": {
@@ -5888,6 +6015,14 @@
           "format": "date-time",
           "title": "Sim Now",
           "type": "string"
+        },
+        "splits": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SplitView"
+          },
+          "title": "Splits",
+          "type": "array"
         },
         "subscriptions": {
           "default": [],
