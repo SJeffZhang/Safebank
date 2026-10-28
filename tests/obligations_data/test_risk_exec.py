@@ -22,7 +22,8 @@ from safebank_bankcore.banking import apply_plan
 from safebank_contracts.enums import Risk
 from safebank_contracts.plan import Execute, InteractiveEvidence, PlanBody, Prepare
 from safebank_contracts.state import InsertAssessment
-from sqlalchemy import func, select as sa_select, text
+from sqlalchemy import func, text
+from sqlalchemy import select as sa_select
 from sqlalchemy.pool import NullPool
 
 from tests.contracts.samples import step
@@ -132,8 +133,7 @@ def _steps(answers=_ANSWERS):
                 step_id="s1",
                 questionnaire_id="rq_v1",
                 answers=[
-                    {"question_id": a["question_id"], "option_id": a["option_id"]}
-                    for a in answers
+                    {"question_id": a["question_id"], "option_id": a["option_id"]} for a in answers
                 ],
             )
         ],
@@ -248,12 +248,16 @@ class TestSubmitRiskAssessment:
             admin = engine(obligations_db.admin_url, poolclass=NullPool)
             async with admin.begin() as conn:
                 r = (
-                    await conn.execute(
-                        sa_select(m.risk_assessments).where(
-                            m.risk_assessments.c.customer_id == "cus_zs"
+                    (
+                        await conn.execute(
+                            sa_select(m.risk_assessments).where(
+                                m.risk_assessments.c.customer_id == "cus_zs"
+                            )
                         )
                     )
-                ).mappings().all()
+                    .mappings()
+                    .all()
+                )
                 assert len(r) == 1
                 row = r[0]
                 # Score 3+4+3+2+1+3 = 16 → R3
@@ -265,21 +269,25 @@ class TestSubmitRiskAssessment:
                 assert row["answers"] is not None
 
                 c = (
-                    await conn.execute(
-                        sa_select(m.customers).where(m.customers.c.id == "cus_zs")
-                    )
-                ).mappings().one()
+                    (await conn.execute(sa_select(m.customers).where(m.customers.c.id == "cus_zs")))
+                    .mappings()
+                    .one()
+                )
                 assert c["risk_level"] == 3
                 assert c["risk_assessed_at"] is not None
                 assert c["risk_valid_until"] == "2027-10-15"
 
                 ops = (
-                    await conn.execute(
-                        sa_select(m.operation_events).where(
-                            m.operation_events.c.plan_id == "plan_risk_001"
+                    (
+                        await conn.execute(
+                            sa_select(m.operation_events).where(
+                                m.operation_events.c.plan_id == "plan_risk_001"
+                            )
                         )
                     )
-                ).mappings().all()
+                    .mappings()
+                    .all()
+                )
                 assert len(ops) == 1
             await admin.dispose()
 
@@ -345,10 +353,10 @@ class TestSubmitRiskAssessment:
                     sa_select(func.count()).select_from(m.risk_assessments)
                 )
                 c = (
-                    await conn.execute(
-                        sa_select(m.customers).where(m.customers.c.id == "cus_zs")
-                    )
-                ).mappings().one()
+                    (await conn.execute(sa_select(m.customers).where(m.customers.c.id == "cus_zs")))
+                    .mappings()
+                    .one()
+                )
             await admin.dispose()
             return assessments, c["risk_level"]
 
