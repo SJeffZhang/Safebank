@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pytest
 
+from services.agent.app.graph.graph import _route_plan_after
 from services.agent.app.graph.state import AgentContext, Understanding, UtteranceRef
 from services.agent.app.llm.client import make_llm as _make_llm
 from services.agent.app.llm.plan import (
@@ -98,6 +99,8 @@ def _strict_transfer(from_account_id="fake_", **overrides) -> dict:
         ],
         "rationale": "test",
     }
+    for k, v in overrides.items():
+        base["steps"][0]["args"][k] = v
     return base
 
 
@@ -204,3 +207,110 @@ def test_mixed_id_prefix_and_null_yields_reference_error():
         adapter(_transfer_state(), ctx())
     # Must be ReferenceError, not ExhaustedClarify
     assert "from_account_id" in str(exc_info.value)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Test 1: amount_cents/account_no exhaust → DEFECT: unreachable via __NULL__
+#
+# amount_cents (int) and account_no (str with ^\d{12,32}$ regex) are listed
+# in _USER_ONLY_PARAMS but can never reach the ExhaustedClarify path because
+# __NULL__ as a string always fails Pydantic validation (int coercion /
+# regex mismatch) before _required_value_problems inspects the value.
+#
+# Only name and bank_name (unconstrained str fields) are actually reachable
+# and are already tested above.  The two defect-proof tests below document
+# the gap.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_amount_cents_null_never_reaches_exhausted_clarify_defect():
+    """amount_cents=__NULL__ raises ValidationError, never ExhaustedClarify.
+
+    amount_cents is in _USER_ONLY_PARAMS but is an int Pydantic field.
+    __NULL__ always fails PlanBody.model_validate before reaching
+    _required_value_problems, so the ExhaustedClarify path is unreachable.
+    """
+    from pydantic import ValidationError
+
+    plan1 = _strict_transfer(from_account_id="acc_zs_debit", amount_cents="__NULL__")
+    plan2 = _strict_transfer(from_account_id="acc_zs_debit", amount_cents="__NULL__")
+    scripted = ScriptedLLM(
+        [
+            tool_response("submit_action_plan", plan1),
+            tool_response("submit_action_plan", plan2),
+        ]
+    )
+    llm = _make_llm(api_key=API_KEY, http_client=scripted.client)
+    adapter = PlanAdapter(llm)
+    with pytest.raises(ValidationError):
+        adapter(_transfer_state(), ctx())
+
+
+def test_account_no_null_never_reaches_exhausted_clarify_defect():
+    """account_no=__NULL__ raises ValidationError, never ExhaustedClarify.
+
+    account_no is in _USER_ONLY_PARAMS but has ^\\d{12,32}$ regex constraint.
+    __NULL__ always fails Pydantic validation, so ExhaustedClarify is
+    unreachable for this parameter.
+    """
+    from pydantic import ValidationError
+
+    plan = _strict_add_payee(bank_name="中国银行")
+    plan["steps"][0]["args"]["account_no"] = "__NULL__"
+    scripted = ScriptedLLM(
+        [
+            tool_response("submit_action_plan", plan),
+            tool_response("submit_action_plan", plan),
+        ]
+    )
+    llm = _make_llm(api_key=API_KEY, http_client=scripted.client)
+    adapter = PlanAdapter(llm)
+    with pytest.raises(ValidationError):
+        adapter(_add_payee_state(), ctx())
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Test 2: non-user field exhausted → ReferenceError (not ExhaustedClarify)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_non_user_field_null_exhausted_still_raises_reference_error():
+    """Two transfer plans with from_account_id=__NULL__ (not user-only)
+    → ReferenceError, NOT ExhaustedClarify."""
+    plan1 = _strict_transfer(from_account_id="__NULL__")
+    plan2 = _strict_transfer(from_account_id="__NULL__")
+    scripted = ScriptedLLM(
+        [
+            tool_response("submit_action_plan", plan1),
+            tool_response("submit_action_plan", plan2),
+        ]
+    )
+    llm = _make_llm(api_key=API_KEY, http_client=scripted.client)
+    adapter = PlanAdapter(llm)
+    with pytest.raises(ReferenceError) as exc_info:
+        adapter(_transfer_state(), ctx())
+    assert "from_account_id" in str(exc_info.value)
+    assert not isinstance(exc_info.value, ExhaustedClarify)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Test 4: _route_plan_after routing
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_route_plan_after_l1_exhausted_returns_respond():
+    """_route_plan_after: source="l1_exhausted" → "respond"."""
+    state = {"clarification": {"required_fields": ["转账金额"], "source": "l1_exhausted"}}
+    assert _route_plan_after(state) == "respond"
+
+
+def test_route_plan_after_no_source_returns_evaluate():
+    """_route_plan_after: no clarification → "evaluate"."""
+    state = {}
+    assert _route_plan_after(state) == "evaluate"
+
+
+def test_route_plan_after_non_exhausted_source_returns_evaluate():
+    """_route_plan_after: source != "l1_exhausted" → "evaluate"."""
+    state = {"clarification": {"source": "l2_form_required"}}
+    assert _route_plan_after(state) == "evaluate"
