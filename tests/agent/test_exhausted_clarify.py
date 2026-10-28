@@ -210,28 +210,18 @@ def test_mixed_id_prefix_and_null_yields_reference_error():
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Test 1: amount_cents/account_no exhaust → DEFECT: unreachable via __NULL__
+# Test 1: amount_cents / account_no null → ExhaustedClarify (fixed)
 #
-# amount_cents (int) and account_no (str with ^\d{12,32}$ regex) are listed
-# in _USER_ONLY_PARAMS but can never reach the ExhaustedClarify path because
-# __NULL__ as a string always fails Pydantic validation (int coercion /
-# regex mismatch) before _required_value_problems inspects the value.
-#
-# Only name and bank_name (unconstrained str fields) are actually reachable
-# and are already tested above.  The two defect-proof tests below document
-# the gap.
+# When the model fills amount_cents="__NULL__" or account_no="__NULL__" the
+# Pydantic coercion/regex fails BEFORE _required_value_problems can inspect
+# the value.  PlanAdapter now inspects the ValidationError.errors() on the
+# final attempt and converts it to ExhaustedClarify when every error targets
+# a _USER_ONLY_PARAMS field with null-ish input.
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def test_amount_cents_null_never_reaches_exhausted_clarify_defect():
-    """amount_cents=__NULL__ raises ValidationError, never ExhaustedClarify.
-
-    amount_cents is in _USER_ONLY_PARAMS but is an int Pydantic field.
-    __NULL__ always fails PlanBody.model_validate before reaching
-    _required_value_problems, so the ExhaustedClarify path is unreachable.
-    """
-    from pydantic import ValidationError
-
+def test_amount_cents_null_exhausted_raises_exhausted_clarify():
+    """Two transfer plans with amount_cents=__NULL__ → ExhaustedClarify."""
     plan1 = _strict_transfer(from_account_id="acc_zs_debit", amount_cents="__NULL__")
     plan2 = _strict_transfer(from_account_id="acc_zs_debit", amount_cents="__NULL__")
     scripted = ScriptedLLM(
@@ -242,19 +232,14 @@ def test_amount_cents_null_never_reaches_exhausted_clarify_defect():
     )
     llm = _make_llm(api_key=API_KEY, http_client=scripted.client)
     adapter = PlanAdapter(llm)
-    with pytest.raises(ValidationError):
+    with pytest.raises(ExhaustedClarify) as exc_info:
         adapter(_transfer_state(), ctx())
+    assert "amount_cents" in exc_info.value.fields
+    assert "转账金额" in exc_info.value.labels
 
 
-def test_account_no_null_never_reaches_exhausted_clarify_defect():
-    """account_no=__NULL__ raises ValidationError, never ExhaustedClarify.
-
-    account_no is in _USER_ONLY_PARAMS but has ^\\d{12,32}$ regex constraint.
-    __NULL__ always fails Pydantic validation, so ExhaustedClarify is
-    unreachable for this parameter.
-    """
-    from pydantic import ValidationError
-
+def test_account_no_null_exhausted_raises_exhausted_clarify():
+    """Two add_payee plans with account_no=__NULL__ → ExhaustedClarify."""
     plan = _strict_add_payee(bank_name="中国银行")
     plan["steps"][0]["args"]["account_no"] = "__NULL__"
     scripted = ScriptedLLM(
@@ -265,8 +250,37 @@ def test_account_no_null_never_reaches_exhausted_clarify_defect():
     )
     llm = _make_llm(api_key=API_KEY, http_client=scripted.client)
     adapter = PlanAdapter(llm)
-    with pytest.raises(ValidationError):
+    with pytest.raises(ExhaustedClarify) as exc_info:
         adapter(_add_payee_state(), ctx())
+    assert "account_no" in exc_info.value.fields
+    assert "收款账号" in exc_info.value.labels
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Anti-example: non-null invalid value still re-raises ValidationError
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_amount_cents_invalid_non_null_still_raises_validation_error():
+    """amount_cents="abc" (real garbage, not __NULL__) → ValidationError on final attempt.
+
+    The model attempted to provide a value, it was just malformed — this is NOT
+    a missing-info case and should stay a hard error.
+    """
+    from pydantic import ValidationError
+
+    plan1 = _strict_transfer(from_account_id="acc_zs_debit", amount_cents="abc")
+    plan2 = _strict_transfer(from_account_id="acc_zs_debit", amount_cents="abc")
+    scripted = ScriptedLLM(
+        [
+            tool_response("submit_action_plan", plan1),
+            tool_response("submit_action_plan", plan2),
+        ]
+    )
+    llm = _make_llm(api_key=API_KEY, http_client=scripted.client)
+    adapter = PlanAdapter(llm)
+    with pytest.raises(ValidationError):
+        adapter(_transfer_state(), ctx())
 
 
 # ═══════════════════════════════════════════════════════════════════════════
