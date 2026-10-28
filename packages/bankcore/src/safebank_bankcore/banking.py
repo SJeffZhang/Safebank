@@ -23,6 +23,7 @@ from safebank_contracts.views import WRITE_RESULTS, CardView, ChannelFlags
 
 from .ids import derive
 from .ledger import post_transfer, replace_state
+from .standing import apply_cancel_scheduled, apply_cancel_subscription, apply_schedule_transfer
 
 
 @dataclass(frozen=True)
@@ -390,6 +391,9 @@ SUPPORTED_WRITES = {
     "freeze_card",
     "unfreeze_card",
     "report_card_lost",
+    "schedule_transfer",
+    "cancel_scheduled",
+    "cancel_subscription",
 }
 
 
@@ -411,6 +415,12 @@ def apply_plan(state: BankState, steps, customer_id: str, plan_id: str) -> Simul
             state, changes, errors = apply_transfer(state, args, state.sim_now, ctx)
         elif step.tool == "add_payee":
             state, changes, errors = apply_add_payee(state, args, state.sim_now, ctx)
+        elif step.tool == "schedule_transfer":
+            state, changes, errors = apply_schedule_transfer(state, args, state.sim_now, ctx)
+        elif step.tool == "cancel_scheduled":
+            state, changes, errors = apply_cancel_scheduled(state, args, state.sim_now, ctx)
+        elif step.tool == "cancel_subscription":
+            state, changes, errors = apply_cancel_subscription(state, args, state.sim_now, ctx)
         elif step.tool in SUPPORTED_WRITES:
             state, changes, errors = apply_card(state, args, state.sim_now, ctx, step.tool)
         else:

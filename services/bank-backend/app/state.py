@@ -24,12 +24,15 @@ from safebank_contracts.state import (
     Counters,
     Customer,
     DirectoryEntry,
+    InsertInstruction,
     InsertPayee,
     LedgerTransfer,
     Operation,
     OperationEvent,
     Payee,
     PostTransfer,
+    ScheduleEventJob,
+    SetInstructionStatus,
     StateScope,
     Transaction,
     UpsertCard,
@@ -449,6 +452,30 @@ async def persist(conn, effects) -> None:
                 m.outbox.insert().values(
                     event_id=effect.operation.event_id,
                     payload=effect.operation.model_dump(mode="json"),
+                )
+            )
+        elif isinstance(effect, InsertInstruction):
+            inst_data = effect.instruction.model_dump(mode="python")
+            await conn.execute(m.standing_instructions.insert().values(**inst_data))
+        elif isinstance(effect, SetInstructionStatus):
+            await conn.execute(
+                update(m.standing_instructions)
+                .where(m.standing_instructions.c.id == effect.instruction_id)
+                .values(status=effect.new_status)
+            )
+        elif isinstance(effect, ScheduleEventJob):
+            await conn.execute(
+                m.event_jobs.insert().values(
+                    id=effect.job_id,
+                    kind=effect.kind,
+                    rank=0,
+                    due_at=effect.due_at,
+                    immutable_payload={"ciphertext": effect.payload_ciphertext},
+                    payload_hash=effect.payload_hash,
+                    source_id=effect.source_id,
+                    period_key=effect.period_key,
+                    status="PENDING",
+                    attempt_count=0,
                 )
             )
         else:
