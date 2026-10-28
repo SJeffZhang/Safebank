@@ -24,6 +24,7 @@ from safebank_contracts.state import (
     Counters,
     Customer,
     DirectoryEntry,
+    EVENT_KIND_RANK,
     InsertInstruction,
     InsertPayee,
     LedgerTransfer,
@@ -464,11 +465,14 @@ async def persist(conn, effects) -> None:
                 .values(status=effect.new_status)
             )
         elif isinstance(effect, ScheduleEventJob):
+            rank = EVENT_KIND_RANK.get(effect.kind)
+            if rank is None:
+                raise ValueError(f"unknown event job kind: {effect.kind}")
             await conn.execute(
                 m.event_jobs.insert().values(
                     id=effect.job_id,
                     kind=effect.kind,
-                    rank=0,
+                    rank=rank,
                     due_at=effect.due_at,
                     immutable_payload={"ciphertext": effect.payload_ciphertext},
                     payload_hash=effect.payload_hash,

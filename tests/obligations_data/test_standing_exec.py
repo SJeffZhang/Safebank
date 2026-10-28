@@ -201,6 +201,29 @@ class TestScheduleTransferExecution:
 
         asyncio.run(check())
 
+    def test_event_job_rank_matches_kind(self, obligations_db):
+        """Persisted event_jobs.rank follows the PRD §8.6 fixed per-kind rank table."""
+
+        async def check():
+            admin = engine(obligations_db.admin_url, poolclass=NullPool)
+            runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+            await _install(admin)
+            steps = _steps(_schedule_step())
+            result, _, _ = await _prepare_execute(
+                runtime, plan_id="pln_c3_rank", steps=steps, expected_versions={"cus_zs": 0}
+            )
+            assert result.status == "EXECUTED"
+            new_id = result.steps[0].result["instruction_id"]
+            async with admin.connect() as conn:
+                rank = await conn.scalar(
+                    text("SELECT rank FROM event_jobs WHERE source_id=:id"), {"id": new_id}
+                )
+                assert rank == 3  # SCHEDULED_TRANSFER
+            await admin.dispose()
+            await runtime.dispose()
+
+        asyncio.run(check())
+
     def test_same_plan_retry_20_times_idempotent(self, obligations_db):
         """Re-executing the same plan_id 20 times produces exactly one of each row."""
 

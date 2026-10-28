@@ -271,6 +271,20 @@ class ScheduleEventJob(Contract):
     payload_hash: str
 
 
+# Fixed per-kind scheduler ordering (PRD §8.6).  ``event_jobs`` is scheduled by
+# ``(due_at, rank, event_id)``, so the rank must be a stable integer per kind —
+# never derived from a priority string.  Unknown kinds must not default to a rank.
+EVENT_KIND_RANK: dict[str, int] = {
+    "FUND_CONFIRM": 0,
+    "FUND_SETTLE": 1,
+    "FUND_EXPIRY": 2,
+    "SCHEDULED_TRANSFER": 3,
+    "MERCHANT_CHARGE": 4,
+    "REMINDER": 5,
+    "DEMO_EVENT": 6,
+}
+
+
 # Typed future effects reserve the public algebra without implementing their business paths.
 FUTURE_EFFECTS = {
     "InsertSplit": create_model(
