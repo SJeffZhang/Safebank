@@ -23,6 +23,7 @@ from safebank_contracts.views import WRITE_RESULTS, CardView, ChannelFlags
 
 from .ids import derive
 from .ledger import post_transfer, replace_state
+from .split import apply_create_split_request
 
 
 @dataclass(frozen=True)
@@ -359,6 +360,17 @@ def step_result(before, after, step, ctx, effects):
             new_last4=new.last4 if new else None,
         )
         created = {"card_id": new.id} if new else {}
+    elif step.tool == "create_split_request":
+        from safebank_contracts.state import FUTURE_EFFECTS
+
+        InsertSplit = FUTURE_EFFECTS["InsertSplit"]
+        split_effect = next((e for e in effects if isinstance(e, InsertSplit)), None)
+        if split_effect is not None:
+            result = split_effect.split.model_dump(mode="json")
+            created = {"split_request_id": split_effect.split.id}
+        else:
+            result = {}
+            created = {}
     else:
         result = dict(
             card_id=args.card_id, status=after.cards[args.card_id].status, no_op=not bool(effects)
@@ -390,6 +402,7 @@ SUPPORTED_WRITES = {
     "freeze_card",
     "unfreeze_card",
     "report_card_lost",
+    "create_split_request",
 }
 
 
@@ -411,6 +424,8 @@ def apply_plan(state: BankState, steps, customer_id: str, plan_id: str) -> Simul
             state, changes, errors = apply_transfer(state, args, state.sim_now, ctx)
         elif step.tool == "add_payee":
             state, changes, errors = apply_add_payee(state, args, state.sim_now, ctx)
+        elif step.tool == "create_split_request":
+            state, changes, errors = apply_create_split_request(state, args, state.sim_now, ctx)
         elif step.tool in SUPPORTED_WRITES:
             state, changes, errors = apply_card(state, args, state.sim_now, ctx, step.tool)
         else:

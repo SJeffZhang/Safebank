@@ -17,6 +17,7 @@ from safebank_contracts.obligations import (
     ScheduledInstruction,
 )
 from safebank_contracts.state import (
+    FUTURE_EFFECTS,
     Account,
     AppendTransaction,
     BankState,
@@ -34,11 +35,13 @@ from safebank_contracts.state import (
     Transaction,
     UpsertCard,
 )
-from safebank_contracts.views import RunView, ScheduledView, SubscriptionView
+from safebank_contracts.views import RunView, ScheduledView, SplitItem, SplitView, SubscriptionView
 from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from . import models as m
+
+InsertSplit = FUTURE_EFFECTS["InsertSplit"]
 
 
 def fingerprint(account_no: str, key: str) -> str:
@@ -370,6 +373,67 @@ async def load_bank_state(conn, scope: StateScope, now, *, customer_id: str) -> 
     if customer_id not in versions or not owner_ids:
         raise LookupError("customer not found")
     obligations, instructions, subscriptions = await _load_obligations(conn, ids, customer_id)
+    # Load split requests and items for the requesting customer only.
+    _splits: list[SplitView] = []
+    split_request_rows = (
+        (
+            await conn.execute(
+                select(m.split_requests).where(m.split_requests.c.customer_id == customer_id)
+            )
+        )
+        .mappings()
+        .all()
+    )
+    for sr in split_request_rows:
+        items = (
+            (
+                await conn.execute(
+                    select(m.split_items).where(m.split_items.c.request_id == sr["id"])
+                )
+            )
+            .mappings()
+            .all()
+        )
+        _splits.append(
+            SplitView(
+                id=sr["id"],
+                account_id=sr["account_id"],
+                total_cents=sr["total_cents"],
+                include_self=sr["include_self"],
+                self_share_cents=sr["self_share_cents"],
+                created_at=sr["created_at"],
+                received_cents=sum(it["amount_cents"] for it in items if it["status"] == "PAID"),
+                outstanding_cents=sr["total_cents"]
+                - sr["self_share_cents"]
+                - sum(it["amount_cents"] for it in items if it["status"] == "PAID"),
+                items=tuple(
+                    SplitItem(
+                        id=it["id"],
+                        payee_id=it["payee_id"],
+                        payee_name=it["payee_id"],  # resolved to real name below
+                        amount_cents=it["amount_cents"],
+                        status=it["status"],
+                        paid_at=it["paid_at"],
+                    )
+                    for it in items
+                ),
+            )
+        )
+    # Resolve payee names from the already-loaded payees.
+    payee_names = {p.id: p.name for p in payees}
+    _splits = [
+        sv.model_copy(
+            update={
+                "items": tuple(
+                    si.model_copy(
+                        update={"payee_name": payee_names.get(si.payee_id, si.payee_name)}
+                    )
+                    for si in sv.items
+                )
+            }
+        )
+        for sv in _splits
+    ]
     return BankState(
         sim_now=now,
         clock_version=clock["version"],
@@ -390,6 +454,7 @@ async def load_bank_state(conn, scope: StateScope, now, *, customer_id: str) -> 
         obligations=obligations,
         instructions=instructions,
         subscriptions=subscriptions,
+        splits=tuple(_splits),
         dataset_revision=clock["dataset_revision"],
     )
 
@@ -451,5 +516,37 @@ async def persist(conn, effects) -> None:
                     payload=effect.operation.model_dump(mode="json"),
                 )
             )
+        elif isinstance(effect, InsertSplit):
+            split = effect.split
+            customer_id_row = await conn.scalar(
+                select(m.accounts.c.customer_id).where(m.accounts.c.id == split.account_id)
+            )
+            if customer_id_row is None:
+                raise ValueError(f"account {split.account_id} not found for split insert")
+            await conn.execute(
+                m.split_requests.insert().values(
+                    id=split.id,
+                    customer_id=customer_id_row,
+                    account_id=split.account_id,
+                    total_cents=split.total_cents,
+                    include_self=split.include_self,
+                    self_share_cents=split.self_share_cents,
+                    created_at=split.created_at,
+                )
+            )
+            for item in split.items:
+                await conn.execute(
+                    m.split_items.insert().values(
+                        id=item.id,
+                        request_id=split.id,
+                        customer_id=customer_id_row,
+                        account_id=split.account_id,
+                        payee_id=item.payee_id,
+                        amount_cents=item.amount_cents,
+                        status=item.status,
+                        paid_at=item.paid_at,
+                        payment_event_id=None,
+                    )
+                )
         else:
             raise ValueError("Unsupported effect; P1 never silently ignores future business")

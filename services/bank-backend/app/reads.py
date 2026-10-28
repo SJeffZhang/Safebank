@@ -21,6 +21,7 @@ SUPPORTED_READS = {
     "list_scheduled",
     "list_subscriptions",
     "upcoming_charges",
+    "get_split_status",
 }
 
 
@@ -243,6 +244,25 @@ def read(state, tool, args, customer_id):
                 annual_to_monthly="floor_div_12",
             ),
         )
+    elif tool == "get_split_status":
+        if args.request_id:
+            target = next((s for s in state.splits if s.id == args.request_id), None)
+            if target is None:
+                raise BankError(Code.NOT_FOUND, 404)
+            data = dict(items=[target.model_dump(mode="json")], next_cursor=None)
+        else:
+            sorted_splits = sorted(state.splits, key=lambda s: (s.created_at, s.id))
+            page, cursor = paginate(
+                sorted_splits,
+                args,
+                customer_id,
+                lambda s: (s.created_at.isoformat(), s.id),
+                "get_split_status",
+            )
+            data = dict(
+                items=[s.model_dump(mode="json") for s in page],
+                next_cursor=cursor,
+            )
     elif tool == "upcoming_charges":
         try:
             window = upcoming_window(state, days=args.days, account_id=args.account_id)
