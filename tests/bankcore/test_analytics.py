@@ -1080,3 +1080,72 @@ def test_detect_anomalies_account_filter():
     ids = {it["transaction"]["id"] for it in filtered["items"]}
     assert ids == {"t_checked"}
     assert "t_sav" not in ids
+
+
+# ── business timezone (UTC sim_now → Asia/Shanghai business tz) ──
+
+UTC_NOW = datetime(2026, 11, 15, 9, 0, 0, tzinfo=__import__("zoneinfo").ZoneInfo("UTC"))
+
+
+def _base_state_utc():
+    """base_state variant with UTC sim_now."""
+    s = base_state()
+    return s.model_copy(update={"sim_now": UTC_NOW})
+
+
+def test_spending_summary_utc_sim_now_october_boundary():
+    """Transaction at Beijing 10-31 23:30 (15:30Z) → counted in 2026-10."""
+    state = with_txns(
+        _base_state_utc(),
+        tx(
+            id="t_oct31",
+            amount_cents=5000,
+            category="餐饮",
+            occurred_at=datetime(2026, 10, 31, 15, 30, 0, tzinfo=__import__("zoneinfo").ZoneInfo("UTC")),
+            sequence=1,
+        ),
+    )
+    result = subject.spending_summary(state, customer_id="cus_a", month="2026-10")
+    assert result["total_cents"] == 5000
+
+
+def test_spending_summary_utc_sim_now_november_boundary():
+    """Beijing 11-01 00:30 (10-31 16:30Z) → counted in 2026-11, not 2026-10."""
+    utc_tx = tx(
+        id="t_nov01",
+        amount_cents=8000,
+        category="购物",
+        occurred_at=datetime(2026, 10, 31, 16, 30, 0, tzinfo=__import__("zoneinfo").ZoneInfo("UTC")),
+        sequence=1,
+    )
+    state_nov = with_txns(_base_state_utc(), utc_tx)
+    result_nov = subject.spending_summary(state_nov, customer_id="cus_a", month="2026-11")
+    assert result_nov["total_cents"] == 8000
+
+    result_oct = subject.spending_summary(state_nov, customer_id="cus_a", month="2026-10")
+    assert result_oct["total_cents"] == 0
+
+
+def test_anomaly_night_large_uses_business_timezone():
+    """18:13Z (Beijing 02:13) → ANOMALY_NIGHT_LARGE; 14:00Z (Beijing 22:00) → not."""
+    utc = __import__("zoneinfo").ZoneInfo("UTC")
+    state = with_txns(
+        _base_state_utc(),
+        _anomaly_tx(
+            id="t_night",
+            amount_cents=60000,
+            merchant_id="mer_a",
+            occurred_at=datetime(2026, 10, 15, 18, 13, 0, tzinfo=utc),
+        ),
+        _anomaly_tx(
+            id="t_day",
+            amount_cents=60000,
+            merchant_id="mer_a",
+            occurred_at=datetime(2026, 10, 15, 14, 0, 0, tzinfo=utc),
+        ),
+    )
+    from_at = datetime(2026, 10, 1, 0, 0, 0, tzinfo=utc)
+    to_at = datetime(2026, 11, 1, 0, 0, 0, tzinfo=utc)
+    result = subject.detect_anomalies(state, customer_id="cus_a", from_at=from_at, to_at=to_at)
+    assert "ANOMALY_NIGHT_LARGE" in _codes(result, "t_night")
+    assert _codes(result, "t_day") == []

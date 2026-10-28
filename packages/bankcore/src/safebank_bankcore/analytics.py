@@ -21,6 +21,7 @@ from collections import defaultdict
 from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 
+from safebank_bankcore.reserve import _business_time
 from safebank_contracts.state import BankState
 
 # The 8 category buckets defined in PRD §5.2.
@@ -80,7 +81,6 @@ def spending_summary(
     prev_total_cents = 0
     transfer_out_cents = 0
 
-    tz = state.sim_now.tzinfo
     for tx in state.transactions:
         # Only owned accounts.
         acct = state.accounts.get(tx.account_id)
@@ -92,11 +92,7 @@ def spending_summary(
         if tx.status != "POSTED":
             continue
 
-        local_ts = (
-            tx.occurred_at.astimezone(tz)
-            if tx.occurred_at.tzinfo
-            else tx.occurred_at.replace(tzinfo=tz)
-        )
+        local_ts = _business_time(tx.occurred_at)
 
         if tx.kind in _CONSUMPTION_KINDS:
             cat = tx.category or ""
@@ -238,9 +234,7 @@ def detect_anomalies(
         codes: list[str] = []
         ev: dict = {}
 
-        local_hour = tx.occurred_at.astimezone(
-            tx.occurred_at.tzinfo
-        ).hour
+        local_hour = _business_time(tx.occurred_at).hour
 
         # 2a. ANOMALY_NIGHT_LARGE  (00:00–04:59, > 50 000 cents)
         if 0 <= local_hour <= 4 and tx.amount_cents > 50_000:
