@@ -245,8 +245,7 @@ def test_0002_data_survives_0003_upgrade_and_execution_replays(obligations_0002_
         async with admin.connect() as conn:
             after = await _capture(conn)
             assert (
-                await conn.scalar(text("SELECT version_num FROM alembic_version"))
-                == "0003_obligations"
+                await conn.scalar(text("SELECT version_num FROM alembic_version")) == "0005_splits"
             )
         assert after == baseline
 

@@ -567,3 +567,79 @@ Index(
     unique=True,
     postgresql_where=instruction_runs.c.transfer_id.isnot(None),
 )
+
+SPLIT_REQUESTS_SELF_CHECK = (
+    "(include_self IS TRUE AND self_share_cents>=0) OR "
+    "(include_self IS FALSE AND self_share_cents=0)"
+)
+
+split_requests = Table(
+    "split_requests",
+    metadata,
+    idcol(primary_key=True),
+    Column(
+        "customer_id",
+        ForeignKey("customers.id", name="split_requests_customer_id_fkey"),
+        nullable=False,
+    ),
+    Column("account_id", String(256), nullable=False),
+    Column("total_cents", BigInteger, nullable=False),
+    Column("include_self", Boolean, nullable=False),
+    Column("self_share_cents", BigInteger, nullable=False),
+    timestamp("created_at", nullable=False),
+    CheckConstraint(
+        "total_cents>0 AND total_cents<=100000000",
+        name="split_requests_total_cents_check",
+    ),
+    CheckConstraint("self_share_cents>=0", name="split_requests_self_share_cents_check"),
+    CheckConstraint(SPLIT_REQUESTS_SELF_CHECK, name="split_requests_include_self_check"),
+    ForeignKeyConstraint(
+        ["account_id", "customer_id"],
+        ["accounts.id", "accounts.customer_id"],
+        name="split_requests_account_customer_fkey",
+    ),
+    UniqueConstraint(
+        "id", "customer_id", "account_id", name="split_requests_id_customer_account_key"
+    ),
+)
+
+SPLIT_ITEM_STATUS_CHECK = "status IN ('UNPAID','PAID')"
+SPLIT_ITEM_PAID_CHECK = (
+    "(status='PAID' AND paid_at IS NOT NULL) OR (status='UNPAID' AND paid_at IS NULL)"
+)
+
+split_items = Table(
+    "split_items",
+    metadata,
+    idcol(primary_key=True),
+    Column("request_id", String(256), nullable=False),
+    Column(
+        "customer_id",
+        ForeignKey("customers.id", name="split_items_customer_id_fkey"),
+        nullable=False,
+    ),
+    Column("account_id", String(256), nullable=False),
+    Column("payee_id", String(256), nullable=False),
+    Column("amount_cents", BigInteger, nullable=False),
+    Column("status", String, nullable=False),
+    Column("paid_at", DateTime(timezone=True)),
+    Column("payment_event_id", String(256)),
+    CheckConstraint("amount_cents>0", name="split_items_amount_cents_check"),
+    CheckConstraint(SPLIT_ITEM_STATUS_CHECK, name="split_items_status_check"),
+    CheckConstraint(SPLIT_ITEM_PAID_CHECK, name="split_items_paid_check"),
+    ForeignKeyConstraint(
+        ["request_id", "customer_id", "account_id"],
+        [
+            "split_requests.id",
+            "split_requests.customer_id",
+            "split_requests.account_id",
+        ],
+        name="split_items_request_owner_fkey",
+    ),
+    ForeignKeyConstraint(
+        ["payee_id", "customer_id"],
+        ["payees.id", "payees.customer_id"],
+        name="split_items_payee_customer_fkey",
+    ),
+    UniqueConstraint("request_id", "payee_id", name="split_items_request_payee_key"),
+)
