@@ -164,11 +164,15 @@ class TestScheduleTransferExecution:
             new_id = result.steps[0].result["instruction_id"]
             async with admin.connect() as conn:
                 row = (
-                    await conn.execute(
-                        text("SELECT status, kind FROM standing_instructions WHERE id=:id"),
-                        {"id": new_id},
+                    (
+                        await conn.execute(
+                            text("SELECT status, kind FROM standing_instructions WHERE id=:id"),
+                            {"id": new_id},
+                        )
                     )
-                ).mappings().one()
+                    .mappings()
+                    .one()
+                )
                 assert row["status"] == "ACTIVE"
                 assert row["kind"] == "SCHEDULED_TRANSFER"
                 assert (
@@ -185,7 +189,10 @@ class TestScheduleTransferExecution:
                 )
                 assert (
                     await conn.scalar(
-                        text("SELECT balance_cents FROM accounts WHERE id='acc_zs_chk'")
+                        text(
+                            "SELECT credits_posted_cents - debits_posted_cents "
+                            "FROM accounts WHERE id='acc_zs_chk'"
+                        )
                     )
                     == 600000
                 )
@@ -273,7 +280,7 @@ class TestCancelScheduledExecution:
         asyncio.run(check())
 
     def test_cancel_scheduled_idempotent_no_op(self, obligations_db):
-        """A second cancel (new plan) on an already-DELETED instruction is a no-op with no events."""
+        """A second cancel (new plan) on a DELETED instruction is a no-op with no events."""
 
         async def check():
             admin = engine(obligations_db.admin_url, poolclass=NullPool)
@@ -299,7 +306,10 @@ class TestCancelScheduledExecution:
                 )
                 assert (
                     await conn.scalar(
-                        text("SELECT count(*) FROM operation_events WHERE action_kind='SCHEDULED_CANCEL'")
+                        text(
+                            "SELECT count(*) FROM operation_events "
+                            "WHERE action_kind='SCHEDULED_CANCEL'"
+                        )
                     )
                     == 1
                 )
@@ -375,14 +385,18 @@ class TestEventJobUniqueness:
             new_id = result.steps[0].result["instruction_id"]
             async with admin.connect() as conn:
                 job = (
-                    await conn.execute(
-                        text(
-                            "SELECT kind, due_at, source_id, period_key FROM event_jobs "
-                            "WHERE source_id=:id"
-                        ),
-                        {"id": new_id},
+                    (
+                        await conn.execute(
+                            text(
+                                "SELECT kind, due_at, source_id, period_key FROM event_jobs "
+                                "WHERE source_id=:id"
+                            ),
+                            {"id": new_id},
+                        )
                     )
-                ).mappings().one()
+                    .mappings()
+                    .one()
+                )
                 with pytest.raises(DBAPIError):
                     await conn.execute(
                         text(
