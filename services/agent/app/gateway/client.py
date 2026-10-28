@@ -8,6 +8,7 @@ never manufactures a success or an authorization verdict — that belongs to L2.
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 from typing import Any
@@ -33,6 +34,8 @@ from services.agent.app.gateway.wire import (
     UnknownExecution,
 )
 from services.agent.app.graph.state import AgentContext
+
+_log = logging.getLogger("safebank.agent.gateway")
 
 _MAX_UTTERANCE_IDS = 100
 
@@ -202,16 +205,24 @@ class GatewayClient:
             # extension as a dict (``.get("pool")``), so write ``Timeout.as_dict()``.
             request.extensions["timeout"] = httpx.Timeout(self._timeout).as_dict()
             response = self._client.send(request, follow_redirects=False)
-        except httpx.HTTPError:
+        except httpx.HTTPError as exc:
+            _log.warning(
+                "gateway transport error %s %s: %s", method, httpx.URL(url).path, type(exc).__name__
+            )
             raise GatewayTransportError() from None
         status = response.status_code
         if 300 <= status < 400:
+            _log.warning("gateway redirect refused %s %s -> %s", method, request.url.path, status)
             raise GatewayProtocolError(status)
         try:
             payload = response.json()
         except ValueError:
+            _log.warning("gateway non-JSON response %s %s -> %s", method, request.url.path, status)
             raise GatewayProtocolError(status) from None
         if status >= 400:
+            # Status and error code only: bodies may echo user text and are never logged.
+            code = payload.get("error", {}).get("code") if isinstance(payload, dict) else None
+            _log.warning("gateway error %s %s -> %s %s", method, request.url.path, status, code)
             raise self._error_from(status, payload, context)
         return status, payload
 

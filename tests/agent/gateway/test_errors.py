@@ -312,3 +312,16 @@ def test_unexpected_success_shape_is_protocol_error():
     transport = ScriptedGateway([json_response(200, {"unexpected": True})])
     with pytest.raises(GatewayProtocolError):
         client_with(transport).get_utterances(("utt_a",), ctx())
+
+
+def test_error_response_is_logged_with_status_and_code_only(caplog):
+    """Gateway errors are visible in the agent log without bodies or credentials."""
+    body_text = "USER_TEXT_MUST_NOT_BE_LOGGED"
+    transport = ScriptedGateway([error_response(422, "CONTRACT_INVALID", message=body_text)])
+    with caplog.at_level("WARNING", logger="safebank.agent.gateway"):
+        with pytest.raises(GatewayResponseError):
+            client_with(transport).get_utterances(("utt_a",), ctx())
+    logged = caplog.text
+    assert "422" in logged and "CONTRACT_INVALID" in logged
+    assert body_text not in logged
+    assert SECRET not in logged and SERVICE_TOKEN not in logged
