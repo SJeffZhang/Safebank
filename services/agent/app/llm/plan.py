@@ -66,6 +66,90 @@ class ReferenceError(Exception):
         self.problems = problems
 
 
+class ExhaustedClarify(Exception):
+    """Retries exhausted and all remaining problems are user-only missing params.
+
+    Raised instead of ``ReferenceError`` so the plan graph node can route to
+    a clarification response instead of propagating the error.
+    """
+
+    def __init__(self, fields: list[str], labels: list[str]) -> None:
+        super().__init__("；".join(labels))
+        self.fields = fields
+        self.labels = labels
+
+
+# Params whose value can ONLY come from user input (not from gather reads).
+# When retries are exhausted and all remaining problems are {param}=__NULL__ / ""
+# for these params, the plan node produces a clarification instead of an error.
+_USER_ONLY_PARAMS: frozenset[str] = frozenset({"name", "account_no", "bank_name", "amount_cents"})
+
+# Chinese labels for user-only params (used in clarification text).
+_PARAM_LABELS: dict[str, str] = {
+    "name": "收款人姓名",
+    "account_no": "收款账号",
+    "bank_name": "开户银行",
+    "amount_cents": "转账金额",
+}
+
+
+def _exhausted_clarify_fields(
+    val_problems: list[str],
+) -> list[str] | None:
+    """Return the list of missing user-only field names if ALL val_problems are user-only.
+
+    Returns None if any problem is NOT a user-only missing-param issue
+    (e.g. ID prefix error) — in that case the caller should raise normally.
+    """
+    import re
+
+    fields: list[str] = []
+    for problem in val_problems:
+        m = re.match(r"steps\[\d+\]\.(\w+):\s*必填参数不能为 __NULL__ 或空字符串", problem)
+        if not m:
+            return None  # not a missing-param problem (e.g. ID prefix error)
+        field = m.group(1)
+        if field not in _USER_ONLY_PARAMS:
+            return None  # a required param but not user-only (e.g. from_account_id)
+        if field not in fields:
+            fields.append(field)
+    return fields if fields else None
+
+
+def _exhausted_clarify_fields_from_ve(exc: ValidationError) -> list[str] | None:
+    """Check if ALL ValidationError errors are for _USER_ONLY_PARAMS fields
+    with null-ish input (None / ``"__NULL__"`` / empty string).
+
+    When the model fills ``amount_cents="__NULL__"`` or ``account_no="__NULL__"``
+    the Pydantic coercion/regex fails *before* ``_required_value_problems`` gets
+    to inspect the value, so the exhausted-clarify path in the ReferenceError
+    handler is never reached.  This helper bridges the gap: if every validation
+    error targets a user-only param and the offending input is null-ish, the
+    caller should raise ``ExhaustedClarify`` instead of re-raising the VE.
+    """
+    fields: list[str] = []
+    for error in exc.errors():
+        loc = error.get("loc", ())
+        # loc for a nested discriminated-union step arg looks like
+        # ('steps', 0, 'TransferArgs', 'args', 'amount_cents')
+        field = loc[-1] if loc else ""
+        if not isinstance(field, str) or field not in _USER_ONLY_PARAMS:
+            # The only tolerated companion error is the cascade ('steps',)
+            # too_short that Pydantic reports because the failing step itself
+            # was dropped; any other structural error needs the model to fix it.
+            if tuple(loc) == ("steps",) and error.get("type") == "too_short":
+                continue
+            return None
+        input_val = error.get("input", None)
+        if input_val is not None and input_val != "__NULL__" and input_val != "":
+            # User provided a real value that was just malformed (e.g. account_no
+            # too short, amount_cents negative).  This is NOT a missing-info case.
+            return None
+        if field not in fields:
+            fields.append(field)
+    return fields if fields else None
+
+
 # Directly copyable identifiers/text whose value must equal the slice/pointer value verbatim.
 # Computed/normalized strings (dates, enum names, decimals) are excluded so they are not
 # false-rejected by a byte-wise equality that the frozen contract does not itself require.
@@ -375,10 +459,22 @@ class PlanAdapter:
                 return draft
             except ReferenceError as exc:
                 if attempt == self._max_retries:
+                    # If ALL remaining problems are user-only missing params,
+                    # produce a clarification instead of propagating the error.
+                    if not ref_problems and not sem_problems and not ch_problems:
+                        fields = _exhausted_clarify_fields(val_problems)
+                        if fields is not None:
+                            labels = [_PARAM_LABELS[f] for f in fields]
+                            raise ExhaustedClarify(fields, labels) from exc
                     raise
                 note = f"计划未通过本地校验：{'；'.join(exc.problems)}；请修正后重新生成。"
             except (LlmToolError, ValidationError, ValueError) as exc:
                 if attempt == self._max_retries:
+                    if isinstance(exc, ValidationError):
+                        fields = _exhausted_clarify_fields_from_ve(exc)
+                        if fields is not None:
+                            labels = [_PARAM_LABELS[f] for f in fields]
+                            raise ExhaustedClarify(fields, labels) from exc
                     raise
                 note = f"上次计划未通过校验（{validation_summary(exc)}），请修正后重新生成。"
         raise AssertionError("unreachable")

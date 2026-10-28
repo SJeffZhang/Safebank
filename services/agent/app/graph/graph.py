@@ -29,6 +29,7 @@ from services.agent.app.graph.state import (
     AgentState,
     DecisionValue,
 )
+from services.agent.app.llm.plan import ExhaustedClarify
 
 # Lazy-imported inside build_gateway_graph to avoid circular import with
 # gateway.client → graph.state → graph.__init__ → graph.graph.
@@ -57,6 +58,13 @@ def _route_gather(state: AgentState) -> str:
     if understanding is None or not understanding.needs_write:
         return "respond"
     return "plan"
+
+
+def _route_plan_after(state: AgentState) -> str:
+    clarification = state.get("clarification") or {}
+    if clarification.get("source") == "l1_exhausted":
+        return "respond"
+    return "evaluate"
 
 
 def _route_evaluate(state: AgentState) -> str:
@@ -228,7 +236,11 @@ def build_graph(ports: Ports, checkpointer: BaseCheckpointSaver) -> CompiledStat
         "understand", _route_understand, {"respond": "respond", "gather": "gather"}
     )
     builder.add_conditional_edges("gather", _route_gather, {"respond": "respond", "plan": "plan"})
-    builder.add_edge("plan", "evaluate")
+    builder.add_conditional_edges(
+        "plan",
+        _route_plan_after,
+        {"evaluate": "evaluate", "respond": "respond"},
+    )
     builder.add_conditional_edges(
         "evaluate",
         _route_evaluate,
@@ -643,6 +655,10 @@ def build_gateway_graph(
         # Normal 200 / 202 UNKNOWN → respond (LLM or fixed template)
         return "respond"
 
+    def _route_plan(state: AgentState) -> str:
+        """Route plan node: exhausted-clarify → respond, normal → evaluate."""
+        return _route_plan_after(state)
+
     # ── gather node (with optional gateway read bridge P1-3) ───────────
 
     if gateway_read_client is not None:
@@ -694,7 +710,13 @@ def build_gateway_graph(
     # ── plan node ─────────────────────────────────────────────────────
 
     def plan(state: AgentState, runtime: Runtime[AgentContext]) -> dict:
-        draft = ports.plan(state, runtime.context)
+        try:
+            draft = ports.plan(state, runtime.context)
+        except ExhaustedClarify as ec:
+            return {
+                "reply_draft": f"请提供以下信息：{'、'.join(ec.labels)}。",
+                "clarification": {"required_fields": ec.labels, "source": "l1_exhausted"},
+            }
         if draft is None:
             raise PortFailure("plan port returned None")
         return {"plan_draft": draft}
@@ -766,7 +788,11 @@ def build_gateway_graph(
     builder.add_conditional_edges(
         "gather", _route_gather_gw, {"respond": "respond", "plan": "plan"}
     )
-    builder.add_edge("plan", "evaluate")
+    builder.add_conditional_edges(
+        "plan",
+        _route_plan,
+        {"evaluate": "evaluate", "respond": "respond"},
+    )
     # P1-1: clarify → respond (fixed draft, no LLM needed)
     builder.add_edge("clarify", "respond")
     builder.add_conditional_edges(
