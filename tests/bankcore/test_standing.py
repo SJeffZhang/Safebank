@@ -24,6 +24,7 @@ from safebank_bankcore.standing import (
     apply_cancel_subscription,
     apply_schedule_transfer,
 )
+from safebank_bankcore.reserve import _business_time, _recurrences
 from safebank_contracts.codes import Code
 from safebank_contracts.obligations import (
     InstructionTarget,
@@ -431,8 +432,18 @@ def test_monthly_jan31_to_feb_end():
     new_state, effects, _ = apply_schedule_transfer(state, args, NOW, ctx())
     inst = effects[0].instruction
     assert inst.anchor_day == 31
-    # Feb has 28 days (2027), so next run should be Feb 28
-    assert inst.next_run_at == at("2027-01-31T09:00:00+08:00")
+    # 2027 is not a leap year; the Jan-31 anchor must clamp the next run to Feb 28.
+    occurrences = _recurrences(
+        period=inst.period,
+        anchor_day=inst.anchor_day,
+        weekday=inst.weekday,
+        local_time=inst.time_of_day,
+        next_at=inst.next_run_at,
+        end_at=inst.end_at,
+        start=_business_time(inst.next_run_at),
+        end=at("2027-04-30T09:00:00+08:00"),
+    )
+    assert occurrences[0] == at("2027-02-28T09:00:00+08:00")
 
 
 def test_monthly_feb28_leap_year():
@@ -440,12 +451,23 @@ def test_monthly_feb28_leap_year():
     state = state.model_copy(
         update={"obligations": raw_projection_state(balance=600000).obligations}
     )
-    # 2028 is a leap year
-    args = sched(period="MONTHLY", first_run_at=at("2028-02-29T09:00:00+08:00"))
+    # 2028 is a leap year; the Jan-31 anchor must clamp the next run to Feb 29.
+    args = sched(period="MONTHLY", first_run_at=at("2028-01-31T09:00:00+08:00"))
     new_state, effects, _ = apply_schedule_transfer(state, args, NOW, ctx())
     inst = effects[0].instruction
-    assert inst.anchor_day == 29
-    assert inst.next_run_at == at("2028-02-29T09:00:00+08:00")
+    assert inst.anchor_day == 31
+    occurrences = _recurrences(
+        period=inst.period,
+        anchor_day=inst.anchor_day,
+        weekday=inst.weekday,
+        local_time=inst.time_of_day,
+        next_at=inst.next_run_at,
+        end_at=inst.end_at,
+        start=_business_time(inst.next_run_at),
+        end=at("2028-04-30T09:00:00+08:00"),
+    )
+    assert occurrences[0] == at("2028-02-29T09:00:00+08:00")
+    assert occurrences[1] == at("2028-03-31T09:00:00+08:00")
 
 
 # ── cancel_scheduled ───────────────────────────────────────────────────────
