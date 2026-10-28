@@ -441,6 +441,53 @@ class TestEventJobUniqueness:
 
         asyncio.run(check())
 
+    def test_duplicate_payload_hash_rejected(self, obligations_db):
+        """A second job with the same payload_hash violates event_jobs_payload_hash_key."""
+
+        async def check():
+            admin = engine(obligations_db.admin_url, poolclass=NullPool)
+            runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+            await _install(admin)
+            steps = _steps(_schedule_step())
+            result, _, _ = await _prepare_execute(
+                runtime, plan_id="pln_job_hash", steps=steps, expected_versions={"cus_zs": 0}
+            )
+            assert result.status == "EXECUTED"
+            new_id = result.steps[0].result["instruction_id"]
+            async with admin.connect() as conn:
+                job = (
+                    (
+                        await conn.execute(
+                            text(
+                                "SELECT kind, due_at, payload_hash FROM event_jobs "
+                                "WHERE source_id=:id"
+                            ),
+                            {"id": new_id},
+                        )
+                    )
+                    .mappings()
+                    .one()
+                )
+                with pytest.raises(DBAPIError):
+                    await conn.execute(
+                        text(
+                            "INSERT INTO event_jobs "
+                            "(id, kind, rank, due_at, immutable_payload, payload_hash, "
+                            " source_id, period_key, status, attempt_count) "
+                            "VALUES ('job_dup_hash', :kind, 0, :due_at, '{}'::jsonb, "
+                            "        :payload_hash, 'other_src', 'other_period', 'PENDING', 0)"
+                        ),
+                        dict(
+                            kind=job["kind"],
+                            due_at=job["due_at"],
+                            payload_hash=job["payload_hash"],
+                        ),
+                    )
+            await admin.dispose()
+            await runtime.dispose()
+
+        asyncio.run(check())
+
 
 class TestPrePostConsistency:
     def test_preflight_matches_persisted_state(self, obligations_db):
