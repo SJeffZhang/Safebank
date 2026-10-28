@@ -360,6 +360,34 @@ def step_result(before, after, step, ctx, effects):
             new_last4=new.last4 if new else None,
         )
         created = {"card_id": new.id} if new else {}
+    elif step.tool == "schedule_transfer":
+        from .standing import commitment_30d_cents
+
+        inst = after.obligations.standing_instructions[derive(ctx.plan_id, ctx.step_id, "si")]
+        result = dict(
+            instruction_id=inst.id,
+            next_run_at=inst.next_run_at,
+            grant_scope_hash=inst.grant_scope_hash,
+            commitment_30d_cents=commitment_30d_cents(inst, after.sim_now),
+        )
+        created = {"instruction_id": inst.id}
+    elif step.tool == "cancel_scheduled":
+        result = dict(
+            instruction_id=args.instruction_id, status="DELETED", no_op=not bool(effects)
+        )
+    elif step.tool == "cancel_subscription":
+        inst = after.obligations.standing_instructions[args.instruction_id]
+        billing = after.obligations.billings.get(inst.billing_id)
+        no_op = not bool(effects)
+        monthly = 0 if no_op else (billing.amount_cents if (billing and billing.active) else 0)
+        annual = monthly * (12 if (billing and billing.period == "MONTHLY") else 52)
+        result = dict(
+            instruction_id=args.instruction_id,
+            status="DELETED",
+            monthly_saving_cents=monthly,
+            annual_saving_cents=annual,
+            no_op=no_op,
+        )
     else:
         result = dict(
             card_id=args.card_id, status=after.cards[args.card_id].status, no_op=not bool(effects)

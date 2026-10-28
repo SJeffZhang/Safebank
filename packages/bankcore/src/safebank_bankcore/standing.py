@@ -49,6 +49,8 @@ from safebank_contracts.plan import StepResult, Violation
 from safebank_contracts.state import (
     BankState,
     InsertInstruction,
+    Operation,
+    OperationEvent,
     ScheduleEventJob,
     SetInstructionStatus,
 )
@@ -274,6 +276,11 @@ def _commitment_30d(
     return len(occurrences) * inst.amount_cents
 
 
+def commitment_30d_cents(inst: ScheduledInstruction, sim_now: datetime) -> int:
+    """Public result-shaping wrapper over :func:`_commitment_30d`."""
+    return _commitment_30d(inst, sim_now)
+
+
 # ---------------------------------------------------------------------------
 # _make_fresh_snapshot  – add / update instructions in the obligation snapshot
 # ---------------------------------------------------------------------------
@@ -304,6 +311,22 @@ def _make_fresh_snapshot(
     return state.model_copy(update={"obligations": new_snap})
 
 
+def _operation(now: datetime, ctx, kind: str, *, target: str | None = None, amount: int = 0):
+    """Build an ``OperationEvent`` effect for an executed standing-instruction write."""
+    return OperationEvent(
+        operation=Operation(
+            event_id=derive(ctx.plan_id, ctx.step_id, "evt"),
+            customer_id=ctx.customer_id,
+            plan_id=ctx.plan_id,
+            step_id=ctx.step_id,
+            action_kind=kind,
+            target_fingerprint=target,
+            amount_cents=amount,
+            occurred_at=now,
+        )
+    )
+
+
 # ---------------------------------------------------------------------------
 # Public apply functions
 # ---------------------------------------------------------------------------
@@ -313,11 +336,12 @@ def apply_schedule_transfer(state: BankState, args: Schedule, now: datetime, ctx
     """Create a standing instruction (PRD §9.4 W3).
 
     Returns ``(new_state, effects, violations)``.  Effects include an
-    ``InsertInstruction`` and a ``ScheduleEventJob`` for the first execution.
-    ``grant_scope_hash`` and ``commitment_30d_cents`` are computed
-    deterministically from the instruction and current ``sim_now``.
+    ``InsertInstruction``, a ``ScheduleEventJob`` for the first execution and an
+    ``OperationEvent`` audit row.  ``grant_scope_hash`` and
+    ``commitment_30d_cents`` are computed deterministically from the
+    instruction and current ``sim_now``.
     """
-    inst, target, _ = _prep_instruction(
+    inst, target, target_fp = _prep_instruction(
         args=args,
         now=now,
         plan_id=ctx.plan_id,
@@ -346,12 +370,11 @@ def apply_schedule_transfer(state: BankState, args: Schedule, now: datetime, ctx
     )
 
     new_state = _make_fresh_snapshot(state, inst, target)
-    # commitment_30d_cents computed on demand via _commitment_30d(inst, now)
-    # — plumbed into ScheduleResult when this function is wired into writes.py
 
     effects: tuple = (
         InsertInstruction(instruction=inst, target=target),
         job,
+        _operation(now, ctx, "SCHEDULED_TRANSFER_CREATE", target=target_fp, amount=inst.amount_cents),
     )
     return new_state, effects, ()
 
@@ -402,20 +425,7 @@ def apply_cancel_scheduled(state: BankState, args, now: datetime, ctx):
         )
 
     if inst.status == "DELETED":
-        result = WRITE_RESULTS["cancel_scheduled"].model_validate(
-            dict(instruction_id=args.instruction_id, status="DELETED", no_op=True)
-        )
-        effects: tuple = (
-            StepResult(
-                step_id=ctx.step_id,
-                tool="cancel_scheduled",
-                status="EXECUTED",
-                created_ids={},
-                result=result.model_dump(mode="json"),
-                effects=(),
-            ),
-        )
-        return state, effects, ()
+        return state, (), ()
 
     if inst.status != "ACTIVE":
         return (
@@ -435,6 +445,7 @@ def apply_cancel_scheduled(state: BankState, args, now: datetime, ctx):
 
     fx: tuple = (
         SetInstructionStatus(instruction_id=inst.id, old_status="ACTIVE", new_status="DELETED"),
+        _operation(now, ctx, "SCHEDULED_CANCEL", target=inst.payee_id, amount=inst.amount_cents),
     )
     return new_state, fx, ()
 
@@ -489,26 +500,7 @@ def apply_cancel_subscription(state: BankState, args, now: datetime, ctx):
         )
 
     if inst.status == "DELETED":
-        result = WRITE_RESULTS["cancel_subscription"].model_validate(
-            dict(
-                instruction_id=args.instruction_id,
-                status="DELETED",
-                monthly_saving_cents=0,
-                annual_saving_cents=0,
-                no_op=True,
-            )
-        )
-        effects: tuple = (
-            StepResult(
-                step_id=ctx.step_id,
-                tool="cancel_subscription",
-                status="EXECUTED",
-                created_ids={},
-                result=result.model_dump(mode="json"),
-                effects=(),
-            ),
-        )
-        return state, effects, ()
+        return state, (), ()
 
     if inst.status != "ACTIVE":
         return (
@@ -524,7 +516,6 @@ def apply_cancel_subscription(state: BankState, args, now: datetime, ctx):
         )
 
     # Monthly savings = associated billing amount (if active)
-    # — computed at wiring time for CancelSubscriptionResult.monthly_saving_cents
     billing = snap.billings.get(inst.billing_id)
     _monthly = billing.amount_cents if (billing and billing.active) else 0
 
@@ -533,5 +524,6 @@ def apply_cancel_subscription(state: BankState, args, now: datetime, ctx):
 
     fx: tuple = (
         SetInstructionStatus(instruction_id=inst.id, old_status="ACTIVE", new_status="DELETED"),
+        _operation(now, ctx, "MANDATE_REVOKE", target=inst.merchant_id, amount=_monthly),
     )
     return new_state, fx, ()
