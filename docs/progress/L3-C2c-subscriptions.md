@@ -1,6 +1,6 @@
 # L3 C2c — R9 detect_subscriptions（订阅识别）
 
-## 状态：纯函数部分完成，R9 接线与真实 PG/HTTP 测试待做
+## 状态：R9 接线与真实 PG/HTTP 测试已完成（2026-10-28）
 
 ## 本次已完成（2026-10-28，续做）
 
@@ -23,15 +23,22 @@
 - `variance_tolerance_bp=500`（5%）、`min_occurrences=3`、月度区间 28–31 天、周 7 天
   （以上为 PRD §5.4 已定）。
 
-## 待做
+## 已完成（2026-10-28 接线与测试）
 
-1. `services/bank-backend/app/reads.py`：`SUPPORTED_READS` 加 `detect_subscriptions`；
-   import 加 `detect_subscriptions`；新增 `elif tool == "detect_subscriptions"` 分支
-   （仿 `detect_anomalies`，参数 `lookback_days=args.lookback_days`）。
-2. `tests/obligations_data/test_reads.py`：R9 真实 PG+HTTP 测试（带时区时间）。
-3. 校验：`perl -e 'alarm 900; exec @ARGV' make test-obligations | tail -3`、
-   `make lint`、`.venv/bin/python -m pytest tests/bankcore -q | tail -1`。
-4. 向协调者报告采用阈值、PRD 未定义项、测试数、提交 SHA。
+1. `reads.py`：`SUPPORTED_READS` + import + `detect_subscriptions` 分支
+   （仅 `customer_id`、`lookback_days=args.lookback_days`）。提交 `5efd853`。
+2. `test_reads.py` 新增 3 个 R9 真实 PG+HTTP 测试（时间均带时区）：月度订阅识别、
+   非周期商户不计、他客户数据不出现。提交 `1d45e02`。
+3. 真实校验：`make lint` 全绿；`make test-obligations` 69 passed（含 3 条新 R9）；
+   `.venv/bin/python -m pytest tests/bankcore -q` 210 passed。
+4. 额外修复：`test_analytics.py` `_sub_tx` 的 E501（110>100）长行，抽出 `suffix`
+   变量（语义等价）。随 `1d45e02` 提交。
+
+### R9 无 account_id 的说明
+
+`DetectSubscriptions` 契约只有 `lookback_days`（PRD §9.3），无 `account_id`。
+任务书第 4 条「他客户 account_id 返回 404」不适用于 R9（R4/R5/R11 才有该机制）；
+隔离性由第 3 条「他客户数据不出现」测试覆盖，未放宽/删除任何断言。
 
 ## 约束
 
