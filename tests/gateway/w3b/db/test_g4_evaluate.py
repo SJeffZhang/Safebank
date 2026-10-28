@@ -423,7 +423,7 @@ def test_evaluate_request_id_conflict(app_config):
             utterance_ids=[f"utt_{sid}_1"],
             steps=[_transfer_step(amount_cents=99999)],
         )
-        b2 = {"request_id": "req_conflict", "plan_draft": pd}
+        b2 = make_body(request_id="req_conflict", plan_draft=pd)
         r2 = await app.client.post(EVALUATE_URL, json=b2, headers=hdrs)
         assert r2.status_code == 409, r2.text
         error = r2.json()
@@ -446,7 +446,7 @@ def test_evaluate_invalid_plan_draft_returns_422(app_config):
 
         resp = await app.client.post(
             EVALUATE_URL,
-            json={"request_id": "req_bad", "plan_draft": {"not": "valid"}},
+            json={"not": "valid"},
             headers=app.auth_headers(sid=sid, jti=jti, utts=[f"utt_{sid}_1"]),
         )
         assert resp.status_code == 422, resp.text
@@ -467,9 +467,41 @@ def test_evaluate_missing_request_id_returns_422(app_config):
             await _seed_full(conn, sid=sid, jti_auth=jti)
 
         pd = make_plan_draft_dict(session_id=sid, utterance_ids=[f"utt_{sid}_1"])
+        pd.pop("request_id")  # PlanDraft body without request_id → 422
         resp = await app.client.post(
             EVALUATE_URL,
-            json={"plan_draft": pd},
+            json=pd,
+            headers=app.auth_headers(sid=sid, jti=jti, utts=[f"utt_{sid}_1"]),
+        )
+        assert resp.status_code == 422, resp.text
+        await db.dispose()
+
+    asyncio.run(run())
+
+
+def test_evaluate_rejects_wrapped_body_returns_422(app_config):
+    """Old wrapped shape {"plan_draft": ..., "request_id": ...} → 422.
+
+    PRD §9.5 G4: an assistant caller posts the PlanDraft itself.  A body that
+    still wraps it must be rejected so the two wire shapes cannot drift.
+    """
+
+    async def run():
+        app = await build_app(app_config)
+        db = _runtime_db(app)
+        sid = "ses_wrapped"
+        jti = "jti-wrapped"
+        async with db.begin() as conn:
+            await _seed_full(conn, sid=sid, jti_auth=jti)
+
+        pd = make_plan_draft_dict(
+            request_id="req_wrapped",
+            session_id=sid,
+            utterance_ids=[f"utt_{sid}_1"],
+        )
+        resp = await app.client.post(
+            EVALUATE_URL,
+            json={"request_id": "req_wrapped", "plan_draft": pd},
             headers=app.auth_headers(sid=sid, jti=jti, utts=[f"utt_{sid}_1"]),
         )
         assert resp.status_code == 422, resp.text
@@ -847,7 +879,7 @@ def test_risky_sequence_idempotency_no_duplicate_cooldown(app_config):
             utterance_ids=[f"utt_{sid}_1"],
             steps=[_transfer_step(amount_cents=99999)],
         )
-        body2 = {"request_id": "req_risky2", "plan_draft": pd}
+        body2 = make_body(request_id="req_risky2", plan_draft=pd)
         r2 = await app.client.post(EVALUATE_URL, json=body2, headers=hdrs)
         assert r2.status_code == 409, r2.text
         assert r2.json()["error"]["code"] == Code.IDEMPOTENCY_CONFLICT.value

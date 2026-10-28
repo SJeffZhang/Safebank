@@ -5156,6 +5156,82 @@
           "title": "ProductView",
           "type": "object"
         },
+        "RiskAssessmentRecord": {
+          "additionalProperties": false,
+          "description": "One completed risk questionnaire submission (PRD §5.5 / §8.3 risk_assessments).",
+          "properties": {
+            "answers": {
+              "items": {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "type": "array"
+              },
+              "title": "Answers",
+              "type": "array"
+            },
+            "assessed_at": {
+              "format": "date-time",
+              "title": "Assessed At",
+              "type": "string"
+            },
+            "customer_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Customer Id",
+              "type": "string"
+            },
+            "id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Id",
+              "type": "string"
+            },
+            "level": {
+              "title": "Level",
+              "type": "string"
+            },
+            "plan_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Plan Id",
+              "type": "string"
+            },
+            "questionnaire_id": {
+              "title": "Questionnaire Id",
+              "type": "string"
+            },
+            "score": {
+              "title": "Score",
+              "type": "integer"
+            },
+            "valid_until": {
+              "format": "date",
+              "title": "Valid Until",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "customer_id",
+            "questionnaire_id",
+            "answers",
+            "score",
+            "level",
+            "assessed_at",
+            "valid_until",
+            "plan_id"
+          ],
+          "title": "RiskAssessmentRecord",
+          "type": "object"
+        },
         "RunView": {
           "additionalProperties": false,
           "properties": {
@@ -5525,6 +5601,133 @@
           "title": "ScheduledView",
           "type": "object"
         },
+        "SplitItem": {
+          "additionalProperties": false,
+          "properties": {
+            "amount_cents": {
+              "ge": 0,
+              "le": 9223372036854775807,
+              "title": "Amount Cents",
+              "type": "integer"
+            },
+            "id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Id",
+              "type": "string"
+            },
+            "paid_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Paid At"
+            },
+            "payee_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Payee Id",
+              "type": "string"
+            },
+            "payee_name": {
+              "title": "Payee Name",
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "UNPAID",
+                "PAID"
+              ],
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "payee_id",
+            "payee_name",
+            "amount_cents",
+            "status",
+            "paid_at"
+          ],
+          "title": "SplitItem",
+          "type": "object"
+        },
+        "SplitView": {
+          "additionalProperties": false,
+          "properties": {
+            "account_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Account Id",
+              "type": "string"
+            },
+            "created_at": {
+              "format": "date-time",
+              "title": "Created At",
+              "type": "string"
+            },
+            "id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Id",
+              "type": "string"
+            },
+            "include_self": {
+              "title": "Include Self",
+              "type": "boolean"
+            },
+            "items": {
+              "items": {
+                "$ref": "#/$defs/SplitItem"
+              },
+              "title": "Items",
+              "type": "array"
+            },
+            "outstanding_cents": {
+              "ge": 0,
+              "le": 9223372036854775807,
+              "title": "Outstanding Cents",
+              "type": "integer"
+            },
+            "received_cents": {
+              "ge": 0,
+              "le": 9223372036854775807,
+              "title": "Received Cents",
+              "type": "integer"
+            },
+            "self_share_cents": {
+              "ge": 0,
+              "le": 9223372036854775807,
+              "title": "Self Share Cents",
+              "type": "integer"
+            },
+            "total_cents": {
+              "ge": 0,
+              "le": 9223372036854775807,
+              "title": "Total Cents",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "id",
+            "account_id",
+            "total_cents",
+            "include_self",
+            "self_share_cents",
+            "received_cents",
+            "outstanding_cents",
+            "created_at",
+            "items"
+          ],
+          "title": "SplitView",
+          "type": "object"
+        },
         "SubscriptionView": {
           "additionalProperties": false,
           "properties": {
@@ -5793,6 +5996,14 @@
           "title": "Accounts",
           "type": "object"
         },
+        "assessments": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/RiskAssessmentRecord"
+          },
+          "title": "Assessments",
+          "type": "array"
+        },
         "cards": {
           "additionalProperties": {
             "$ref": "#/$defs/Card"
@@ -5888,6 +6099,14 @@
           "format": "date-time",
           "title": "Sim Now",
           "type": "string"
+        },
+        "splits": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SplitView"
+          },
+          "title": "Splits",
+          "type": "array"
         },
         "subscriptions": {
           "default": [],
@@ -8172,44 +8391,6 @@
           "title": "AppendTransaction",
           "type": "object"
         },
-        "AssessmentResult": {
-          "additionalProperties": false,
-          "properties": {
-            "assessed_at": {
-              "format": "date-time",
-              "title": "Assessed At",
-              "type": "string"
-            },
-            "assessment_id": {
-              "maxLength": 256,
-              "minLength": 1,
-              "title": "Assessment Id",
-              "type": "string"
-            },
-            "level": {
-              "title": "Level",
-              "type": "integer"
-            },
-            "score": {
-              "title": "Score",
-              "type": "integer"
-            },
-            "valid_until": {
-              "format": "date",
-              "title": "Valid Until",
-              "type": "string"
-            }
-          },
-          "required": [
-            "assessment_id",
-            "score",
-            "level",
-            "assessed_at",
-            "valid_until"
-          ],
-          "title": "AssessmentResult",
-          "type": "object"
-        },
         "Card": {
           "additionalProperties": false,
           "properties": {
@@ -8544,9 +8725,10 @@
         },
         "InsertAssessment": {
           "additionalProperties": false,
+          "description": "Effect: persist a completed risk assessment + update customer summary.",
           "properties": {
-            "assessment": {
-              "$ref": "#/$defs/AssessmentResult"
+            "record": {
+              "$ref": "#/$defs/RiskAssessmentRecord"
             },
             "type": {
               "const": "InsertAssessment",
@@ -8556,7 +8738,7 @@
             }
           },
           "required": [
-            "assessment"
+            "record"
           ],
           "title": "InsertAssessment",
           "type": "object"
@@ -8582,9 +8764,13 @@
         },
         "InsertInstruction": {
           "additionalProperties": false,
+          "description": "A new standing instruction was created and must be persisted.",
           "properties": {
             "instruction": {
-              "$ref": "#/$defs/ScheduledView"
+              "$ref": "#/$defs/ScheduledInstruction"
+            },
+            "target": {
+              "$ref": "#/$defs/InstructionTarget"
             },
             "type": {
               "const": "InsertInstruction",
@@ -8594,7 +8780,8 @@
             }
           },
           "required": [
-            "instruction"
+            "instruction",
+            "target"
           ],
           "title": "InsertInstruction",
           "type": "object"
@@ -8635,6 +8822,67 @@
             "split"
           ],
           "title": "InsertSplit",
+          "type": "object"
+        },
+        "InstructionTarget": {
+          "additionalProperties": false,
+          "properties": {
+            "instruction_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Instruction Id",
+              "type": "string"
+            },
+            "ownership": {
+              "enum": [
+                "OWN",
+                "OTHER",
+                "EXTERNAL"
+              ],
+              "title": "Ownership",
+              "type": "string"
+            },
+            "source_customer_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Source Customer Id",
+              "type": "string"
+            },
+            "target_account_id": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Target Account Id"
+            },
+            "target_customer_id": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Target Customer Id"
+            }
+          },
+          "required": [
+            "instruction_id",
+            "source_customer_id",
+            "ownership",
+            "target_account_id",
+            "target_customer_id"
+          ],
+          "title": "InstructionTarget",
           "type": "object"
         },
         "JsonValue": {},
@@ -8986,41 +9234,98 @@
           "title": "PostTransfer",
           "type": "object"
         },
-        "RunView": {
+        "RiskAssessmentRecord": {
           "additionalProperties": false,
+          "description": "One completed risk questionnaire submission (PRD §5.5 / §8.3 risk_assessments).",
           "properties": {
-            "code": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Code"
+            "answers": {
+              "items": {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "type": "array"
+              },
+              "title": "Answers",
+              "type": "array"
             },
-            "due_at": {
+            "assessed_at": {
               "format": "date-time",
-              "title": "Due At",
+              "title": "Assessed At",
               "type": "string"
             },
-            "status": {
-              "title": "Status",
+            "customer_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Customer Id",
+              "type": "string"
+            },
+            "id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Id",
+              "type": "string"
+            },
+            "level": {
+              "title": "Level",
+              "type": "string"
+            },
+            "plan_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Plan Id",
+              "type": "string"
+            },
+            "questionnaire_id": {
+              "title": "Questionnaire Id",
+              "type": "string"
+            },
+            "score": {
+              "title": "Score",
+              "type": "integer"
+            },
+            "valid_until": {
+              "format": "date",
+              "title": "Valid Until",
               "type": "string"
             }
           },
           "required": [
-            "status",
-            "code",
-            "due_at"
+            "id",
+            "customer_id",
+            "questionnaire_id",
+            "answers",
+            "score",
+            "level",
+            "assessed_at",
+            "valid_until",
+            "plan_id"
           ],
-          "title": "RunView",
+          "title": "RiskAssessmentRecord",
           "type": "object"
         },
         "ScheduleEventJob": {
           "additionalProperties": false,
+          "description": "First-execution job produced alongside instruction creation.\n\n``source_id`` identifies the instruction that produced this job;\n``period_key`` is a deterministic period label (e.g. ISO-8601 of first\ndue_at) so that ``(source_id, period_key)`` is unique.",
           "properties": {
+            "account_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Account Id",
+              "type": "string"
+            },
+            "customer_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Customer Id",
+              "type": "string"
+            },
             "due_at": {
               "format": "date-time",
               "title": "Due At",
@@ -9032,16 +9337,43 @@
               "title": "Event Id",
               "type": "string"
             },
+            "instruction_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Instruction Id",
+              "type": "string"
+            },
+            "job_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Job Id",
+              "type": "string"
+            },
             "kind": {
+              "enum": [
+                "SCHEDULED_TRANSFER",
+                "MERCHANT_MANDATE"
+              ],
               "title": "Kind",
               "type": "string"
             },
-            "payload": {
-              "additionalProperties": {
-                "$ref": "#/$defs/JsonValue"
-              },
-              "title": "Payload",
-              "type": "object"
+            "payload_ciphertext": {
+              "title": "Payload Ciphertext",
+              "type": "string"
+            },
+            "payload_hash": {
+              "title": "Payload Hash",
+              "type": "string"
+            },
+            "period_key": {
+              "title": "Period Key",
+              "type": "string"
+            },
+            "source_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
             },
             "type": {
               "const": "ScheduleEventJob",
@@ -9051,26 +9383,42 @@
             }
           },
           "required": [
+            "job_id",
+            "instruction_id",
+            "customer_id",
+            "account_id",
             "event_id",
             "kind",
             "due_at",
-            "payload"
+            "source_id",
+            "period_key",
+            "payload_ciphertext",
+            "payload_hash"
           ],
           "title": "ScheduleEventJob",
           "type": "object"
         },
-        "ScheduledView": {
+        "ScheduledInstruction": {
           "additionalProperties": false,
           "properties": {
             "amount_cents": {
               "ge": 0,
-              "le": 9223372036854775807,
+              "gt": 0,
+              "le": 100000000,
               "title": "Amount Cents",
               "type": "integer"
+            },
+            "amount_type": {
+              "const": "FIXED",
+              "default": "FIXED",
+              "title": "Amount Type",
+              "type": "string"
             },
             "anchor_day": {
               "anyOf": [
                 {
+                  "ge": 1,
+                  "le": 31,
                   "type": "integer"
                 },
                 {
@@ -9078,6 +9426,17 @@
                 }
               ],
               "title": "Anchor Day"
+            },
+            "created_at": {
+              "format": "date-time",
+              "title": "Created At",
+              "type": "string"
+            },
+            "customer_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Customer Id",
+              "type": "string"
             },
             "end_at": {
               "anyOf": [
@@ -9097,21 +9456,21 @@
               "title": "From Account Id",
               "type": "string"
             },
+            "grant_scope_hash": {
+              "title": "Grant Scope Hash",
+              "type": "string"
+            },
             "id": {
               "maxLength": 256,
               "minLength": 1,
               "title": "Id",
               "type": "string"
             },
-            "last_run": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/RunView"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+            "kind": {
+              "const": "SCHEDULED_TRANSFER",
+              "default": "SCHEDULED_TRANSFER",
+              "title": "Kind",
+              "type": "string"
             },
             "next_run_at": {
               "anyOf": [
@@ -9147,15 +9506,39 @@
               "title": "Period",
               "type": "string"
             },
+            "priority": {
+              "enum": [
+                "URGENT",
+                "HIGH",
+                "MEDIUM",
+                "LOW"
+              ],
+              "title": "Priority",
+              "type": "string"
+            },
+            "recurrence": {
+              "const": "PERIODIC",
+              "default": "PERIODIC",
+              "title": "Recurrence",
+              "type": "string"
+            },
+            "source_plan_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Source Plan Id",
+              "type": "string"
+            },
             "status": {
+              "enum": [
+                "ACTIVE",
+                "DISABLED",
+                "DELETED"
+              ],
               "title": "Status",
               "type": "string"
             },
-            "target_display": {
-              "title": "Target Display",
-              "type": "string"
-            },
             "time_of_day": {
+              "format": "time",
               "title": "Time Of Day",
               "type": "string"
             },
@@ -9175,6 +9558,8 @@
             "weekday": {
               "anyOf": [
                 {
+                  "ge": 0,
+                  "le": 6,
                   "type": "integer"
                 },
                 {
@@ -9186,10 +9571,11 @@
           },
           "required": [
             "id",
+            "customer_id",
+            "status",
             "from_account_id",
             "payee_id",
             "to_account_id",
-            "target_display",
             "amount_cents",
             "period",
             "anchor_day",
@@ -9197,14 +9583,17 @@
             "time_of_day",
             "next_run_at",
             "end_at",
-            "status",
-            "last_run"
+            "priority",
+            "grant_scope_hash",
+            "source_plan_id",
+            "created_at"
           ],
-          "title": "ScheduledView",
+          "title": "ScheduledInstruction",
           "type": "object"
         },
         "SetInstructionStatus": {
           "additionalProperties": false,
+          "description": "An existing instruction's status was changed (e.g. ACTIVE→DELETED).",
           "properties": {
             "instruction_id": {
               "maxLength": 256,
@@ -9212,13 +9601,12 @@
               "title": "Instruction Id",
               "type": "string"
             },
-            "status": {
-              "enum": [
-                "ACTIVE",
-                "DISABLED",
-                "DELETED"
-              ],
-              "title": "Status",
+            "new_status": {
+              "title": "New Status",
+              "type": "string"
+            },
+            "old_status": {
+              "title": "Old Status",
               "type": "string"
             },
             "type": {
@@ -9230,7 +9618,8 @@
           },
           "required": [
             "instruction_id",
-            "status"
+            "old_status",
+            "new_status"
           ],
           "title": "SetInstructionStatus",
           "type": "object"
@@ -9631,22 +10020,22 @@
           "$ref": "#/$defs/InsertPayee"
         },
         {
-          "$ref": "#/$defs/OperationEvent"
-        },
-        {
-          "$ref": "#/$defs/InsertSplit"
-        },
-        {
           "$ref": "#/$defs/InsertAssessment"
         },
         {
-          "$ref": "#/$defs/ScheduleEventJob"
+          "$ref": "#/$defs/OperationEvent"
         },
         {
           "$ref": "#/$defs/InsertInstruction"
         },
         {
           "$ref": "#/$defs/SetInstructionStatus"
+        },
+        {
+          "$ref": "#/$defs/ScheduleEventJob"
+        },
+        {
+          "$ref": "#/$defs/InsertSplit"
         },
         {
           "$ref": "#/$defs/InsertFundOrder"

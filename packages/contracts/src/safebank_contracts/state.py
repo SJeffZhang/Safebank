@@ -1,5 +1,6 @@
 """Immutable serializable shadow state and typed persistence effects (PRD §7.7.1)."""
 
+from datetime import date
 from functools import reduce
 from operator import or_
 from typing import Annotated, Literal
@@ -22,7 +23,6 @@ from .obligations import (
 )
 from .tools import Id
 from .views import (
-    WRITE_RESULTS,
     ChannelFlags,
     FundOrderView,
     HoldingView,
@@ -179,6 +179,20 @@ class Counters(Contract):
     daily_used_cents: FrozenMap[Cents] = Field(default_factory=dict)
 
 
+class RiskAssessmentRecord(Contract):
+    """One completed risk questionnaire submission (PRD §5.5 / §8.3 risk_assessments)."""
+
+    id: Id
+    customer_id: Id
+    questionnaire_id: str
+    answers: tuple[tuple[str, str], ...]  # ((qid, oid), ...)
+    score: StrictInt
+    level: str  # "R1"–"R5"
+    assessed_at: Timestamp
+    valid_until: date
+    plan_id: Id
+
+
 class StateScope(Contract):
     customer_ids: tuple[Id, ...]
     directory: FrozenMap[DirectoryEntry] = Field(default_factory=dict)
@@ -203,6 +217,8 @@ class BankState(Contract):
     products: tuple[ProductView, ...] = ()
     holdings: tuple[HoldingView, ...] = ()
     orders: tuple[FundOrderView, ...] = ()
+    assessments: tuple[RiskAssessmentRecord, ...] = ()
+    splits: tuple[SplitView, ...] = ()
     dataset_revision: str = "p1_core_v1"
 
 
@@ -287,6 +303,13 @@ EVENT_KIND_RANK: dict[str, int] = {
 }
 
 
+class InsertAssessment(Contract):
+    """Effect: persist a completed risk assessment + update customer summary."""
+
+    type: Literal["InsertAssessment"] = "InsertAssessment"
+    record: RiskAssessmentRecord
+
+
 # Typed future effects reserve the public algebra without implementing their business paths.
 FUTURE_EFFECTS = {
     "InsertSplit": create_model(
@@ -294,12 +317,6 @@ FUTURE_EFFECTS = {
         __base__=Contract,
         type=(Literal["InsertSplit"], "InsertSplit"),
         split=(SplitView, ...),
-    ),
-    "InsertAssessment": create_model(
-        "InsertAssessment",
-        __base__=Contract,
-        type=(Literal["InsertAssessment"], "InsertAssessment"),
-        assessment=(WRITE_RESULTS["submit_risk_assessment"], ...),
     ),
     "InsertFundOrder": create_model(
         "InsertFundOrder",
@@ -328,6 +345,7 @@ LedgerEffect = Annotated[
             AppendTransaction,
             UpsertCard,
             InsertPayee,
+            InsertAssessment,
             OperationEvent,
             InsertInstruction,
             SetInstructionStatus,

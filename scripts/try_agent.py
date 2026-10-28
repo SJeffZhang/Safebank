@@ -39,6 +39,11 @@ EXIT_UNKNOWN = 5
 EXIT_HTTP_FAILURE = 6
 EXIT_CONFIG_ERROR = 7
 EXIT_ALLOW_READY = 8
+EXIT_CONFIRMED = 9
+EXIT_REJECTED_BY_USER = 10
+EXIT_EXECUTION_FAILED = 11
+EXIT_EXECUTION_UNKNOWN = 12
+EXIT_STATE_CHANGED = 13
 
 EXIT_LABELS: dict[int, str] = {
     EXIT_PENDING_APPROVAL: "PENDING_APPROVAL",
@@ -50,6 +55,11 @@ EXIT_LABELS: dict[int, str] = {
     EXIT_HTTP_FAILURE: "HTTP_FAILURE",
     EXIT_CONFIG_ERROR: "CONFIG_ERROR",
     EXIT_ALLOW_READY: "ALLOW_READY",
+    EXIT_CONFIRMED: "CONFIRMED",
+    EXIT_REJECTED_BY_USER: "REJECTED_BY_USER",
+    EXIT_EXECUTION_FAILED: "EXECUTION_FAILED",
+    EXIT_EXECUTION_UNKNOWN: "EXECUTION_UNKNOWN",
+    EXIT_STATE_CHANGED: "STATE_CHANGED",
 }
 
 # DecisionValue enum values (PRD §6.1, state.py:81-85).
@@ -68,6 +78,7 @@ class Config:
     pin: str
     out_path: str | None = None
     request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    confirm: bool = False
 
 
 @dataclass
@@ -221,8 +232,21 @@ def _resolve_decision(values: dict) -> tuple[str, str | None, dict | None]:
 # ── Flow ───────────────────────────────────────────────────────────────────
 
 
-def run(config: Config, client: httpx.Client, events: list[SanitisedEvent]) -> int:
-    """Execute the full try-agent flow.  Returns an exit code."""
+def run(
+    config: Config,
+    client: httpx.Client,
+    events: list[SanitisedEvent],
+    *,
+    input_fn: Any = None,
+    getpass_fn: Any = None,
+) -> int:
+    """Execute the full try-agent flow.  Returns an exit code.
+
+    *input_fn* and *getpass_fn* are injectable for testing; defaults are
+    built-in ``input`` and ``getpass.getpass``.
+    """
+    _input = input_fn if input_fn is not None else input
+    _getpass = getpass_fn if getpass_fn is not None else getpass.getpass
 
     # ── 1. G1 Login ───────────────────────────────────────────────────
     login_req = {"customer_id": config.customer_id, "pin": config.pin}
@@ -562,6 +586,439 @@ def run(config: Config, client: httpx.Client, events: list[SanitisedEvent]) -> i
         events.append(
             SanitisedEvent(kind="result", detail={"event": "approval_panel", "panel": panel})
         )
+
+        # ── T2: explicit human confirmation ────────────────────────────
+        if config.confirm:
+            # Show panel summary to stderr.
+            safe_panel = {
+                k: panel.get(k)
+                for k in (
+                    "approval_id",
+                    "plan_id",
+                    "risk",
+                    "decision",
+                    "status",
+                    "risk_ack_required",
+                    "otp_required",
+                )
+                if k in panel
+            }
+            sys.stderr.write(f"Approval panel: {json.dumps(safe_panel, default=str)}\n")
+
+            # 1. Ask user to confirm.
+            answer = _input("Type 'yes' to confirm: ").strip()
+            if answer != "yes":
+                # 2a. User declined → call G7 reject.
+                reject_req = {
+                    "request_id": f"{config.request_id}-reject",
+                    "view_hash": panel.get("view_hash", ""),
+                }
+                events.append(
+                    SanitisedEvent(
+                        kind="http_request",
+                        detail={
+                            "to": "G7",
+                            "url": f"{config.gateway_url}/approvals/{approval_id}/reject",
+                        },
+                    )
+                )
+                try:
+                    g7_resp = client.post(
+                        f"{config.gateway_url}/approvals/{approval_id}/reject",
+                        headers={
+                            "X-Service-Token": os.environ["FRONTEND_SERVICE_TOKEN"],
+                            "Authorization": f"Bearer {app_token}",
+                        },
+                        json=reject_req,
+                    )
+                except httpx.TransportError as exc:
+                    events.append(
+                        SanitisedEvent(
+                            kind="error",
+                            detail=f"G7 connection failed: {exc.__class__.__name__}",
+                        )
+                    )
+                    return EXIT_HTTP_FAILURE
+                events.append(
+                    SanitisedEvent(
+                        kind="http_response",
+                        detail={
+                            "from": "G7",
+                            "status": g7_resp.status_code,
+                            "headers": _sanitise_headers(dict(g7_resp.headers)),
+                        },
+                    )
+                )
+                if g7_resp.status_code != 200:
+                    events.append(SanitisedEvent(kind="error", detail=_safe_error_body(g7_resp)))
+                    return EXIT_HTTP_FAILURE
+                events.append(
+                    SanitisedEvent(
+                        kind="result",
+                        detail={"event": "approval_rejected", "approval_id": approval_id},
+                    )
+                )
+                return EXIT_REJECTED_BY_USER
+
+            # 2b. User said yes → build G6 confirm body.
+            view_hash: str = panel.get("view_hash", "")
+
+            risk_ack_val: bool | None = None
+            if panel.get("risk_ack_required"):
+                risk_answer = _input("Risk acknowledged? Type 'yes': ").strip()
+                if risk_answer != "yes":
+                    # User declined risk ack → reject.
+                    reject_req = {
+                        "request_id": f"{config.request_id}-reject-risk",
+                        "view_hash": view_hash,
+                    }
+                    events.append(
+                        SanitisedEvent(
+                            kind="http_request",
+                            detail={
+                                "to": "G7",
+                                "url": f"{config.gateway_url}/approvals/{approval_id}/reject",
+                            },
+                        )
+                    )
+                    try:
+                        g7_resp = client.post(
+                            f"{config.gateway_url}/approvals/{approval_id}/reject",
+                            headers={
+                                "X-Service-Token": os.environ["FRONTEND_SERVICE_TOKEN"],
+                                "Authorization": f"Bearer {app_token}",
+                            },
+                            json=reject_req,
+                        )
+                    except httpx.TransportError as exc:
+                        events.append(
+                            SanitisedEvent(
+                                kind="error",
+                                detail=f"G7 connection failed: {exc.__class__.__name__}",
+                            )
+                        )
+                        return EXIT_HTTP_FAILURE
+                    events.append(
+                        SanitisedEvent(
+                            kind="http_response",
+                            detail={
+                                "from": "G7",
+                                "status": g7_resp.status_code,
+                                "headers": _sanitise_headers(dict(g7_resp.headers)),
+                            },
+                        )
+                    )
+                    if g7_resp.status_code != 200:
+                        events.append(
+                            SanitisedEvent(kind="error", detail=_safe_error_body(g7_resp))
+                        )
+                        return EXIT_HTTP_FAILURE
+                    events.append(
+                        SanitisedEvent(
+                            kind="result",
+                            detail={"event": "approval_rejected", "approval_id": approval_id},
+                        )
+                    )
+                    return EXIT_REJECTED_BY_USER
+                risk_ack_val = True
+
+            otp_val: str | None = None
+            if panel.get("otp_required"):
+                # 3a. RED risk → send OTP via G10.
+                otp_req = {
+                    "request_id": f"{config.request_id}-otp-send",
+                    "view_hash": view_hash,
+                }
+                events.append(
+                    SanitisedEvent(
+                        kind="http_request",
+                        detail={
+                            "to": "G10",
+                            "url": f"{config.gateway_url}/approvals/{approval_id}/otp",
+                        },
+                    )
+                )
+                try:
+                    g10_resp = client.post(
+                        f"{config.gateway_url}/approvals/{approval_id}/otp",
+                        headers={
+                            "X-Service-Token": os.environ["FRONTEND_SERVICE_TOKEN"],
+                            "Authorization": f"Bearer {app_token}",
+                        },
+                        json=otp_req,
+                    )
+                except httpx.TransportError as exc:
+                    events.append(
+                        SanitisedEvent(
+                            kind="error",
+                            detail=f"G10 connection failed: {exc.__class__.__name__}",
+                        )
+                    )
+                    return EXIT_HTTP_FAILURE
+                events.append(
+                    SanitisedEvent(
+                        kind="http_response",
+                        detail={
+                            "from": "G10",
+                            "status": g10_resp.status_code,
+                            "headers": _sanitise_headers(dict(g10_resp.headers)),
+                        },
+                    )
+                )
+                if g10_resp.status_code != 200:
+                    events.append(SanitisedEvent(kind="error", detail=_safe_error_body(g10_resp)))
+                    return EXIT_HTTP_FAILURE
+                events.append(
+                    SanitisedEvent(
+                        kind="result", detail={"event": "otp_sent", "approval_id": approval_id}
+                    )
+                )
+                # 3b. Read OTP via getpass (no echo, never printed).
+                otp_val = _getpass("OTP: ").strip()
+                if not otp_val:
+                    events.append(
+                        SanitisedEvent(
+                            kind="error", detail="OTP is required for RED-risk confirmation"
+                        )
+                    )
+                    return EXIT_REJECTED_BY_USER
+
+            # 4. Call G6 confirm.
+            confirm_req: dict[str, Any] = {
+                "request_id": f"{config.request_id}-confirm",
+                "view_hash": view_hash,
+            }
+            if otp_val is not None:
+                confirm_req["otp"] = otp_val
+            if risk_ack_val is not None:
+                confirm_req["risk_ack"] = risk_ack_val
+            events.append(
+                SanitisedEvent(
+                    kind="http_request",
+                    detail={
+                        "to": "G6",
+                        "url": f"{config.gateway_url}/approvals/{approval_id}/confirm",
+                    },
+                )
+            )
+            try:
+                g6_resp = client.post(
+                    f"{config.gateway_url}/approvals/{approval_id}/confirm",
+                    headers={
+                        "X-Service-Token": os.environ["FRONTEND_SERVICE_TOKEN"],
+                        "Authorization": f"Bearer {app_token}",
+                    },
+                    json=confirm_req,
+                )
+            except httpx.TransportError as exc:
+                events.append(
+                    SanitisedEvent(
+                        kind="error",
+                        detail=f"G6 connection failed: {exc.__class__.__name__}",
+                    )
+                )
+                return EXIT_HTTP_FAILURE
+            events.append(
+                SanitisedEvent(
+                    kind="http_response",
+                    detail={
+                        "from": "G6",
+                        "status": g6_resp.status_code,
+                        "headers": _sanitise_headers(dict(g6_resp.headers)),
+                    },
+                )
+            )
+            if g6_resp.status_code != 200:
+                events.append(SanitisedEvent(kind="error", detail=_safe_error_body(g6_resp)))
+                return EXIT_HTTP_FAILURE
+            events.append(
+                SanitisedEvent(
+                    kind="result",
+                    detail={"event": "approval_confirmed", "approval_id": approval_id},
+                )
+            )
+
+            # 5. Resume L1 with approval_id.
+            resume_req = {"command": {"resume": approval_id}}
+            events.append(
+                SanitisedEvent(
+                    kind="http_request",
+                    detail={
+                        "to": "L1",
+                        "url": f"{config.agent_url}/threads/{session_id}/runs/stream",
+                        "resume": approval_id,
+                    },
+                )
+            )
+            try:
+                resume_resp = client.send(
+                    client.build_request(
+                        "POST",
+                        f"{config.agent_url}/threads/{session_id}/runs/stream",
+                        headers={
+                            "Authorization": f"Bearer {assistant_token}",
+                            "Accept": "text/event-stream",
+                        },
+                        json=resume_req,
+                    ),
+                    stream=True,
+                )
+            except httpx.TransportError as exc:
+                events.append(
+                    SanitisedEvent(
+                        kind="error",
+                        detail=f"L1 resume connection failed: {exc.__class__.__name__}",
+                    )
+                )
+                return EXIT_HTTP_FAILURE
+            events.append(
+                SanitisedEvent(
+                    kind="http_response",
+                    detail={
+                        "from": "L1",
+                        "status": resume_resp.status_code,
+                        "headers": _sanitise_headers(dict(resume_resp.headers)),
+                    },
+                )
+            )
+            if resume_resp.status_code != 200:
+                try:
+                    content = resume_resp.read()
+                finally:
+                    resume_resp.close()
+                events.append(
+                    SanitisedEvent(
+                        kind="error",
+                        detail=_safe_error_body(resume_resp, content),
+                    )
+                )
+                return EXIT_HTTP_FAILURE
+
+            resume_events = parse_sse(resume_resp)
+            resume_values: dict[str, Any] = {}
+            resume_reply: str = ""
+
+            for evt in resume_events:
+                evt_type = evt["type"]
+                body = evt["body"]
+                events.append(
+                    SanitisedEvent(
+                        kind="sse_event",
+                        detail={
+                            "type": evt_type,
+                            "body_keys": list(body.keys()) if isinstance(body, dict) else None,
+                        },
+                    )
+                )
+                if evt_type == "error":
+                    msg = body.get("message", body.get("raw", str(body)))
+                    events.append(SanitisedEvent(kind="error", detail=f"L1 resume error: {msg}"))
+                    return EXIT_UNKNOWN
+                if evt_type == "values":
+                    resume_values = body
+                if evt_type == "messages":
+                    msgs = body if isinstance(body, list) else []
+                    for m in msgs:
+                        if isinstance(m, dict) and m.get("type") == "ai":
+                            resume_reply = m.get("content", resume_reply)
+
+            # 6. Authoritative G5 plan status check.
+            g5_plan_id = resume_values.get("plan_id", "") if isinstance(resume_values, dict) else ""
+            if not g5_plan_id:
+                # Try from the panel or decision.
+                g5_plan_id = panel.get("plan_id", "")
+            if not g5_plan_id and plan_id:
+                g5_plan_id = plan_id
+            if g5_plan_id:
+                events.append(
+                    SanitisedEvent(
+                        kind="http_request",
+                        detail={
+                            "to": "G5",
+                            "url": f"{config.gateway_url}/plans/{g5_plan_id}",
+                        },
+                    )
+                )
+                try:
+                    g5_resp = client.get(
+                        f"{config.gateway_url}/plans/{g5_plan_id}",
+                        headers={
+                            "X-Service-Token": os.environ["FRONTEND_SERVICE_TOKEN"],
+                            "Authorization": f"Bearer {app_token}",
+                        },
+                    )
+                except httpx.TransportError as exc:
+                    events.append(
+                        SanitisedEvent(
+                            kind="error",
+                            detail=f"G5 connection failed: {exc.__class__.__name__}",
+                        )
+                    )
+                    return EXIT_HTTP_FAILURE
+                events.append(
+                    SanitisedEvent(
+                        kind="http_response",
+                        detail={
+                            "from": "G5",
+                            "status": g5_resp.status_code,
+                            "headers": _sanitise_headers(dict(g5_resp.headers)),
+                        },
+                    )
+                )
+                if g5_resp.status_code == 409:
+                    # STATE_CHANGED → extract details.decision.
+                    g5_body = g5_resp.json()
+                    details = g5_body.get("details", {})
+                    decision_obj = details.get("decision", {}) if isinstance(details, dict) else {}
+                    dec_str = (
+                        decision_obj.get("decision", "UNKNOWN")
+                        if isinstance(decision_obj, dict)
+                        else "UNKNOWN"
+                    )
+                    events.append(
+                        SanitisedEvent(
+                            kind="result",
+                            detail={
+                                "event": "state_changed",
+                                "new_decision": dec_str,
+                                "plan_id": g5_plan_id,
+                            },
+                        )
+                    )
+                    return EXIT_STATE_CHANGED
+                if g5_resp.status_code != 200:
+                    events.append(SanitisedEvent(kind="error", detail=_safe_error_body(g5_resp)))
+                    return EXIT_HTTP_FAILURE
+
+                g5_body = g5_resp.json()
+                g5_status = str(g5_body.get("status", "UNKNOWN")).upper()
+                events.append(
+                    SanitisedEvent(
+                        kind="result",
+                        detail={
+                            "event": "plan_status",
+                            "plan_id": g5_plan_id,
+                            "status": g5_status,
+                        },
+                    )
+                )
+                if g5_status == "EXECUTED":
+                    if resume_reply:
+                        sys.stderr.write(f"Reply: {resume_reply}\n")
+                    return EXIT_CONFIRMED
+                if g5_status in ("UNKNOWN", "EXECUTING"):
+                    return EXIT_EXECUTION_UNKNOWN
+                if g5_status == "FAILED":
+                    return EXIT_EXECUTION_FAILED
+                # Any other status → UNKNOWN.
+                return EXIT_EXECUTION_UNKNOWN
+
+            # No plan_id available → just check resume SSE decision.
+            resume_decision_str, _, resume_exec_dict = _resolve_decision(resume_values)
+            if resume_decision_str == "DENY":
+                return EXIT_DENY
+            return EXIT_UNKNOWN
+
         return EXIT_PENDING_APPROVAL
 
     # ── Check for clarification (before decision routing) ─────────────
@@ -610,6 +1067,12 @@ def _parse_args(argv: list[str] | None = None) -> Config:
     parser.add_argument(
         "--out", default=None, help="Optional JSON file to write sanitised event trace"
     )
+    parser.add_argument(
+        "--confirm",
+        action="store_true",
+        default=False,
+        help="Require explicit human confirmation before executing (T2 flow)",
+    )
     args = parser.parse_args(argv)
 
     pin = args.pin
@@ -626,6 +1089,7 @@ def _parse_args(argv: list[str] | None = None) -> Config:
         text=args.text,
         out_path=args.out,
         pin=pin,
+        confirm=args.confirm,
     )
 
 

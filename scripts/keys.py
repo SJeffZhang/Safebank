@@ -99,6 +99,7 @@ def generate(root: Path) -> bool:
         {
             "AGENT_SERVICE_TOKEN": tokens["AGENT_SERVICE_TOKEN"],
             "AGENT_DATABASE_URL": f"postgresql://agent_app:{passwords['agent_app']}@postgres-agent/agent",
+            "GATEWAY_URL": "http://gateway:8200",
         },
     )
     env("frontend.env", {"FRONTEND_SERVICE_TOKEN": tokens["FRONTEND_SERVICE_TOKEN"]})

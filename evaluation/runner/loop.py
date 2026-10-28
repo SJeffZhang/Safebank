@@ -162,8 +162,9 @@ def classify_outcome(
             risk: str | None = body.get("risk")
             req = last_eval.get("request", {})
             if isinstance(req, dict):
-                plan_draft = req.get("plan_draft", req)
-                steps = plan_draft.get("steps", []) if isinstance(plan_draft, dict) else []
+                steps = req.get("steps", [])
+                if not isinstance(steps, list):
+                    steps = []
             else:
                 steps = []
             params: dict[str, Any] = steps[0].get("args", {}) if steps else {}
