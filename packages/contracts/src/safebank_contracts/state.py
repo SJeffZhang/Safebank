@@ -16,7 +16,11 @@ from pydantic import (
 
 from .base import Cents, Contract, FrozenMap, Timestamp
 from .enums import AccountType, CardStatus, Phase
-from .obligations import ObligationSnapshot
+from .obligations import (
+    InstructionTarget,
+    ObligationSnapshot,
+    ScheduledInstruction,
+)
 from .tools import Id
 from .views import (
     ChannelFlags,
@@ -244,6 +248,61 @@ class OperationEvent(Contract):
     operation: Operation
 
 
+class InsertInstruction(Contract):
+    """A new standing instruction was created and must be persisted."""
+
+    type: Literal["InsertInstruction"] = "InsertInstruction"
+    instruction: ScheduledInstruction
+    target: InstructionTarget
+
+
+class SetInstructionStatus(Contract):
+    """An existing instruction's status was changed (e.g. ACTIVE→DELETED)."""
+
+    type: Literal["SetInstructionStatus"] = "SetInstructionStatus"
+    instruction_id: Id
+    old_status: str
+    new_status: str
+
+
+class ScheduleEventJob(Contract):
+    """First-execution job produced alongside instruction creation.
+
+    ``source_id`` identifies the instruction that produced this job;
+    ``period_key`` is a deterministic period label (e.g. ISO-8601 of first
+    due_at) so that ``(source_id, period_key)`` is unique.
+    """
+
+    type: Literal["ScheduleEventJob"] = "ScheduleEventJob"
+    job_id: Id
+    instruction_id: Id
+    customer_id: Id
+    account_id: Id
+    event_id: Id
+    kind: Literal["SCHEDULED_TRANSFER", "MERCHANT_MANDATE"]
+    due_at: Timestamp
+    source_id: Id
+    period_key: str
+    # Plaintext, non-sensitive instruction reference (inst_id|amount|from_account);
+    # the "ciphertext" name is historical and misleading — kept frozen.
+    payload_ciphertext: str
+    payload_hash: str
+
+
+# Fixed per-kind scheduler ordering (PRD §8.6).  ``event_jobs`` is scheduled by
+# ``(due_at, rank, event_id)``, so the rank must be a stable integer per kind —
+# never derived from a priority string.  Unknown kinds must not default to a rank.
+EVENT_KIND_RANK: dict[str, int] = {
+    "FUND_CONFIRM": 0,
+    "FUND_SETTLE": 1,
+    "FUND_EXPIRY": 2,
+    "SCHEDULED_TRANSFER": 3,
+    "MERCHANT_CHARGE": 4,
+    "REMINDER": 5,
+    "DEMO_EVENT": 6,
+}
+
+
 class InsertAssessment(Contract):
     """Effect: persist a completed risk assessment + update customer summary."""
 
@@ -258,28 +317,6 @@ FUTURE_EFFECTS = {
         __base__=Contract,
         type=(Literal["InsertSplit"], "InsertSplit"),
         split=(SplitView, ...),
-    ),
-    "ScheduleEventJob": create_model(
-        "ScheduleEventJob",
-        __base__=Contract,
-        type=(Literal["ScheduleEventJob"], "ScheduleEventJob"),
-        event_id=(Id, ...),
-        kind=(str, ...),
-        due_at=(Timestamp, ...),
-        payload=(dict[str, JsonValue], ...),
-    ),
-    "InsertInstruction": create_model(
-        "InsertInstruction",
-        __base__=Contract,
-        type=(Literal["InsertInstruction"], "InsertInstruction"),
-        instruction=(ScheduledView, ...),
-    ),
-    "SetInstructionStatus": create_model(
-        "SetInstructionStatus",
-        __base__=Contract,
-        type=(Literal["SetInstructionStatus"], "SetInstructionStatus"),
-        instruction_id=(Id, ...),
-        status=(Literal["ACTIVE", "DISABLED", "DELETED"], ...),
     ),
     "InsertFundOrder": create_model(
         "InsertFundOrder",
@@ -310,6 +347,9 @@ LedgerEffect = Annotated[
             InsertPayee,
             InsertAssessment,
             OperationEvent,
+            InsertInstruction,
+            SetInstructionStatus,
+            ScheduleEventJob,
             *FUTURE_EFFECTS.values(),
         ],
     ),

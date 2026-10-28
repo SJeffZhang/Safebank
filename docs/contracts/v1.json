@@ -8764,9 +8764,13 @@
         },
         "InsertInstruction": {
           "additionalProperties": false,
+          "description": "A new standing instruction was created and must be persisted.",
           "properties": {
             "instruction": {
-              "$ref": "#/$defs/ScheduledView"
+              "$ref": "#/$defs/ScheduledInstruction"
+            },
+            "target": {
+              "$ref": "#/$defs/InstructionTarget"
             },
             "type": {
               "const": "InsertInstruction",
@@ -8776,7 +8780,8 @@
             }
           },
           "required": [
-            "instruction"
+            "instruction",
+            "target"
           ],
           "title": "InsertInstruction",
           "type": "object"
@@ -8817,6 +8822,67 @@
             "split"
           ],
           "title": "InsertSplit",
+          "type": "object"
+        },
+        "InstructionTarget": {
+          "additionalProperties": false,
+          "properties": {
+            "instruction_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Instruction Id",
+              "type": "string"
+            },
+            "ownership": {
+              "enum": [
+                "OWN",
+                "OTHER",
+                "EXTERNAL"
+              ],
+              "title": "Ownership",
+              "type": "string"
+            },
+            "source_customer_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Source Customer Id",
+              "type": "string"
+            },
+            "target_account_id": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Target Account Id"
+            },
+            "target_customer_id": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Target Customer Id"
+            }
+          },
+          "required": [
+            "instruction_id",
+            "source_customer_id",
+            "ownership",
+            "target_account_id",
+            "target_customer_id"
+          ],
+          "title": "InstructionTarget",
           "type": "object"
         },
         "JsonValue": {},
@@ -9244,41 +9310,22 @@
           "title": "RiskAssessmentRecord",
           "type": "object"
         },
-        "RunView": {
-          "additionalProperties": false,
-          "properties": {
-            "code": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Code"
-            },
-            "due_at": {
-              "format": "date-time",
-              "title": "Due At",
-              "type": "string"
-            },
-            "status": {
-              "title": "Status",
-              "type": "string"
-            }
-          },
-          "required": [
-            "status",
-            "code",
-            "due_at"
-          ],
-          "title": "RunView",
-          "type": "object"
-        },
         "ScheduleEventJob": {
           "additionalProperties": false,
+          "description": "First-execution job produced alongside instruction creation.\n\n``source_id`` identifies the instruction that produced this job;\n``period_key`` is a deterministic period label (e.g. ISO-8601 of first\ndue_at) so that ``(source_id, period_key)`` is unique.",
           "properties": {
+            "account_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Account Id",
+              "type": "string"
+            },
+            "customer_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Customer Id",
+              "type": "string"
+            },
             "due_at": {
               "format": "date-time",
               "title": "Due At",
@@ -9290,16 +9337,43 @@
               "title": "Event Id",
               "type": "string"
             },
+            "instruction_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Instruction Id",
+              "type": "string"
+            },
+            "job_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Job Id",
+              "type": "string"
+            },
             "kind": {
+              "enum": [
+                "SCHEDULED_TRANSFER",
+                "MERCHANT_MANDATE"
+              ],
               "title": "Kind",
               "type": "string"
             },
-            "payload": {
-              "additionalProperties": {
-                "$ref": "#/$defs/JsonValue"
-              },
-              "title": "Payload",
-              "type": "object"
+            "payload_ciphertext": {
+              "title": "Payload Ciphertext",
+              "type": "string"
+            },
+            "payload_hash": {
+              "title": "Payload Hash",
+              "type": "string"
+            },
+            "period_key": {
+              "title": "Period Key",
+              "type": "string"
+            },
+            "source_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
             },
             "type": {
               "const": "ScheduleEventJob",
@@ -9309,26 +9383,42 @@
             }
           },
           "required": [
+            "job_id",
+            "instruction_id",
+            "customer_id",
+            "account_id",
             "event_id",
             "kind",
             "due_at",
-            "payload"
+            "source_id",
+            "period_key",
+            "payload_ciphertext",
+            "payload_hash"
           ],
           "title": "ScheduleEventJob",
           "type": "object"
         },
-        "ScheduledView": {
+        "ScheduledInstruction": {
           "additionalProperties": false,
           "properties": {
             "amount_cents": {
               "ge": 0,
-              "le": 9223372036854775807,
+              "gt": 0,
+              "le": 100000000,
               "title": "Amount Cents",
               "type": "integer"
+            },
+            "amount_type": {
+              "const": "FIXED",
+              "default": "FIXED",
+              "title": "Amount Type",
+              "type": "string"
             },
             "anchor_day": {
               "anyOf": [
                 {
+                  "ge": 1,
+                  "le": 31,
                   "type": "integer"
                 },
                 {
@@ -9336,6 +9426,17 @@
                 }
               ],
               "title": "Anchor Day"
+            },
+            "created_at": {
+              "format": "date-time",
+              "title": "Created At",
+              "type": "string"
+            },
+            "customer_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Customer Id",
+              "type": "string"
             },
             "end_at": {
               "anyOf": [
@@ -9355,21 +9456,21 @@
               "title": "From Account Id",
               "type": "string"
             },
+            "grant_scope_hash": {
+              "title": "Grant Scope Hash",
+              "type": "string"
+            },
             "id": {
               "maxLength": 256,
               "minLength": 1,
               "title": "Id",
               "type": "string"
             },
-            "last_run": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/RunView"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+            "kind": {
+              "const": "SCHEDULED_TRANSFER",
+              "default": "SCHEDULED_TRANSFER",
+              "title": "Kind",
+              "type": "string"
             },
             "next_run_at": {
               "anyOf": [
@@ -9405,15 +9506,39 @@
               "title": "Period",
               "type": "string"
             },
+            "priority": {
+              "enum": [
+                "URGENT",
+                "HIGH",
+                "MEDIUM",
+                "LOW"
+              ],
+              "title": "Priority",
+              "type": "string"
+            },
+            "recurrence": {
+              "const": "PERIODIC",
+              "default": "PERIODIC",
+              "title": "Recurrence",
+              "type": "string"
+            },
+            "source_plan_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Source Plan Id",
+              "type": "string"
+            },
             "status": {
+              "enum": [
+                "ACTIVE",
+                "DISABLED",
+                "DELETED"
+              ],
               "title": "Status",
               "type": "string"
             },
-            "target_display": {
-              "title": "Target Display",
-              "type": "string"
-            },
             "time_of_day": {
+              "format": "time",
               "title": "Time Of Day",
               "type": "string"
             },
@@ -9433,6 +9558,8 @@
             "weekday": {
               "anyOf": [
                 {
+                  "ge": 0,
+                  "le": 6,
                   "type": "integer"
                 },
                 {
@@ -9444,10 +9571,11 @@
           },
           "required": [
             "id",
+            "customer_id",
+            "status",
             "from_account_id",
             "payee_id",
             "to_account_id",
-            "target_display",
             "amount_cents",
             "period",
             "anchor_day",
@@ -9455,14 +9583,17 @@
             "time_of_day",
             "next_run_at",
             "end_at",
-            "status",
-            "last_run"
+            "priority",
+            "grant_scope_hash",
+            "source_plan_id",
+            "created_at"
           ],
-          "title": "ScheduledView",
+          "title": "ScheduledInstruction",
           "type": "object"
         },
         "SetInstructionStatus": {
           "additionalProperties": false,
+          "description": "An existing instruction's status was changed (e.g. ACTIVE→DELETED).",
           "properties": {
             "instruction_id": {
               "maxLength": 256,
@@ -9470,13 +9601,12 @@
               "title": "Instruction Id",
               "type": "string"
             },
-            "status": {
-              "enum": [
-                "ACTIVE",
-                "DISABLED",
-                "DELETED"
-              ],
-              "title": "Status",
+            "new_status": {
+              "title": "New Status",
+              "type": "string"
+            },
+            "old_status": {
+              "title": "Old Status",
               "type": "string"
             },
             "type": {
@@ -9488,7 +9618,8 @@
           },
           "required": [
             "instruction_id",
-            "status"
+            "old_status",
+            "new_status"
           ],
           "title": "SetInstructionStatus",
           "type": "object"
@@ -9895,16 +10026,16 @@
           "$ref": "#/$defs/OperationEvent"
         },
         {
-          "$ref": "#/$defs/InsertSplit"
+          "$ref": "#/$defs/InsertInstruction"
+        },
+        {
+          "$ref": "#/$defs/SetInstructionStatus"
         },
         {
           "$ref": "#/$defs/ScheduleEventJob"
         },
         {
-          "$ref": "#/$defs/InsertInstruction"
-        },
-        {
-          "$ref": "#/$defs/SetInstructionStatus"
+          "$ref": "#/$defs/InsertSplit"
         },
         {
           "$ref": "#/$defs/InsertFundOrder"

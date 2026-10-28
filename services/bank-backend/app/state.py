@@ -17,6 +17,7 @@ from safebank_contracts.obligations import (
     ScheduledInstruction,
 )
 from safebank_contracts.state import (
+    EVENT_KIND_RANK,
     FUTURE_EFFECTS,
     Account,
     AppendTransaction,
@@ -26,6 +27,7 @@ from safebank_contracts.state import (
     Customer,
     DirectoryEntry,
     InsertAssessment,
+    InsertInstruction,
     InsertPayee,
     LedgerTransfer,
     Operation,
@@ -33,6 +35,8 @@ from safebank_contracts.state import (
     Payee,
     PostTransfer,
     RiskAssessmentRecord,
+    ScheduleEventJob,
+    SetInstructionStatus,
     StateScope,
     Transaction,
     UpsertCard,
@@ -537,6 +541,33 @@ async def persist(conn, effects) -> None:
                 m.outbox.insert().values(
                     event_id=effect.operation.event_id,
                     payload=effect.operation.model_dump(mode="json"),
+                )
+            )
+        elif isinstance(effect, InsertInstruction):
+            inst_data = effect.instruction.model_dump(mode="python")
+            await conn.execute(m.standing_instructions.insert().values(**inst_data))
+        elif isinstance(effect, SetInstructionStatus):
+            await conn.execute(
+                update(m.standing_instructions)
+                .where(m.standing_instructions.c.id == effect.instruction_id)
+                .values(status=effect.new_status)
+            )
+        elif isinstance(effect, ScheduleEventJob):
+            rank = EVENT_KIND_RANK.get(effect.kind)
+            if rank is None:
+                raise ValueError(f"unknown event job kind: {effect.kind}")
+            await conn.execute(
+                m.event_jobs.insert().values(
+                    id=effect.job_id,
+                    kind=effect.kind,
+                    rank=rank,
+                    due_at=effect.due_at,
+                    immutable_payload={"payload": effect.payload_ciphertext},
+                    payload_hash=effect.payload_hash,
+                    source_id=effect.source_id,
+                    period_key=effect.period_key,
+                    status="PENDING",
+                    attempt_count=0,
                 )
             )
         elif isinstance(effect, InsertAssessment):

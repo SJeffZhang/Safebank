@@ -27,6 +27,7 @@ from .ids import derive
 from .ledger import post_transfer, replace_state
 from .risk import apply_risk_assessment as score_risk
 from .split import apply_create_split_request
+from .standing import apply_cancel_scheduled, apply_cancel_subscription, apply_schedule_transfer
 
 
 @dataclass(frozen=True)
@@ -415,6 +416,32 @@ def step_result(before, after, step, ctx, effects):
             new_last4=new.last4 if new else None,
         )
         created = {"card_id": new.id} if new else {}
+    elif step.tool == "schedule_transfer":
+        from .standing import commitment_30d_cents
+
+        inst = after.obligations.standing_instructions[derive(ctx.plan_id, ctx.step_id, "si")]
+        result = dict(
+            instruction_id=inst.id,
+            next_run_at=inst.next_run_at,
+            grant_scope_hash=inst.grant_scope_hash,
+            commitment_30d_cents=commitment_30d_cents(inst, after.sim_now),
+        )
+        created = {"instruction_id": inst.id}
+    elif step.tool == "cancel_scheduled":
+        result = dict(instruction_id=args.instruction_id, status="DELETED", no_op=not bool(effects))
+    elif step.tool == "cancel_subscription":
+        inst = after.obligations.standing_instructions[args.instruction_id]
+        billing = after.obligations.billings.get(inst.billing_id)
+        no_op = not bool(effects)
+        monthly = 0 if no_op else (billing.amount_cents if (billing and billing.active) else 0)
+        annual = monthly * (12 if (billing and billing.period == "MONTHLY") else 52)
+        result = dict(
+            instruction_id=args.instruction_id,
+            status="DELETED",
+            monthly_saving_cents=monthly,
+            annual_saving_cents=annual,
+            no_op=no_op,
+        )
     elif step.tool == "submit_risk_assessment":
         record = next(e.record for e in effects if isinstance(e, InsertAssessment))
         result = dict(
@@ -466,6 +493,9 @@ SUPPORTED_WRITES = {
     "freeze_card",
     "unfreeze_card",
     "report_card_lost",
+    "schedule_transfer",
+    "cancel_scheduled",
+    "cancel_subscription",
     "submit_risk_assessment",
     "create_split_request",
 }
@@ -489,6 +519,12 @@ def apply_plan(state: BankState, steps, customer_id: str, plan_id: str) -> Simul
             state, changes, errors = apply_transfer(state, args, state.sim_now, ctx)
         elif step.tool == "add_payee":
             state, changes, errors = apply_add_payee(state, args, state.sim_now, ctx)
+        elif step.tool == "schedule_transfer":
+            state, changes, errors = apply_schedule_transfer(state, args, state.sim_now, ctx)
+        elif step.tool == "cancel_scheduled":
+            state, changes, errors = apply_cancel_scheduled(state, args, state.sim_now, ctx)
+        elif step.tool == "cancel_subscription":
+            state, changes, errors = apply_cancel_subscription(state, args, state.sim_now, ctx)
         elif step.tool == "submit_risk_assessment":
             state, changes, errors = apply_risk_assessment(state, args, state.sim_now, ctx)
         elif step.tool == "create_split_request":
