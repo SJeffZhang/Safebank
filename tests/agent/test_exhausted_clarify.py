@@ -328,3 +328,26 @@ def test_route_plan_after_non_exhausted_source_returns_evaluate():
     """_route_plan_after: source != "l1_exhausted" → "evaluate"."""
     state = {"clarification": {"source": "l2_form_required"}}
     assert _route_plan_after(state) == "evaluate"
+
+
+class _FakeVE:
+    def __init__(self, errors):
+        self._errors = errors
+
+    def errors(self):
+        return self._errors
+
+
+def test_other_structural_error_beside_user_only_null_does_not_clarify():
+    """Review P2-1: only the ('steps',) too_short cascade may accompany the null field."""
+    from services.agent.app.llm.plan import _exhausted_clarify_fields_from_ve
+
+    null_amount = {
+        "loc": ("steps", 0, "transfer", "args", "amount_cents"),
+        "type": "value_error",
+        "input": "__NULL__",
+    }
+    cascade = {"loc": ("steps",), "type": "too_short", "input": []}
+    structural = {"loc": ("steps", 1), "type": "union_tag_invalid", "input": {}}
+    assert _exhausted_clarify_fields_from_ve(_FakeVE([null_amount, cascade])) == ["amount_cents"]
+    assert _exhausted_clarify_fields_from_ve(_FakeVE([null_amount, structural])) is None

@@ -134,10 +134,10 @@ def _exhausted_clarify_fields_from_ve(exc: ValidationError) -> list[str] | None:
         # ('steps', 0, 'TransferArgs', 'args', 'amount_cents')
         field = loc[-1] if loc else ""
         if not isinstance(field, str) or field not in _USER_ONLY_PARAMS:
-            # If this error is at the container level (e.g. "Tuple too short"
-            # because a child step was removed), skip it — it's not about a
-            # specific field value the user failed to provide.
-            if "args" not in loc:
+            # The only tolerated companion error is the cascade ('steps',)
+            # too_short that Pydantic reports because the failing step itself
+            # was dropped; any other structural error needs the model to fix it.
+            if tuple(loc) == ("steps",) and error.get("type") == "too_short":
                 continue
             return None
         input_val = error.get("input", None)
