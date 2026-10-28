@@ -615,7 +615,7 @@ class TestUserConfirmsYellow:
 
         # After resume with DENY, G5 confirms non-EXECUTED status.
         # Must NOT be EXIT_CONFIRMED.
-        assert exit_code != mod.EXIT_CONFIRMED
+        assert exit_code == mod.EXIT_EXECUTION_UNKNOWN
 
 
 # ── Tests: risk_ack required ────────────────────────────────────────────────
