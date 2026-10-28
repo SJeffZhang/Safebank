@@ -144,10 +144,13 @@ def test_irreversible_step_is_red_not_failure():
 def test_unsupported_domain_write_is_tool_not_allowed():
     from safebank_bankcore.ledger import replace_state
     from safebank_contracts.views import ProductView
+
     from services.gateway.app.l3.fake import FakeL3
     from tests.contracts.samples import step as raw_step
 
-    product = ProductView.model_validate(FakeL3._minimal_read_result("get_product") | {"id": "prd_a"})
+    product = ProductView.model_validate(
+        FakeL3._minimal_read_result("get_product") | {"id": "prd_a"}
+    )
     state = replace_state(w3_state(), products=(product,))
     subscribe = raw_step(
         "subscribe_product", account_id="acc_a", product_id="prd_a", amount_cents=100

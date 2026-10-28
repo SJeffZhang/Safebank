@@ -12,7 +12,7 @@ from services.gateway.app.pipeline.entity import EntityStage
 from services.gateway.app.pipeline.provenance import ProvenanceStage
 from services.gateway.app.schemas.scope import ScopeTransfer
 from tests.bankcore.fixtures import NOW
-from tests.bankcore.obligations_fixtures import raw_billing, raw_merchant, raw_mandate
+from tests.bankcore.obligations_fixtures import raw_billing, raw_mandate, raw_merchant
 from tests.contracts.samples import step
 from tests.gateway.w2.test_contract_entity import context
 from tests.gateway.w2.test_provenance import authorized, source
