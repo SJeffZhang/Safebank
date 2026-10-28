@@ -443,7 +443,9 @@ def detect_subscriptions(
         charges.sort(key=lambda t: t.occurred_at)
         amounts = [c.amount_cents for c in charges]
         intervals = [
-            (_business_time(charges[i].occurred_at) - _business_time(charges[i - 1].occurred_at)).days
+            (
+                _business_time(charges[i].occurred_at) - _business_time(charges[i - 1].occurred_at)
+            ).days
             for i in range(1, len(charges))
         ]
 

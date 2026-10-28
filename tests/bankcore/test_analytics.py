@@ -1167,7 +1167,7 @@ def test_anomaly_night_large_uses_business_timezone():
 def _sub_tx(merchant_id, occurred_at, amount_cents, id_suffix="", kind="MANDATE", **kw):
     """Minimal MANDATE transaction for subscription detection."""
     return Transaction(
-        id=f"stx_{merchant_id}_{id_suffix or occurred_at.replace('-','').replace('T','').replace(':','')}",
+        id=f"stx_{merchant_id}_{id_suffix or occurred_at.replace('-', '').replace('T', '').replace(':', '')}",
         transfer_id=f"xfr_{id_suffix or 's'}",
         customer_id="cus_a",
         account_id="acc_a",
