@@ -662,3 +662,16 @@ def test_make_fresh_snapshot_no_obligations_raises():
     )
     with pytest.raises(ValueError, match="not loaded"):
         _make_fresh_snapshot(state, inst, tgt)
+
+
+def test_grant_scope_hash_changes_on_first_run_at_with_same_anchor():
+    """PRD 7.7 lists first_run_at in the grant scope: same weekday/time, next week."""
+    state = base_state()
+    state = state.model_copy(
+        update={"obligations": raw_projection_state(balance=600000).obligations}
+    )
+    a1 = sched(period="WEEKLY", first_run_at=at("2026-10-19T09:00:00+08:00"))
+    a2 = sched(period="WEEKLY", first_run_at=at("2026-10-26T09:00:00+08:00"))
+    _, e1, _ = apply_schedule_transfer(state, a1, NOW, ctx())
+    _, e2, _ = apply_schedule_transfer(state, a2, NOW, ctx())
+    assert e1[0].instruction.grant_scope_hash != e2[0].instruction.grant_scope_hash

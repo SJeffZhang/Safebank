@@ -201,6 +201,7 @@ def _prep_instruction(
         period=args.period,
         time_of_day_val=local_time,
         amount_cents=args.amount_cents,
+        first_run_at=bt.isoformat(),
     )
     inst = ScheduledInstruction(
         id=inst_id,
@@ -250,6 +251,7 @@ def _grant_scope_hash(
     period: str,
     time_of_day_val,
     amount_cents: int,
+    first_run_at: str,
 ) -> str:
     """Deterministic SHA-256 hash covering scope-defining fields.
 
@@ -267,6 +269,7 @@ def _grant_scope_hash(
             period,
             str(time_of_day_val),
             str(amount_cents),
+            first_run_at,
         )
     )
     return hashlib.sha256(payload.encode()).hexdigest()
