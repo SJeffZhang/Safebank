@@ -137,6 +137,10 @@ test-cards:
 test-w4b2c:
 	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w4b2c -q
 
+.PHONY: test-w5-sms
+test-w5-sms:
+	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w5_sms -q
+
 .PHONY: test-w3b
 .PHONY: test-w3b
 test-w3b:
