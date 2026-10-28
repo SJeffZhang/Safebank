@@ -5156,6 +5156,82 @@
           "title": "ProductView",
           "type": "object"
         },
+        "RiskAssessmentRecord": {
+          "additionalProperties": false,
+          "description": "One completed risk questionnaire submission (PRD §5.5 / §8.3 risk_assessments).",
+          "properties": {
+            "answers": {
+              "items": {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "type": "array"
+              },
+              "title": "Answers",
+              "type": "array"
+            },
+            "assessed_at": {
+              "format": "date-time",
+              "title": "Assessed At",
+              "type": "string"
+            },
+            "customer_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Customer Id",
+              "type": "string"
+            },
+            "id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Id",
+              "type": "string"
+            },
+            "level": {
+              "title": "Level",
+              "type": "string"
+            },
+            "plan_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Plan Id",
+              "type": "string"
+            },
+            "questionnaire_id": {
+              "title": "Questionnaire Id",
+              "type": "string"
+            },
+            "score": {
+              "title": "Score",
+              "type": "integer"
+            },
+            "valid_until": {
+              "format": "date",
+              "title": "Valid Until",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "customer_id",
+            "questionnaire_id",
+            "answers",
+            "score",
+            "level",
+            "assessed_at",
+            "valid_until",
+            "plan_id"
+          ],
+          "title": "RiskAssessmentRecord",
+          "type": "object"
+        },
         "RunView": {
           "additionalProperties": false,
           "properties": {
@@ -5919,6 +5995,14 @@
           },
           "title": "Accounts",
           "type": "object"
+        },
+        "assessments": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/RiskAssessmentRecord"
+          },
+          "title": "Assessments",
+          "type": "array"
         },
         "cards": {
           "additionalProperties": {
@@ -8307,44 +8391,6 @@
           "title": "AppendTransaction",
           "type": "object"
         },
-        "AssessmentResult": {
-          "additionalProperties": false,
-          "properties": {
-            "assessed_at": {
-              "format": "date-time",
-              "title": "Assessed At",
-              "type": "string"
-            },
-            "assessment_id": {
-              "maxLength": 256,
-              "minLength": 1,
-              "title": "Assessment Id",
-              "type": "string"
-            },
-            "level": {
-              "title": "Level",
-              "type": "integer"
-            },
-            "score": {
-              "title": "Score",
-              "type": "integer"
-            },
-            "valid_until": {
-              "format": "date",
-              "title": "Valid Until",
-              "type": "string"
-            }
-          },
-          "required": [
-            "assessment_id",
-            "score",
-            "level",
-            "assessed_at",
-            "valid_until"
-          ],
-          "title": "AssessmentResult",
-          "type": "object"
-        },
         "Card": {
           "additionalProperties": false,
           "properties": {
@@ -8679,9 +8725,10 @@
         },
         "InsertAssessment": {
           "additionalProperties": false,
+          "description": "Effect: persist a completed risk assessment + update customer summary.",
           "properties": {
-            "assessment": {
-              "$ref": "#/$defs/AssessmentResult"
+            "record": {
+              "$ref": "#/$defs/RiskAssessmentRecord"
             },
             "type": {
               "const": "InsertAssessment",
@@ -8691,7 +8738,7 @@
             }
           },
           "required": [
-            "assessment"
+            "record"
           ],
           "title": "InsertAssessment",
           "type": "object"
@@ -9119,6 +9166,82 @@
             "transfer"
           ],
           "title": "PostTransfer",
+          "type": "object"
+        },
+        "RiskAssessmentRecord": {
+          "additionalProperties": false,
+          "description": "One completed risk questionnaire submission (PRD §5.5 / §8.3 risk_assessments).",
+          "properties": {
+            "answers": {
+              "items": {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "type": "array"
+              },
+              "title": "Answers",
+              "type": "array"
+            },
+            "assessed_at": {
+              "format": "date-time",
+              "title": "Assessed At",
+              "type": "string"
+            },
+            "customer_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Customer Id",
+              "type": "string"
+            },
+            "id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Id",
+              "type": "string"
+            },
+            "level": {
+              "title": "Level",
+              "type": "string"
+            },
+            "plan_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Plan Id",
+              "type": "string"
+            },
+            "questionnaire_id": {
+              "title": "Questionnaire Id",
+              "type": "string"
+            },
+            "score": {
+              "title": "Score",
+              "type": "integer"
+            },
+            "valid_until": {
+              "format": "date",
+              "title": "Valid Until",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "customer_id",
+            "questionnaire_id",
+            "answers",
+            "score",
+            "level",
+            "assessed_at",
+            "valid_until",
+            "plan_id"
+          ],
+          "title": "RiskAssessmentRecord",
           "type": "object"
         },
         "RunView": {
@@ -9766,13 +9889,13 @@
           "$ref": "#/$defs/InsertPayee"
         },
         {
+          "$ref": "#/$defs/InsertAssessment"
+        },
+        {
           "$ref": "#/$defs/OperationEvent"
         },
         {
           "$ref": "#/$defs/InsertSplit"
-        },
-        {
-          "$ref": "#/$defs/InsertAssessment"
         },
         {
           "$ref": "#/$defs/ScheduleEventJob"

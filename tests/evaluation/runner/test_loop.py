@@ -84,7 +84,7 @@ def test_classify_evaluate_200_uses_decision():
                 "risk": "YELLOW",
                 "findings": [{"code": "X1"}],
             },
-            "request": {"plan_draft": {"steps": [{"args": {"card_id": "crd_a"}}]}},
+            "request": {"steps": [{"args": {"card_id": "crd_a"}}]},
         },
     ]
     outcome, risk, params, codes, fc, cs, cl, un = classify_outcome(requests, None, None)

@@ -56,7 +56,7 @@ def _fake_transport_evaluate(
     error_code: str | None = None,
 ) -> list[dict]:
     """Create a fake transport.requests entry for a single G4 evaluate call."""
-    req_body: dict = {"plan_draft": plan_draft or _fake_plan_draft(), "request_id": "req_01"}
+    req_body: dict = plan_draft or _fake_plan_draft()
     resp_body: dict = {"decision": decision}
     if risk is not None:
         resp_body["risk"] = risk
@@ -401,14 +401,14 @@ class TestExtractG4Evidence:
                 "method": "POST",
                 "url": "http://gateway:8200/plans/evaluate",
                 "status": 422,
-                "request": {"plan_draft": pd, "request_id": "req_01"},
+                "request": pd,
                 "json": {"error": {"code": "PARAM_MISMATCH"}},
             },
             {  # second attempt: 200
                 "method": "POST",
                 "url": "http://gateway:8200/plans/evaluate",
                 "status": 200,
-                "request": {"plan_draft": pd, "request_id": "req_02"},
+                "request": pd,
                 "json": {"decision": "ALLOW"},
             },
         ]
@@ -431,7 +431,7 @@ class TestExtractG4Evidence:
                 "method": "POST",
                 "url": "http://gateway:8200/plans/evaluate",
                 "status": 503,
-                "request": {"plan_draft": pd, "request_id": "req_01"},
+                "request": pd,
                 "json": {"error": {"code": "DEPENDENCY_UNAVAILABLE"}},
             },
         ]
@@ -776,7 +776,7 @@ class TestExtractGatherReads:
                 "method": "POST",
                 "url": "/plans/evaluate",
                 "status": 200,
-                "request": {"plan_draft": {}},
+                "request": {},
                 "json": {"decision": "ALLOW"},
             },
             {

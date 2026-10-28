@@ -213,12 +213,15 @@ async def evaluate_plan(request: Request) -> JSONResponse:
     except Exception as exc:
         raise GatewayError(Code.CONTRACT_INVALID, 422) from exc
 
+    # PRD §9.5 G4: an assistant (A) caller posts the PlanDraft itself as the
+    # body; ``request_id`` lives inside it.  Keep the idempotent_body structure
+    # below unchanged so already-persisted idempotency records stay valid.
     try:
-        plan_draft = PlanDraft.model_validate(raw_body.get("plan_draft", {}))
+        plan_draft = PlanDraft.model_validate(raw_body)
     except Exception as exc:
         raise GatewayError(Code.CONTRACT_INVALID, 422, "invalid plan_draft") from exc
 
-    request_id: str = raw_body.get("request_id", "")
+    request_id: str = plan_draft.request_id
     if not request_id or not isinstance(request_id, str):
         raise GatewayError(Code.CONTRACT_INVALID, 422, "request_id is required")
 

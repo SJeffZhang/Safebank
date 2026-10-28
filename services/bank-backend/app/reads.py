@@ -2,13 +2,14 @@
 
 import base64
 import json
-from datetime import timedelta
+from datetime import date, timedelta
 
 from safebank_bankcore.analytics import detect_anomalies, detect_subscriptions, spending_summary
 from safebank_bankcore.banking import card_view
 from safebank_bankcore.ids import digest
 from safebank_bankcore.reserve import _business_time, upcoming_window
 from safebank_contracts.codes import Code
+from safebank_contracts.risk_questionnaire import QUESTIONNAIRE
 from safebank_contracts.views import READ_RESULTS
 
 from .errors import BankError
@@ -20,6 +21,8 @@ SUPPORTED_READS = {
     "get_spending_summary",
     "get_cards",
     "get_profile",
+    "get_risk_profile",
+    "get_risk_questionnaire",
     "list_scheduled",
     "list_subscriptions",
     "upcoming_charges",
@@ -77,19 +80,19 @@ def read(state, tool, args, customer_id):
                 key=lambda t: t.sequence,
             )
             for day in range(args.history_days - 1, -1, -1):
-                date = state.sim_now.date() - timedelta(days=day)
+                day_date = state.sim_now.date() - timedelta(days=day)
                 last = next(
                     (
                         t
                         for t in reversed(transactions)
-                        if _business_time(t.occurred_at).date() <= date
+                        if _business_time(t.occurred_at).date() <= day_date
                     ),
                     None,
                 )
                 history.append(
                     dict(
                         account_id=account.id,
-                        date=date,
+                        date=day_date,
                         balance_cents=last.balance_after_cents if last else 0,
                         available_cents=last.available_after_cents if last else 0,
                     )
@@ -356,6 +359,34 @@ def read(state, tool, args, customer_id):
                 )
                 for aid, a in sorted(window.accounts.items())
             ],
+        )
+    elif tool == "get_risk_questionnaire":
+        questions = QUESTIONNAIRE["rq_v1"]
+        data = dict(
+            questionnaire_id="rq_v1",
+            questions=[
+                dict(
+                    id=q.id,
+                    prompt=q.prompt,
+                    options=[dict(id=o.id, label=o.label) for o in q.options],
+                )
+                for q in questions.values()
+            ],
+            validity_months=12,
+        )
+    elif tool == "get_risk_profile":
+        customer = state.customers[customer_id]
+        latest = state.assessments[0] if state.assessments else None
+        data = dict(
+            assessment_id=latest.id if latest else None,
+            level=customer.risk_level,
+            assessed_at=latest.assessed_at if latest else None,
+            valid_until=latest.valid_until if latest else None,
+            is_valid=(
+                customer.risk_level is not None
+                and customer.risk_valid_until is not None
+                and date.fromisoformat(customer.risk_valid_until) >= state.sim_now.date()
+            ),
         )
     elif tool == "detect_anomalies":
         data = detect_anomalies(

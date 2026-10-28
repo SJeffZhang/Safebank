@@ -185,3 +185,47 @@ def test_seed_demo_installs_alongside_p1(obligations_db):
         await runtime.dispose()
 
     asyncio.run(check())
+
+
+def test_rerun_converges_payee_creation_times_without_touching_ledger(obligations_db):
+    """An install made from the old seed (payees created at sim_now) is corrected on rerun."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await seed_core(conn, KEY)
+            await install_demo(conn, KEY)
+            # Simulate the earlier seed: payee created exactly at the simulated "now".
+            await conn.execute(
+                text(
+                    "UPDATE payees SET created_at = (SELECT sim_now FROM clock) "
+                    "WHERE id = 'pye_zs_ww'"
+                )
+            )
+        async with admin.connect() as conn:
+            before = await _row_counts(conn)
+            ledger_before = await conn.scalar(
+                text("SELECT sum(credits_posted_cents - debits_posted_cents) FROM accounts")
+            )
+        async with admin.begin() as conn:
+            summary = await install_demo(conn, KEY)
+        assert summary["added_customers"] == 0
+        assert summary["synced_payees"] == 1
+        async with admin.connect() as conn:
+            created = await conn.scalar(
+                text("SELECT created_at FROM payees WHERE id = 'pye_zs_ww'")
+            )
+            sim_now = await conn.scalar(text("SELECT sim_now FROM clock"))
+            assert (sim_now - created).days > 100
+            assert await _row_counts(conn) == before
+            assert (
+                await conn.scalar(
+                    text("SELECT sum(credits_posted_cents - debits_posted_cents) FROM accounts")
+                )
+                == ledger_before
+            )
+        async with admin.begin() as conn:
+            assert (await install_demo(conn, KEY))["synced_payees"] == 0
+        await admin.dispose()
+
+    asyncio.run(check())
