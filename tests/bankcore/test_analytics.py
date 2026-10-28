@@ -1159,3 +1159,475 @@ def test_anomaly_night_large_uses_business_timezone():
     result = subject.detect_anomalies(state, customer_id="cus_a", from_at=from_at, to_at=to_at)
     assert "ANOMALY_NIGHT_LARGE" in _codes(result, "t_night")
     assert _codes(result, "t_day") == []
+
+
+# ── R9 detect_subscriptions ────────────────────────────────────────────
+
+
+def _sub_tx(merchant_id, occurred_at, amount_cents, id_suffix="", kind="MANDATE", **kw):
+    """Minimal MANDATE transaction for subscription detection."""
+    return Transaction(
+        id=f"stx_{merchant_id}_{id_suffix or occurred_at.replace('-','').replace('T','').replace(':','')}",
+        transfer_id=f"xfr_{id_suffix or 's'}",
+        customer_id="cus_a",
+        account_id="acc_a",
+        direction="OUT",
+        kind=kind,
+        phase=Phase.POSTED,
+        status="POSTED",
+        amount_cents=amount_cents,
+        balance_after_cents=600_000 - amount_cents,
+        available_after_cents=600_000 - amount_cents,
+        counterparty="",
+        memo=None,
+        category="",
+        merchant_id=merchant_id,
+        payee_id=None,
+        card_id=None,
+        channel=None,
+        occurred_at=occurred_at,
+        sequence=1,
+    )
+
+
+def _subs_result(items):
+    """Convert a list of dicts to a {merchant_id: dict} lookup with sorted keys."""
+    return {i["merchant_id"]: i for i in items}
+
+
+# ── Recognition: minimum occurrences ──────────────────────────────────
+
+
+def test_r9_three_monthly_charges_detected():
+    """Three charges ~30 days apart → MONTHLY, median 19900."""
+    state = with_txns(
+        base_state(),
+        _sub_tx("mer_gym", at("2026-07-25T06:00:00+08:00"), 19900, "1"),
+        _sub_tx("mer_gym", at("2026-08-25T06:00:00+08:00"), 19900, "2"),
+        _sub_tx("mer_gym", at("2026-09-25T06:00:00+08:00"), 19900, "3"),
+    )
+    result = subject.detect_subscriptions(state, customer_id="cus_a", lookback_days=180)
+    items = result["items"]
+    assert len(items) == 1
+    item = items[0]
+    assert item["merchant_id"] == "mer_gym"
+    assert item["period"] == "MONTHLY"
+    assert item["typical_amount_cents"] == 19900
+    assert item["occurrences"] == 3
+
+
+def test_r9_two_charges_not_detected():
+    """Only 2 charges at merchant → below min_occurrences."""
+    state = with_txns(
+        base_state(),
+        _sub_tx("mer_gym", at("2026-07-25T06:00:00+08:00"), 19900, "1"),
+        _sub_tx("mer_gym", at("2026-08-25T06:00:00+08:00"), 19900, "2"),
+    )
+    result = subject.detect_subscriptions(state, customer_id="cus_a", lookback_days=180)
+    assert len(result["items"]) == 0
+
+
+# ── Interval: 28/29/30/31 day boundaries ─────────────────────────────
+
+
+def test_r9_28_day_interval_detected_monthly():
+    """Three charges each 28 days apart → MONTHLY (within 28-31 range)."""
+    state = with_txns(
+        base_state(),
+        _sub_tx("mer_v", at("2026-07-01T06:00:00+08:00"), 3000, "1"),
+        _sub_tx("mer_v", at("2026-07-29T06:00:00+08:00"), 3000, "2"),
+        _sub_tx("mer_v", at("2026-08-26T06:00:00+08:00"), 3000, "3"),
+    )
+    result = subject.detect_subscriptions(state, customer_id="cus_a", lookback_days=180)
+    assert len(result["items"]) == 1
+    assert result["items"][0]["period"] == "MONTHLY"
+
+
+def test_r9_31_day_interval_detected_monthly():
+    """Three charges each 31 days apart → MONTHLY (within 28-31 range)."""
+    state = with_txns(
+        base_state(),
+        _sub_tx("mer_v", at("2026-07-01T06:00:00+08:00"), 3000, "1"),
+        _sub_tx("mer_v", at("2026-08-01T06:00:00+08:00"), 3000, "2"),
+        _sub_tx("mer_v", at("2026-09-01T06:00:00+08:00"), 3000, "3"),
+    )
+    result = subject.detect_subscriptions(state, customer_id="cus_a", lookback_days=180)
+    assert len(result["items"]) == 1
+    assert result["items"][0]["period"] == "MONTHLY"
+
+
+def test_r9_29_day_interval_detected_monthly():
+    """Three charges each 29 days apart → MONTHLY."""
+    state = with_txns(
+        base_state(),
+        _sub_tx("mer_v", at("2026-07-03T06:00:00+08:00"), 3000, "1"),
+        _sub_tx("mer_v", at("2026-08-01T06:00:00+08:00"), 3000, "2"),
+        _sub_tx("mer_v", at("2026-08-30T06:00:00+08:00"), 3000, "3"),
+    )
+    result = subject.detect_subscriptions(state, customer_id="cus_a", lookback_days=180)
+    assert len(result["items"]) == 1
+    assert result["items"][0]["period"] == "MONTHLY"
+
+
+def test_r9_27_day_interval_not_detected():
+    """Three charges 27 days apart → NOT monthly (below 28)."""
+    state = with_txns(
+        base_state(),
+        _sub_tx("mer_v", at("2026-07-01T06:00:00+08:00"), 3000, "1"),
+        _sub_tx("mer_v", at("2026-07-28T06:00:00+08:00"), 3000, "2"),
+        _sub_tx("mer_v", at("2026-08-24T06:00:00+08:00"), 3000, "3"),
+    )
+    result = subject.detect_subscriptions(state, customer_id="cus_a", lookback_days=180)
+    assert len(result["items"]) == 0
+
+
+def test_r9_32_day_interval_not_detected():
+    """Three charges 32 days apart → NOT monthly (above 31)."""
+    state = with_txns(
+        base_state(),
+        _sub_tx("mer_v", at("2026-07-01T06:00:00+08:00"), 3000, "1"),
+        _sub_tx("mer_v", at("2026-08-02T06:00:00+08:00"), 3000, "2"),
+        _sub_tx("mer_v", at("2026-09-03T06:00:00+08:00"), 3000, "3"),
+    )
+    result = subject.detect_subscriptions(state, customer_id="cus_a", lookback_days=180)
+    assert len(result["items"]) == 0
+
+
+# ── Weekly detection ─────────────────────────────────────────────────
+
+
+def test_r9_weekly_charges_detected():
+    """Three charges exactly 7 days apart → WEEKLY."""
+    state = with_txns(
+        base_state(),
+        _sub_tx("mer_w", at("2026-09-22T09:00:00+08:00"), 1500, "1"),
+        _sub_tx("mer_w", at("2026-09-29T09:00:00+08:00"), 1500, "2"),
+        _sub_tx("mer_w", at("2026-10-06T09:00:00+08:00"), 1500, "3"),
+    )
+    result = subject.detect_subscriptions(state, customer_id="cus_a", lookback_days=180)
+    assert len(result["items"]) == 1
+    assert result["items"][0]["period"] == "WEEKLY"
+
+
+# ── Non-periodic merchant not detected ───────────────────────────────
+
+
+def test_r9_irregular_intervals_not_detected():
+    """Charges at irregular intervals (10, 25 days) → not periodic."""
+    state = with_txns(
+        base_state(),
+        _sub_tx("mer_x", at("2026-07-05T06:00:00+08:00"), 5000, "1"),
+        _sub_tx("mer_x", at("2026-07-15T06:00:00+08:00"), 5000, "2"),  # 10 days
+        _sub_tx("mer_x", at("2026-07-30T06:00:00+08:00"), 5000, "3"),  # 15 days
+    )
+    result = subject.detect_subscriptions(state, customer_id="cus_a", lookback_days=180)
+    assert len(result["items"]) == 0
+
+
+# ── Amount variance ──────────────────────────────────────────────────
+
+
+def test_r9_amount_within_5pct_variance():
+    """Amounts 19900, 19400, 20400 all within 5% of median 19900."""
+    state = with_txns(
+        base_state(),
+        _sub_tx("mer_gym", at("2026-07-25T06:00:00+08:00"), 19900, "1"),
+        _sub_tx("mer_gym", at("2026-08-25T06:00:00+08:00"), 19400, "2"),  # -2.5%
+        _sub_tx("mer_gym", at("2026-09-25T06:00:00+08:00"), 20400, "3"),  # +2.5%
+    )
+    result = subject.detect_subscriptions(state, customer_id="cus_a", lookback_days=180)
+    assert len(result["items"]) == 1
+    assert result["items"][0]["typical_amount_cents"] == 19900
+
+
+def test_r9_amount_exceeds_5pct_variance():
+    """Amount 25000 vs 19900 median → 30% variance → not detected."""
+    state = with_txns(
+        base_state(),
+        _sub_tx("mer_gym", at("2026-07-25T06:00:00+08:00"), 19900, "1"),
+        _sub_tx("mer_gym", at("2026-08-25T06:00:00+08:00"), 19900, "2"),
+        _sub_tx("mer_gym", at("2026-09-25T06:00:00+08:00"), 25000, "3"),
+    )
+    result = subject.detect_subscriptions(state, customer_id="cus_a", lookback_days=180)
+    assert len(result["items"]) == 0
+
+
+def test_r9_amount_exact_5pct_boundary():
+    """19900 ± 5% = 19900 ± 995 → 20895 (exactly 5%) → included."""
+    state = with_txns(
+        base_state(),
+        _sub_tx("mer_gym", at("2026-07-25T06:00:00+08:00"), 19900, "1"),
+        _sub_tx("mer_gym", at("2026-08-25T06:00:00+08:00"), 19900, "2"),
+        _sub_tx("mer_gym", at("2026-09-25T06:00:00+08:00"), 20895, "3"),
+    )
+    result = subject.detect_subscriptions(state, customer_id="cus_a", lookback_days=180)
+    assert len(result["items"]) == 1
+
+
+def test_r9_amount_slightly_over_5pct_boundary():
+    """19900 + 5% = 20895 → 20896 (over boundary) → rejected."""
+    state = with_txns(
+        base_state(),
+        _sub_tx("mer_gym", at("2026-07-25T06:00:00+08:00"), 19900, "1"),
+        _sub_tx("mer_gym", at("2026-08-25T06:00:00+08:00"), 19900, "2"),
+        _sub_tx("mer_gym", at("2026-09-25T06:00:00+08:00"), 20896, "3"),
+    )
+    result = subject.detect_subscriptions(state, customer_id="cus_a", lookback_days=180)
+    assert len(result["items"]) == 0
+
+
+# ── Cancelled MANDATE still detected from transactions ─────────────────
+
+
+def test_r9_detects_from_transactions_not_instruction_status():
+    """Subscription is detected from recurring transactions even if mandate
+    is DELETED (the charge history still exists)."""
+    state = with_txns(
+        base_state(),
+        _sub_tx("mer_gym", at("2026-07-25T06:00:00+08:00"), 19900, "1"),
+        _sub_tx("mer_gym", at("2026-08-25T06:00:00+08:00"), 19900, "2"),
+        _sub_tx("mer_gym", at("2026-09-25T06:00:00+08:00"), 19900, "3"),
+    )
+    # State has no subscriptions → detected from transactions only
+    result = subject.detect_subscriptions(state, customer_id="cus_a", lookback_days=180)
+    assert len(result["items"]) == 1
+    # instruction_id/billing_id absent because no matching subscription
+    assert result["items"][0]["instruction_id"] is None
+    assert result["items"][0]["billing_id"] is None
+
+
+# ── Other customer transactions excluded ──────────────────────────────
+
+
+def test_r9_other_customer_transactions_excluded():
+    """cus_b's charges at same merchant do not affect cus_a's detection."""
+    tx_cus_b = _sub_tx("mer_gym", at("2026-07-25T06:00:00+08:00"), 19900, "b1")
+    tx_cus_b = tx_cus_b.model_copy(update={"customer_id": "cus_b", "account_id": "acc_b"})
+    state = with_txns(
+        base_state(),
+        _sub_tx("mer_gym", at("2026-07-25T06:00:00+08:00"), 19900, "1"),
+        _sub_tx("mer_gym", at("2026-08-25T06:00:00+08:00"), 19900, "2"),
+        tx_cus_b,  # cus_b charge at same merchant, not counted
+    )
+    result = subject.detect_subscriptions(state, customer_id="cus_a", lookback_days=180)
+    # cus_a only has 2 charges → below threshold
+    assert len(result["items"]) == 0
+
+
+def test_r9_cus_b_three_charges_detected():
+    """cus_b can independently detect subscriptions on its own accounts."""
+    tx1 = _sub_tx("mer_gym", at("2026-07-25T06:00:00+08:00"), 19900, "b1")
+    tx2 = _sub_tx("mer_gym", at("2026-08-25T06:00:00+08:00"), 19900, "b2")
+    tx3 = _sub_tx("mer_gym", at("2026-09-25T06:00:00+08:00"), 19900, "b3")
+    txns = [
+        t.model_copy(update={"customer_id": "cus_b", "account_id": "acc_b"})
+        for t in (tx1, tx2, tx3)
+    ]
+    state = with_txns(base_state(), *txns)
+    result = subject.detect_subscriptions(state, customer_id="cus_b", lookback_days=180)
+    assert len(result["items"]) == 1
+    assert result["items"][0]["merchant_id"] == "mer_gym"
+
+
+# ── lookback_days boundary ────────────────────────────────────────────
+
+
+def test_r9_lookback_excludes_old_charges():
+    """Only 2 charges in last 60 days, 3 in last 180 → detected at 180, not at 60."""
+    state = with_txns(
+        base_state(),
+        _sub_tx("mer_gym", at("2026-07-25T06:00:00+08:00"), 19900, "1"),  # ~82 days ago
+        _sub_tx("mer_gym", at("2026-08-25T06:00:00+08:00"), 19900, "2"),  # ~51 days ago
+        _sub_tx("mer_gym", at("2026-09-25T06:00:00+08:00"), 19900, "3"),  # ~20 days ago
+    )
+    result_60 = subject.detect_subscriptions(state, customer_id="cus_a", lookback_days=60)
+    assert len(result_60["items"]) == 0  # only 2 charges in 60d
+    result_180 = subject.detect_subscriptions(state, customer_id="cus_a", lookback_days=180)
+    assert len(result_180["items"]) == 1
+
+
+# ── Idle detection (needs obligations for usage_expected) ──────────────
+
+
+def _state_with_obligation(state, merchant_id="mer_gym", usage_expected=True):
+    """Attach an obligations snapshot with the given merchant to the state."""
+    from safebank_contracts.obligations import Merchant, ObligationSnapshot
+
+    merchants = {
+        merchant_id: Merchant(
+            id=merchant_id,
+            name="测试商户",
+            mcc="7997",
+            category="健身",
+            usage_expected=usage_expected,
+        )
+    }
+    snapshot = ObligationSnapshot(
+        covered_customer_ids=("cus_a",),
+        merchants=merchants,
+        billings={},
+        standing_instructions={},
+        runs=(),
+        instruction_targets={},
+    )
+    return state.model_copy(update={"obligations": snapshot})
+
+
+def test_r9_idle_when_no_recent_usage_and_previous_has():
+    """usage_expected=True, recent=0, previous>0 → is_idle=True."""
+    state = with_txns(
+        _state_with_obligation(base_state()),
+        # 3 monthly charges
+        _sub_tx("mer_gym", at("2026-07-25T06:00:00+08:00"), 19900, "1"),
+        _sub_tx("mer_gym", at("2026-08-25T06:00:00+08:00"), 19900, "2"),
+        _sub_tx("mer_gym", at("2026-09-25T06:00:00+08:00"), 19900, "3"),
+        # 1 CARD_SPEND visit 90 days ago (in the 60-120d window)
+        _sub_tx(
+            "mer_gym",
+            at("2026-07-17T18:00:00+08:00"),
+            5000,
+            "visit1",
+            kind="CARD_SPEND",
+        ),
+    )
+    result = subject.detect_subscriptions(state, customer_id="cus_a", lookback_days=180)
+    assert len(result["items"]) == 1
+    item = result["items"][0]
+    assert item["is_idle"] is True
+    assert item["usage_evidence"]["recent_usage_count"] == 0
+    assert item["usage_evidence"]["previous_usage_count"] >= 1
+
+
+def test_r9_not_idle_when_recent_usage_present():
+    """usage_expected=True, recent>0 → is_idle=False."""
+    state = with_txns(
+        _state_with_obligation(base_state()),
+        # 3 monthly charges
+        _sub_tx("mer_gym", at("2026-07-25T06:00:00+08:00"), 19900, "1"),
+        _sub_tx("mer_gym", at("2026-08-25T06:00:00+08:00"), 19900, "2"),
+        _sub_tx("mer_gym", at("2026-09-25T06:00:00+08:00"), 19900, "3"),
+        # Recent visit (within 60 days)
+        _sub_tx(
+            "mer_gym",
+            at("2026-10-01T18:00:00+08:00"),
+            5000,
+            "visit_recent",
+            kind="CARD_SPEND",
+        ),
+    )
+    result = subject.detect_subscriptions(state, customer_id="cus_a", lookback_days=180)
+    assert len(result["items"]) == 1
+    item = result["items"][0]
+    assert item["is_idle"] is False
+    assert item["usage_evidence"]["recent_usage_count"] >= 1
+
+
+def test_r9_not_idle_when_usage_expected_false():
+    """usage_expected=False → never idle (e.g., video subscription)."""
+    state = with_txns(
+        _state_with_obligation(base_state(), merchant_id="mer_v", usage_expected=False),
+        _sub_tx("mer_v", at("2026-07-18T06:00:00+08:00"), 3000, "1"),
+        _sub_tx("mer_v", at("2026-08-18T06:00:00+08:00"), 3000, "2"),
+        _sub_tx("mer_v", at("2026-09-18T06:00:00+08:00"), 3000, "3"),
+    )
+    result = subject.detect_subscriptions(state, customer_id="cus_a", lookback_days=180)
+    assert len(result["items"]) == 1
+    assert result["items"][0]["is_idle"] is False
+
+
+# ── Multiple merchants ────────────────────────────────────────────────
+
+
+def test_r9_multiple_subscriptions_detected():
+    """Two merchants both have recurring charges → two items."""
+    state = with_txns(
+        base_state(),
+        _sub_tx("mer_gym", at("2026-07-25T06:00:00+08:00"), 19900, "g1"),
+        _sub_tx("mer_gym", at("2026-08-25T06:00:00+08:00"), 19900, "g2"),
+        _sub_tx("mer_gym", at("2026-09-25T06:00:00+08:00"), 19900, "g3"),
+        _sub_tx("mer_v", at("2026-07-18T06:00:00+08:00"), 3000, "v1"),
+        _sub_tx("mer_v", at("2026-08-18T06:00:00+08:00"), 3000, "v2"),
+        _sub_tx("mer_v", at("2026-09-18T06:00:00+08:00"), 3000, "v3"),
+    )
+    result = subject.detect_subscriptions(state, customer_id="cus_a", lookback_days=180)
+    mids = {i["merchant_id"] for i in result["items"]}
+    assert mids == {"mer_gym", "mer_v"}
+
+
+# ── Annual cost ───────────────────────────────────────────────────────
+
+
+def test_r9_annual_cost_monthly():
+    """MONTHLY 19900 → annual = 19900 × 12 = 238800."""
+    state = with_txns(
+        base_state(),
+        _sub_tx("mer_gym", at("2026-07-25T06:00:00+08:00"), 19900, "1"),
+        _sub_tx("mer_gym", at("2026-08-25T06:00:00+08:00"), 19900, "2"),
+        _sub_tx("mer_gym", at("2026-09-25T06:00:00+08:00"), 19900, "3"),
+    )
+    result = subject.detect_subscriptions(state, customer_id="cus_a", lookback_days=180)
+    assert result["items"][0]["annual_cost_cents"] == 238800
+
+
+def test_r9_annual_cost_weekly():
+    """WEEKLY 1500 → annual = 1500 × 52 = 78000."""
+    state = with_txns(
+        base_state(),
+        _sub_tx("mer_w", at("2026-09-22T09:00:00+08:00"), 1500, "1"),
+        _sub_tx("mer_w", at("2026-09-29T09:00:00+08:00"), 1500, "2"),
+        _sub_tx("mer_w", at("2026-10-06T09:00:00+08:00"), 1500, "3"),
+    )
+    result = subject.detect_subscriptions(state, customer_id="cus_a", lookback_days=180)
+    assert result["items"][0]["annual_cost_cents"] == 78000
+
+
+# ── Mixed interval (monthly + one 28d) is still MONTHLY ───────────────
+
+
+def test_r9_mixed_monthly_intervals_still_monthly():
+    """Intervals 30, 28, 31 → all within 28-31 → MONTHLY."""
+    state = with_txns(
+        base_state(),
+        _sub_tx("mer_gym", at("2026-07-25T06:00:00+08:00"), 19900, "1"),
+        _sub_tx("mer_gym", at("2026-08-24T06:00:00+08:00"), 19900, "2"),  # 30 days
+        _sub_tx("mer_gym", at("2026-09-21T06:00:00+08:00"), 19900, "3"),  # 28 days
+        _sub_tx("mer_gym", at("2026-10-22T06:00:00+08:00"), 19900, "4"),  # 31 days
+    )
+    result = subject.detect_subscriptions(state, customer_id="cus_a", lookback_days=180)
+    assert len(result["items"]) == 1
+    assert result["items"][0]["period"] == "MONTHLY"
+
+
+# ── MANDATE charges excluded from usage evidence ─────────────────────
+
+
+def test_r9_mandate_not_counted_as_usage():
+    """MANDATE transactions are NOT counted in usage evidence (only CARD_SPEND)."""
+    state = with_txns(
+        _state_with_obligation(base_state()),
+        # 3 monthly MANDATE charges
+        _sub_tx("mer_gym", at("2026-06-25T06:00:00+08:00"), 19900, "1"),
+        _sub_tx("mer_gym", at("2026-07-25T06:00:00+08:00"), 19900, "2"),
+        _sub_tx("mer_gym", at("2026-08-25T06:00:00+08:00"), 19900, "3"),
+        # Recent MANDATE (not CARD_SPEND) at the next monthly interval: still
+        # part of the charge series, must NOT count as usage.
+        _sub_tx(
+            "mer_gym",
+            at("2026-09-25T06:00:00+08:00"),
+            19900,
+            "recent_charge",
+            kind="MANDATE",
+        ),
+        # Previous CARD_SPEND visit in 60-120d window
+        _sub_tx(
+            "mer_gym",
+            at("2026-07-17T18:00:00+08:00"),
+            5000,
+            "old_visit",
+            kind="CARD_SPEND",
+        ),
+    )
+    result = subject.detect_subscriptions(state, customer_id="cus_a", lookback_days=180)
+    item = result["items"][0]
+    assert item["is_idle"] is True
+    assert item["usage_evidence"]["recent_usage_count"] == 0
