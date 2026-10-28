@@ -1228,3 +1228,39 @@ def _run_barrier_test(
     assert all_tokens == {"tok_read_a", "tok_read_b"}, (
         f"expected both tokens, got {all_tokens} — executor leaked across invocations"
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Test 3: plan raises ExhaustedClarify → respond (no evaluate)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _fake_plan_exhausted_clarify(fields, labels):
+    """Return a plan port that raises ExhaustedClarify immediately."""
+    from services.agent.app.llm.plan import ExhaustedClarify
+
+    def _raise(state, context):
+        raise ExhaustedClarify(fields, labels)
+
+    return _raise
+
+
+def test_exhausted_clarify_routes_to_respond_no_evaluate_via_compiled_graph():
+    """plan raises ExhaustedClarify(bank_name) → respond, no /plans/evaluate."""
+    graph, _client, transport = _gateway_graph(
+        [
+            *_g20_ok(_g20_item("utt_a")),
+            _NOOP,
+            _NOOP,
+        ],
+        plan=_fake_plan_exhausted_clarify(["bank_name"], ["开户银行"]),
+    )
+
+    result = _invoke(graph)
+    assert "开户银行" in result["reply_draft"]
+    assert result.get("clarification") is not None
+    assert result["clarification"]["source"] == "l1_exhausted"
+    assert "开户银行" in result["clarification"]["required_fields"]
+    # Must NOT have called /plans/evaluate
+    evaluate_urls = [r["url"] for r in transport.requests if "/plans/evaluate" in r["url"]]
+    assert len(evaluate_urls) == 0, f"unexpected /plans/evaluate calls: {evaluate_urls}"
