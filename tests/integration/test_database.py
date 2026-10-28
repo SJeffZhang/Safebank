@@ -15,7 +15,10 @@ def test_migration_exists_and_runtime_does_not_own_tables():
     async def check():
         db = engine(database_url(), poolclass=NullPool)
         async with db.connect() as c:
-            assert await c.scalar(text("SELECT version_num FROM alembic_version")) == "0005_splits"
+            assert (
+                await c.scalar(text("SELECT version_num FROM alembic_version"))
+                == "0006_risk_assessments"
+            )
             assert (
                 await c.scalar(text("SELECT tableowner FROM pg_tables WHERE tablename='accounts'"))
                 == "postgres"

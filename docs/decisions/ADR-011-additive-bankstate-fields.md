@@ -22,6 +22,12 @@ rules (AGENTS §2.6). C4 is the first to add one: `BankState.splits`.
   `make test`, which covers the gateway's snapshot validation.
 - When several domain branches add fields in parallel, each later merge regenerates the
   snapshot again on top of main.
+- Exception (added 2026-10-28 with C5): a reserved `FUTURE_EFFECTS` placeholder that
+  nothing on main produces or consumes may be redefined once by the domain that first
+  implements it. The coordinator confirms with `git grep` on main that it has no users,
+  and the snapshot diff must touch only that effect. C5 used this for `InsertAssessment`
+  (from `{assessment: AssessmentResult}` to `{record: RiskAssessmentRecord}`, which carries
+  the customer, answers and plan the L3 fact row needs).
 
 ## Consequences
 
