@@ -16,6 +16,7 @@ import pytest
 import uvicorn
 from app.db import engine
 from app.main import create_app
+from safebank_bankcore.reserve import BUSINESS_TIMEZONE
 from sqlalchemy import text as sa_text
 from sqlalchemy.pool import NullPool
 
@@ -1077,7 +1078,7 @@ async def _insert_card_spend(
 
     from app import models as m
 
-    occurred = occurred_at.astimezone(tz_utc).replace(tzinfo=None)
+    occurred = occurred_at.astimezone(tz_utc)
     await conn.execute(
         m.transfers.insert().values(
             id=xfer_id,
@@ -1156,7 +1157,7 @@ def test_r4_returns_categories_and_daily(obligations_db):
                 account_id="acc_zs_chk",
                 amount_cents=2000,
                 category="娱乐",
-                occurred_at=dtm(2026, 10, 20, 18, 0, 0, tzinfo=tz_utc),
+                occurred_at=dtm(2026, 10, 20, 10, 0, 0, tzinfo=tz_utc),
                 balance_cents=bal - 2000,
             )
             # September 2026: 餐饮 2000 (prev month reference)
@@ -1372,6 +1373,383 @@ def test_r4_invalid_month_returns_422(obligations_db):
                 client, "get_spending_summary", {"month": "2026-00", "account_id": None}
             )
             assert r.status_code == 422, r.text
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r4_cross_month_tz_plus0800_boundary(obligations_db):
+    """A tx at 2026-10-01T00:30:00+08:00 (UTC 2026-09-30T16:30:00) belongs to October.
+
+    The +08:00 local date determines the month, not the UTC date.
+    """
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        tz_plus8 = BUSINESS_TIMEZONE
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+
+            # Early morning Oct 1 in +08:00 → UTC evening Sep 30
+            occurred = dtm(2026, 10, 1, 0, 30, 0, tzinfo=tz_plus8)
+            await _insert_card_spend(
+                conn,
+                tx_id="tx_cross",
+                xfer_id="xfr_cross",
+                customer_id="cus_zs",
+                account_id="acc_zs_chk",
+                amount_cents=5000,
+                category="餐饮",
+                occurred_at=occurred,
+                balance_cents=595_000,
+            )
+
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+
+            r = await _read(
+                client, "get_spending_summary", {"month": "2026-10", "account_id": None}
+            )
+            assert r.status_code == 200, r.text
+            body = r.json()
+            # Must appear in October (local time), not September
+            assert body["total_cents"] == 5000
+            assert body["month"] == "2026-10"
+
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+# ─── R5 detect_anomalies ───
+
+
+async def _insert_card_spend_with_merchant(
+    conn,
+    *,
+    tx_id,
+    xfer_id,
+    customer_id,
+    account_id,
+    amount_cents,
+    category,
+    occurred_at,
+    balance_cents,
+    merchant_id=None,
+    card_id=None,
+):
+    """Insert a CARD_SPEND transfer + transaction with optional card/merchant."""
+    import uuid
+
+    from app import models as m
+
+    occurred = occurred_at.astimezone(tz_utc)
+    await conn.execute(
+        m.transfers.insert().values(
+            id=xfer_id,
+            debit_account_id=account_id,
+            credit_account_id="acc_external_clearing",
+            amount_cents=amount_cents,
+            code="CARD_SPEND",
+            phase="POSTED",
+            plan_id="pln_seed",
+            step_id=str(uuid.uuid4()),
+            leg="DEBIT",
+            occurred_at=occurred,
+        )
+    )
+    await conn.execute(
+        m.transactions.insert().values(
+            id=tx_id,
+            transfer_id=xfer_id,
+            customer_id=customer_id,
+            account_id=account_id,
+            direction="OUT",
+            kind="CARD_SPEND",
+            phase="POSTED",
+            status="POSTED",
+            amount_cents=amount_cents,
+            balance_after_cents=balance_cents,
+            available_after_cents=balance_cents,
+            counterparty="merchant",
+            category=category,
+            merchant_id=merchant_id,
+            card_id=card_id,
+            occurred_at=occurred,
+        )
+    )
+
+
+def test_r5_range_returns_anomalies(obligations_db):
+    """Night-time large tx within range → anomaly flagged."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        tz_plus8 = BUSINESS_TIMEZONE
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+
+            bal = 600_000
+            await _insert_card_spend_with_merchant(
+                conn,
+                tx_id="tx_night",
+                xfer_id="xfr_night",
+                customer_id="cus_zs",
+                account_id="acc_zs_chk",
+                amount_cents=128_000,
+                category="餐饮",
+                occurred_at=dtm(2026, 10, 7, 2, 13, 0, tzinfo=tz_plus8),
+                balance_cents=bal - 128_000,
+                merchant_id="mer_night",
+                card_id="crd_zs_1",
+            )
+
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+
+            r = await _read(
+                client,
+                "detect_anomalies",
+                {
+                    "from_at": "2026-10-01T00:00:00+08:00",
+                    "to_at": "2026-11-01T00:00:00+08:00",
+                    "account_id": None,
+                },
+            )
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert len(body["items"]) >= 1
+            item = body["items"][0]
+            assert item["transaction"]["id"] == "tx_night"
+            assert "ANOMALY_NIGHT_LARGE" in item["codes"]
+
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r5_account_id_filter(obligations_db):
+    """Anomalies only from the given account; other accounts excluded."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        tz_plus8 = BUSINESS_TIMEZONE
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+
+            bal = 600_000
+            # Night tx on checking account
+            await _insert_card_spend_with_merchant(
+                conn,
+                tx_id="tx_chk",
+                xfer_id="xfr_chk",
+                customer_id="cus_zs",
+                account_id="acc_zs_chk",
+                amount_cents=128_000,
+                category="餐饮",
+                occurred_at=dtm(2026, 10, 7, 2, 13, 0, tzinfo=tz_plus8),
+                balance_cents=bal - 128_000,
+                merchant_id="mer_night_a",
+                card_id="crd_zs_1",
+            )
+            # Night tx on savings account
+            await _insert_card_spend_with_merchant(
+                conn,
+                tx_id="tx_sav",
+                xfer_id="xfr_sav",
+                customer_id="cus_zs",
+                account_id="acc_zs_sav",
+                amount_cents=80_000,
+                category="交通",
+                occurred_at=dtm(2026, 10, 8, 3, 0, 0, tzinfo=tz_plus8),
+                balance_cents=2_000_000 - 80_000,
+                merchant_id="mer_night_b",
+                card_id="crd_zs_2",
+            )
+
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+
+            r = await _read(
+                client,
+                "detect_anomalies",
+                {
+                    "from_at": "2026-10-01T00:00:00+08:00",
+                    "to_at": "2026-11-01T00:00:00+08:00",
+                    "account_id": "acc_zs_chk",
+                },
+            )
+            assert r.status_code == 200, r.text
+            body = r.json()
+            ids = {it["transaction"]["id"] for it in body["items"]}
+            assert ids == {"tx_chk"}
+            assert "tx_sav" not in ids
+
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r5_cross_customer_404(obligations_db):
+    """Query with another customer's account_id → 404."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+
+            r = await _read(
+                client,
+                "detect_anomalies",
+                {
+                    "from_at": "2026-10-01T00:00:00+08:00",
+                    "to_at": "2026-11-01T00:00:00+08:00",
+                    "account_id": "acc_ls_chk",
+                },
+            )
+            assert r.status_code == 404, r.text
+
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r5_no_anomalies_empty_result(obligations_db):
+    """Daytime small tx → no anomalies, empty result."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        tz_plus8 = BUSINESS_TIMEZONE
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+
+            await _insert_card_spend_with_merchant(
+                conn,
+                tx_id="tx_safe",
+                xfer_id="xfr_safe",
+                customer_id="cus_zs",
+                account_id="acc_zs_chk",
+                amount_cents=3000,
+                category="餐饮",
+                occurred_at=dtm(2026, 10, 10, 12, 0, 0, tzinfo=tz_plus8),
+                balance_cents=597_000,
+                merchant_id="mer_safe",
+                card_id="crd_zs_1",
+            )
+
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+
+            r = await _read(
+                client,
+                "detect_anomalies",
+                {
+                    "from_at": "2026-10-01T00:00:00+08:00",
+                    "to_at": "2026-11-01T00:00:00+08:00",
+                    "account_id": None,
+                },
+            )
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["items"] == []
+
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_r5_timezone_aware(obligations_db):
+    """from_at/to_at in +08:00 are correctly parsed."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        tz_plus8 = BUSINESS_TIMEZONE
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await install_obligations(conn)
+
+            # Tx at 02:13 on Oct 7 (+08:00) — night large
+            await _insert_card_spend_with_merchant(
+                conn,
+                tx_id="tx_a",
+                xfer_id="xfr_a",
+                customer_id="cus_zs",
+                account_id="acc_zs_chk",
+                amount_cents=128_000,
+                category="餐饮",
+                occurred_at=dtm(2026, 10, 7, 2, 13, 0, tzinfo=tz_plus8),
+                balance_cents=472_000,
+                merchant_id="mer_tz",
+                card_id="crd_zs_1",
+            )
+
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            await _await_app(client, port)
+
+            # Range: Oct 7 in +08:00 — includes the tx
+            r = await _read(
+                client,
+                "detect_anomalies",
+                {
+                    "from_at": "2026-10-07T00:00:00+08:00",
+                    "to_at": "2026-10-08T00:00:00+08:00",
+                    "account_id": None,
+                },
+            )
+            assert r.status_code == 200, r.text
+            assert len(r.json()["items"]) == 1
+
+            # Range: Oct 6 in +08:00 — tx_outside
+            r = await _read(
+                client,
+                "detect_anomalies",
+                {
+                    "from_at": "2026-10-05T00:00:00+08:00",
+                    "to_at": "2026-10-06T00:00:00+08:00",
+                    "account_id": None,
+                },
+            )
+            assert r.status_code == 200, r.text
+            assert r.json()["items"] == []
+
         await admin.dispose()
         await runtime.dispose()
 

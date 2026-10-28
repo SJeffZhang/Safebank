@@ -859,7 +859,7 @@ def test_category_outlier_triggers():
                 id=f"p{i}",
                 amount_cents=10000 + i * 10,  # 10000..10090, tight
                 category="餐饮",
-                occurred_at=at(f"2026-10-{(i+1):02d}T10:00:00+08:00"),
+                occurred_at=at(f"2026-10-{(i + 1):02d}T10:00:00+08:00"),
             )
         )
     # Outlier: way above
@@ -889,7 +889,7 @@ def test_category_outlier_not_enough_history():
                 id=f"p{i}",
                 amount_cents=10000,
                 category="餐饮",
-                occurred_at=at(f"2026-10-{(i+1):02d}T10:00:00+08:00"),
+                occurred_at=at(f"2026-10-{(i + 1):02d}T10:00:00+08:00"),
             )
         )
     txns.append(
@@ -913,7 +913,7 @@ def test_category_outlier_within_bounds():
                 id=f"p{i}",
                 amount_cents=10000 + i * 10,  # 10000..10090, tight
                 category="餐饮",
-                occurred_at=at(f"2026-10-{(i+1):02d}T10:00:00+08:00"),
+                occurred_at=at(f"2026-10-{(i + 1):02d}T10:00:00+08:00"),
             )
         )
     txns.append(
@@ -938,7 +938,7 @@ def test_category_outlier_history_bounded_by_90_days():
                 id=f"recent{i}",
                 amount_cents=10000,
                 category="餐饮",
-                occurred_at=at(f"2026-10-{(i+1):02d}T10:00:00+08:00"),
+                occurred_at=at(f"2026-10-{(i + 1):02d}T10:00:00+08:00"),
             )
         )
     for i in range(5):
@@ -971,7 +971,7 @@ def test_category_outlier_different_category_not_counted():
                 id=f"p{i}",
                 amount_cents=10000,
                 category="交通",
-                occurred_at=at(f"2026-10-{(i+1):02d}T10:00:00+08:00"),
+                occurred_at=at(f"2026-10-{(i + 1):02d}T10:00:00+08:00"),
             )
         )
     txns.append(

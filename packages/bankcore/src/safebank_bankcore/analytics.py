@@ -224,12 +224,12 @@ def detect_anomalies(
     # index per key so duplicate check is O(1) per tx.
     # Also pre-index by category for the outlier check.
 
-    results: dict[str, list[str]] = {}   # tx_id → codes
-    evidence_map: dict[str, dict] = {}   # tx_id → evidence fields
+    results: dict[str, list[str]] = {}  # tx_id → codes
+    evidence_map: dict[str, dict] = {}  # tx_id → evidence fields
 
     for tx in candidates:
         idx = full_history.index(tx)  # position in full_history (sorted)
-        prior = full_history[:idx]    # everything strictly before this tx
+        prior = full_history[:idx]  # everything strictly before this tx
 
         codes: list[str] = []
         ev: dict = {}
@@ -270,9 +270,7 @@ def detect_anomalies(
         if tx.category:
             cutoff = tx.occurred_at - _days_as_delta(90)
             same_cat_prior = [
-                h
-                for h in prior
-                if h.category == tx.category and h.occurred_at >= cutoff
+                h for h in prior if h.category == tx.category and h.occurred_at >= cutoff
             ]
             if len(same_cat_prior) >= 10:
                 amounts_dec = [Decimal(h.amount_cents) for h in same_cat_prior]
