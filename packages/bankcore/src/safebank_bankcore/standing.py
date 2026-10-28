@@ -106,7 +106,7 @@ def _target_info(
     if target is None:
         return ("EXTERNAL", None, None, payee.target_fingerprint)
     if target.customer_id == customer_id:
-        return ("OWN", payee.target_account_id, customer_id, payee.target_account_id)
+        raise ValueError("payee pointing to own account; use to_account_id for OWN transfers")
     return ("OTHER", payee.target_account_id, target.customer_id, payee.target_account_id)
 
 

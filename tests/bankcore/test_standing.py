@@ -129,6 +129,25 @@ def test_target_other_payee():
     assert cust == "cus_b"
 
 
+def test_target_own_account_via_payee_raises():
+    state = base_state()
+    payee = Payee(
+        id="pye_own",
+        customer_id="cus_a",
+        name="本人",
+        alias=None,
+        phone=None,
+        bank_name="本行",
+        account_no="6222020000000001",
+        target_account_id="acc_s",
+        target_fingerprint="fingerprint_s",
+        created_at=NOW - timedelta(days=5),
+    )
+    state = state.model_copy(update={"payees": {"pye_own": payee}})
+    with pytest.raises(ValueError, match="to_account_id"):
+        _target_info(state, "cus_a", "pye_own", None)
+
+
 def test_target_payee_not_found_raises():
     state = base_state()
     with pytest.raises(ValueError):
