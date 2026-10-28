@@ -10,7 +10,7 @@ from alembic import op
 from sqlalchemy import text
 
 revision = "0006_risk_assessments"
-down_revision = "0003_obligations"
+down_revision = "0005_splits"
 branch_labels = None
 depends_on = None
 

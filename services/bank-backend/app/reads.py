@@ -4,9 +4,10 @@ import base64
 import json
 from datetime import date, timedelta
 
+from safebank_bankcore.analytics import detect_anomalies, detect_subscriptions, spending_summary
 from safebank_bankcore.banking import card_view
 from safebank_bankcore.ids import digest
-from safebank_bankcore.reserve import upcoming_window
+from safebank_bankcore.reserve import _business_time, upcoming_window
 from safebank_contracts.codes import Code
 from safebank_contracts.risk_questionnaire import QUESTIONNAIRE
 from safebank_contracts.views import READ_RESULTS
@@ -17,6 +18,7 @@ SUPPORTED_READS = {
     "get_accounts",
     "list_payees",
     "get_transactions",
+    "get_spending_summary",
     "get_cards",
     "get_profile",
     "get_risk_profile",
@@ -24,6 +26,9 @@ SUPPORTED_READS = {
     "list_scheduled",
     "list_subscriptions",
     "upcoming_charges",
+    "get_split_status",
+    "detect_anomalies",
+    "detect_subscriptions",
 }
 
 
@@ -80,7 +85,7 @@ def read(state, tool, args, customer_id):
                     (
                         t
                         for t in reversed(transactions)
-                        if t.occurred_at.astimezone(state.sim_now.tzinfo).date() <= day_date
+                        if _business_time(t.occurred_at).date() <= day_date
                     ),
                     None,
                 )
@@ -147,6 +152,13 @@ def read(state, tool, args, customer_id):
                 for p in payees
             ],
             next_cursor=cursor,
+        )
+    elif tool == "get_spending_summary":
+        data = spending_summary(
+            state,
+            customer_id=customer_id,
+            month=args.month,
+            account_id=args.account_id,
         )
     elif tool == "get_cards":
         data = dict(
@@ -246,6 +258,25 @@ def read(state, tool, args, customer_id):
                 annual_to_monthly="floor_div_12",
             ),
         )
+    elif tool == "get_split_status":
+        if args.request_id:
+            target = next((s for s in state.splits if s.id == args.request_id), None)
+            if target is None:
+                raise BankError(Code.NOT_FOUND, 404)
+            data = dict(items=[target.model_dump(mode="json")], next_cursor=None)
+        else:
+            sorted_splits = sorted(state.splits, key=lambda s: (s.created_at, s.id))
+            page, cursor = paginate(
+                sorted_splits,
+                args,
+                customer_id,
+                lambda s: (s.created_at.isoformat(), s.id),
+                "get_split_status",
+            )
+            data = dict(
+                items=[s.model_dump(mode="json") for s in page],
+                next_cursor=cursor,
+            )
     elif tool == "upcoming_charges":
         try:
             window = upcoming_window(state, days=args.days, account_id=args.account_id)
@@ -356,6 +387,20 @@ def read(state, tool, args, customer_id):
                 and customer.risk_valid_until is not None
                 and date.fromisoformat(customer.risk_valid_until) >= state.sim_now.date()
             ),
+        )
+    elif tool == "detect_anomalies":
+        data = detect_anomalies(
+            state,
+            customer_id=customer_id,
+            from_at=args.from_at,
+            to_at=args.to_at,
+            account_id=args.account_id,
+        )
+    elif tool == "detect_subscriptions":
+        data = detect_subscriptions(
+            state,
+            customer_id=customer_id,
+            lookback_days=args.lookback_days,
         )
     else:
         raise BankError(Code.TOOL_NOT_ALLOWED, 403)

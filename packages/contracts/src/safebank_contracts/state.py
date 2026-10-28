@@ -214,6 +214,7 @@ class BankState(Contract):
     holdings: tuple[HoldingView, ...] = ()
     orders: tuple[FundOrderView, ...] = ()
     assessments: tuple[RiskAssessmentRecord, ...] = ()
+    splits: tuple[SplitView, ...] = ()
     dataset_revision: str = "p1_core_v1"
 
 

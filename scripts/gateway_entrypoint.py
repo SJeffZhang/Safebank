@@ -54,6 +54,9 @@ def main() -> None:
         os.chown(PRIVATE, UID, GID)
         os.environ["JWT_PRIVATE_KEY_PATH"] = str(PRIVATE / "jwt-private.pem")
         os.environ["DEMO_PINS_FILE"] = str(PRIVATE / "demo_pins")
+        # HOME stays /root (0700) after the privilege drop; asyncpg probes
+        # ~/.postgresql/postgresql.key on connect and fails with PermissionError.
+        os.environ["HOME"] = str(PRIVATE)
         os.setgroups([])
         os.setgid(GID)
         os.setuid(UID)

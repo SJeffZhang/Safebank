@@ -1357,7 +1357,7 @@ scheduler job 用真实时间 lease 防重复工作器；金融执行幂等由 e
 | TransactionView | id、account_id、direction、kind、status、amount_cents、balance_after_cents、available_after_cents、counterparty、memo?、category、merchant_id?、merchant_name?、payee_id?、card_id?、occurred_at |
 | CardView | id、account_id、last4、status、single_limit_cents、daily_limit_cents、daily_used_cents、remaining_daily_cents、max_single_limit_cents、max_daily_limit_cents、controls、current、replacement_id?（由 `cards.replaces_id` 反查：新卡 replaces_id 指向旧卡） |
 | ScheduledView | id、from_account_id、payee_id?、to_account_id?、target_display、amount_cents、period、anchor_day?、weekday?、time_of_day、next_run_at?、end_at?、status、last_run:{status,code?,due_at}? |
-| SplitView | id、account_id、total_cents、include_self、self_share_cents、received_cents、outstanding_cents、created_at、items:[{id,payee_id,payee_name,amount_cents,status,paid_at?}] |
+| SplitView | id、account_id、total_cents、include_self、self_share_cents、received_cents（已 PAID 参与人金额之和）、outstanding_cents（= total − self_share − received，即仍待其他参与人支付的金额；本人份额不计入）、created_at、items:[{id,payee_id,payee_name,amount_cents,status,paid_at?}] |
 | SubscriptionView | instruction_id、billing_id、account_id、merchant_id、merchant_name、period、amount_cents、max_amount_cents、next_due_at、status、annual_cost_cents |
 | ProductView | id、name、product_type、risk_level、risk_label、nav、nav_date、recent_return_bp、confirm_days、settle_days、min_amount_cents、risk_disclosure、disclosure_version、nav_history:[{date,nav}]；列表可令 nav_history=[]，详情必须填充 |
 | FundOrderView | id、account_id、product_id、type、status、amount_cents、units、nav?、trade_date、confirm_at?、settle_at?、failure_code? |
