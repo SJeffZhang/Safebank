@@ -11,6 +11,7 @@ from datetime import datetime, time, timedelta
 
 import pytest
 from safebank_bankcore.banking import Context
+from safebank_bankcore.reserve import _business_time, _recurrences
 from safebank_bankcore.standing import (
     InsertInstruction,
     OperationEvent,
@@ -24,7 +25,6 @@ from safebank_bankcore.standing import (
     apply_cancel_subscription,
     apply_schedule_transfer,
 )
-from safebank_bankcore.reserve import _business_time, _recurrences
 from safebank_contracts.codes import Code
 from safebank_contracts.obligations import (
     InstructionTarget,

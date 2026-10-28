@@ -17,6 +17,7 @@ from safebank_contracts.obligations import (
     ScheduledInstruction,
 )
 from safebank_contracts.state import (
+    EVENT_KIND_RANK,
     Account,
     AppendTransaction,
     BankState,
@@ -24,7 +25,6 @@ from safebank_contracts.state import (
     Counters,
     Customer,
     DirectoryEntry,
-    EVENT_KIND_RANK,
     InsertInstruction,
     InsertPayee,
     LedgerTransfer,
