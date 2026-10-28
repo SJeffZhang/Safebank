@@ -21,8 +21,9 @@ from collections import defaultdict
 from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 
-from safebank_bankcore.reserve import _business_time
 from safebank_contracts.state import BankState
+
+from safebank_bankcore.reserve import _business_time
 
 # The 8 category buckets defined in PRD §5.2.
 CATEGORIES = ("", "餐饮", "交通", "购物", "娱乐", "生活服务", "数码", "健身", "其他")
@@ -222,7 +223,6 @@ def detect_anomalies(
     # recent duplicates: we iterate history once and keep the *last-seen*
     # index per key so duplicate check is O(1) per tx.
     # Also pre-index by category for the outlier check.
-    history_by_key: dict[tuple, int] = {}  # key → index in full_history
 
     results: dict[str, list[str]] = {}   # tx_id → codes
     evidence_map: dict[str, dict] = {}   # tx_id → evidence fields
@@ -243,7 +243,6 @@ def detect_anomalies(
 
         # 2b. ANOMALY_DUPLICATE  (same card/merchant/amount, ≤ 5 min apart)
         if tx.card_id is not None and tx.merchant_id is not None:
-            dup_key = (tx.card_id, tx.merchant_id, tx.amount_cents)
             # Find the closest previous match (backwards through prior)
             for prev in reversed(prior):
                 if (

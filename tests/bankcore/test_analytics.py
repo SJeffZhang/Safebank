@@ -13,6 +13,13 @@ def at(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
+_UTC = __import__("zoneinfo").ZoneInfo("UTC")
+
+
+def utc_at(y: int, mo: int, d: int, h: int = 0, mi: int = 0, s: int = 0) -> datetime:
+    return datetime(y, mo, d, h, mi, s, tzinfo=_UTC)
+
+
 def tx(**updates) -> Transaction:
     """Minimal posted CARD_SPEND transaction."""
     values = dict(
@@ -1034,7 +1041,11 @@ def test_no_future_information_leak():
 
 def test_detect_anomalies_empty_range():
     """No transactions in range → empty result."""
-    result = _detect(base_state(), from_at=at("2026-01-01T00:00:00+08:00"), to_at=at("2026-01-02T00:00:00+08:00"))
+    result = _detect(
+        base_state(),
+        from_at=at("2026-01-01T00:00:00+08:00"),
+        to_at=at("2026-01-02T00:00:00+08:00"),
+    )
     assert result["items"] == ()
 
 
@@ -1084,7 +1095,7 @@ def test_detect_anomalies_account_filter():
 
 # ── business timezone (UTC sim_now → Asia/Shanghai business tz) ──
 
-UTC_NOW = datetime(2026, 11, 15, 9, 0, 0, tzinfo=__import__("zoneinfo").ZoneInfo("UTC"))
+UTC_NOW = datetime(2026, 11, 15, 9, 0, 0, tzinfo=_UTC)
 
 
 def _base_state_utc():
@@ -1101,7 +1112,7 @@ def test_spending_summary_utc_sim_now_october_boundary():
             id="t_oct31",
             amount_cents=5000,
             category="餐饮",
-            occurred_at=datetime(2026, 10, 31, 15, 30, 0, tzinfo=__import__("zoneinfo").ZoneInfo("UTC")),
+            occurred_at=utc_at(2026, 10, 31, 15, 30),
             sequence=1,
         ),
     )
@@ -1115,7 +1126,7 @@ def test_spending_summary_utc_sim_now_november_boundary():
         id="t_nov01",
         amount_cents=8000,
         category="购物",
-        occurred_at=datetime(2026, 10, 31, 16, 30, 0, tzinfo=__import__("zoneinfo").ZoneInfo("UTC")),
+        occurred_at=utc_at(2026, 10, 31, 16, 30),
         sequence=1,
     )
     state_nov = with_txns(_base_state_utc(), utc_tx)
@@ -1128,24 +1139,23 @@ def test_spending_summary_utc_sim_now_november_boundary():
 
 def test_anomaly_night_large_uses_business_timezone():
     """18:13Z (Beijing 02:13) → ANOMALY_NIGHT_LARGE; 14:00Z (Beijing 22:00) → not."""
-    utc = __import__("zoneinfo").ZoneInfo("UTC")
     state = with_txns(
         _base_state_utc(),
         _anomaly_tx(
             id="t_night",
             amount_cents=60000,
             merchant_id="mer_a",
-            occurred_at=datetime(2026, 10, 15, 18, 13, 0, tzinfo=utc),
+            occurred_at=utc_at(2026, 10, 15, 18, 13),
         ),
         _anomaly_tx(
             id="t_day",
             amount_cents=60000,
             merchant_id="mer_a",
-            occurred_at=datetime(2026, 10, 15, 14, 0, 0, tzinfo=utc),
+            occurred_at=utc_at(2026, 10, 15, 14, 0),
         ),
     )
-    from_at = datetime(2026, 10, 1, 0, 0, 0, tzinfo=utc)
-    to_at = datetime(2026, 11, 1, 0, 0, 0, tzinfo=utc)
+    from_at = utc_at(2026, 10, 1)
+    to_at = utc_at(2026, 11, 1)
     result = subject.detect_anomalies(state, customer_id="cus_a", from_at=from_at, to_at=to_at)
     assert "ANOMALY_NIGHT_LARGE" in _codes(result, "t_night")
     assert _codes(result, "t_day") == []
