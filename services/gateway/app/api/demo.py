@@ -19,7 +19,6 @@ from ..auth.matrix import CONSOLE_AUD
 from ..auth.tokens import sign_jwt
 from ..errors import GatewayError
 from ..utterance.service import new_id
-
 from . import stub
 
 router = APIRouter()
@@ -96,7 +95,7 @@ class SmsCodeResponse(BaseModel):
 
 
 @router.get("/demo/sms")
-async def demo_sms(approval_id: str = Query(...), request: Request):
+async def demo_sms(request: Request, approval_id: str = Query(...)):
     """D5 — read the currently-active OTP for a red approval (demo/eval only).
 
     The auth matrix requires the D service token plus a ``demo-console`` JWT.
