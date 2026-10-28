@@ -15,7 +15,11 @@ from pydantic import (
 
 from .base import Cents, Contract, FrozenMap, Timestamp
 from .enums import AccountType, CardStatus, Phase
-from .obligations import ObligationSnapshot
+from .obligations import (
+    InstructionTarget,
+    ObligationSnapshot,
+    ScheduledInstruction,
+)
 from .tools import Id
 from .views import (
     WRITE_RESULTS,
@@ -228,6 +232,45 @@ class OperationEvent(Contract):
     operation: Operation
 
 
+class InsertInstruction(Contract):
+    """A new standing instruction was created and must be persisted."""
+
+    type: Literal["InsertInstruction"] = "InsertInstruction"
+    instruction: ScheduledInstruction
+    target: InstructionTarget
+
+
+class SetInstructionStatus(Contract):
+    """An existing instruction's status was changed (e.g. ACTIVE→DELETED)."""
+
+    type: Literal["SetInstructionStatus"] = "SetInstructionStatus"
+    instruction_id: Id
+    old_status: str
+    new_status: str
+
+
+class ScheduleEventJob(Contract):
+    """First-execution job produced alongside instruction creation.
+
+    ``source_id`` identifies the instruction that produced this job;
+    ``period_key`` is a deterministic period label (e.g. ISO-8601 of first
+    due_at) so that ``(source_id, period_key)`` is unique.
+    """
+
+    type: Literal["ScheduleEventJob"] = "ScheduleEventJob"
+    job_id: Id
+    instruction_id: Id
+    customer_id: Id
+    account_id: Id
+    event_id: Id
+    kind: Literal["SCHEDULED_TRANSFER", "MERCHANT_MANDATE"]
+    due_at: Timestamp
+    source_id: Id
+    period_key: str
+    payload_ciphertext: str
+    payload_hash: str
+
+
 # Typed future effects reserve the public algebra without implementing their business paths.
 FUTURE_EFFECTS = {
     "InsertSplit": create_model(
@@ -241,28 +284,6 @@ FUTURE_EFFECTS = {
         __base__=Contract,
         type=(Literal["InsertAssessment"], "InsertAssessment"),
         assessment=(WRITE_RESULTS["submit_risk_assessment"], ...),
-    ),
-    "ScheduleEventJob": create_model(
-        "ScheduleEventJob",
-        __base__=Contract,
-        type=(Literal["ScheduleEventJob"], "ScheduleEventJob"),
-        event_id=(Id, ...),
-        kind=(str, ...),
-        due_at=(Timestamp, ...),
-        payload=(dict[str, JsonValue], ...),
-    ),
-    "InsertInstruction": create_model(
-        "InsertInstruction",
-        __base__=Contract,
-        type=(Literal["InsertInstruction"], "InsertInstruction"),
-        instruction=(ScheduledView, ...),
-    ),
-    "SetInstructionStatus": create_model(
-        "SetInstructionStatus",
-        __base__=Contract,
-        type=(Literal["SetInstructionStatus"], "SetInstructionStatus"),
-        instruction_id=(Id, ...),
-        status=(Literal["ACTIVE", "DISABLED", "DELETED"], ...),
     ),
     "InsertFundOrder": create_model(
         "InsertFundOrder",
@@ -292,6 +313,9 @@ LedgerEffect = Annotated[
             UpsertCard,
             InsertPayee,
             OperationEvent,
+            InsertInstruction,
+            SetInstructionStatus,
+            ScheduleEventJob,
             *FUTURE_EFFECTS.values(),
         ],
     ),

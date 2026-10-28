@@ -585,6 +585,8 @@ event_jobs = Table(
     timestamp("due_at", nullable=False),
     Column("immutable_payload", JSONB, nullable=False),
     Column("payload_hash", String, nullable=False),
+    Column("source_id", String(256), nullable=False),
+    Column("period_key", String, nullable=False),
     Column("status", String, nullable=False),
     timestamp("lease_until_wall"),
     Column("attempt_count", Integer, nullable=False, server_default="0"),
@@ -592,7 +594,7 @@ event_jobs = Table(
     CheckConstraint(EVENT_STATUS_CHECK, name="event_jobs_status_check"),
     CheckConstraint("rank >= 0", name="event_jobs_rank_check"),
     CheckConstraint("attempt_count >= 0", name="event_jobs_attempt_count_check"),
-    UniqueConstraint("payload_hash", name="event_jobs_payload_hash_key"),
+    UniqueConstraint("source_id", "period_key", name="event_jobs_source_period_key"),
 )
 Index(
     "event_jobs_pending_due",

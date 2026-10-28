@@ -4,9 +4,10 @@ No IO, database, clock or authorization. Returns new :class:`BankState` copies
 with updated ``obligations`` snapshots. Every effect is an immutable record;
 persist, migration, scheduler and HTTP routes are not part of this module.
 
-Internal types defined here (``InsertInstruction``, ``SetInstructionStatus``,
-``ScheduleEventJob``) are frozen dataclasses that will later be promoted into
-``safebank_contracts`` when the corresponding persistence layers are built.
+Effect types (``InsertInstruction``, ``SetInstructionStatus``,
+``ScheduleEventJob``) are now defined in ``safebank_contracts.state`` as
+proper ``Contract`` subclasses so they can travel through the LedgerEffect
+discriminated union for persistence.
 
 Reference implementations
     - ``reserve.py``: BUSINESS_TIMEZONE, _business_time, _next_month, _recurrences,
@@ -35,9 +36,7 @@ grant_scope_hash
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Literal
 
 from safebank_contracts.codes import Code
 from safebank_contracts.obligations import (
@@ -47,55 +46,17 @@ from safebank_contracts.obligations import (
     ScheduledInstruction,
 )
 from safebank_contracts.plan import StepResult, Violation
-from safebank_contracts.state import BankState
+from safebank_contracts.state import (
+    BankState,
+    InsertInstruction,
+    ScheduleEventJob,
+    SetInstructionStatus,
+)
 from safebank_contracts.tools import Schedule
 from safebank_contracts.views import WRITE_RESULTS
 
 from .ids import derive, digest
 from .reserve import _business_time, _recurrences
-
-# ---------------------------------------------------------------------------
-# Internal effect types (frozen dataclasses → promote to contracts later)
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class InsertInstruction:
-    """A new standing instruction was created and must be persisted."""
-
-    instruction: ScheduledInstruction
-    target: InstructionTarget
-
-
-@dataclass(frozen=True)
-class SetInstructionStatus:
-    """An existing instruction's status was changed (e.g. ACTIVE→DELETED)."""
-
-    instruction_id: str
-    old_status: str
-    new_status: str
-
-
-@dataclass(frozen=True)
-class ScheduleEventJob:
-    """First-execution job produced alongside instruction creation.
-
-    ``event_id`` is a deterministic handle that the scheduler uses to produce
-    one ``InstructionRun`` on or after ``due_at``.  Changing the due date or
-    payload must produce a different ``event_id`` so stale grant scopes do
-    not accidentally match.
-    """
-
-    job_id: str
-    instruction_id: str
-    customer_id: str
-    account_id: str
-    event_id: str
-    kind: Literal["SCHEDULED_TRANSFER", "MERCHANT_MANDATE"]
-    due_at: datetime
-    payload_ciphertext: str  # opaque placeholder until event-payload schema exists
-    payload_hash: str  # SHA-256 of the event's immutable payload for grant binding
-
 
 # ---------------------------------------------------------------------------
 # Helpers – anchor derivation
@@ -378,6 +339,8 @@ def apply_schedule_transfer(state: BankState, args: Schedule, now: datetime, ctx
         event_id=event_id,
         kind="SCHEDULED_TRANSFER",
         due_at=due_at,
+        source_id=inst.id,
+        period_key=due_at.isoformat(),
         payload_ciphertext=payload_data,
         payload_hash=hashlib.sha256(payload_data.encode()).hexdigest(),
     )

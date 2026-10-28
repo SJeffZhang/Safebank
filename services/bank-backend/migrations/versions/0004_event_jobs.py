@@ -36,6 +36,8 @@ def upgrade() -> None:
         sa.Column("due_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("immutable_payload", sa.dialects.postgresql.JSONB(), nullable=False),
         sa.Column("payload_hash", sa.String(), nullable=False),
+        sa.Column("source_id", sa.String(256), nullable=False),
+        sa.Column("period_key", sa.String(), nullable=False),
         sa.Column("status", sa.String(), nullable=False),
         sa.Column("lease_until_wall", sa.DateTime(timezone=True), nullable=True),
         sa.Column("attempt_count", sa.Integer(), nullable=False, server_default="0"),
@@ -43,7 +45,7 @@ def upgrade() -> None:
         sa.CheckConstraint(EVENT_STATUS_CHECK, name="event_jobs_status_check"),
         sa.CheckConstraint("rank >= 0", name="event_jobs_rank_check"),
         sa.CheckConstraint("attempt_count >= 0", name="event_jobs_attempt_count_check"),
-        sa.UniqueConstraint("payload_hash", name="event_jobs_payload_hash_key"),
+        sa.UniqueConstraint("source_id", "period_key", name="event_jobs_source_period_key"),
     )
     op.create_index(
         "event_jobs_pending_due",
