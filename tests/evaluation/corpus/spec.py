@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 ROOT = Path(__file__).resolve().parents[3]
 CORPUS_DIR = ROOT / "evaluation" / "corpus" / "l1_stability"
-SEED_PATH = ROOT / "evaluation" / "fixtures" / "l1_seed_v1.json"
+SEED_PATH = ROOT / "services" / "bank-backend" / "fixtures" / "l1_seed_v1.json"
 
 SEED_FIXTURE_ID = "l1_seed_v1"
 
