@@ -371,7 +371,7 @@ class TestRevokeMandateExecution:
 
 class TestEventJobUniqueness:
     def test_same_source_period_duplicate_job_rejected(self, obligations_db):
-        """A second event job for the same source_id + period_key is rejected by the unique constraint."""
+        """A second job for the same source_id + period_key violates the unique constraint."""
 
         async def check():
             admin = engine(obligations_db.admin_url, poolclass=NullPool)
