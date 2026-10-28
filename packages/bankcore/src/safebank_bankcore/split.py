@@ -183,7 +183,7 @@ def apply_create_split_request(
         include_self=args.include_self,
         self_share_cents=self_share,
         received_cents=0,
-        outstanding_cents=args.total_cents,
+        outstanding_cents=args.total_cents - self_share,
         created_at=now_biz,
         items=items,
     )
@@ -228,7 +228,7 @@ def build_split_view(request: _SplitRequestData) -> SplitView:
         include_self=request.include_self,
         self_share_cents=request.self_share_cents,
         received_cents=received,
-        outstanding_cents=request.total_cents - received,
+        outstanding_cents=request.total_cents - request.self_share_cents - received,
         created_at=request.created_at,
         items=tuple(
             SplitItem(

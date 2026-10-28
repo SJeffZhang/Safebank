@@ -227,7 +227,7 @@ class TestApplyCreateSplit:
         sv = effects[0].split
         assert sv.include_self is True
         assert sv.self_share_cents == 3334  # remainder to self
-        assert sv.outstanding_cents == 10000
+        assert sv.outstanding_cents == 6666  # self share is not owed by others
         assert len(sv.items) == 2
         assert sum(it.amount_cents for it in sv.items) + sv.self_share_cents == 10000
 
@@ -531,4 +531,4 @@ class TestQueryProjection:
         sv = build_split_view(req)
         assert sv.self_share_cents == 3334
         assert sv.received_cents == 3333
-        assert sv.outstanding_cents == 6667  # total - received
+        assert sv.outstanding_cents == 3333  # total - self_share - received
