@@ -116,6 +116,40 @@ def _exhausted_clarify_fields(
     return fields if fields else None
 
 
+def _exhausted_clarify_fields_from_ve(exc: ValidationError) -> list[str] | None:
+    """Check if ALL ValidationError errors are for _USER_ONLY_PARAMS fields
+    with null-ish input (None / ``"__NULL__"`` / empty string).
+
+    When the model fills ``amount_cents="__NULL__"`` or ``account_no="__NULL__"``
+    the Pydantic coercion/regex fails *before* ``_required_value_problems`` gets
+    to inspect the value, so the exhausted-clarify path in the ReferenceError
+    handler is never reached.  This helper bridges the gap: if every validation
+    error targets a user-only param and the offending input is null-ish, the
+    caller should raise ``ExhaustedClarify`` instead of re-raising the VE.
+    """
+    fields: list[str] = []
+    for error in exc.errors():
+        loc = error.get("loc", ())
+        # loc for a nested discriminated-union step arg looks like
+        # ('steps', 0, 'TransferArgs', 'args', 'amount_cents')
+        field = loc[-1] if loc else ""
+        if not isinstance(field, str) or field not in _USER_ONLY_PARAMS:
+            # If this error is at the container level (e.g. "Tuple too short"
+            # because a child step was removed), skip it — it's not about a
+            # specific field value the user failed to provide.
+            if "args" not in loc:
+                continue
+            return None
+        input_val = error.get("input", None)
+        if input_val is not None and input_val != "__NULL__" and input_val != "":
+            # User provided a real value that was just malformed (e.g. account_no
+            # too short, amount_cents negative).  This is NOT a missing-info case.
+            return None
+        if field not in fields:
+            fields.append(field)
+    return fields if fields else None
+
+
 # Directly copyable identifiers/text whose value must equal the slice/pointer value verbatim.
 # Computed/normalized strings (dates, enum names, decimals) are excluded so they are not
 # false-rejected by a byte-wise equality that the frozen contract does not itself require.
@@ -436,6 +470,11 @@ class PlanAdapter:
                 note = f"计划未通过本地校验：{'；'.join(exc.problems)}；请修正后重新生成。"
             except (LlmToolError, ValidationError, ValueError) as exc:
                 if attempt == self._max_retries:
+                    if isinstance(exc, ValidationError):
+                        fields = _exhausted_clarify_fields_from_ve(exc)
+                        if fields is not None:
+                            labels = [_PARAM_LABELS[f] for f in fields]
+                            raise ExhaustedClarify(fields, labels) from exc
                     raise
                 note = f"上次计划未通过校验（{validation_summary(exc)}），请修正后重新生成。"
         raise AssertionError("unreachable")
