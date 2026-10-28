@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 from safebank_bankcore.ledger import replace_state
 from safebank_contracts.codes import Code
+from safebank_contracts.obligations import ObligationSnapshot
 from safebank_contracts.views import SubscriptionView
 
 from services.gateway.app.errors import GatewayError
@@ -13,6 +14,7 @@ from services.gateway.app.pipeline.intent import IntentStage
 from services.gateway.app.pipeline.provenance import ProvenanceStage
 from services.gateway.app.schemas.scope import ScopeTransfer
 from tests.bankcore.fixtures import NOW
+from tests.bankcore.obligations_fixtures import raw_billing, raw_merchant, raw_mandate
 from tests.contracts.samples import step
 from tests.gateway.w2.test_contract_entity import context
 from tests.gateway.w2.test_provenance import authorized, source
@@ -72,7 +74,36 @@ def test_cancelled_fees_are_exact_deduplicated_and_bound_to_self_schedule(monkey
         status="ACTIVE",
         annual_cost_cents=238800,
     )
-    ctx._lazy_state = replace_state(ctx._lazy_state, subscriptions=(subscription,))
+    ctx._lazy_state = replace_state(
+        ctx._lazy_state,
+        subscriptions=(subscription,),
+        obligations=ObligationSnapshot(
+            covered_customer_ids=("cus_a",),
+            merchants={"mer_a": raw_merchant(id="mer_a", name="合成订阅")},
+            billings={
+                "bil_a": raw_billing(
+                    id="bil_a",
+                    customer_id="cus_a",
+                    account_id="acc_a",
+                    merchant_id="mer_a",
+                    amount_cents=19900,
+                )
+            },
+            standing_instructions={
+                "si_a": raw_mandate(
+                    id="si_a",
+                    customer_id="cus_a",
+                    status="ACTIVE",
+                    from_account_id="acc_a",
+                    merchant_id="mer_a",
+                    billing_id="bil_a",
+                    max_amount_cents=19900,
+                )
+            },
+            runs=(),
+            instruction_targets={},
+        ),
+    )
     ctx.origin = "app_form"
 
     async def records(*_):
