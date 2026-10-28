@@ -4,6 +4,7 @@ import base64
 import json
 from datetime import timedelta
 
+from safebank_bankcore.analytics import detect_anomalies, spending_summary
 from safebank_bankcore.banking import card_view
 from safebank_bankcore.ids import digest
 from safebank_bankcore.reserve import upcoming_window
@@ -16,12 +17,14 @@ SUPPORTED_READS = {
     "get_accounts",
     "list_payees",
     "get_transactions",
+    "get_spending_summary",
     "get_cards",
     "get_profile",
     "list_scheduled",
     "list_subscriptions",
     "upcoming_charges",
     "get_split_status",
+    "detect_anomalies",
 }
 
 
@@ -145,6 +148,13 @@ def read(state, tool, args, customer_id):
                 for p in payees
             ],
             next_cursor=cursor,
+        )
+    elif tool == "get_spending_summary":
+        data = spending_summary(
+            state,
+            customer_id=customer_id,
+            month=args.month,
+            account_id=args.account_id,
         )
     elif tool == "get_cards":
         data = dict(
@@ -345,6 +355,14 @@ def read(state, tool, args, customer_id):
                 )
                 for aid, a in sorted(window.accounts.items())
             ],
+        )
+    elif tool == "detect_anomalies":
+        data = detect_anomalies(
+            state,
+            customer_id=customer_id,
+            from_at=args.from_at,
+            to_at=args.to_at,
+            account_id=args.account_id,
         )
     else:
         raise BankError(Code.TOOL_NOT_ALLOWED, 403)
