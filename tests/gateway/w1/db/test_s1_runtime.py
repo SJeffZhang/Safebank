@@ -71,7 +71,7 @@ def test_logout_revokes_before_unrelated_customer_handlers(gateway_db, monkeypat
             evaluate_resp = await client.post(
                 "/plans/evaluate",
                 headers=headers(assistant, "a-test"),
-                json={"request_id": new_id("req"), "plan_draft": {}},
+                json={},
             )
             assert evaluate_resp.status_code not in (401, 403), (
                 f"auth should pass before logout, got {evaluate_resp.status_code}"
@@ -91,7 +91,7 @@ def test_logout_revokes_before_unrelated_customer_handlers(gateway_db, monkeypat
             evaluate_after = await client.post(
                 "/plans/evaluate",
                 headers=headers(assistant, "a-test"),
-                json={"request_id": new_id("req"), "plan_draft": {}},
+                json={},
             )
             assert evaluate_after.status_code == 401, evaluate_after.text
             assert evaluate_after.json()["error"]["code"] == "UNAUTHENTICATED"
