@@ -16,9 +16,11 @@
   `_rebuild_holdings` / `BUSINESS_TIMEZONE` imports. Import NOT yet exercised
   (direct `python -c` failed: `safebank_bankcore` not on sys.path outside
   pytest; pytest conftest resolves it).
-- NOT yet done (next session): state.py `load_bank_state` (load holdings +
-  fund_orders into BankState, `_rebuild_holdings` before return) and
-  `persist()` handlers for InsertFundOrder / UpdateFundOrder / UpdateHolding;
-  reads.py `get_holdings` + SUPPORTED_READS; test_funds_schema.py 0009
-  updates; test_funds_exec.py; full gates (make lint / make test /
-  make test-obligations / make contracts-check).
+- Committed `efd4399`: state.py `load_bank_state` now loads holdings + fund_orders,
+  calls `_rebuild_holdings` before return; `persist()` handles InsertFundOrder /
+  UpdateFundOrder / UpdateHolding; reads.py adds `get_holdings` (R16) wired to
+  `holdings_view`. Lint + bankcore 427 passed.
+- `make test-obligations`: 161 passed / 14 failed — schema tests still expect 0008
+  head, need updating to 0009 (listed below).
+- NOT yet done: test_funds_schema.py 0009 version updates; test_funds_exec.py;
+  full gates (make lint / make test / make test-obligations / make contracts-check).
