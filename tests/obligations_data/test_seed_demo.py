@@ -433,15 +433,18 @@ def test_seed_demo_installs_merchant_mandates(obligations_db):
             }
             assert {i["account_id"] for i in items} == {"acc_zs_chk"}
 
-            r = await _read(
-                client, "upcoming_charges", {"days": 7, "account_id": "acc_zs_chk"}
-            )
+            r = await _read(client, "upcoming_charges", {"days": 7, "account_id": "acc_zs_chk"})
             assert r.status_code == 200, r.text
             body = r.json()
             assert body["charges_total_cents"] == 4500
             assert {i["billing_id"] for i in body["items"]} == {"blg_video", "blg_music"}
 
-            r = await _read(client, "list_subscriptions", {"status": "ACTIVE", "limit": 50}, customer_id="cus_ls")
+            r = await _read(
+                client,
+                "list_subscriptions",
+                {"status": "ACTIVE", "limit": 50},
+                customer_id="cus_ls",
+            )
             assert r.status_code == 200, r.text
             ls = r.json()["items"]
             assert len(ls) == 2

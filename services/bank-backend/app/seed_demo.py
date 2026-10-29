@@ -191,9 +191,7 @@ async def install_demo(conn, fingerprint_key: str) -> dict[str, Any]:
         if instruction["kind"] != "MERCHANT_MANDATE":
             continue
         result = await conn.execute(
-            pg_insert(m.standing_instructions)
-            .values(**instruction)
-            .on_conflict_do_nothing()
+            pg_insert(m.standing_instructions).values(**instruction).on_conflict_do_nothing()
         )
         backfilled_mandates += result.rowcount or 0
 
