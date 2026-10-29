@@ -10,7 +10,7 @@ sees the same products.
 import asyncio
 import socket
 import threading
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import httpx
@@ -142,7 +142,7 @@ async def _install_products(conn) -> None:
                 risk_level=p.risk_level,
                 risk_label=p.risk_label,
                 base_nav=p.base_nav,
-                base_date=datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
+                base_date=datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
                 confirm_days=p.confirm_days,
                 settle_days=p.settle_days,
                 min_amount_cents=p.min_amount_cents,
@@ -278,7 +278,12 @@ def test_r14_pagination_respects_limit(obligations_db):
             r2 = await _read(
                 client,
                 "list_products",
-                {"limit": 50, "max_risk_level": None, "product_type": None, "cursor": b1["next_cursor"]},
+                {
+                    "limit": 50,
+                    "max_risk_level": None,
+                    "product_type": None,
+                    "cursor": b1["next_cursor"],
+                },
             )
             assert r2.status_code == 200, r2.text
             b2 = r2.json()
@@ -298,9 +303,7 @@ def test_r15_compare_fields_and_values(obligations_db):
         app, port, admin, runtime = await _prepare_app(obligations_db)
         async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
             await _await_app(client, port)
-            r = await _read(
-                client, "compare_products", {"product_ids": ["prod_zmf", "prod_gp"]}
-            )
+            r = await _read(client, "compare_products", {"product_ids": ["prod_zmf", "prod_gp"]})
             assert r.status_code == 200, r.text
             body = r.json()
             assert body["comparison_fields"] == COMPARISON_FIELDS
@@ -332,9 +335,7 @@ def test_r15_requires_2_to_4_unique_ids(obligations_db):
                 {"product_ids": ["prod_zmf", "prod_zq", "prod_gp", "prod_zmf", "prod_zmf"]},
             )
             assert r.status_code == 422, r.text
-            r = await _read(
-                client, "compare_products", {"product_ids": ["prod_zmf", "prod_zmf"]}
-            )
+            r = await _read(client, "compare_products", {"product_ids": ["prod_zmf", "prod_zmf"]})
             assert r.status_code == 422, r.text
         await admin.dispose()
         await runtime.dispose()
@@ -347,9 +348,7 @@ def test_r15_unknown_id_404(obligations_db):
         app, port, admin, runtime = await _prepare_app(obligations_db)
         async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
             await _await_app(client, port)
-            r = await _read(
-                client, "compare_products", {"product_ids": ["prod_zmf", "prod_nope"]}
-            )
+            r = await _read(client, "compare_products", {"product_ids": ["prod_zmf", "prod_nope"]})
             assert r.status_code == 404, r.text
         await admin.dispose()
         await runtime.dispose()

@@ -511,8 +511,7 @@ async def load_bank_state(conn, scope: StateScope, now, *, customer_id: str) -> 
                 risk_disclosure=view["risk_disclosure"],
                 disclosure_version=view["disclosure_version"],
                 nav_history=tuple(
-                    NavPoint(date=pt["date"], nav=Decimal(pt["nav"]))
-                    for pt in view["nav_history"]
+                    NavPoint(date=pt["date"], nav=Decimal(pt["nav"])) for pt in view["nav_history"]
                 ),
             )
         )
