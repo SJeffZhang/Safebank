@@ -65,4 +65,14 @@ def test_frozen_ddl_matches_metadata():
         "status IN ('EXECUTING','FENCING','PAUSED','UNKNOWN','EXECUTED','FAILED','CANCELLED')"
     )
     checks[0].sqltext = text("status IN ('EXECUTING','UNKNOWN','EXECUTED','FAILED','CANCELLED')")
+    # 0004_in_progress: event_decisions gains the IN_PROGRESS claim status (S1).
+    decisions = historical.tables["event_decisions"]
+    dchecks = [c for c in decisions.constraints if isinstance(c, CheckConstraint)]
+    assert len(dchecks) == 1
+    assert str(dchecks[0].sqltext) == (
+        "status IN ('IN_PROGRESS','SUCCESS','BLOCKED','FAILED_INSUFFICIENT','SKIPPED_REAPPROVAL')"
+    )
+    dchecks[0].sqltext = text(
+        "status IN ('SUCCESS','BLOCKED','FAILED_INSUFFICIENT','SKIPPED_REAPPROVAL')"
+    )
     assert frozen == _render(historical)

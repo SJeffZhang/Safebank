@@ -120,4 +120,4 @@ def test_upgrade_0002_to_0003_keeps_rows():
     finally:
         subprocess.run(["docker", "rm", "-f", old.name], check=True, capture_output=True)
 
-    assert GATEWAY_REVISION == "0003_plan_draft"
+    assert GATEWAY_REVISION == "0004_in_progress"

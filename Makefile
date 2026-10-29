@@ -158,6 +158,10 @@ eval-l1:
 test-w4c:
 	GATEWAY_DB_TESTS=1 OBLIGATIONS_DB_TESTS=1 .venv/bin/pytest tests/gateway/w4c -q
 
+.PHONY: test-s1
+test-s1:
+	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/s1 -q
+
 .PHONY: try-agent
 try-agent:
 	docker compose exec frontend python -m scripts.try_agent $(ARGS)

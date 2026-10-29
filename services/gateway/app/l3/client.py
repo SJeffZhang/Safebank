@@ -148,3 +148,24 @@ class L3Client:
         return await self._request(
             "POST", "/internal/outbox/ack", json=body, timeout=self.timeouts["default"]
         )
+
+    async def event(self, event_id: str) -> dict[str, Any]:
+        return await self._request(
+            "GET", f"/internal/events/{event_id}", timeout=self.timeouts["default"]
+        )
+
+    async def event_execute(self, event_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/internal/events/{event_id}/execute",
+            json=body,
+            timeout=self.timeouts["execute"],
+        )
+
+    async def event_block(self, event_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/internal/events/{event_id}/block",
+            json=body,
+            timeout=self.timeouts["default"],
+        )
