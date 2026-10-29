@@ -46,3 +46,18 @@ _(none)_
 
 - Scrub replaces the whole `raw` span (including the leading 尾号 and any whitespace) with `该卡`, so `"已为您解冻尾号 zs_1 的卡"` → `"已为您解冻该卡 的卡"` — slightly awkward doubled `的卡` but acceptable.
 - `_collect_card_facts` only pairs `id`/`card_id` with `last4` when they sit at the same nesting level; an `id` at one level with `last4` nested deeper is not paired. Matches the actual `get_cards` shape (`{"cards":[{"id":…,"last4":…}]}`), so no action required.
+
+## Round 2
+
+Re-review of `git diff 6da6a17..HEAD` (commits f127d9c red tests, 3f34462 fix, 2066e1b docs).
+
+- **P1-1 copula variants: FIXED.** New regex `尾号(?:为|是)?\s*([A-Za-z0-9_]+)`. Verified empirically: `尾号为zs_1`, `尾号是zs_1`, `卡号尾号为zs_1` all extract with `last4=None`; valid `尾号为1234` and `尾号1234` extract `last4="1234"`; no over-match of amounts — `尾号为1234，转账80000元，余额6000元` → only `尾号为1234` matched. `尾号是这个` (copula + CJK) correctly yields no match.
+- **"已为您解冻尾号 zs_1 的卡" → "已为您解冻该卡": FIXED.** New `_TRAILING_DECKA_RE` (`\s*的卡`) absorbed into the replacement; `test_scrub_deka_collapses` asserts exact `== "已为您解冻该卡"`, `test_scrub_without_deka` asserts the no-`的卡` case.
+- **P2-1 facts block has no card IDs: FIXED.** `_card_facts_block` now emits only `sorted(set(facts.values()))` → `- 尾号1234`; `test_no_card_id_in_block` and `test_prompt_has_no_card_id` assert no `crd_` in the block/prompt; `test_sorted_deduplicated` asserts sorted dedup.
+- **P2-2 dict/pydantic read paths tested: FIXED.** `test_pydantic_data` (BaseModel `data` via `model_dump`) and `test_plain_dict_read_record` (plain-dict read record) both assert the mapping.
+- **New problems introduced: none blocking.** Two minor observations, not findings: (1) `尾号是visa` would extract `visa` → `last4=None` → scrubbed to `该卡` (consistent with the design intent that any non-4-digit token after 尾号 is malformed; contrived phrase). (2) `_card_facts` still builds an `id→last4` dict whose keys are now unused in production (the block reads only values) — harmless, could be simplified later. The card ID still appears in the execution-step summary JSON (pre-existing, out of this fix's scope; the fix's own rule + scrub mitigate misuse of it as a tail).
+- **Tests:** `.venv/bin/pytest tests/agent -q` → **520 passed, 38 skipped** (3.82s).
+
+### Round 2 verdict
+
+**APPROVE**
