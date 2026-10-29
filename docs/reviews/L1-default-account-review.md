@@ -33,3 +33,17 @@ Non-blocking observation: `_replan_user_items` passes L2 `replan_hints` labels t
 - [x] respond text leaks no ids/tokens — **PASS**. `_REPLAN_USER_CODE_LABELS` values are fixed Chinese sentences; `respond_template("REPLAN_USER")` = "需要您确认以下信息："; new reply = template + "\n" + de-duplicated bullet list. `test_replan_user_lists_findings_without_ids` asserts no `acc_/pye_/pln_/evl_/src_/utt_/crd_/txn_` markers. (Hint-label passthrough noted above.)
 - [x] existing tests not loosened — **PASS**. `test_replan_user_calls_llm` was *replaced* (not weakened) by `test_replan_user_deterministic_reply` asserting `len(llm.calls) == 0` for the intended deterministic change, plus a stricter no-id test added. No assertions weakened.
 - [x] `.venv/bin/pytest tests/agent -q` — **526 passed, 38 skipped** (5.57s).
+
+## Round 2
+
+- P1 named-source detection (current turn only, source-anchored) — **FIXED**. `_current_turn_text` returns only the last `UtteranceKind.TYPED` utterance (verified `StrEnum`, `TYPED="typed"`); `_NAMED_SOURCE_PATTERNS` require a source anchor (`从<类型>(账户|卡)?` or `用<类型>…转/付/汇`). "转到他的活期" (target), "转给储蓄客户王五" (payee name), "不要用活期" (negation), and earlier-turn "我活期余额多少" no longer count as named — each has a new RED test. Positive case "从储蓄转500给王五" still keeps SAVINGS.
+- P2a CHECKING de-dup by id — **FIXED**. `_checking_accounts` now keys by account id (`setdefault`), so the same single CHECKING account across multiple `get_accounts` reads counts once; two distinct CHECKING ids still raise `ExhaustedClarify`. Covered by `test_duplicate_checking_reads_do_not_clarify`.
+- Any new problem:
+  - P2: `_NAMED_SOURCE_KEYWORDS` is now dead (only its definition references it; the regexes hard-code the words). Harmless, but should be deleted or reused by the patterns.
+  - P2 (edge): `_negated_before` only inspects 2 chars before the match, so "不需要用活期转…" is not caught as negated (the "不" is 3 chars back). Common immediate negations (不/别/勿/莫 right before) are covered.
+  - Observation (pre-existing, not new): `_user_named_source_account` is one boolean for the whole plan, so naming a source on one step of a multi-step plan also skips defaulting for the other steps.
+- Tests: `.venv/bin/pytest tests/agent -q` → **532 passed, 38 skipped** (5.32s).
+
+## Round 2 verdict
+
+APPROVE
