@@ -2,12 +2,12 @@
 
 import base64
 import json
-from datetime import date, timedelta
+from datetime import datetime, timedelta
 
 from safebank_bankcore.analytics import detect_anomalies, detect_subscriptions, spending_summary
 from safebank_bankcore.banking import card_view
 from safebank_bankcore.ids import digest
-from safebank_bankcore.reserve import _business_time, upcoming_window
+from safebank_bankcore.reserve import BUSINESS_TIMEZONE, _business_time, upcoming_window
 from safebank_contracts.codes import Code
 from safebank_contracts.risk_questionnaire import QUESTIONNAIRE
 from safebank_contracts.views import READ_RESULTS
@@ -50,6 +50,18 @@ COMPARISON_FIELDS = [
 
 def mask(value):
     return "****" + value[-4:]
+
+
+def _risk_still_valid(valid_until: str, sim_now: datetime) -> bool:
+    """Whether a stored risk_valid_until (date or aware datetime string) covers sim_now.
+
+    Validity is by business date: the assessment is valid through the whole day it
+    expires on, so compare the Asia/Shanghai dates rather than instants.
+    """
+    dt = datetime.fromisoformat(valid_until)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=BUSINESS_TIMEZONE)
+    return _business_time(dt).date() >= _business_time(sim_now).date()
 
 
 def require_account(state, account_id, customer_id):
@@ -237,7 +249,7 @@ def read(state, tool, args, customer_id):
                 is_valid=(
                     customer.risk_level is not None
                     and customer.risk_valid_until is not None
-                    and date.fromisoformat(customer.risk_valid_until) >= state.sim_now.date()
+                    and _risk_still_valid(customer.risk_valid_until, state.sim_now)
                 ),
                 valid_until=customer.risk_valid_until,
             ),
@@ -401,7 +413,7 @@ def read(state, tool, args, customer_id):
             is_valid=(
                 customer.risk_level is not None
                 and customer.risk_valid_until is not None
-                and date.fromisoformat(customer.risk_valid_until) >= state.sim_now.date()
+                and _risk_still_valid(customer.risk_valid_until, state.sim_now)
             ),
         )
     elif tool == "detect_anomalies":
