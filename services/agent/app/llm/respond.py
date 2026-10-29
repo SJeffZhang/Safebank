@@ -35,6 +35,17 @@ _REPLAN_USER_SYSTEM = (
     "只能引用下面提供的提示标签，**禁止捏造**金额、账户或人名。"
 )
 
+# Deterministic plain-Chinese explanations for REPLAN-user finding codes.
+# Never print internal ids/tokens; unknown codes fall back to the generic line.
+_REPLAN_USER_CODE_LABELS: dict[str, str] = {
+    "INTENT_SCOPE_EXCEEDED": "计划中的付款账户、金额或收款人与您的原话不一致",
+    "ENTITY_UNSEEN": "计划引用了尚未读取到的账户、卡或收款人",
+    "UNKNOWN_SENSITIVE_ARG": "计划中出现了来源不明的敏感信息",
+    "TAINTED_SENSITIVE_ARG": "计划中的敏感信息来源不可信",
+    "INTENT_UNCLEAR": "未能明确您的操作意图",
+    "PAYEE_NOT_FOUND": "未找到您指定的收款人",
+}
+
 
 _ANALYSIS_SYSTEM = (
     "你是一个银行AI助手，负责向用户提供账户信息和分析结果。"
@@ -135,20 +146,10 @@ class RespondAdapter:
         return text or executed_failed_fallback()
 
     def _respond_replan_user(self, state: AgentState, decision: dict[str, object]) -> str:
-        """LLM explanation with replan_hints labels."""
-        utterance_text = _utterance_text(state)
-        hints = _replan_hint_labels(decision)
-        hints_block = "\n".join(f"- {h}" for h in hints) if hints else "（无具体提示）"
-
-        user_prompt = _build_prompt(
-            _REPLAN_USER_SYSTEM,
-            utterance=utterance_text,
-            replan_hints=hints_block,
-        )
-        text = self._call_llm(_REPLAN_USER_SYSTEM, user_prompt)
-        if not text:
-            return respond_template("REPLAN_USER")
-        return text
+        """Deterministic finding list (no LLM, no internal ids)."""
+        items = _replan_user_items(decision)
+        body = "\n".join(f"- {item}" for item in items)
+        return respond_template("REPLAN_USER") + "\n" + body
 
     def _respond_analysis(self, state: AgentState) -> str:
         """LLM analysis response: utterance + reads data summary."""
@@ -339,6 +340,36 @@ def _replan_hint_labels(decision: dict[str, object]) -> list[str]:
         if label:
             labels.append(label)
     return labels
+
+
+def _finding_codes(decision: dict[str, object]) -> list[str]:
+    """Extract finding codes from a decision (dict or model findings)."""
+    findings = decision.get("findings", ()) or ()
+    codes: list[str] = []
+    for f in findings:
+        code = f.get("code") if isinstance(f, dict) else getattr(f, "code", None)
+        if code:
+            codes.append(str(code))
+    return codes
+
+
+def _replan_user_items(decision: dict[str, object]) -> list[str]:
+    """Deterministic, de-duplicated explanation items for a REPLAN-user decision."""
+    items: list[str] = []
+    for code in _finding_codes(decision):
+        label = _REPLAN_USER_CODE_LABELS.get(code)
+        if label:
+            items.append(label)
+    items.extend(_replan_hint_labels(decision))
+    if not items:
+        items.append("请补充必要信息后重新发起")
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for item in items:
+        if item not in seen:
+            seen.add(item)
+            ordered.append(item)
+    return ordered
 
 
 def _reads_summary(state: AgentState) -> str:

@@ -126,21 +126,39 @@ class TestLLMPaths:
         assert len(result) > 0
         assert len(llm.calls) == 1
 
-    def test_replan_user_calls_llm(self):
-        """REPLAN + user resolver → LLM with replan_hints labels."""
-        llm = FakeLLM("请选择收款账户。")
+    def test_replan_user_deterministic_reply(self):
+        """REPLAN + user resolver → deterministic finding list (no LLM)."""
+        llm = FakeLLM("should not be called")
         adapter = RespondAdapter(llm)
         state = _make_state(
             decision={
                 "decision": "REPLAN",
                 "plan_id": "p1",
-                "findings": [{"code": "AMBIGUOUS_PAYEE", "resolver": "user"}],
+                "findings": [{"code": "INTENT_SCOPE_EXCEEDED", "resolver": "user"}],
                 "replan_hints": [{"label": "请选择收款人"}],
             },
         )
         result = adapter(state, None)
         assert len(result) > 0
-        assert len(llm.calls) == 1
+        assert len(llm.calls) == 0
+
+    def test_replan_user_lists_findings_without_ids(self):
+        """INTENT_SCOPE_EXCEEDED → non-empty explanation, no internal ids."""
+        llm = FakeLLM("")
+        adapter = RespondAdapter(llm)
+        state = _make_state(
+            decision={
+                "decision": "REPLAN",
+                "plan_id": "p1",
+                "findings": [{"code": "INTENT_SCOPE_EXCEEDED", "resolver": "user"}],
+            },
+        )
+        result = adapter(state, None)
+        assert "需要您确认" in result
+        tail = result.split("需要您确认以下信息：", 1)[1]
+        assert tail.strip()  # non-empty explanation after the colon
+        for marker in ("acc_", "pye_", "pln_", "evl_", "src_", "utt_", "crd_", "txn_"):
+            assert marker not in result
 
     def test_analysis_calls_llm(self):
         """No decision/execution → analysis LLM with reads summary."""
