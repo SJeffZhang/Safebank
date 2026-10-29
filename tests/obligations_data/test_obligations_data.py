@@ -83,7 +83,7 @@ def test_migration_and_runtime_roles(obligations_db):
         db = engine(obligations_db.runtime_url, poolclass=NullPool)
         async with db.connect() as c:
             assert (
-                await c.scalar(text("SELECT version_num FROM alembic_version")) == "0007_products"
+                await c.scalar(text("SELECT version_num FROM alembic_version")) == "0008_funds"
             )
             owner = await c.scalar(
                 text("SELECT tableowner FROM pg_tables WHERE tablename='standing_instructions'")

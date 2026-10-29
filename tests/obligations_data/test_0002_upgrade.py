@@ -246,7 +246,7 @@ def test_0002_data_survives_0003_upgrade_and_execution_replays(obligations_0002_
             after = await _capture(conn)
             assert (
                 await conn.scalar(text("SELECT version_num FROM alembic_version"))
-                == "0007_products"
+                == "0008_funds"
             )
         assert after == baseline
 

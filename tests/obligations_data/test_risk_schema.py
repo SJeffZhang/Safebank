@@ -58,7 +58,7 @@ def test_alembic_version_is_head(obligations_db):
         db = engine(obligations_db.runtime_url, poolclass=NullPool)
         async with db.connect() as c:
             assert (
-                await c.scalar(text("SELECT version_num FROM alembic_version")) == "0007_products"
+                await c.scalar(text("SELECT version_num FROM alembic_version")) == "0008_funds"
             )
             owner = await c.scalar(
                 text("SELECT tableowner FROM pg_tables WHERE tablename='risk_assessments'")
@@ -277,7 +277,7 @@ def test_0003_data_survives_0006_upgrade(obligations_0003_db):
 
     # 4. Verify existing obligation data unchanged.
     m2, b2, s2, r2, ver_after = capture_0003_tables()
-    assert ver_after == "0007_products"
+    assert ver_after == "0008_funds"
     assert m2 == m_count
     assert b2 == b_count
     assert s2 == s_count
