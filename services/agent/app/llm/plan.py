@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -100,28 +101,71 @@ _DEFAULT_SOURCE_TOOLS: frozenset[str] = frozenset({"transfer", "schedule_transfe
 # Words that mean the user explicitly named a source account type.
 _NAMED_SOURCE_KEYWORDS: tuple[str, ...] = ("储蓄", "活期", "支票", "定期")
 
+# Source-anchored phrasings: the keyword must be introduced by a source
+# preposition — "从<类型>(账户|卡)?" directly, or "用<类型>(账户|卡)? … 转/付/汇"
+# for the "用" form.  This is a closed list: other explicit phrasings (e.g.
+# "从主账户转") are NOT detected, per review P2b (documented, accepted).
+_NAMED_SOURCE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"从(?:我的)?(?:储蓄|活期|支票|定期)(?:账户|卡)?"),
+    re.compile(r"用(?:我的)?(?:储蓄|活期)(?:账户|卡)?[^，。；！？]*(?:转|付|汇)"),
+)
+
+
+def _negated_before(text: str, start: int) -> bool:
+    """True when the match at *start* is immediately preceded by a negation."""
+    prefix = text[max(0, start - 2) : start]
+    return any(marker in prefix for marker in ("不", "别", "勿", "莫"))
+
+
+def _current_turn_text(state: AgentState) -> str:
+    """Text of the current turn's typed utterance (last typed ``UtteranceRef``).
+
+    Earlier turns' typed utterances, hints, actions and context are skipped so a
+    keyword in a previous turn does not mark this turn's source as "named".
+    """
+    for utterance in reversed(state.get("utterances", [])):
+        if getattr(utterance, "kind", None) == UtteranceKind.TYPED:
+            return getattr(utterance, "text", "") or ""
+    return ""
+
 
 def _user_named_source_account(state: AgentState) -> bool:
-    """True if the user's utterance explicitly names a source account type."""
-    for utterance in state.get("utterances", []):
-        text = getattr(utterance, "text", "") or ""
-        if any(keyword in text for keyword in _NAMED_SOURCE_KEYWORDS):
-            return True
+    """True if the CURRENT turn's utterance names a source account type.
+
+    Only source-anchored phrasings count ("从储蓄…", "用活期…转…"); the keyword
+    as a target ("转到他的活期"), inside a payee name, negated ("不要用活期"),
+    or in an earlier turn does not.
+    """
+    text = _current_turn_text(state)
+    for pattern in _NAMED_SOURCE_PATTERNS:
+        for match in pattern.finditer(text):
+            if not _negated_before(text, match.start()):
+                return True
     return False
 
 
 def _checking_accounts(state: AgentState) -> list[tuple[str, str, str]]:
-    """All CHECKING accounts across get_accounts reads as (id, source_ref, pointer)."""
-    found: list[tuple[str, str, str]] = []
+    """Distinct CHECKING accounts across get_accounts reads as (id, source_ref, pointer).
+
+    De-duplicated by account id: the same single CHECKING account appearing in
+    several reads counts once, so it does not trigger a spurious clarification.
+    """
+    found: dict[str, tuple[str, str, str]] = {}
     for read in state.get("reads", []):
         if getattr(read, "tool", "") != "get_accounts":
             continue
         data = getattr(read, "data", None) or {}
         accounts = data.get("accounts", []) if isinstance(data, dict) else []
         for index, account in enumerate(accounts):
-            if isinstance(account, dict) and account.get("type") == "CHECKING":
-                found.append((account.get("id") or "", read.source_ref, f"/accounts/{index}/id"))
-    return found
+            if not isinstance(account, dict) or account.get("type") != "CHECKING":
+                continue
+            account_id = account.get("id") or ""
+            if not account_id:
+                continue
+            found.setdefault(
+                account_id, (account_id, read.source_ref, f"/accounts/{index}/id")
+            )
+    return list(found.values())
 
 
 def _default_source_account_overrides(body: PlanBody, state: AgentState) -> PlanBody:
