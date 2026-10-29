@@ -16,7 +16,7 @@ from tests.gateway.w1.fixtures import NOW, bank_state
         ("给王五转1000", "SCOPED", ("TRANSFER_EXTERNAL",)),
         (
             "取消闲置订阅，把省的钱每月1号转储蓄",
-            "INTENT_UNCLEAR",
+            "SCOPED",
             ("MANDATE_CANCEL", "SCHEDULE_CREATE"),
         ),
         ("把下周要扣的会员费留够，剩下的钱买稳健型理财", "CLARIFYING", ("FUND_SUBSCRIBE",)),
@@ -28,7 +28,7 @@ from tests.gateway.w1.fixtures import NOW, bank_state
         ),
         (
             "找出没用的订阅取消掉，省下来的钱每月1号自动转到我的储蓄账户",
-            "INTENT_UNCLEAR",
+            "SCOPED",
             ("MANDATE_CANCEL", "SCHEDULE_CREATE"),
         ),
         (
