@@ -30,7 +30,7 @@ it('uses the switch centre and a radius that reaches all viewport corners, then 
  await revealTheme(commit);
  expect(commit).toHaveBeenCalledTimes(1);expect(origin).toBe('320px');
  const radius=Math.hypot(Math.max(320,window.innerWidth-320),Math.max(40,window.innerHeight-40))+24;
- expect(animate).toHaveBeenCalledWith({'--sb-theme-radius':['0px',`${radius}px`]},expect.objectContaining({duration:800,pseudoElement:'::view-transition-new(root)'}));
+ expect(animate).toHaveBeenCalledWith({'--sb-theme-radius':['0px',`${radius}px`]},expect.objectContaining({duration:1400,pseudoElement:'::view-transition-new(root)'}));
  expect(document.documentElement).not.toHaveClass('theme-reveal-active');
  expect(document.documentElement.style.getPropertyValue('--sb-theme-origin-x')).toBe('');
 });

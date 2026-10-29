@@ -32,6 +32,9 @@ export function Cards(p: PageProps) {
     [p.sid, p.revision],
   );
   const [cardId, setCardId] = useState("");
+  const [deckSettled, setDeckSettled] = useState(false);
+  const materials = ["graphite", "silver", "champagne"] as const;
+  const materialOf = (id: string) => materials[Math.max(0, q.value?.items.findIndex(item=>item.id === id) ?? 0) % materials.length];
   const [applicationOpen, setApplicationOpen] = useState(false);
   const [applicationPurpose, setApplicationPurpose] = useState("日常消费");
   const [pendingApplication, setPendingApplication] = useState<{ids:string[];purpose:string}>();
@@ -161,19 +164,22 @@ export function Cards(p: PageProps) {
         <>
           <div className="cards-layout">
             <div className="card-display">
-              <div className="card-deck" role="group" aria-label="我的银行卡叠卡"
+              <div className="card-deck" role="group" aria-label="我的银行卡叠卡" data-settled={deckSettled}
                 style={{ "--deck-count": (q.value?.items.length ?? 1) - 1 } as CSSProperties}>
                 {(q.value?.items ?? []).filter((item) => item.id !== card.id).map((item, index) => (
                   <button key={item.id} type="button"
                     className="card-deck-peek"
+                    data-card-material={materialOf(item.id)}
                     style={{ "--deck-index": index, zIndex: index + 1 } as CSSProperties}
-                    onClick={() => { setCardId(item.id); setLimit(null); setLost(false); }}
+                    onClick={() => { setDeckSettled(true); setCardId(item.id); setLimit(null); setLost(false); }}
                     aria-label={`选择${purposeOf(item.id) !== "未设置用途" ? purposeOf(item.id) : p.accounts.find((a) => a.id === item.account_id)?.display_name ?? "银行卡"}，尾号${item.last4}`}>
                     <span className="deck-bank"><span className="brand-glyph">S</span> {purposeOf(item.id)}</span>
                     <span className="deck-tail">{item.last4}<Icon name="down" size={12} /></span>
                   </button>
                 ))}
               <div key={card.id}
+                data-card-material={materialOf(card.id)}
+                onAnimationEnd={event=>{if(event.target === event.currentTarget) setDeckSettled(true);}}
                 className={`bank-card large card-deck-front ${card.status !== "ACTIVE" ? "inactive" : ""}`}
               >
                 <div className="bank-card-brand">

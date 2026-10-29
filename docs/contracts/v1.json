@@ -3993,6 +3993,183 @@
           "title": "DirectoryEntry",
           "type": "object"
         },
+        "FundOrderRecord": {
+          "additionalProperties": false,
+          "description": "Internal counterpart of a fund order (PRD §8.3 fund_orders).\n\n``FundOrderView`` is the public, read-only projection (no internal account\nor idempotency keys); this record carries the persistence fields the domain\nneeds to drive confirm/settle/expiry system events without re-deriving them.",
+          "properties": {
+            "account_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Account Id",
+              "type": "string"
+            },
+            "amount_cents": {
+              "ge": 0,
+              "le": 9223372036854775807,
+              "title": "Amount Cents",
+              "type": "integer"
+            },
+            "confirm_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Confirm At"
+            },
+            "customer_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Customer Id",
+              "type": "string"
+            },
+            "expires_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Expires At"
+            },
+            "failure_code": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Failure Code"
+            },
+            "id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Id",
+              "type": "string"
+            },
+            "nav": {
+              "anyOf": [
+                {
+                  "pattern": "^\\d{1,14}(\\.\\d{1,4})?$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Nav"
+            },
+            "pending_transfer_id": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pending Transfer Id"
+            },
+            "plan_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Plan Id",
+              "type": "string"
+            },
+            "product_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Product Id",
+              "type": "string"
+            },
+            "reserved_cost_cents": {
+              "ge": 0,
+              "le": 9223372036854775807,
+              "title": "Reserved Cost Cents",
+              "type": "integer"
+            },
+            "settle_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Settle At"
+            },
+            "status": {
+              "enum": [
+                "PENDING_CONFIRM",
+                "PENDING_SETTLEMENT",
+                "SETTLED",
+                "FAILED",
+                "EXPIRED"
+              ],
+              "title": "Status",
+              "type": "string"
+            },
+            "step_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Step Id",
+              "type": "string"
+            },
+            "trade_date": {
+              "format": "date",
+              "title": "Trade Date",
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "SUB",
+                "RED"
+              ],
+              "title": "Type",
+              "type": "string"
+            },
+            "units": {
+              "pattern": "^\\d{1,14}(\\.\\d{1,4})?$",
+              "title": "Units",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "customer_id",
+            "account_id",
+            "product_id",
+            "type",
+            "status",
+            "amount_cents",
+            "units",
+            "nav",
+            "reserved_cost_cents",
+            "pending_transfer_id",
+            "plan_id",
+            "step_id",
+            "trade_date",
+            "confirm_at",
+            "settle_at",
+            "expires_at",
+            "failure_code"
+          ],
+          "title": "FundOrderRecord",
+          "type": "object"
+        },
         "FundOrderView": {
           "additionalProperties": false,
           "properties": {
@@ -6036,6 +6213,14 @@
           },
           "title": "Directory",
           "type": "object"
+        },
+        "fund_orders": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/FundOrderRecord"
+          },
+          "title": "Fund Orders",
+          "type": "array"
         },
         "holdings": {
           "default": [],
@@ -8513,8 +8698,9 @@
           "title": "ChannelFlags",
           "type": "object"
         },
-        "FundOrderView": {
+        "FundOrderRecord": {
           "additionalProperties": false,
+          "description": "Internal counterpart of a fund order (PRD §8.3 fund_orders).\n\n``FundOrderView`` is the public, read-only projection (no internal account\nor idempotency keys); this record carries the persistence fields the domain\nneeds to drive confirm/settle/expiry system events without re-deriving them.",
           "properties": {
             "account_id": {
               "maxLength": 256,
@@ -8539,6 +8725,24 @@
                 }
               ],
               "title": "Confirm At"
+            },
+            "customer_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Customer Id",
+              "type": "string"
+            },
+            "expires_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Expires At"
             },
             "failure_code": {
               "anyOf": [
@@ -8569,11 +8773,36 @@
               ],
               "title": "Nav"
             },
+            "pending_transfer_id": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pending Transfer Id"
+            },
+            "plan_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Plan Id",
+              "type": "string"
+            },
             "product_id": {
               "maxLength": 256,
               "minLength": 1,
               "title": "Product Id",
               "type": "string"
+            },
+            "reserved_cost_cents": {
+              "ge": 0,
+              "le": 9223372036854775807,
+              "title": "Reserved Cost Cents",
+              "type": "integer"
             },
             "settle_at": {
               "anyOf": [
@@ -8598,6 +8827,12 @@
               "title": "Status",
               "type": "string"
             },
+            "step_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Step Id",
+              "type": "string"
+            },
             "trade_date": {
               "format": "date",
               "title": "Trade Date",
@@ -8619,6 +8854,7 @@
           },
           "required": [
             "id",
+            "customer_id",
             "account_id",
             "product_id",
             "type",
@@ -8626,12 +8862,17 @@
             "amount_cents",
             "units",
             "nav",
+            "reserved_cost_cents",
+            "pending_transfer_id",
+            "plan_id",
+            "step_id",
             "trade_date",
             "confirm_at",
             "settle_at",
+            "expires_at",
             "failure_code"
           ],
-          "title": "FundOrderView",
+          "title": "FundOrderRecord",
           "type": "object"
         },
         "HoldingView": {
@@ -8747,7 +8988,7 @@
           "additionalProperties": false,
           "properties": {
             "order": {
-              "$ref": "#/$defs/FundOrderView"
+              "$ref": "#/$defs/FundOrderRecord"
             },
             "type": {
               "const": "InsertFundOrder",
@@ -9929,7 +10170,7 @@
           "additionalProperties": false,
           "properties": {
             "order": {
-              "$ref": "#/$defs/FundOrderView"
+              "$ref": "#/$defs/FundOrderRecord"
             },
             "type": {
               "const": "UpdateFundOrder",

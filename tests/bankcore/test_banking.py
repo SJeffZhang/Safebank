@@ -177,4 +177,4 @@ def test_noop_and_unimplemented_tools_never_fake_business():
     state = banking_state()
     result = simulate(state, [step("unfreeze_card")])
     assert result.results[0].result["no_op"] and not result.effects
-    assert simulate(state, [step("subscribe_product")]).error == "TOOL_NOT_ALLOWED"
+    assert simulate(state, [step("subscribe_product")]).error == "NOT_FOUND"

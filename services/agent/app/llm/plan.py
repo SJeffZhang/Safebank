@@ -63,6 +63,19 @@ _SYSTEM = (
     "账单分析类问题（月度/商户账单、分类占比与环比、异常交易、消费报告）是只读任务，"
     "不要生成任何写计划；需要的数据用 gather 阶段读取，计划节点只负责整理或直接说明"
     "没有可执行的写操作。"
+    "理财操作：subscribe_product 的 product_id 必须从已读产品数据（list_products 或 "
+    "get_product 的 items/id，以 prd_ 开头）用 read 来源引用，不能自己编造或从原话取值；"
+    "account_id 选自己名下唯一活期账户（type=CHECKING，acc_ 开头）并用 read 来源引用，"
+    "amount_cents 来自用户原话或 derived 的 available_less_7d_charges，"
+    "不要自行判断适当性（适当性由网关判定）。"
+    "redeem_product 的 units（赎回份额）必须从 get_holdings 的 holdings 里用 read 来源引用，"
+    "不能自己编造份额；product_id 同样从已读产品数据引用。"
+    "产品相关问题（产品列表/详情/比较）是只读任务，用 list_products / compare_products / "
+    "get_product 读取，不要生成任何写计划。"
+    "X-3「把下周要扣的会员费留够，剩下的钱买稳健型理财」：先读 upcoming_charges、"
+    "list_products 与 get_risk_profile；subscribe_product 的 amount_cents 用 derived 且 "
+    "template 只能是 available_less_7d_charges；当存在多个稳健/平衡类产品时不要自行挑一个"
+    "产品，把 product_id 留空交由澄清，让用户选择具体产品。"
 )
 
 
@@ -213,6 +226,102 @@ def _default_source_account_overrides(body: PlanBody, state: AgentState) -> Plan
         else:
             new_steps.append(step)
     return body.model_copy(update={"steps": tuple(new_steps)})
+
+
+# Read tools that can provide a real product id for wealth plans.
+_WEALTH_PRODUCT_READS: frozenset[str] = frozenset({"list_products", "get_product"})
+
+# risk_label values the gateway treats as 稳健/平衡-class for X-3 disambiguation.
+_WEALTH_STEADY_LABELS: frozenset[str] = frozenset({"稳健", "平衡"})
+
+
+def _wealth_product_clarify(body: PlanBody, state: AgentState) -> PlanBody:
+    """X-3: when the user asks for 稳健型理财 but several 稳健/平衡 products
+    exist, L1 must not silently pick one — surface a clarification instead.
+
+    Only fires for subscribe_product plans whose current turn explicitly says
+    ``稳健型`` and whose list_products reads contain more than one 稳健/平衡
+    product.  The exact product choice is the user's; suitability is decided
+    by the gateway, never by L1.
+    """
+    if not any(step.tool == "subscribe_product" for step in body.steps):
+        return body
+    if "稳健型" not in _current_turn_text(state):
+        return body
+    steady_ids: set[str] = set()
+    for read in state.get("reads", []):
+        if getattr(read, "tool", "") != "list_products":
+            continue
+        data = getattr(read, "data", None) or {}
+        items = data.get("items", []) if isinstance(data, dict) else []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if item.get("risk_label") in _WEALTH_STEADY_LABELS:
+                steady_ids.add(item.get("id") or "")
+    if len(steady_ids) > 1:
+        raise ExhaustedClarify(["product_id"], ["理财产品"])
+    return body
+
+
+def _wealth_source_problems(draft: PlanDraft, state: AgentState) -> list[str]:
+    """Locally verifiable source rules for subscribe_product / redeem_product.
+
+    - subscribe_product.product_id must be read-sourced from list_products /
+      get_product; amount must come from the user's words or the
+      available_less_7d_charges derived template (never a read/step/hint/action
+      source or the wrong derived template).
+    - redeem_product.units must be read-sourced from get_holdings (never
+      invented from the utterance or another step).
+
+    These are bounded local checks, not authorization — L2 re-derives sources.
+    """
+
+    read_by_ref = {read.source_ref: read for read in state.get("reads", [])}
+    problems: list[str] = []
+    for index, step in enumerate(draft.steps):
+        sources = {source.param: source for source in step.arg_sources}
+        if step.tool == "subscribe_product":
+            product = sources.get("product_id")
+            if product is None or product.source.kind != "read":
+                problems.append(
+                    f"steps[{index}].product_id: 必须从已读产品数据（list_products/get_product）"
+                    "用 read 来源引用，不能自填或从原话取值"
+                )
+            else:
+                read = read_by_ref.get(product.source.ref)
+                if read is None or read.tool not in _WEALTH_PRODUCT_READS:
+                    problems.append(
+                        f"steps[{index}].product_id: read 来源必须指向 list_products 或 get_product"
+                    )
+            amount = sources.get("amount_cents")
+            if amount is not None:
+                kind = amount.source.kind
+                if kind == "derived":
+                    if amount.source.template != "available_less_7d_charges":
+                        problems.append(
+                            f"steps[{index}].amount_cents: 申购金额的 derived template 只能是 "
+                            "available_less_7d_charges"
+                        )
+                elif kind != "utterance":
+                    problems.append(
+                        f"steps[{index}].amount_cents: 申购金额只能来自用户原话或 "
+                        "available_less_7d_charges 派生模板"
+                    )
+        elif step.tool == "redeem_product":
+            units = sources.get("units")
+            if units is None or units.source.kind != "read":
+                problems.append(
+                    f"steps[{index}].units: 赎回份额必须从 get_holdings 的 holdings 里"
+                    "用 read 来源引用，不能自己编造或从原话取值"
+                )
+            else:
+                read = read_by_ref.get(units.source.ref)
+                if read is None or read.tool != "get_holdings":
+                    problems.append(
+                        f"steps[{index}].units: 赎回份额的 read 来源必须指向 get_holdings"
+                    )
+    return problems
 
 
 def _exhausted_clarify_fields(
@@ -596,14 +705,21 @@ class PlanAdapter:
                 args = single_tool_call(message, _PLAN_TOOL)
                 body = PlanBody.model_validate(from_strict_plan(args))
                 body = _default_source_account_overrides(body, state)
+                body = _wealth_product_clarify(body, state)
                 draft = self._to_draft(body, state)
                 ref_problems = _reference_problems(draft, state)
                 val_problems = _required_value_problems(draft, state)
                 sem_problems = _semantic_problems(draft, state)
                 ch_problems = _channel_source_problems(draft, state)
                 der_problems = _derived_schedule_problems(draft, state)
+                wealth_problems = _wealth_source_problems(draft, state)
                 all_problems = (
-                    ref_problems + val_problems + sem_problems + ch_problems + der_problems
+                    ref_problems
+                    + val_problems
+                    + sem_problems
+                    + ch_problems
+                    + der_problems
+                    + wealth_problems
                 )
                 if all_problems:
                     raise ReferenceError(all_problems)
@@ -617,6 +733,7 @@ class PlanAdapter:
                         and not sem_problems
                         and not ch_problems
                         and not der_problems
+                        and not wealth_problems
                     ):
                         fields = _exhausted_clarify_fields(val_problems)
                         if fields is not None:
