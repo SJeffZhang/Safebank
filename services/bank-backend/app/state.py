@@ -2,12 +2,12 @@
 
 import hashlib
 import hmac
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from safebank_bankcore.ledger import account_deltas
 from safebank_bankcore.funds import _rebuild_holdings
+from safebank_bankcore.ledger import account_deltas
 from safebank_bankcore.products import ProductDef, get_product
 from safebank_bankcore.reserve import BUSINESS_TIMEZONE
 from safebank_bankcore.scope import scope_for
@@ -522,7 +522,54 @@ async def load_bank_state(conn, scope: StateScope, now, *, customer_id: str) -> 
                 ),
             )
         )
-    return BankState(
+    # Load fund holdings and orders for the requesting customer.
+    _holdings = tuple(
+        HoldingView(
+            account_id=r["account_id"],
+            product_id=r["product_id"],
+            units=Decimal(r["units"]),
+            reserved_units=Decimal(r["reserved_units"]),
+            available_units=Decimal("0"),
+            cost_cents=r["cost_cents"],
+            reserved_cost_cents=r["reserved_cost_cents"],
+            available_cost_cents=0,
+            nav=Decimal("0"),
+            market_value_cents=0,
+            unrealized_change_cents=0,
+            reserved_receivable_cents=0,
+        )
+        for r in (
+            await conn.execute(select(m.holdings).where(m.holdings.c.customer_id == customer_id))
+        ).mappings()
+    )
+    _fund_orders = tuple(
+        FundOrderRecord(
+            id=r["id"],
+            customer_id=r["customer_id"],
+            account_id=r["account_id"],
+            product_id=r["product_id"],
+            type=r["type"],
+            status=r["status"],
+            amount_cents=r["amount_cents"],
+            units=Decimal(r["units"]),
+            nav=Decimal(r["nav"]) if r["nav"] is not None else None,
+            reserved_cost_cents=r["reserved_cost_cents"],
+            pending_transfer_id=r["pending_transfer_id"],
+            plan_id=r["plan_id"],
+            step_id=r["step_id"],
+            trade_date=r["trade_date"].date(),
+            confirm_at=r["confirm_at"],
+            settle_at=r["settle_at"],
+            expires_at=r["expires_at"],
+            failure_code=r["failure_code"],
+        )
+        for r in (
+            await conn.execute(
+                select(m.fund_orders).where(m.fund_orders.c.customer_id == customer_id)
+            )
+        ).mappings()
+    )
+    raw = BankState(
         sim_now=now,
         clock_version=clock["version"],
         versions=versions,
@@ -546,7 +593,10 @@ async def load_bank_state(conn, scope: StateScope, now, *, customer_id: str) -> 
         products=tuple(_products),
         dataset_revision=clock["dataset_revision"],
         assessments=tuple(assessments),
+        holdings=_holdings,
+        fund_orders=_fund_orders,
     )
+    return _rebuild_holdings(raw, now)
 
 
 async def persist(conn, effects) -> None:
@@ -694,5 +744,79 @@ async def persist(conn, effects) -> None:
                         payment_event_id=None,
                     )
                 )
+        elif isinstance(effect, InsertFundOrder):
+            order = effect.order
+            await conn.execute(
+                m.fund_orders.insert().values(
+                    id=order.id,
+                    customer_id=order.customer_id,
+                    account_id=order.account_id,
+                    product_id=order.product_id,
+                    type=order.type,
+                    status=order.status,
+                    amount_cents=order.amount_cents,
+                    units=order.units,
+                    nav=order.nav,
+                    reserved_cost_cents=order.reserved_cost_cents,
+                    pending_transfer_id=order.pending_transfer_id,
+                    plan_id=order.plan_id,
+                    step_id=order.step_id,
+                    trade_date=datetime.combine(
+                        order.trade_date, time(0, 0), tzinfo=BUSINESS_TIMEZONE
+                    ),
+                    confirm_at=order.confirm_at,
+                    settle_at=order.settle_at,
+                    expires_at=order.expires_at,
+                    failure_code=order.failure_code,
+                )
+            )
+        elif isinstance(effect, UpdateFundOrder):
+            order = effect.order
+            await conn.execute(
+                update(m.fund_orders)
+                .where(m.fund_orders.c.id == order.id)
+                .values(
+                    status=order.status,
+                    units=order.units,
+                    nav=order.nav,
+                    reserved_cost_cents=order.reserved_cost_cents,
+                    pending_transfer_id=order.pending_transfer_id,
+                    confirm_at=order.confirm_at,
+                    settle_at=order.settle_at,
+                    expires_at=order.expires_at,
+                    failure_code=order.failure_code,
+                )
+            )
+        elif isinstance(effect, UpdateHolding):
+            h = effect.holding
+            customer_id_row = await conn.scalar(
+                select(m.accounts.c.customer_id).where(m.accounts.c.id == h.account_id)
+            )
+            if customer_id_row is None:
+                raise ValueError(f"account {h.account_id} not found for holding update")
+            data = dict(
+                customer_id=customer_id_row,
+                account_id=h.account_id,
+                product_id=h.product_id,
+                units=h.units,
+                reserved_units=h.reserved_units,
+                cost_cents=h.cost_cents,
+                reserved_cost_cents=h.reserved_cost_cents,
+            )
+            statement = insert(m.holdings).values(**data)
+            await conn.execute(
+                statement.on_conflict_do_update(
+                    index_elements=["customer_id", "account_id", "product_id"],
+                    set_={
+                        k: statement.excluded[k]
+                        for k in (
+                            "units",
+                            "reserved_units",
+                            "cost_cents",
+                            "reserved_cost_cents",
+                        )
+                    },
+                )
+            )
         else:
             raise ValueError("Unsupported effect; P1 never silently ignores future business")
