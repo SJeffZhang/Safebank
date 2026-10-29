@@ -92,9 +92,28 @@ def clean_database(obligations_db):
 
 async def _seed_products(conn):
     from app import models as m
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
 
     for p in _PRODUCTS:
-        await conn.execute(m.products.insert().values(**p))
+        await conn.execute(
+            pg_insert(m.products).values(**p).on_conflict_do_nothing()
+        )
+        settlement_id = f"acc_fund_{p['id']}"
+        await conn.execute(
+            pg_insert(m.accounts)
+            .values(
+                id=settlement_id,
+                customer_id=None,
+                type="INTERNAL",
+                display_name=f"Fund Settlement ({p['id']})",
+                account_no=f"internal-{p['id']}",
+                flags=0,
+                # Contract Account defaults (same as the P1 seed's internal accounts).
+                single_limit_cents=500_000,
+                daily_limit_cents=2_000_000,
+            )
+            .on_conflict_do_nothing()
+        )
 
 
 async def _seed_risk_assessment(conn, customer_id: str, level: int):
@@ -263,6 +282,9 @@ def test_non_mmf_subscribe_creates_pending_order_and_fund_confirm_job(obligation
             body = await _prepare_execute(
                 client, "pln_fund_sub_1", "hash_fund_sub_1", steps, expected_versions=0
             )
+            if body["status"] != "EXECUTED":
+                import json
+                print("DEBUG BODY:", json.dumps(body, indent=2, default=str))
             assert body["status"] == "EXECUTED", body
             snapshot = await _snapshot(client, steps)
         assert snapshot.status_code == 200, snapshot.text
