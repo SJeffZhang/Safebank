@@ -402,3 +402,116 @@ def apply_merchant_charge(
     after = _refresh(after, billing=updated_billing)
     after = _refresh(after, run=run)
     return after, fx, run
+
+
+def block_instruction(
+    state: BankState,
+    *,
+    instruction_id: str,
+    due_at: datetime,
+    event_id: str | None = None,
+    period_key: str | None = None,
+    status: str,
+    code: str | None,
+):
+    """Record a terminal (non-success) run for a due scheduled transfer.
+
+    Used by the L3 scheduler's ``/internal/events/{id}/block`` endpoint. The
+    period is consumed exactly once and the next ``next_run_at`` is advanced
+    regardless of the recorded status. Replaying the same ``due_at`` is a no-op.
+    """
+    snap = state.obligations
+    if snap is None:
+        raise ValueError("obligations snapshot not loaded")
+    inst = snap.standing_instructions.get(instruction_id)
+    if inst is None or not isinstance(inst, ScheduledInstruction):
+        raise ValueError(f"scheduled instruction not found: {instruction_id}")
+
+    due = _business_time(due_at)
+    period = period_key or due.isoformat()
+    if _run_exists(snap, instruction_id=inst.id, due_at=due):
+        return state, (), None
+
+    if inst.status == "ACTIVE":
+        return _finish_scheduled(
+            state,
+            inst=inst,
+            due=due,
+            period=period,
+            event_id=event_id,
+            status=status,
+            code=code,
+            transfer_id=None,
+        )
+
+    next_due = _next_scheduled_due(inst, due)
+    updated = inst.model_copy(update={"next_run_at": next_due})
+    run = InstructionRun(
+        id=derive(inst.id, period, "run"),
+        customer_id=inst.customer_id,
+        account_id=inst.from_account_id,
+        kind="SCHEDULED_TRANSFER",
+        instruction_id=inst.id,
+        billing_id=None,
+        due_at=due,
+        event_id=event_id or digest(["SCHEDULED_TRANSFER", inst.id, due.isoformat()]),
+        status=status,
+        code=code,
+        amount_cents=inst.amount_cents,
+        transfer_id=None,
+    )
+    return _refresh(_refresh(state, inst=updated), run=run), (), run
+
+
+def block_billing(
+    state: BankState,
+    *,
+    billing_id: str,
+    due_at: datetime,
+    event_id: str | None = None,
+    period_key: str | None = None,
+    status: str,
+    code: str | None,
+):
+    """Record a terminal (non-success) run for a due merchant billing.
+
+    The billing's ``next_due_at`` is advanced exactly once and the run is
+    recorded without moving money. Replaying the same ``due_at`` is a no-op.
+    """
+    snap = state.obligations
+    if snap is None:
+        raise ValueError("obligations snapshot not loaded")
+    billing = snap.billings.get(billing_id)
+    if billing is None:
+        raise ValueError(f"billing not found: {billing_id}")
+
+    due = _business_time(due_at)
+    period = period_key or due.isoformat()
+    if _run_exists(snap, billing_id=billing.id, due_at=due):
+        return state, (), None
+
+    mandate = next(
+        (
+            m
+            for m in snap.standing_instructions.values()
+            if isinstance(m, MerchantMandate) and m.billing_id == billing.id
+        ),
+        None,
+    )
+    run = InstructionRun(
+        id=derive(billing.id, period, "run"),
+        customer_id=billing.customer_id,
+        account_id=billing.account_id,
+        kind="MERCHANT_MANDATE",
+        instruction_id=mandate.id if mandate is not None else None,
+        billing_id=billing.id,
+        due_at=due,
+        event_id=event_id or digest(["MERCHANT_CHARGE", billing.id, due.isoformat()]),
+        status=status,
+        code=code,
+        amount_cents=billing.amount_cents,
+        transfer_id=None,
+    )
+    next_due = _next_billing_due(billing, due)
+    updated_billing = billing.model_copy(update={"next_due_at": next_due})
+    return _refresh(_refresh(state, billing=updated_billing), run=run), (), run
