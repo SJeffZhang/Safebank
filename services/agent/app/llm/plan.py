@@ -120,9 +120,7 @@ def _checking_accounts(state: AgentState) -> list[tuple[str, str, str]]:
         accounts = data.get("accounts", []) if isinstance(data, dict) else []
         for index, account in enumerate(accounts):
             if isinstance(account, dict) and account.get("type") == "CHECKING":
-                found.append(
-                    (account.get("id") or "", read.source_ref, f"/accounts/{index}/id")
-                )
+                found.append((account.get("id") or "", read.source_ref, f"/accounts/{index}/id"))
     return found
 
 
@@ -159,9 +157,7 @@ def _default_source_account_overrides(body: PlanBody, state: AgentState) -> Plan
                     source=ReadSource(kind="read", ref=source_ref, pointer=pointer),
                 )
             )
-            new_steps.append(
-                step.model_copy(update={"args": args, "arg_sources": tuple(sources)})
-            )
+            new_steps.append(step.model_copy(update={"args": args, "arg_sources": tuple(sources)}))
         else:
             new_steps.append(step)
     return body.model_copy(update={"steps": tuple(new_steps)})
