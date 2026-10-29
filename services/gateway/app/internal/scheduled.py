@@ -45,9 +45,7 @@ _STAGES = (
     decision.stage,
 )
 
-_TERMINAL_STATUSES = frozenset(
-    {"SUCCESS", "BLOCKED", "FAILED_INSUFFICIENT", "SKIPPED_REAPPROVAL"}
-)
+_TERMINAL_STATUSES = frozenset({"SUCCESS", "BLOCKED", "FAILED_INSUFFICIENT", "SKIPPED_REAPPROVAL"})
 
 
 class AuthorizeRequest(BaseModel):
@@ -118,10 +116,16 @@ async def _re_evaluate(request: Request, event: dict[str, Any]) -> EvalContext:
 
 async def _load_grant(conn, instruction_id: str) -> dict[str, Any] | None:
     row = (
-        await conn.execute(
-            select(t.scheduled_grants).where(t.scheduled_grants.c.instruction_id == instruction_id)
+        (
+            await conn.execute(
+                select(t.scheduled_grants).where(
+                    t.scheduled_grants.c.instruction_id == instruction_id
+                )
+            )
         )
-    ).mappings().first()
+        .mappings()
+        .first()
+    )
     return dict(row) if row is not None else None
 
 
@@ -192,9 +196,7 @@ async def _block(
         )
     except L3Error:
         return _retrying(event["event_id"])
-    await _persist_decision(
-        request, event["customer_id"], event["event_id"], status, code
-    )
+    await _persist_decision(request, event["customer_id"], event["event_id"], status, code)
     return {"event_id": event["event_id"], "status": status, "code": code}
 
 
@@ -316,9 +318,7 @@ async def scheduled_authorize(request: Request, body: AuthorizeRequest) -> dict[
             return await _block(
                 request, event, "FAILED_INSUFFICIENT", Code.INSUFFICIENT_FUNDS.value, ctx=ctx
             )
-        return await _block(
-            request, event, "BLOCKED", Code.SCHEDULED_BYPASS.value, ctx=ctx
-        )
+        return await _block(request, event, "BLOCKED", Code.SCHEDULED_BYPASS.value, ctx=ctx)
 
     # Otherwise the grant still holds: authorize execution on L3.
     evidence = ScheduledEvidence(
