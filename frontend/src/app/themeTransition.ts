@@ -22,7 +22,7 @@ export async function revealTheme(commit: () => void) {
     await transition.ready;
     const animation = root.animate(
       { '--sb-theme-radius': ['0px', `${radius}px`] },
-      { duration: 800, easing: 'cubic-bezier(.22,.61,.36,1)', fill: 'both', pseudoElement: '::view-transition-new(root)' },
+      { duration: 1400, easing: 'cubic-bezier(.22,.61,.36,1)', fill: 'both', pseudoElement: '::view-transition-new(root)' },
     );
     await Promise.all([animation.finished, finished]);
   } catch {

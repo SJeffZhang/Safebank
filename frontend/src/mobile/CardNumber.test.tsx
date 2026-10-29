@@ -94,7 +94,14 @@ it('selecting an exposed stacked card switches controls and sends actions to tha
  expect(await screen.findByRole('button',{name:'选择银行卡，尾号6612'})).toBeVisible();
  expect(screen.getByRole('button',{name:'选择银行卡，尾号3906'})).toBeVisible();
  expect(screen.queryByRole('combobox',{name:'选择银行卡'})).toBeNull();
+ const front=()=>document.querySelector('.card-deck-front')!;
+ const originalMaterial=front().getAttribute('data-card-material');
+ const silver=screen.getByRole('button',{name:'选择银行卡，尾号6612'}).getAttribute('data-card-material');
+ const gold=screen.getByRole('button',{name:'选择银行卡，尾号3906'}).getAttribute('data-card-material');
+ expect(new Set([originalMaterial,silver,gold]).size).toBe(3);
  await userEvent.click(screen.getByRole('button',{name:'选择银行卡，尾号6612'}));
+ expect(front()).toHaveAttribute('data-card-material',silver);
+ expect(screen.getByRole('button',{name:'选择银行卡，尾号0818'})).toHaveAttribute('data-card-material',originalMaterial);
  expect(screen.getByText('卡片 6612')).toBeInTheDocument();
  expect(screen.getByText('2,000.00')).toBeInTheDocument();
  await userEvent.click(screen.getByRole('button',{name:'解冻卡片'}));

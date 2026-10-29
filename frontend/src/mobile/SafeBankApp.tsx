@@ -463,6 +463,13 @@ function BankApp() {
                   <i />
                   {isPreview ? "合成数据预览" : "已连接银行沙箱"}
                 </span>
+                <a
+                  className="icon-button"
+                  href="#security?tab=notifications"
+                  aria-label="查看通知"
+                >
+                  <Icon name="bell" size={19} />
+                </a>
                 <button
                   className="icon-button"
                   data-theme-toggle
@@ -473,13 +480,6 @@ function BankApp() {
                 >
                   <Icon name={theme === "light" ? "eye" : "spark"} size={19} />
                 </button>
-                <a
-                  className="icon-button"
-                  href="#security?tab=notifications"
-                  aria-label="查看通知"
-                >
-                  <Icon name="bell" size={19} />
-                </a>
                 <span className="topbar-avatar">
                   {props.profile.display_name.slice(0, 1)}
                 </span>
@@ -499,6 +499,7 @@ function BankApp() {
             <main className={`workspace ${page === "assistant" ? "assistant-workspace" : ""}`} id="main-content" tabIndex={-1}>
               <div
                 className="page-content"
+                data-page={page}
                 key={page === "assistant" ? `${page}-${sid}` : page}
               >
                 {page === "overview" ? (

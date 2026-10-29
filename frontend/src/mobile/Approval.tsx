@@ -205,9 +205,9 @@ export function Approval({
                 {view.preflight.balances.map((b) => (
                   <div key={b.account_id} className="balance-diff">
                     <span>可用余额</span>
-                    <Money value={b.available_before_cents} />
+                    <Money value={b.available_before_cents} animate={false} />
                     <Icon name="arrow" size={18} />
-                    <Money value={b.available_after_cents} />
+                    <Money value={b.available_after_cents} animate={false} />
                   </div>
                 ))}
                 <div className="reserve-note">

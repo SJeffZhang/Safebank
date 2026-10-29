@@ -1,6 +1,7 @@
 import { createPortal } from "react-dom";
 import { useEffect, useRef, useState, useId, type ReactNode } from "react";
 import { formatCents } from "../services/transfer/money";
+import { useAmountMotion } from "./useAmountMotion";
 export { formatCents as money };
 export function Icon({
   name,
@@ -246,15 +247,18 @@ export function Money({
   value,
   className = "",
   hide = false,
+  animate = true,
 }: {
   value: number;
   className?: string;
   hide?: boolean;
+  animate?: boolean;
 }) {
+  const number = useAmountMotion(value, animate, hide);
   return (
-    <span className={`money ${className}`}>
-      <small className="money-currency">¥</small>
-      <span className="money-value">
+    <span className={`money ${className}`} role="img" aria-label={hide ? "金额已隐藏" : `金额 ¥ ${formatCents(value)}`}>
+      <small className="money-currency" aria-hidden="true">¥</small>
+      <span className="money-value" aria-hidden="true" ref={number}>
         {hide ? "••••••" : formatCents(value)}
       </span>
     </span>
@@ -350,6 +354,7 @@ export function LineChart({
   values: number[];
   labels?: string[];
 }) {
+  const gradientId = `balance-fill-${useId().replace(/:/g, "")}`;
   if (!values.length)
     return <Empty title="暂无余额曲线" detail="有账户历史后即可查看。" />;
   const low = Math.min(...values) * 0.95,
@@ -368,7 +373,7 @@ export function LineChart({
         aria-label={`账户余额趋势，期末 ${formatCents(values[values.length - 1])} 元`}
       >
         <defs>
-          <linearGradient id="chart-fill" x1="0" x2="0" y1="0" y2="1">
+          <linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1">
             <stop offset="0%" stopColor="var(--sb-copper)" stopOpacity=".15" />
             <stop offset="100%" stopColor="var(--sb-copper)" stopOpacity="0" />
           </linearGradient>
@@ -384,8 +389,11 @@ export function LineChart({
             strokeDasharray="4 6"
           />
         ))}
-        <polygon points={`0,160 ${points} 700,160`} fill="url(#chart-fill)" />
+        <g className="chart-reveal" key={points}>
+        <polygon className="chart-area-reveal" points={`0,160 ${points} 700,160`} fill={`url(#${gradientId})`} />
         <polyline
+          className="chart-line-draw"
+          pathLength="1"
           points={points}
           fill="none"
           stroke="var(--sb-copper)"
@@ -393,6 +401,7 @@ export function LineChart({
           vectorEffect="non-scaling-stroke"
           strokeLinejoin="round"
         />
+        </g>
       </svg>
       <div className="chart-labels">
         {labels.map((l) => (
