@@ -105,3 +105,89 @@ No P0. All 13 mandatory checks pass. The handler correctly implements PRD §7.11
 - **`mode=EvalMode.EXECUTE_REPLAY`** on the EvalContext (line 107) means the pipeline runs in replay mode — it won't create new plans or approvals.
 - **`_block` passes `expected_payload_hash`** (line 194) to L3, allowing L3 to verify the event payload hasn't been tampered with between the gateway's fetch and the block call.
 - **Token enforcement tested at unit level** (`test_routing.py:test_scheduled_authorize_rejects_wrong_token`) in addition to integration level (`test_wrong_token_returns_401`).
+
+---
+
+## Round 2 (2026-10-30)
+
+**Scope**: commit 189b61c (advisory lock fix for P1-1 + P1-2 test). Code read from source; tests not run (Docker-dependent).
+
+### Key question: is the advisory lock held across HTTP calls to L3?
+
+**Yes — CONFIRMED.** The `pg_try_advisory_lock` on `lock_conn` (line 266) is held across **every** L3 HTTP call in the handler:
+
+| Line | Operation | HTTP? |
+|------|-----------|-------|
+| 280 | `l3.event(body.event_id)` | ✅ HTTP |
+| 292 | `_backfill_grant(db, l3, …)` → `l3.execution(…)` | ✅ HTTP |
+| 297–303 | `_block(…)` → `l3.event_block(…)` (line 187) | ✅ HTTP |
+| 305–313 | `_block(…)` → `l3.event_block(…)` | ✅ HTTP |
+| 317 | `_re_evaluate(…)` → `l3.snapshot(…)` | ✅ HTTP |
+| 329–361 | `_block(…)` or `l3.event_execute(…)` | ✅ HTTP |
+| 365 | `_persist_decision(…)` | DB only ✅ |
+
+The lock is only released in `finally` (lines 371–377). `lock_conn` is obtained from the pool at line 252 (`await db.connect()`) and not returned until the handler exits.
+
+This is the **exact violation of the project rule** "no HTTP inside DB transactions or while holding row/advisory locks on a pooled connection."
+
+### P1-1 reopened: pool connection held across HTTP → exhaustion risk
+
+`lock_conn` is a pooled asyncpg connection. While the advisory lock is held, the handler makes up to 4 sequential HTTP calls to L3 (event, execution/backfill, snapshot, event_execute/block). Each call could take seconds (network latency, L3 queue, DB contention). With a default pool size of ~18 connections and the scheduler firing multiple events, even a handful of slow L3 responses could exhaust the pool.
+
+**Failure scenario**: 10 concurrent scheduler callbacks for different event_ids each acquire advisory locks on separate connections and begin calling L3. L3 experiences a slow DB migration or read spike; each HTTP call takes 3–5 seconds. After ~18 concurrent callbacks, the connection pool is exhausted. Other gateway operations that need a DB connection time out.
+
+### Recommended fix: stale-claim pattern (IN_PROGRESS row)
+
+Replace the long-held advisory lock with a two-phase stale-claim approach:
+
+1. **Phase A — claim (short, with lock)**:
+   - Acquire `pg_try_advisory_lock` on a connection
+   - Check no existing `event_decisions` row for this `event_id`
+   - If a terminal row exists → unlock, return stored result
+   - If an IN_PROGRESS row exists and is fresh (`decided_at_wall` within timeout) → unlock, return `RETRYING`/`EXECUTION_IN_PROGRESS`
+   - If an IN_PROGRESS row exists and is stale → proceed (reclaim)
+   - INSERT/UPDATE a row with `status = 'IN_PROGRESS'` and `decided_at_wall`
+   - Release the advisory lock and close the connection
+
+2. **Phase B — evaluate and execute (no lock)**:
+   - Fetch L3 event, load/backfill grant, re-evaluate, call `event_execute`/`event_block`
+   - All HTTP calls happen here with **no advisory lock held and no pooled connection tied up**
+
+3. **Phase C — commit result (short, with lock)**:
+   - Re-acquire `pg_try_advisory_lock` on a fresh connection
+   - UPDATE the `event_decisions` row from `IN_PROGRESS` to terminal status (SUCCESS/BLOCKED/SKIPPED_REAPPROVAL), with audit in the same transaction
+   - Release lock and close connection
+
+A stale-IN_PROGRESS recovery path is essential: if a handler crashes in Phase B, the IN_PROGRESS row is orphaned. The next callback must detect the stale row (`decided_at_wall` older than e.g. 60s), check L3 for the actual execution result via `l3.event(event_id)`, and update it to terminal status. The `event_decisions` table needs a CHECK or index for the `IN_PROGRESS` status (currently not in any CHECK constraint — check the DDL).
+
+### P1-2 verification: retry returns L3's stored terminal result ✅
+
+The test `test_persist_failure_retry_records_original_result` correctly demonstrates:
+1. First call succeeds normally (SUCCESS with `instruction_run_id`)
+2. Event_decisions row is manually deleted (simulating a persist failure after L3 commit)
+3. Retry calls `l3.event_execute` again
+4. L3 returns the **same `instruction_run_id`** from its idempotent store
+5. Event_decisions row is re-persisted with `status = 'SUCCESS'`
+
+This is correct and sufficient. The retry path does not double-execute; L3's idempotency handles the replay properly.
+
+### P1-1 concurrent test adequacy
+
+`test_concurrent_callbacks_exactly_one_execute` uses `asyncio.gather` with a 0.3s `event_execute` delay to create a race. This correctly verifies:
+- Exactly one callback reaches L3 `event_execute`
+- The other gets `RETRYING`/`EXECUTION_IN_PROGRESS`
+- Total L3 execute calls = 1
+
+However, this test runs within a single asyncio event loop with a `NullPool` — it does not exercise real connection pool contention. The test proves the serialization logic works in principle; the concern is the production pool behavior (see P1-1 above).
+
+### Verdict: **REQUEST_CHANGES**
+
+**Blocking**:
+
+- **P1-1 (reopened)**: Advisory lock on a pooled connection is held across HTTP calls to L3 (`scheduled.py` lines 252–377). The lock acquisition at line 266 is inside a `try` block that extends through all L3 I/O (`l3.event`, `l3.execution` via `_backfill_grant`, `l3.snapshot` via `_re_evaluate`, `l3.event_execute`/`l3.event_block`), with release only at `finally` (lines 371–377). Must be restructured to the two-phase stale-claim pattern (IN_PROGRESS row in a short locked transaction → HTTP calls with no lock → terminal update in a second short transaction) so no pool connection holds a lock during L3 I/O.
+
+**Not blocking**:
+
+- P1-2 fix is correct. Test `test_persist_failure_retry_records_original_result` proves L3 idempotency handles the retry correctly. No additional changes needed.
+- Concurrent callback test (`test_concurrent_callbacks_exactly_one_execute`) is sound within a single-loop async context and should be retained after the lock restructuring.
+- All other Round 1 checks remain valid — the business logic (re-evaluation, risk comparison, block/execute mapping) is unchanged from the approved Round 1 and the lock restructuring should preserve it exactly.
