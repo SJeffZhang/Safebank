@@ -53,6 +53,16 @@ _SYSTEM = (
     "「关掉」两个字（[0,2)），「开通境外支付」中 overseas=true 的 span 只对应「开通」；"
     "方向必须一致：true 用开类动词（开启/打开/开通），false 用关类动词（关闭/关掉）。"
     "update_card_controls 的渠道参数值为 KEEP 时不要声明来源。"
+    "cancel_subscription 的 instruction_id 必须从已读数据（list_subscriptions 或 "
+    "detect_subscriptions 的 items 里的 instruction_id，以 si_ 开头）用 read 来源引用，"
+    "不能自己编造或从原话直接取值。"
+    "订阅组合（找出没用的订阅取消掉并定时把省下的钱转走）里，schedule_transfer 的 "
+    "amount_cents 必须用 derived 来源且 template 只能是 cancelled_monthly_fees，"
+    "inputs 只能引用订阅读取（read）或取消步骤（step），不得引用原话字面金额；"
+    "付款/收款账户仍用 read 来源，first_run_at 按用户说的日期（如每月1号）。"
+    "账单分析类问题（月度/商户账单、分类占比与环比、异常交易、消费报告）是只读任务，"
+    "不要生成任何写计划；需要的数据用 gather 阶段读取，计划节点只负责整理或直接说明"
+    "没有可执行的写操作。"
 )
 
 
@@ -478,6 +488,31 @@ def _channel_source_problems(draft: PlanDraft, state: AgentState) -> list[str]:
     return problems
 
 
+def _derived_schedule_problems(draft: PlanDraft, state: AgentState) -> list[str]:
+    """Reject derived-template schedule amounts that smuggle a literal utterance amount.
+
+    ``cancelled_monthly_fees`` means the amount comes from the cancelled subscriptions'
+    monthly fees, not from a figure the user typed.  A single param can only carry one
+    top-level source, so a literal amount would have to be smuggled inside
+    ``DerivedSource.inputs`` as an utterance leaf — reject it locally.
+    """
+
+    problems: list[str] = []
+    for index, step in enumerate(draft.steps):
+        if step.tool != "schedule_transfer":
+            continue
+        for source in step.arg_sources:
+            if source.param != "amount_cents" or source.source.kind != "derived":
+                continue
+            for leaf in source.source.inputs:
+                if leaf.kind == "utterance":
+                    problems.append(
+                        f"steps[{index}].amount_cents: cancelled_monthly_fees 派生金额不能携带"
+                        "原话字面金额来源，inputs 只能引用订阅读取（read）或取消步骤（step）"
+                    )
+    return problems
+
+
 def _reference_problems(draft: PlanDraft, state: AgentState) -> list[str]:
     """Local, bounded, generic reference-integrity checks (C1b boundary, not authorization).
 
@@ -566,7 +601,10 @@ class PlanAdapter:
                 val_problems = _required_value_problems(draft, state)
                 sem_problems = _semantic_problems(draft, state)
                 ch_problems = _channel_source_problems(draft, state)
-                all_problems = ref_problems + val_problems + sem_problems + ch_problems
+                der_problems = _derived_schedule_problems(draft, state)
+                all_problems = (
+                    ref_problems + val_problems + sem_problems + ch_problems + der_problems
+                )
                 if all_problems:
                     raise ReferenceError(all_problems)
                 return draft
@@ -574,7 +612,12 @@ class PlanAdapter:
                 if attempt == self._max_retries:
                     # If ALL remaining problems are user-only missing params,
                     # produce a clarification instead of propagating the error.
-                    if not ref_problems and not sem_problems and not ch_problems:
+                    if (
+                        not ref_problems
+                        and not sem_problems
+                        and not ch_problems
+                        and not der_problems
+                    ):
                         fields = _exhausted_clarify_fields(val_problems)
                         if fields is not None:
                             labels = [_PARAM_LABELS[f] for f in fields]
