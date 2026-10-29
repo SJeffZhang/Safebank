@@ -55,19 +55,37 @@ X-4 的解析路径本就正确，无需改动（其测试作回归护栏）。X
 
 红测先行：修复前 X-2 为 `INTENT_UNCLEAR`（`1 failed, 10 passed`）。
 
+## 评审修复（independent review APPROVE + P2）
+
+评审报告 `docs/reviews/L2-parser-coverage-c-review.md`：APPROVE，无 P0/P1，两条 P2。
+
+- **P2-1（纵深防御，已修）**：派生模板定时转账的目标在解析期必须只解析到
+  **本客户唯一一个 SAVINGS 账户**（镜像 `provenance._is_own_savings`）。收款人
+  目标（如「…每月1号转到王五」）或歧义目标一律 `FORM_REQUIRED`/`INTENT_UNCLEAR`，
+  绝不 SCOPED。红测先行：`test_x2_derived_schedule_payee_target_rejected`。
+  下游 `_derived` 本就 fail-closed，此修只是把非自转目标在解析期就拒掉。
+- **P2-2（评测路径证明，已加）**：`tests/gateway/w2/test_derived_cancelled.py`
+  新增 `test_cancelled_fees_reject_wrong_amount`：schedule 步金额与取消订阅费用
+  之和不等（10000 ≠ 19900）时，`_derived` 返回 `unknown` → `UNKNOWN_SENSITIVE_ARG`
+  REPLAN。（金额 0 的占位只存在于 scope.transfers；step args 的 `amount_cents`
+  被契约强制 `> 0`，故错值用非零值验证。）
+
 ## 门禁（tail -1）
 
 | 命令 | 结果 |
 |---|---|
 | `make lint` | 428 files already formatted |
-| `make test` | 3353 passed, 901 skipped |
-| `make test-w1` | 1793 passed |
-| `make test-w2` | 256 passed |
+| `make test` | 3355 passed, 901 skipped |
+| `make test-w1` | 1794 passed |
+| `make test-w2` | 257 passed |
 | `make test-w3a` | 45 passed |
 
 ## 提交
 
 - `31f1ee9` fix(parser): derived-template monthly schedule no longer future/INTENT_UNCLEAR
 - `92dd183` style(parser): ruff format
+- `46806d9` docs: add parser coverage c review
+- `6280923` fix(parser): reject non-self target for derived-template schedule (P2-1)
+- `133e7b9` test(w2): derived cancelled-monthly-fees wrong amount is REPLAN (P2-2)
 
 未推送（worker 禁 push）；未运行 `make up` / `make test-integration` / docker 卷命令。
