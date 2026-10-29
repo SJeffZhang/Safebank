@@ -428,6 +428,32 @@ def prepare_seed(
             }
         )
 
+    # --- fund settlement accounts -----------------------------------------
+    # Every product needs an INTERNAL settlement account (PRD §8.3 products
+    # and bankcore funds.py require acc_fund_<product_id> for fund ledger rows).
+    fund_settlement_accounts: list[dict[str, Any]] = []
+    for product in prepared_products:
+        fund_settlement_accounts.append(
+            {
+                "id": f"acc_fund_{product['id']}",
+                "customer_id": None,
+                "type": "INTERNAL",
+                "display_name": f"Fund Settlement ({product['id']})",
+                "account_no": f"internal-{product['id']}",
+                "flags": 0,
+                "debits_posted_cents": 0,
+                "credits_posted_cents": 0,
+                "debits_pending_cents": 0,
+                "credits_pending_cents": 0,
+                "balance_cents": 0,
+                "available_cents": 0,
+                "last_transaction_cents": 0,
+                "single_limit_cents": 500_000,
+                "daily_limit_cents": 2_000_000,
+                "created_at": sim_now,
+            }
+        )
+
     # --- holdings ---------------------------------------------------------
     # Customer fund holdings bought before the seed window: these carry cost
     # only and never generate ledger rows. ``units`` / ``reserved_units`` are
@@ -836,6 +862,7 @@ def prepare_seed(
         "payees": prepared_payees,
         "merchants": prepared_merchants,
         "products": prepared_products,
+        "fund_settlement_accounts": fund_settlement_accounts,
         "holdings": prepared_holdings,
         "billings": prepared_billings,
         "standing_instructions": prepared_instructions,
