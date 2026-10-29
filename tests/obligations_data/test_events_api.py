@@ -7,7 +7,7 @@ via the EventService directly (same pattern as test_standing_exec.py).
 
 import asyncio
 import hashlib
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, time, timedelta, timezone
 
 import pytest
 from app import models as m
@@ -169,6 +169,8 @@ def test_execute_scheduled_transfer_and_replay(obligations_db):
         await _setup(obligations_db)
         payload_hash = _si_hash("si_zs_mom", 100000, "acc_zs_chk")
         evt_id = "evt_si_zs_mom_001"
+        payload_str = f"{evt_id}|{_si_payload('si_zs_mom', 100000, 'acc_zs_chk')}"
+        payload_hash = hashlib.sha256(payload_str.encode()).hexdigest()
         admin = _admin_conn(obligations_db)
         async with admin.begin() as conn:
             await _seed_event(
@@ -178,7 +180,7 @@ def test_execute_scheduled_transfer_and_replay(obligations_db):
                 source_id="si_zs_mom",
                 due_at=SI_DUE,
                 payload_hash=payload_hash,
-                immutable_payload={"payload": _si_payload("si_zs_mom", 100000, "acc_zs_chk")},
+                immutable_payload={"payload": payload_str},
                 period_key=SI_DUE.isoformat(),
             )
         await admin.dispose()
@@ -220,8 +222,9 @@ def test_execute_scheduled_transfer_and_replay(obligations_db):
             txn = (
                 await conn.execute(
                     select(m.transactions).where(
-                        m.transactions.c.code == "SCHEDULED_TRANSFER",
-                        m.transactions.c.debit_account_id == "acc_zs_chk",
+                        m.transactions.c.kind == "SCHEDULED_TRANSFER",
+                        m.transactions.c.account_id == "acc_zs_chk",
+                        m.transactions.c.direction == "OUT",
                     )
                 )
             ).first()
@@ -288,6 +291,8 @@ def test_execute_payload_hash_mismatch(obligations_db):
         await _setup(obligations_db)
         payload_hash = _si_hash("si_zs_mom", 100000, "acc_zs_chk")
         evt_id = "evt_hash_mismatch"
+        payload_str = f"{evt_id}|{_si_payload('si_zs_mom', 100000, 'acc_zs_chk')}"
+        payload_hash = hashlib.sha256(payload_str.encode()).hexdigest()
         admin = _admin_conn(obligations_db)
         async with admin.begin() as conn:
             await _seed_event(
@@ -297,7 +302,7 @@ def test_execute_payload_hash_mismatch(obligations_db):
                 source_id="si_zs_mom",
                 due_at=SI_DUE,
                 payload_hash=payload_hash,
-                immutable_payload={"payload": _si_payload("si_zs_mom", 100000, "acc_zs_chk")},
+                immutable_payload={"payload": payload_str},
                 period_key=SI_DUE.isoformat(),
             )
         await admin.dispose()
@@ -336,6 +341,8 @@ def test_block_scheduled_transfer_then_execute_replayed(obligations_db):
         await _setup(obligations_db)
         payload_hash = _si_hash("si_zs_mom", 100000, "acc_zs_chk")
         evt_id = "evt_block_replay"
+        payload_str = f"{evt_id}|{_si_payload('si_zs_mom', 100000, 'acc_zs_chk')}"
+        payload_hash = hashlib.sha256(payload_str.encode()).hexdigest()
         admin = _admin_conn(obligations_db)
         async with admin.begin() as conn:
             await _seed_event(
@@ -345,7 +352,7 @@ def test_block_scheduled_transfer_then_execute_replayed(obligations_db):
                 source_id="si_zs_mom",
                 due_at=SI_DUE,
                 payload_hash=payload_hash,
-                immutable_payload={"payload": _si_payload("si_zs_mom", 100000, "acc_zs_chk")},
+                immutable_payload={"payload": payload_str},
                 period_key=SI_DUE.isoformat(),
             )
         await admin.dispose()
@@ -411,8 +418,11 @@ def test_execute_insufficient_funds(obligations_db):
     async def check():
         await _setup(obligations_db)
 
-        # Create a standing instruction with an amount exceeding balance
-        huge_amount = 10_000_000  # acc_zs_chk only has 600_000
+        # Raise card limits so the amount passes transfer_control_violation
+        # and reaches post_transfer for the balance (INSUFFICIENT_FUNDS) check.
+        # acc_zs_chk has 600_000 credits; use 700_000 → exceeds balance but
+        # stays under all card/customer outflow limits.
+        huge_amount = 700_000
         huge_si_id = "si_zs_huge"
         payload_hash = _si_hash(huge_si_id, huge_amount, "acc_zs_chk")
         evt_id = "evt_insufficient"
@@ -420,18 +430,26 @@ def test_execute_insufficient_funds(obligations_db):
         admin = _admin_conn(obligations_db)
         async with admin.begin() as conn:
             await conn.execute(
+                m.cards.update()
+                .where(m.cards.c.id == "crd_zs_1")
+                .values(single_limit_cents=5_000_000, daily_limit_cents=10_000_000)
+            )
+            await conn.execute(
                 m.standing_instructions.insert().values(
                     id=huge_si_id,
                     customer_id="cus_zs",
+                    kind="SCHEDULED_TRANSFER",
+                    amount_type="FIXED",
                     status="ACTIVE",
                     from_account_id="acc_zs_chk",
                     payee_id="pye_zs_mom",
                     to_account_id=None,
                     amount_cents=huge_amount,
+                    recurrence="PERIODIC",
                     period="ONCE",
-                    anchor_day=5,
+                    anchor_day=None,
                     weekday=None,
-                    time_of_day=None,
+                    time_of_day=time(6, 0),
                     next_run_at=SI_DUE,
                     end_at=None,
                     priority="HIGH",
@@ -475,7 +493,7 @@ def test_execute_insufficient_funds(obligations_db):
         async with runtime.connect() as conn:
             txn = (
                 await conn.execute(
-                    select(m.transactions).where(m.transactions.c.code == "SCHEDULED_TRANSFER")
+                    select(m.transactions).where(m.transactions.c.kind == "SCHEDULED_TRANSFER")
                 )
             ).first()
             assert txn is None  # no transfer posted
@@ -558,8 +576,9 @@ def test_merchant_charge_with_active_mandate(obligations_db):
             txn = (
                 await conn.execute(
                     select(m.transactions).where(
-                        m.transactions.c.code == "MERCHANT_CHARGE",
-                        m.transactions.c.debit_account_id == "acc_zs_chk",
+                        m.transactions.c.kind == "MERCHANT_CHARGE",
+                        m.transactions.c.account_id == "acc_zs_chk",
+                        m.transactions.c.direction == "OUT",
                     )
                 )
             ).first()
@@ -648,8 +667,9 @@ def test_demo_event_external_credit(obligations_db):
             txn = (
                 await conn.execute(
                     select(m.transactions).where(
-                        m.transactions.c.code == "SALARY",
-                        m.transactions.c.credit_account_id == "acc_zs_chk",
+                        m.transactions.c.kind == "SALARY",
+                        m.transactions.c.account_id == "acc_zs_chk",
+                        m.transactions.c.direction == "IN",
                     )
                 )
             ).first()

@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from safebank_bankcore import events as bank_events
 from safebank_bankcore import external as bank_external
 from safebank_bankcore import funds as bank_funds
+from safebank_contracts.obligations import InstructionRun
 from safebank_bankcore.banking import Context
 from safebank_contracts.codes import Code
 from safebank_contracts.state import StateScope
@@ -370,7 +371,7 @@ class EventService:
             state, effects, run = self._apply_demo(state, row)
         await persist(conn, effects)
         await self._bump_version(conn, customer_id, version["version"] + 1)
-        if run is not None:
+        if isinstance(run, InstructionRun):
             await conn.execute(m.instruction_runs.insert().values(**run.model_dump(mode="python")))
             result = {
                 "status": run.status,
@@ -380,11 +381,12 @@ class EventService:
             }
         else:
             result = {}
+        event_status = run.status if isinstance(run, InstructionRun) else "SUCCESS"
         committed = self._wall_clock()
         await conn.execute(
             m.event_executions.insert().values(
                 event_id=event_id,
-                status="SUCCESS",
+                status=event_status,
                 authorization_evidence=authorization_evidence or {},
                 result_json=result,
                 committed_at=committed,
@@ -396,7 +398,7 @@ class EventService:
         return {
             "event_id": event_id,
             "customer_id": customer_id,
-            "status": "SUCCESS",
+            "status": event_status,
             "result": result,
             "committed_at": committed.isoformat(),
         }
@@ -459,7 +461,7 @@ class EventService:
             )
         await persist(conn, effects)
         await self._bump_version(conn, customer_id, version["version"] + 1)
-        if run is not None:
+        if isinstance(run, InstructionRun):
             await conn.execute(m.instruction_runs.insert().values(**run.model_dump(mode="python")))
             result = {
                 "status": run.status,
