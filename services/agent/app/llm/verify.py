@@ -23,8 +23,10 @@ _AMOUNT_YUAN_RE = re.compile(r"([\d,]+(?:\.\d{1,2})?)\s*(元|块)")
 # Percentage
 _PCT_RE = re.compile(r"([\d]+(?:\.[\d]+)?)\s*%")
 
-# Card last-4: 尾号 + 4 digits
-_CARD_LAST4_RE = re.compile(r"尾号\s*(\d{4})")
+# Card tail: 尾号 followed by an ASCII word token.  Valid tails are exactly
+# 4 digits; anything else (card IDs, 5+ digits, mixed alphanumerics) is
+# extracted with last4=None so it can be flagged and scrubbed.
+_CARD_LAST4_RE = re.compile(r"尾号\s*([A-Za-z0-9_]+)")
 
 # Amount string that should be preserved during masking (contains ¥/元/块)
 _AMOUNT_TEXT_RE = re.compile(r"(?:¥|￥)[\d,.]+|[\d,.]+\s*(?:元|块)")
@@ -203,14 +205,17 @@ def extract_percentages(text: str) -> list[dict]:
 
 
 def extract_card_last4(text: str) -> list[dict]:
-    """Extract card last-4 references from *text*.
+    """Extract card tail references from *text*.
 
-    Returns ``[{span, raw, last4, kind}, ...]``.
+    Returns ``[{span, raw, last4, kind}, ...]``.  ``last4`` is the 4-digit tail
+    for valid references, or ``None`` when the token after 尾号 is not exactly
+    4 digits (card ID, overlong, or mixed alphanumeric).
     """
     results: list[dict] = []
     for m in _CARD_LAST4_RE.finditer(text):
         raw = m.group(0)
-        last4 = m.group(1)
+        token = m.group(1)
+        last4: str | None = token if (len(token) == 4 and token.isdigit()) else None
         results.append(
             {"span": m.span(), "raw": raw, "last4": last4, "kind": ExtractedKind.CARD_LAST4}
         )
@@ -367,15 +372,20 @@ def check_against_facts(extracted: list[dict], fact_set: dict) -> list[dict]:
                 )
         elif kind == ExtractedKind.CARD_LAST4:
             last4 = item.get("last4")
-            if last4 not in fact_set.get("last4s", []):
-                unverified.append(
-                    {
-                        "span": item["span"],
-                        "raw": item["raw"],
-                        "kind": kind,
-                        "reason": "card_not_found",
-                    }
-                )
+            if last4 is None:
+                reason = "card_tail_malformed"
+            elif last4 not in fact_set.get("last4s", []):
+                reason = "card_not_found"
+            else:
+                continue
+            unverified.append(
+                {
+                    "span": item["span"],
+                    "raw": item["raw"],
+                    "kind": kind,
+                    "reason": reason,
+                }
+            )
     return unverified
 
 
@@ -498,6 +508,23 @@ def _contains_any(text: str, phrases: list[str]) -> bool:
     return any(p in text for p in phrases)
 
 
+def _scrub_unverified_card_tails(text: str, fact_set: dict) -> str:
+    """Replace every unverified ``尾号…`` phrase in *text* with ``该卡``.
+
+    Only CARD_LAST4 items that fail fact-checking are touched; amounts and
+    percentages are left for the normal masking path.
+    """
+    extracted = extract_card_last4(text)
+    unverified = check_against_facts(extracted, fact_set)
+    card_items = [uv for uv in unverified if uv.get("kind") == ExtractedKind.CARD_LAST4]
+    if not card_items:
+        return text
+    for uv in sorted(card_items, key=lambda u: u["span"][0], reverse=True):
+        start, end = uv["span"]
+        text = text[:start] + "该卡" + text[end:]
+    return text
+
+
 # ── OutputVerifier ──────────────────────────────────────────────────────────
 
 
@@ -541,6 +568,10 @@ class OutputVerifier:
                 if not re_unverified:
                     text = repaired
                 # else: fall through → use original text (will be masked below)
+
+        # Step 4.5: deterministic scrub — an unverified card tail must never
+        # reach the user, even when the LLM is absent or its repair failed.
+        text = _scrub_unverified_card_tails(text, fact_set)
 
         # Step 5: always mask long numbers
         masked = mask_long_numbers(text)

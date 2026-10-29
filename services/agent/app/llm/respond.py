@@ -24,6 +24,8 @@ _EXECUTED_SYSTEM = (
     "你是一个银行AI助手，负责向用户简短总结刚完成的操作。"
     "用中文回复，不超过三句话。"
     "只能引用下面提供的数字和名称，**禁止捏造**金额、账户或状态。"
+    "提到卡片时只能用下面提供的卡号尾号（如“尾号1234”）；"
+    "**禁止**打印卡ID，**禁止**编造尾号；如果不知道尾号，就说“该卡”。"
 )
 
 
@@ -110,11 +112,7 @@ class RespondAdapter:
         utterance_text = _utterance_text(state)
         steps_text = _execution_steps_summary(execution)
 
-        user_prompt = _build_prompt(
-            _EXECUTED_SYSTEM,
-            utterance=utterance_text,
-            execution_summary=steps_text,
-        )
+        user_prompt = _build_executed_user_prompt(state, execution)
 
         text = self._call_llm(_EXECUTED_SYSTEM, user_prompt)
         return text or _build_fallback(
@@ -242,6 +240,84 @@ def _execution_steps_summary(execution: object) -> str:
             parts.append(f"  结果: {truncated}")
         steps.append("\n".join(parts))
     return "\n".join(steps) or "（无步骤信息）"
+
+
+def _build_executed_user_prompt(state: AgentState, execution: object) -> str:
+    """Build the user prompt for the EXECUTED success response."""
+    utterance_text = _utterance_text(state)
+    steps_text = _execution_steps_summary(execution)
+    card_facts_text = _card_facts_block(state)
+
+    return _build_prompt(
+        _EXECUTED_SYSTEM,
+        utterance=utterance_text,
+        card_facts=card_facts_text,
+        execution_summary=steps_text,
+    )
+
+
+def _card_facts(state: AgentState) -> dict[str, str]:
+    """Build ``{card_id: last4}`` from card data already present in reads.
+
+    get_cards results carry a ``last4`` field alongside the card id (``id`` or
+    ``card_id``); this lets the respond prompt give the model the real tail
+    instead of leaving it to guess from the card ID.
+    """
+    facts: dict[str, str] = {}
+    for r in state.get("reads") or []:
+        data = _attr_or_get(r, "data", None)
+        if data is None:
+            continue
+        _collect_card_facts(data, facts)
+    return facts
+
+
+def _collect_card_facts(data: object, facts: dict[str, str]) -> None:
+    """Walk *data* (dict/object) recursively, recording id → last4 pairs."""
+    if isinstance(data, list):
+        for item in data:
+            if (
+                isinstance(item, (dict, list))
+                or hasattr(item, "model_dump")
+                or hasattr(item, "__dict__")
+            ):
+                _collect_card_facts(item, facts)
+        return
+
+    if isinstance(data, dict):
+        items = data.items()
+    elif hasattr(data, "model_dump"):
+        items = data.model_dump(mode="json").items()
+    elif hasattr(data, "__dict__"):
+        items = data.__dict__.items()
+    else:
+        return
+
+    last4: str | None = None
+    card_id: str | None = None
+    for key, value in items:
+        if key == "last4" and isinstance(value, str) and len(value) == 4:
+            last4 = value
+        elif key in ("id", "card_id") and isinstance(value, str):
+            card_id = value
+    if last4 is not None and card_id is not None:
+        facts[card_id] = last4
+
+    for _key, value in items:
+        if (
+            isinstance(value, (dict, list))
+            or hasattr(value, "model_dump")
+            or hasattr(value, "__dict__")
+        ):
+            _collect_card_facts(value, facts)
+
+
+def _card_facts_block(state: AgentState) -> str:
+    """Format card facts as a prompt section (empty string if none)."""
+    facts = _card_facts(state)
+    if not facts:
+        return ""
+    return "\n".join(f"- {cid}: 尾号{last4}" for cid, last4 in sorted(facts.items()))
 
 
 def _replan_hint_labels(decision: dict[str, object]) -> list[str]:
