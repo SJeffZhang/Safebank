@@ -3,6 +3,30 @@
 **Branch**: `feat/l2-scheduled-authorize` (from main 0b9684e). Worktree GW-s1.
 **Status**: exploration + design complete; NO code/tests written this session (tool budget exhausted at 98/100). This file is the checkpoint.
 
+## Status (session r1, updated)
+- Red tests committed (`6853210`): `tests/gateway/s1/test_scheduled_authorize.py` (terminal replay +
+  RETRYING-on-unavailable), `conftest.py` fixtures/seed helpers, `Makefile` `test-s1` target.
+- L3 client + FakeL3 event support committed (`125c9a1`): `L3Client.event/event_execute/event_block`;
+  `FakeL3` event store (`set_event`), `_op_for` routing, `GET /internal/events/{id}`,
+  `POST /internal/events/{id}/execute`, `POST /internal/events/{id}/block` endpoints.
+- Red tests NOT yet re-run against the new client/fake (handler still stubbed → both still fail).
+- Handler `services/gateway/app/internal/scheduled.py` NOT yet implemented.
+- Verified: `decision.py:_active_scopes` returns `[]` when `ctx.authorization is None` (hint path only),
+  so S1 re-eval with authorization=None is safe; `replay_with_context` is the EvalContext pattern to mirror.
+- Tool budget exhausted at ~97/100; next session resumes at handler implementation.
+
+## Next steps for resumer
+1. Implement handler step 1+2 (terminal replay → L3 event fetch/RETRYING) so the two red tests turn green;
+   commit after each passing step.
+2. Then grant lookup/backfill → re-evaluation (stage tuple `(contract, entity, snapshot, preflight, workflow, decision)`,
+   fresh `transfer` PlanDraft, `origin="app_form"`, `authorization=None` is OK) → block/execute → persist
+   event_decisions + audit.
+3. Remaining tests: missing-grant backfill; revoked→BLOCKED; risk increase→SKIPPED_REAPPROVAL;
+   insufficient→FAILED_INSUFFICIENT; happy path SUCCESS executes once; wrong token 401/403; same-event
+   replays never execute twice.
+4. Add CI line `.github/workflows/checks.yml` p1-postgres for `make test-s1`.
+5. Gates: `make lint`, `make test`, `make test-gateway`, `make test-gateway-db` (tail -1).
+
 ## What the task is
 Implement gateway `POST /internal/scheduled/authorize` (stub at `services/gateway/app/internal/scheduled.py`,
 registered on internal bank-net app :8201, auth `SCHEDULER_SERVICE_TOKEN` → caller kind S).
