@@ -27,25 +27,50 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from . import models as m
 from .db import engine, ready
+from .demo import register_demo_routes
 from .errors import BankError
 from .execution import ExecutionService, utcnow
 from .reads import SUPPORTED_READS, read
 from .state import load_bank_state, resolve_scope
 
 
-def create_app(db=None, *, service_token=None, fingerprint_key=None):
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def create_app(
+    db=None,
+    *,
+    service_token=None,
+    fingerprint_key=None,
+    demo_mode=None,
+    admin_db=None,
+):
     token = service_token or os.environ.get("GATEWAY_SERVICE_TOKEN")
     key = fingerprint_key or os.environ.get("FINGERPRINT_KEY")
     if not token or not key:
         raise ValueError("L3 service credentials are required")
     owned = db is None
     database = db if db is not None else engine(os.environ["BANK_DATABASE_URL"])
+    if demo_mode is None:
+        demo_mode = _env_flag("DEMO_MODE") or _env_flag("EVAL_MODE")
+    admin_owned = False
+    admin_database = None
+    if demo_mode:
+        admin_database = admin_db
+        if admin_database is None:
+            admin_owned = True
+            admin_database = engine(
+                os.environ.get("BANK_MIGRATION_DATABASE_URL") or os.environ["BANK_DATABASE_URL"]
+            )
 
     @asynccontextmanager
     async def lifespan(app):
         yield
         if owned:
             await database.dispose()
+        if admin_owned and admin_database is not None:
+            await admin_database.dispose()
 
     async def authenticate(x_service_token: str | None = Header(default=None)):
         if not x_service_token or not secrets.compare_digest(token, x_service_token):
@@ -207,6 +232,9 @@ def create_app(db=None, *, service_token=None, fingerprint_key=None):
                 .values(delivered_at_wall=utcnow())
             )
         return {"acknowledged": len(existing)}
+
+    if demo_mode:
+        register_demo_routes(app, database, admin_database, key)
 
     return app
 

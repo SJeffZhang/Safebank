@@ -25,16 +25,16 @@
       "display_name": "李四",
       "phone": "13800000003",
       "risk_level": 3,
-      "risk_assessed_at": "2026-09-01T10:00:00+08:00",
-      "risk_valid_until": "2027-09-01T10:00:00+08:00"
+      "risk_assessed_at": "2026-03-01T10:00:00+08:00",
+      "risk_valid_until": "2027-03-01T10:00:00+08:00"
     },
     {
       "id": "cus_sb",
       "display_name": "孙八",
       "phone": "13800000004",
       "risk_level": 2,
-      "risk_assessed_at": "2026-09-01T10:00:00+08:00",
-      "risk_valid_until": "2027-09-01T10:00:00+08:00"
+      "risk_assessed_at": "2026-05-01T10:00:00+08:00",
+      "risk_valid_until": "2027-05-01T10:00:00+08:00"
     }
   ],
   "accounts": [
@@ -443,6 +443,17 @@
       "min_amount_cents": 100000,
       "risk_disclosure": "本产品集中投资于科技行业股票，收益弹性大但风险高。行业集中度高，净值可能出现剧烈波动，适合能承受较大回撤的激进型投资者。",
       "disclosure_version": "v1"
+    }
+  ],
+  "holdings": [
+    {
+      "customer_id": "cus_ls",
+      "account_id": "acc_ls_chk",
+      "product_id": "prd_mmf",
+      "units": "10000.0000",
+      "reserved_units": "0.0000",
+      "cost_cents": 1000000,
+      "reserved_cost_cents": 0
     }
   ],
   "billings": [

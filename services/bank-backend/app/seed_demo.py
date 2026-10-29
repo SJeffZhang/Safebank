@@ -30,7 +30,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select, text, update
+from sqlalchemy import or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from . import models as m
@@ -140,6 +140,10 @@ async def install_demo(conn, fingerprint_key: str) -> dict[str, Any]:
         )
         added_products += result.rowcount or 0
 
+    new_holdings = [h for h in prepared["holdings"] if h["customer_id"] in new_customer_ids]
+    for holding in new_holdings:
+        await conn.execute(m.holdings.insert().values(**holding))
+
     new_transactions = [t for t in prepared["transactions"] if t["customer_id"] in new_customer_ids]
     new_txn_ids = {t["id"] for t in new_transactions}
     new_transfers = [t for t in prepared["transfers"] if t["step_id"] in new_txn_ids]
@@ -195,6 +199,17 @@ async def install_demo(conn, fingerprint_key: str) -> dict[str, Any]:
         )
         backfilled_mandates += result.rowcount or 0
 
+    # Backfill fund holdings for already-installed customers idempotently by owner
+    # (non-ledger rows; accounts/transactions never touched here).
+    backfilled_holdings = 0
+    for holding in prepared["holdings"]:
+        if holding["customer_id"] not in skipped_customer_ids:
+            continue
+        result = await conn.execute(
+            pg_insert(m.holdings).values(**holding).on_conflict_do_nothing()
+        )
+        backfilled_holdings += result.rowcount or 0
+
     # Already-installed customers keep their ledger (append-only), but payee creation
     # times are reference data: converge them to the seed so a corrected seed takes
     # effect on rerun (the new-payee rule reads this column).
@@ -213,8 +228,31 @@ async def install_demo(conn, fingerprint_key: str) -> dict[str, Any]:
         )
         synced_payees += result.rowcount or 0
 
+    # Risk assessment dates are reference data (like payee creation times): converge
+    # them to the seed on rerun so a corrected seed takes effect for skipped customers.
+    synced_risk_assessments = 0
+    for customer in prepared["customers"]:
+        if customer["id"] not in skipped_customer_ids:
+            continue
+        result = await conn.execute(
+            update(m.customers)
+            .where(
+                m.customers.c.id == customer["id"],
+                or_(
+                    m.customers.c.risk_assessed_at != customer["risk_assessed_at"],
+                    m.customers.c.risk_valid_until != customer["risk_valid_until"],
+                ),
+            )
+            .values(
+                risk_assessed_at=customer["risk_assessed_at"],
+                risk_valid_until=customer["risk_valid_until"],
+            )
+        )
+        synced_risk_assessments += result.rowcount or 0
+
     return {
         "synced_payees": synced_payees,
+        "synced_risk_assessments": synced_risk_assessments,
         "added_customers": len(new_customer_ids),
         "skipped_customers": sorted(skipped_customer_ids),
         "added_accounts": len(new_accounts),
@@ -222,11 +260,13 @@ async def install_demo(conn, fingerprint_key: str) -> dict[str, Any]:
         "added_payees": len(new_payees),
         "added_merchants": added_merchants,
         "added_products": added_products,
+        "added_holdings": len(new_holdings),
         "added_transactions": len(new_transactions),
         "added_billings": len(new_billings),
         "added_standing_instructions": len(new_instructions),
         "backfilled_billings": backfilled_billings,
         "backfilled_mandates": backfilled_mandates,
+        "backfilled_holdings": backfilled_holdings,
         "funding_transfers": funding_count,
         "funding_total_cents": total_funding,
         "clearing_debits_delta": in_delta,

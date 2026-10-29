@@ -24,6 +24,7 @@ from safebank_contracts.state import (
 from safebank_contracts.tools import EntityRef
 from safebank_contracts.views import WRITE_RESULTS, CardView, ChannelFlags
 
+from .funds import apply_redeem, apply_subscribe, order_view
 from .ids import derive
 from .ledger import post_transfer, replace_state
 from .risk import apply_risk_assessment as score_risk
@@ -499,6 +500,32 @@ def step_result(before, after, step, ctx, effects):
         else:
             result = {}
             created = {}
+    elif step.tool == "subscribe_product":
+        order = next(
+            o for o in after.fund_orders if o.id == derive(ctx.plan_id, ctx.step_id, "ord")
+        )
+        result = dict(
+            order=order_view(order).model_dump(mode="json"),
+            available_after_cents=after.accounts[args.account_id].available_cents,
+            pending_debit_after_cents=after.accounts[args.account_id].debits_pending_cents,
+            estimated_units=order.units,
+        )
+        created = {"order_id": order.id}
+    elif step.tool == "redeem_product":
+        order = next(
+            o for o in after.fund_orders if o.id == derive(ctx.plan_id, ctx.step_id, "ord")
+        )
+        holding = next(
+            h
+            for h in after.holdings
+            if h.account_id == order.account_id and h.product_id == order.product_id
+        )
+        result = dict(
+            order=order_view(order).model_dump(mode="json"),
+            available_units_after=holding.available_units,
+            estimated_amount_cents=order.amount_cents,
+        )
+        created = {"order_id": order.id}
     else:
         result = dict(
             card_id=args.card_id, status=after.cards[args.card_id].status, no_op=not bool(effects)
@@ -535,6 +562,8 @@ SUPPORTED_WRITES = {
     "cancel_subscription",
     "submit_risk_assessment",
     "create_split_request",
+    "subscribe_product",
+    "redeem_product",
 }
 
 
@@ -566,6 +595,10 @@ def apply_plan(state: BankState, steps, customer_id: str, plan_id: str) -> Simul
             state, changes, errors = apply_risk_assessment(state, args, state.sim_now, ctx)
         elif step.tool == "create_split_request":
             state, changes, errors = apply_create_split_request(state, args, state.sim_now, ctx)
+        elif step.tool == "subscribe_product":
+            state, changes, errors = apply_subscribe(state, args, state.sim_now, ctx)
+        elif step.tool == "redeem_product":
+            state, changes, errors = apply_redeem(state, args, state.sim_now, ctx)
         elif step.tool in SUPPORTED_WRITES:
             state, changes, errors = apply_card(state, args, state.sim_now, ctx, step.tool)
         else:
