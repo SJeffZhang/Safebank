@@ -33,9 +33,7 @@ def _subs_read() -> ReadRecord:
         tool="detect_subscriptions",
         args={"lookback_days": 180},
         data={
-            "items": [
-                {"instruction_id": "si_sub1", "is_idle": True, "merchant_name": "视频会员"}
-            ]
+            "items": [{"instruction_id": "si_sub1", "is_idle": True, "merchant_name": "视频会员"}]
         },
     )
 
@@ -115,9 +113,7 @@ def _x2_plan_with_literal_amount() -> dict:
                         "source": {
                             "kind": "derived",
                             "template": "cancelled_monthly_fees",
-                            "inputs": [
-                                {"kind": "utterance", "ref": "utt_typed", "span": [0, 3]}
-                            ],
+                            "inputs": [{"kind": "utterance", "ref": "utt_typed", "span": [0, 3]}],
                         },
                     }
                 ],
@@ -151,9 +147,7 @@ def test_plan_prompt_contains_subs_bills_rules():
 def test_gather_prompt_contains_subs_bills_rules():
     scripted = ScriptedLLM([text_response("")])
     llm = make_llm(api_key=API_KEY, http_client=scripted.client)
-    GatherAdapter(llm, read_executor=lambda name, args: None)(
-        _subs_state("取消订阅"), _ctx()
-    )
+    GatherAdapter(llm, read_executor=lambda name, args: None)(_subs_state("取消订阅"), _ctx())
     prompt = _system_prompt(scripted)
     assert "list_subscriptions" in prompt
     assert "detect_subscriptions" in prompt

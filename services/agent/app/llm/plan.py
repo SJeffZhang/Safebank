@@ -602,7 +602,9 @@ class PlanAdapter:
                 sem_problems = _semantic_problems(draft, state)
                 ch_problems = _channel_source_problems(draft, state)
                 der_problems = _derived_schedule_problems(draft, state)
-                all_problems = ref_problems + val_problems + sem_problems + ch_problems + der_problems
+                all_problems = (
+                    ref_problems + val_problems + sem_problems + ch_problems + der_problems
+                )
                 if all_problems:
                     raise ReferenceError(all_problems)
                 return draft
