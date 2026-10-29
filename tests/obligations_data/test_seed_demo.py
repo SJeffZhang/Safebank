@@ -37,28 +37,64 @@ COUNTED_TABLES = (
 # (2026-10-15, Asia/Shanghai), so base_date is that same day.
 EXPECTED_PRODUCTS = {
     "prd_mmf": dict(
-        name="安心货币", product_type="MMF", risk_level=1, risk_label="保守",
-        confirm_days=0, settle_days=0, min_amount_cents=100, base_nav=Decimal("1.0000"),
+        name="安心货币",
+        product_type="MMF",
+        risk_level=1,
+        risk_label="保守",
+        confirm_days=0,
+        settle_days=0,
+        min_amount_cents=100,
+        base_nav=Decimal("1.0000"),
     ),
     "prd_sbond": dict(
-        name="稳盈短债", product_type="BOND", risk_level=2, risk_label="稳健",
-        confirm_days=1, settle_days=1, min_amount_cents=100000, base_nav=Decimal("1.0520"),
+        name="稳盈短债",
+        product_type="BOND",
+        risk_level=2,
+        risk_label="稳健",
+        confirm_days=1,
+        settle_days=1,
+        min_amount_cents=100000,
+        base_nav=Decimal("1.0520"),
     ),
     "prd_stable": dict(
-        name="稳健增利", product_type="BOND", risk_level=3, risk_label="稳健",
-        confirm_days=1, settle_days=1, min_amount_cents=100000, base_nav=Decimal("1.2310"),
+        name="稳健增利",
+        product_type="BOND",
+        risk_level=3,
+        risk_label="稳健",
+        confirm_days=1,
+        settle_days=1,
+        min_amount_cents=100000,
+        base_nav=Decimal("1.2310"),
     ),
     "prd_mixed": dict(
-        name="均衡混合", product_type="MIXED", risk_level=3, risk_label="平衡",
-        confirm_days=1, settle_days=2, min_amount_cents=100000, base_nav=Decimal("1.4875"),
+        name="均衡混合",
+        product_type="MIXED",
+        risk_level=3,
+        risk_label="平衡",
+        confirm_days=1,
+        settle_days=2,
+        min_amount_cents=100000,
+        base_nav=Decimal("1.4875"),
     ),
     "prd_growth": dict(
-        name="成长股票", product_type="EQUITY", risk_level=4, risk_label="进取",
-        confirm_days=1, settle_days=2, min_amount_cents=100000, base_nav=Decimal("2.0310"),
+        name="成长股票",
+        product_type="EQUITY",
+        risk_level=4,
+        risk_label="进取",
+        confirm_days=1,
+        settle_days=2,
+        min_amount_cents=100000,
+        base_nav=Decimal("2.0310"),
     ),
     "prd_tech": dict(
-        name="科技先锋", product_type="EQUITY", risk_level=5, risk_label="激进",
-        confirm_days=1, settle_days=2, min_amount_cents=100000, base_nav=Decimal("1.8820"),
+        name="科技先锋",
+        product_type="EQUITY",
+        risk_level=5,
+        risk_label="激进",
+        confirm_days=1,
+        settle_days=2,
+        min_amount_cents=100000,
+        base_nav=Decimal("1.8820"),
     ),
 }
 
@@ -274,14 +310,18 @@ def test_seed_demo_installs_products_idempotently(obligations_db):
 
         async with admin.connect() as conn:
             rows = (
-                await conn.execute(
-                    text(
-                        "SELECT id, name, product_type, risk_level, risk_label, base_nav, "
-                        "base_date, confirm_days, settle_days, min_amount_cents, "
-                        "risk_disclosure, disclosure_version FROM products ORDER BY id"
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT id, name, product_type, risk_level, risk_label, base_nav, "
+                            "base_date, confirm_days, settle_days, min_amount_cents, "
+                            "risk_disclosure, disclosure_version FROM products ORDER BY id"
+                        )
                     )
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
             assert [r["id"] for r in rows] == sorted(EXPECTED_PRODUCTS)
             for r in rows:
                 exp = EXPECTED_PRODUCTS[r["id"]]
@@ -305,14 +345,18 @@ def test_seed_demo_installs_products_idempotently(obligations_db):
         # NAV projections via bankcore on the loaded product definitions.
         async with admin.connect() as conn:
             rows = (
-                await conn.execute(
-                    text(
-                        "SELECT id, name, product_type, risk_level, risk_label, base_nav, "
-                        "base_date, confirm_days, settle_days, min_amount_cents, "
-                        "risk_disclosure, disclosure_version FROM products ORDER BY id"
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT id, name, product_type, risk_level, risk_label, base_nav, "
+                            "base_date, confirm_days, settle_days, min_amount_cents, "
+                            "risk_disclosure, disclosure_version FROM products ORDER BY id"
+                        )
                     )
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
             defs = tuple(
                 ProductDef(
                     id=r["id"],

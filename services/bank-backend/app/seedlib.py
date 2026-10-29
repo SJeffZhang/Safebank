@@ -18,6 +18,7 @@ from __future__ import annotations
 import calendar
 import json
 from datetime import datetime, time
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -79,6 +80,19 @@ def _require_int(value: Any, label: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise SeedError(f"{label} must be an integer, got {value!r}")
     return value
+
+
+PRODUCT_TYPES = ("MMF", "BOND", "MIXED", "EQUITY")
+
+
+def _parse_decimal(value: Any, label: str) -> Decimal:
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, ValueError) as exc:
+        raise SeedError(f"{label} must be a decimal number, got {value!r}") from exc
+    if not parsed.is_finite():
+        raise SeedError(f"{label} must be finite, got {value!r}")
+    return parsed
 
 
 def _non_empty_str(value: Any, label: str) -> str:
@@ -155,12 +169,14 @@ def prepare_seed(
     payees = seed["payees"]
     merchants = seed["merchants"]
     transactions = seed["transactions"]
+    products = seed.get("products") or []
 
     customer_ids = _unique_ids(customers, "customer")
     account_ids = _unique_ids(accounts, "account")
     card_ids = _unique_ids(cards, "card")
     payee_ids = _unique_ids(payees, "payee")
     merchant_ids = _unique_ids(merchants, "merchant")
+    _unique_ids(products, "product")
     _unique_ids(transactions, "transaction")
     _unique_ids(billings, "billing")
     _unique_ids(standing_instructions, "standing_instruction")
@@ -354,6 +370,59 @@ def prepare_seed(
                     merchant.get("category"), f"merchant {merchant_id} category"
                 ),
                 "usage_expected": bool(merchant.get("usage_expected", False)),
+            }
+        )
+
+    # --- products ----------------------------------------------------------
+    # Global catalog (not customer-scoped), like merchants. ``base_nav`` is the
+    # NAV at ``base_date``; ``base_date`` is a tz-aware instant whose civil date
+    # in Asia/Shanghai is the NAV anchor date.
+    prepared_products: list[dict[str, Any]] = []
+    for product in products:
+        product_id = product["id"]
+        product_type = _non_empty_str(
+            product.get("product_type"), f"product {product_id} product_type"
+        )
+        if product_type not in PRODUCT_TYPES:
+            raise SeedError(f"product {product_id} has unknown product_type {product_type!r}")
+        risk_level = _require_int(product.get("risk_level"), f"product {product_id} risk_level")
+        if not 1 <= risk_level <= 5:
+            raise SeedError(f"product {product_id} risk_level out of range: {risk_level!r}")
+        base_nav = _parse_decimal(product.get("base_nav"), f"product {product_id} base_nav")
+        if base_nav <= 0:
+            raise SeedError(f"product {product_id} base_nav must be positive, got {base_nav!r}")
+        confirm_days = _require_int(
+            product.get("confirm_days"), f"product {product_id} confirm_days"
+        )
+        settle_days = _require_int(product.get("settle_days"), f"product {product_id} settle_days")
+        min_amount_cents = _require_int(
+            product.get("min_amount_cents"), f"product {product_id} min_amount_cents"
+        )
+        if confirm_days < 0 or settle_days < 0 or min_amount_cents <= 0:
+            raise SeedError(
+                f"product {product_id} has invalid confirm_days/settle_days/min_amount_cents"
+            )
+        prepared_products.append(
+            {
+                "id": product_id,
+                "name": _non_empty_str(product.get("name"), f"product {product_id} name"),
+                "product_type": product_type,
+                "risk_level": risk_level,
+                "risk_label": _non_empty_str(
+                    product.get("risk_label"), f"product {product_id} risk_label"
+                ),
+                "base_nav": base_nav,
+                "base_date": _parse_dt(product.get("base_date"), f"product {product_id} base_date"),
+                "confirm_days": confirm_days,
+                "settle_days": settle_days,
+                "min_amount_cents": min_amount_cents,
+                "risk_disclosure": _non_empty_str(
+                    product.get("risk_disclosure"), f"product {product_id} risk_disclosure"
+                ),
+                "disclosure_version": _non_empty_str(
+                    product.get("disclosure_version"),
+                    f"product {product_id} disclosure_version",
+                ),
             }
         )
 
@@ -639,6 +708,7 @@ def prepare_seed(
         "cards": prepared_cards,
         "payees": prepared_payees,
         "merchants": prepared_merchants,
+        "products": prepared_products,
         "billings": prepared_billings,
         "standing_instructions": prepared_instructions,
         "transfers": prepared_transfers,
