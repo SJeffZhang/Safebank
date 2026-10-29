@@ -698,10 +698,7 @@ def test_no_connection_held_during_l3_call(app_config):
         async with db.connect() as probe_conn:
             row = (
                 await probe_conn.execute(
-                    text(
-                        "SELECT status FROM event_decisions "
-                        "WHERE event_id = 'evt_nolock'"
-                    )
+                    text("SELECT status FROM event_decisions WHERE event_id = 'evt_nolock'")
                 )
             ).first()
         assert row is not None, "IN_PROGRESS row must exist after Phase A"
@@ -805,10 +802,7 @@ def test_retrying_releases_in_progress_row(app_config):
         async with db.connect() as conn:
             rows = (
                 await conn.execute(
-                    text(
-                        "SELECT 1 FROM event_decisions "
-                        "WHERE event_id = 'evt_retry_rel'"
-                    )
+                    text("SELECT 1 FROM event_decisions WHERE event_id = 'evt_retry_rel'")
                 )
             ).all()
         assert rows == [], "IN_PROGRESS row must be deleted on RETRYING"
