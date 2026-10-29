@@ -46,6 +46,7 @@ if TYPE_CHECKING:
 
 InsertFundOrder = FUTURE_EFFECTS["InsertFundOrder"]
 UpdateFundOrder = FUTURE_EFFECTS["UpdateFundOrder"]
+UpdateHolding = FUTURE_EFFECTS["UpdateHolding"]
 
 
 def _reject(state, ctx, code):
@@ -169,7 +170,7 @@ def _apply_holding(
     cost_delta: int = 0,
     reserved_cost_delta: int = 0,
     now: datetime,
-) -> BankState:
+) -> tuple[BankState, HoldingView]:
     index = _holding_index(state)
     holding = index.get((account_id, product_id))
     if holding is None:
@@ -198,7 +199,8 @@ def _apply_holding(
         }
     )
     index[(account_id, product_id)] = raw
-    return _rebuild_holdings(replace_state(state, holdings=tuple(index.values())), now)
+    after = _rebuild_holdings(replace_state(state, holdings=tuple(index.values())), now)
+    return after, _holding_index(after)[(account_id, product_id)]
 
 
 def apply_subscribe(state: BankState, args, now: datetime, ctx: Context):
@@ -263,7 +265,7 @@ def apply_subscribe(state: BankState, args, now: datetime, ctx: Context):
             failure_code=None,
         )
         after = _put_order(after, order)
-        after = _apply_holding(
+        after, holding = _apply_holding(
             after, account.id, product.id, units_delta=units, cost_delta=args.amount_cents, now=now
         )
         return (
@@ -271,6 +273,7 @@ def apply_subscribe(state: BankState, args, now: datetime, ctx: Context):
             (
                 *effects,
                 InsertFundOrder(order=order),
+                UpdateHolding(holding=holding),
                 _op(state, ctx, now, "FUND_SUBSCRIBE", target=product.id, amount=args.amount_cents),
             ),
             (),
@@ -394,7 +397,7 @@ def apply_redeem(state: BankState, args, now: datetime, ctx: Context):
             failure_code=None,
         )
         after = _put_order(after, order)
-        after = _apply_holding(
+        after, holding = _apply_holding(
             after, account.id, product.id, units_delta=-units, cost_delta=-reserved_cost, now=now
         )
         return (
@@ -402,6 +405,7 @@ def apply_redeem(state: BankState, args, now: datetime, ctx: Context):
             (
                 *effects,
                 InsertFundOrder(order=order),
+                UpdateHolding(holding=holding),
                 _op(state, ctx, now, "FUND_REDEEM", target=product.id, amount=amount_cents),
             ),
             (),
@@ -428,7 +432,7 @@ def apply_redeem(state: BankState, args, now: datetime, ctx: Context):
         failure_code=None,
     )
     after = _put_order(state, order)
-    after = _apply_holding(
+    after, holding = _apply_holding(
         after,
         account.id,
         product.id,
@@ -440,6 +444,7 @@ def apply_redeem(state: BankState, args, now: datetime, ctx: Context):
         after,
         (
             InsertFundOrder(order=order),
+            UpdateHolding(holding=holding),
             _op(state, ctx, now, "FUND_REDEEM", target=product.id, amount=amount_cents),
         ),
         (),
@@ -502,7 +507,7 @@ def apply_fund_confirm(state: BankState, order_id: str, at: datetime, ctx: Conte
         }
     )
     after = _put_order(after, updated)
-    after = _apply_holding(
+    after, holding = _apply_holding(
         after,
         order.account_id,
         order.product_id,
@@ -510,7 +515,7 @@ def apply_fund_confirm(state: BankState, order_id: str, at: datetime, ctx: Conte
         cost_delta=order.amount_cents,
         now=at,
     )
-    return after, (*effects, UpdateFundOrder(order=updated)), ()
+    return after, (*effects, UpdateFundOrder(order=updated), UpdateHolding(holding=holding)), ()
 
 
 def _fail_confirm(
@@ -574,7 +579,7 @@ def apply_fund_settle(state: BankState, order_id: str, at: datetime, ctx: Contex
         return after, effects, errors
     updated = order.model_copy(update={"status": "SETTLED", "settle_at": at})
     after = _put_order(after, updated)
-    after = _apply_holding(
+    after, holding = _apply_holding(
         after,
         order.account_id,
         order.product_id,
@@ -584,7 +589,7 @@ def apply_fund_settle(state: BankState, order_id: str, at: datetime, ctx: Contex
         reserved_cost_delta=-order.reserved_cost_cents,
         now=at,
     )
-    return after, (*effects, UpdateFundOrder(order=updated)), ()
+    return after, (*effects, UpdateFundOrder(order=updated), UpdateHolding(holding=holding)), ()
 
 
 def order_view(order: FundOrderRecord) -> FundOrderView:
