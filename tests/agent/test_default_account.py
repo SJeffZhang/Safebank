@@ -69,6 +69,25 @@ def _state(utterance_text: str, accounts: list[dict]) -> dict:
     }
 
 
+def _accounts_read(source_ref: str, accounts: list[dict]) -> ReadRecord:
+    return ReadRecord(
+        source_ref=source_ref,
+        tool="get_accounts",
+        args={},
+        data={"accounts": accounts},
+    )
+
+
+def _state_with(utterances: list[UtteranceRef], reads: list[ReadRecord]) -> dict:
+    return {
+        "customer_id": "cus_a",
+        "session_id": "ses_a",
+        "utterances": utterances,
+        "understanding": Understanding(intents=["transfer"], needs_write=True),
+        "reads": reads,
+    }
+
+
 # ── RED: unspecified source → CHECKING, named source → kept, ambiguity → clarify ──
 
 
@@ -107,3 +126,75 @@ def test_two_checking_accounts_raises_clarify():
         adapter(_state("给王五转100元", accounts), _ctx())
     assert "from_account_id" in exc_info.value.fields
     assert "付款账户" in exc_info.value.labels
+
+
+# ── RED (round 2): "named source" must be current-turn + source-anchored ──
+
+
+def _assert_override_to_checking(draft, checking_id: str = "acc_zs_chk") -> None:
+    step = draft.steps[0]
+    assert step.args.from_account_id == checking_id
+    sources = [s for s in step.arg_sources if s.param == "from_account_id"]
+    assert len(sources) == 1
+    assert sources[0].source.kind == "read"
+
+
+def test_target_mention_is_not_named_source():
+    scripted = ScriptedLLM([tool_response("submit_action_plan", _transfer_plan("acc_zs_sav"))])
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    adapter = PlanAdapter(llm)
+    draft = adapter(_state("转到他的活期", ONE_CHECKING), _ctx())
+    _assert_override_to_checking(draft)
+
+
+def test_payee_name_keyword_is_not_named_source():
+    scripted = ScriptedLLM([tool_response("submit_action_plan", _transfer_plan("acc_zs_sav"))])
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    adapter = PlanAdapter(llm)
+    draft = adapter(_state("转给储蓄客户王五", ONE_CHECKING), _ctx())
+    _assert_override_to_checking(draft)
+
+
+def test_negation_is_not_named_source():
+    scripted = ScriptedLLM([tool_response("submit_action_plan", _transfer_plan("acc_zs_sav"))])
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    adapter = PlanAdapter(llm)
+    draft = adapter(_state("不要用活期", ONE_CHECKING), _ctx())
+    _assert_override_to_checking(draft)
+
+
+def test_earlier_turn_keyword_is_not_named_source():
+    scripted = ScriptedLLM([tool_response("submit_action_plan", _transfer_plan("acc_zs_sav"))])
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    adapter = PlanAdapter(llm)
+    utterances = [
+        UtteranceRef(id="utt_prev", kind="typed", text="我活期余额多少"),
+        UtteranceRef(id="utt_typed", kind="typed", text="给王五转100元"),
+    ]
+    draft = adapter(
+        _state_with(utterances, [_accounts_read("src_acc", ONE_CHECKING)]), _ctx()
+    )
+    _assert_override_to_checking(draft)
+
+
+def test_from_savings_with_amount_is_named_source():
+    scripted = ScriptedLLM([tool_response("submit_action_plan", _transfer_plan("acc_zs_sav"))])
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    adapter = PlanAdapter(llm)
+    draft = adapter(_state("从储蓄转500给王五", ONE_CHECKING), _ctx())
+    assert draft.steps[0].args.from_account_id == "acc_zs_sav"
+
+
+def test_duplicate_checking_reads_do_not_clarify():
+    scripted = ScriptedLLM([tool_response("submit_action_plan", _transfer_plan("acc_zs_sav"))])
+    llm = make_llm(api_key=API_KEY, http_client=scripted.client)
+    adapter = PlanAdapter(llm)
+    reads = [
+        _accounts_read("src_acc_1", ONE_CHECKING),
+        _accounts_read("src_acc_2", ONE_CHECKING),
+    ]
+    draft = adapter(
+        _state_with([UtteranceRef(id="utt_typed", kind="typed", text="给王五转100元")], reads),
+        _ctx(),
+    )
+    _assert_override_to_checking(draft)
