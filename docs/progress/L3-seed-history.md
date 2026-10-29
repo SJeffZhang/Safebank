@@ -118,6 +118,10 @@ must remain the latest (balance_after 600000).
   transactions (new OUT 891480 cents, credits 2099430, debits 1499430)` — everyday
   spends now span 2026-07-17..2026-10-12 in 日用/零食/茶饮/生鲜.
 - `make test-obligations` (after P1-2 + monthly-coverage test): **159 passed, 1 warning**.
+- Final gates (after review fix): `make lint` **pass** (All checks passed! / 431 files
+  already formatted); `make test` **3370 passed, 907 skipped**; `make test-obligations`
+  **159 passed, 1 warning**; `make test-e0b` **119 passed**; `make contracts-check`
+  **PASS: contracts v1 match frozen schemas**.
 
 Note: the E0 runner suite uses `mini_seed.json`, not `l1_seed_v1.json`, so no old transaction-count
 assertion needed updating.
