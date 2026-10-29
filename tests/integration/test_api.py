@@ -80,6 +80,12 @@ def test_http_contract_auth_ownership_execution_and_outbox():
                             "args": {"account_id": None, "product_id": None},
                         },
                     )
+                ).status_code == 200
+                assert (
+                    await client.post(
+                        "/internal/read/get_unknown_tool",
+                        json={"customer_id": "cus_a", "args": {}},
+                    )
                 ).json()["error"]["code"] == "TOOL_NOT_ALLOWED"
                 p, e = await commands(db)
                 snapshot = await client.post(
