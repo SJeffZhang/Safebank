@@ -796,10 +796,7 @@ def parse(
                     continue  # internal anchor slots, not contract fields
                 elif not put(key, value):
                     return Parsed()
-            if (
-                tool == "schedule_transfer"
-                and not command.future
-            ):
+            if tool == "schedule_transfer" and not command.future:
                 first = _first_run_at(
                     state.sim_now,
                     period,
