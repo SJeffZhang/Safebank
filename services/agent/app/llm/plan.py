@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import ValidationError
@@ -77,6 +79,16 @@ _SYSTEM = (
     "template 只能是 available_less_7d_charges；当存在多个稳健/平衡类产品时不要自行挑一个"
     "产品，把 product_id 留空交由澄清，让用户选择具体产品。"
 )
+
+
+def _extract_date_line(state: AgentState) -> str:
+    """Return the business date line stored in state by the gather step.
+
+    The gather step performs a best-effort ``get_profile`` read and stores the
+    formatted date string in ``state["business_date"]``.  This function simply
+    returns it; it does NOT call the read executor itself.
+    """
+    return state.get("business_date", "")
 
 
 def _index_map(text: str) -> str:
@@ -774,6 +786,11 @@ class PlanAdapter:
             "用户请求（id/kind/text；span 用 0 基半开区间 [start, end)，即 text[start:end]，"
             "end 不包含；每字符下标范围如下）："
         ]
+        # Inject the current business date from a get_profile read so relative dates
+        # (9月, 上个月, 最近, 下周) resolve against the right year.
+        date_line = _extract_date_line(state)
+        if date_line:
+            parts.append(date_line)
         for utterance in state.get("utterances", []):
             text = json.dumps(utterance.text, ensure_ascii=False)
             parts.append(f"- id={utterance.id} kind={utterance.kind.value} text={text}")

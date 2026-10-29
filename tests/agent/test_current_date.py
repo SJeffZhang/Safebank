@@ -71,7 +71,11 @@ def profile_read_result(sim_now="2026-10-15T09:00:00+08:00"):
 
 class TestGatherBusinessDate:
     def test_get_profile_called_once_per_turn(self):
-        """get_profile is read once at gather start when not already in state."""
+        """get_profile is read once at gather start when not already in state.
+
+        The profile read is NOT returned as a normal ReadRecord — only the
+        formatted date string is stored in ``state["business_date"]``.
+        """
         read_log = []
 
         def executor(name, args):
@@ -82,11 +86,14 @@ class TestGatherBusinessDate:
         from services.agent.app.llm.client import BETA_API_BASE, MODEL, make_llm
 
         llm = make_llm(api_key="test-key", http_client=scripted.client)
-        result = GatherAdapter(llm, executor)(gather_state(), ctx())
-        assert len(result) >= 1
+        st = gather_state()
+        result = GatherAdapter(llm, executor)(st, ctx())
+        # Model returned no tool calls → no new reads
+        assert len(result) == 0
+        # get_profile was still called by the date resolver
         assert ("get_profile", {}) in read_log
-        profile_records = [r for r in result if r.tool == "get_profile"]
-        assert len(profile_records) == 1
+        # The business date was stored in state
+        assert "当前业务时间：2026-10-15 09:00" in st.get("business_date", "")
 
     def test_date_line_in_gather_prompt(self):
         """The business date line appears in the gather system+user prompt."""
@@ -168,17 +175,26 @@ class TestGatherBusinessDate:
 
 class TestPlanBusinessDate:
     def test_date_line_in_plan_prompt(self):
-        """The business date line appears in the plan prompt when get_profile read exists."""
+        """The business date line appears in the plan prompt when business_date is set."""
         scripted = ScriptedLLM(
             [
                 tool_response(
                     "submit_action_plan",
                     {
-                        "intents": ["detect_anomalies"],
+                        "intents": ["transfer"],
                         "steps": [
                             {
-                                "tool": "detect_anomalies",
-                                "args": {"history_days": 30},
+                                "step_id": "s1",
+                                "tool": "transfer",
+                                "args": {
+                                    "from_account_id": "acc_a",
+                                    "payee_id": {"kind": "id", "id": "pye_b"},
+                                    "to_account_id": {"kind": "none"},
+                                    "amount_cents": 80000,
+                                    "memo": "__NULL__",
+                                },
+                                "depends_on": [],
+                                "arg_sources": [],
                             }
                         ],
                         "rationale": "test",
@@ -190,15 +206,9 @@ class TestPlanBusinessDate:
 
         llm = make_llm(api_key="test-key", http_client=scripted.client)
 
-        reads_with_profile = [
-            ReadRecord(
-                source_ref="src_p",
-                tool="get_profile",
-                args={},
-                data=profile_read_result().data,
-            )
-        ]
-        PlanAdapter(llm)(plan_state(reads=reads_with_profile), ctx())
+        st = plan_state()
+        st["business_date"] = "当前业务时间：2026-10-15 09:00（北京时间，Asia/Shanghai）"
+        PlanAdapter(llm)(st, ctx())
 
         assert len(scripted.requests) >= 1
         all_text = ""
@@ -213,11 +223,20 @@ class TestPlanBusinessDate:
                 tool_response(
                     "submit_action_plan",
                     {
-                        "intents": ["detect_anomalies"],
+                        "intents": ["transfer"],
                         "steps": [
                             {
-                                "tool": "detect_anomalies",
-                                "args": {"history_days": 30},
+                                "step_id": "s1",
+                                "tool": "transfer",
+                                "args": {
+                                    "from_account_id": "acc_a",
+                                    "payee_id": {"kind": "id", "id": "pye_b"},
+                                    "to_account_id": {"kind": "none"},
+                                    "amount_cents": 80000,
+                                    "memo": "__NULL__",
+                                },
+                                "depends_on": [],
+                                "arg_sources": [],
                             }
                         ],
                         "rationale": "test",
@@ -229,7 +248,6 @@ class TestPlanBusinessDate:
 
         llm = make_llm(api_key="test-key", http_client=scripted.client)
 
-        # No get_profile in reads
         PlanAdapter(llm)(plan_state(reads=[]), ctx())
 
         assert len(scripted.requests) >= 1

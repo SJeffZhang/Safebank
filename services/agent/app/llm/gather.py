@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -101,7 +103,12 @@ class GatherAdapter:
     def __call__(self, state: AgentState, context: AgentContext) -> list[ReadRecord]:
         reads: list[ReadRecord] = []
         tools_attempted: set[str] = set()
-        messages = [SystemMessage(content=_SYSTEM), HumanMessage(content=self._prompt(state))]
+
+        # Resolve current business date from get_profile so relative dates
+        # (9月, 上个月, 最近, 下周) are interpreted against the right year.
+        date_line = self._resolve_business_date_line(state)
+
+        messages = [SystemMessage(content=_SYSTEM), HumanMessage(content=self._prompt(state, date_line))]
         for _ in range(self._max_rounds):
             message = self._model.invoke(messages)
             if self._observer is not None:
@@ -259,8 +266,70 @@ class GatherAdapter:
         )
 
     @staticmethod
-    def _prompt(state: AgentState) -> str:
-        parts = ["用户请求："]
+    def _format_date_line(sim_now: str) -> str:
+        """Format a ``sim_now`` timestamp into a human-readable date line."""
+        try:
+            dt = datetime.fromisoformat(sim_now)
+            local = dt.astimezone(ZoneInfo("Asia/Shanghai"))
+            date_str = local.strftime("%Y-%m-%d %H:%M")
+            return f"当前业务时间：{date_str}（北京时间，Asia/Shanghai）"
+        except Exception:
+            return ""
+
+    def _resolve_business_date_line(
+        self, state: AgentState
+    ) -> str:
+        """Perform a ``get_profile`` read at gather start to learn the business clock.
+
+        Only calls the read executor once per turn: if ``business_date`` is already
+        set in state (from a previous turn or plan step), it is reused.
+        On failure the date line is silently omitted so the turn is not blocked.
+
+        The profile read is NOT appended to ``state["reads"]`` — only the formatted
+        date string is stored in ``state["business_date"]``.
+        """
+        # Reuse from a previous turn.
+        existing = state.get("business_date", "")
+        if existing:
+            return existing
+
+        # Check if a previous get_profile read already yielded sim_now.
+        for r in state.get("reads", []):
+            if getattr(r, "tool", "") == "get_profile":
+                sim_now = (r.data or {}).get("sim_now", "")
+                if sim_now:
+                    date_line = self._format_date_line(sim_now)
+                    if date_line:
+                        state["business_date"] = date_line
+                        return date_line
+
+        try:
+            result = self._read_executor("get_profile", {})
+        except Exception:
+            return ""
+
+        if result is None:
+            return ""
+
+        try:
+            sim_now = (result.data or {}).get("sim_now", "")
+        except Exception:
+            return ""
+
+        if not sim_now:
+            return ""
+
+        date_line = self._format_date_line(sim_now)
+        if date_line:
+            state["business_date"] = date_line
+        return date_line
+
+    @staticmethod
+    def _prompt(state: AgentState, date_line: str = "") -> str:
+        parts = []
+        if date_line:
+            parts.append(date_line)
+        parts.append("用户请求：")
         parts.extend(utterance.text for utterance in state.get("utterances", []))
         understanding = state.get("understanding")
         if understanding is not None:
