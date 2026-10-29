@@ -62,7 +62,7 @@ def test_upgrade_head_twice_succeeds(obligations_db):
         db = engine(obligations_db.admin_url, poolclass=NullPool)
         async with db.connect() as c:
             version = await c.scalar(text("SELECT version_num FROM alembic_version"))
-            assert version == "0008_funds"
+            assert version == "0009_funds_units_nonneg"
         await db.dispose()
 
     asyncio.run(check())
@@ -231,7 +231,7 @@ def test_0003_data_survives_0004_upgrade(obligations_0002_db):
             version = await conn.scalar(text("SELECT version_num FROM alembic_version"))
             # The session-shared fixture may already be past 0004 (later heads); upgrading
             # to an older target is then a no-op, so require 0004 or a later revision.
-            assert version in ("0004_event_jobs", "0007_products", "0008_funds")
+            assert version in ("0004_event_jobs", "0007_products", "0008_funds", "0009_funds_units_nonneg")
             # Old data intact.
             assert await conn.scalar(text("SELECT count(*) FROM merchant_billing")) == bill_count
             assert await conn.scalar(text("SELECT count(*) FROM merchants")) == merchant_count
