@@ -29,6 +29,7 @@ from . import models as m
 from .db import engine, ready
 from .demo import register_demo_routes
 from .errors import BankError
+from .events import BlockEventRequest, EventService, ExecuteEventRequest
 from .execution import ExecutionService, utcnow
 from .reads import SUPPORTED_READS, read
 from .state import load_bank_state, resolve_scope
@@ -86,6 +87,7 @@ def create_app(
         openapi_url=None,
     )
     svc = ExecutionService(database, key)
+    events = EventService()
 
     @app.middleware("http")
     async def trace(request: Request, call_next):
@@ -232,6 +234,36 @@ def create_app(
                 .values(delivered_at_wall=utcnow())
             )
         return {"acknowledged": len(existing)}
+
+    @app.get("/internal/events/{event_id}")
+    async def get_event(event_id: str, customer_id: str | None = None):
+        async with database.connect() as conn:
+            return await events.get_event(conn, event_id, customer_id)
+
+    @app.post("/internal/events/{event_id}/execute")
+    async def execute_event(event_id: str, body: ExecuteEventRequest):
+        async with database.begin() as conn:
+            return await events.execute_event(
+                conn,
+                event_id,
+                body.expected_versions,
+                body.clock_version,
+                body.expected_payload_hash,
+                body.authorization_evidence,
+            )
+
+    @app.post("/internal/events/{event_id}/block")
+    async def block_event(event_id: str, body: BlockEventRequest):
+        async with database.begin() as conn:
+            return await events.block_event(
+                conn,
+                event_id,
+                body.status,
+                body.code or body.status,
+                body.expected_versions,
+                body.clock_version,
+                body.expected_payload_hash,
+            )
 
     if demo_mode:
         register_demo_routes(app, database, admin_database, key)
