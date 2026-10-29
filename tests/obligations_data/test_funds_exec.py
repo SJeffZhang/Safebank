@@ -390,6 +390,7 @@ def test_redeem_reserves_units_and_creates_fund_settle_job(obligations_db):
                     units="500.0000",
                     reserved_units="0.0000",
                     cost_cents=500_000,
+                    reserved_cost_cents=0,
                 )
             )
             # Also need a fund order for the initial subscription
@@ -484,6 +485,7 @@ def test_get_holdings_returns_holdings_and_orders(obligations_db):
                     units="500.0000",
                     reserved_units="0.0000",
                     cost_cents=500_000,
+                    reserved_cost_cents=0,
                 )
             )
 
