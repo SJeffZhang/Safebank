@@ -122,6 +122,27 @@ def test_detect_subscriptions_four_with_gym_idle(obligations_db):
     assert idle[0]["usage_evidence"]["previous_usage_count"] == 6
 
 
+def test_everyday_card_spends_span_jul_aug_sep_oct(obligations_db):
+    """Everyday spending (日用/零食/茶饮/生鲜) appears in each of Jul-Oct."""
+    _install_and_load(obligations_db)
+    rows = _sql(
+        obligations_db,
+        """
+        SELECT to_char(occurred_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM') AS month,
+               count(*)
+        FROM transactions
+        WHERE card_id = 'crd_zs_1'
+          AND kind = 'CARD_SPEND'
+          AND category IN ('日用', '零食', '茶饮', '生鲜')
+        GROUP BY month
+        ORDER BY month
+        """,
+    )
+    months = {r[0] for r in rows}
+    assert {"2026-07", "2026-08", "2026-09", "2026-10"} <= months, months
+    assert sum(r[1] for r in rows) == 140, rows
+
+
 def test_zhangsan_checking_balance_refund_memo_and_ledger(obligations_db):
     _install_and_load(obligations_db)
 
