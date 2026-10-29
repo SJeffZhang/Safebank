@@ -424,13 +424,18 @@ def _clause(clause: str) -> Command | None:
     if bank:
         return Command("_payee_attr", fields={"bank_name": bank["bank"]})
     # Recognized future commands remain partial and always require a complete form.
+    # A concrete monthly/weekly anchor, by contrast, is a complete schedule: the
+    # anchor is encoded into first_run_at by the parse() loop (the Schedule
+    # contract has no anchor_day/weekday field), so it must NOT be marked future.
     future = re.fullmatch(r"(?:明天|后天|定时)(?P<body>.+)", clause)
     monthly = re.fullmatch(r"每月\s*(?P<day>\d{1,2})\s*[号日](?:自动)?(?P<body>.+)", clause)
-    if future or monthly:
-        match = future or monthly
+    weekly = re.fullmatch(
+        r"每(?:周|星期|礼拜)(?P<weekday>[一二三四五六日天])(?:自动)?(?P<body>.+)", clause
+    )
+    if future or monthly or weekly:
+        match = future or monthly or weekly
         transfer = _transfer_clause(match["body"])
         if transfer is not None:
-            transfer.future = True
             if monthly:
                 if not 1 <= int(monthly["day"]) <= 31:
                     return None
@@ -438,7 +443,21 @@ def _clause(clause: str) -> Command | None:
                 transfer.fields.update(
                     period="MONTHLY", anchor_day=int(monthly["day"]), continuous=True
                 )
+            elif weekly:
+                transfer.tool = "schedule_transfer"
+                transfer.fields.update(period="WEEKLY", weekday=weekly["weekday"], continuous=True)
+            else:
+                transfer.future = True
             return transfer
+    split = re.fullmatch(r"(?P<self>我和)?(?P<names>.+?)(?:AA|分摊)", clause)
+    if split:
+        names = [name for name in re.split(r"[、]", split["names"]) if name]
+        if not names:
+            return None
+        return Command(
+            "_split_participants",
+            fields={"participants": names, "include_self": bool(split["self"])},
+        )
     return _transfer_clause(clause)
 
 
@@ -485,6 +504,42 @@ def _payees(label: str, payees: list) -> list:
         for payee in payees
         if near_name(payee.name, label) or (payee.alias and near_name(payee.alias, label))
     ]
+
+
+_WEEKDAYS = {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "日": 6, "天": 6}
+
+
+def _first_run_at(
+    sim_now, period: str, anchor_day: int | None = None, weekday: str | None = None
+) -> str | None:
+    """First occurrence of a monthly/weekly anchor strictly after sim_now.
+
+    The Schedule contract carries the anchor only through first_run_at (08:00
+    local); there is no anchor_day/weekday field, so a concrete anchor makes a
+    complete schedule request rather than a FORM_REQUIRED one.
+    """
+    import calendar
+    from datetime import timedelta
+
+    if period == "MONTHLY":
+        day = int(anchor_day)
+        year, month = sim_now.year, sim_now.month
+        if sim_now.day < day:
+            if day > calendar.monthrange(year, month)[1]:
+                return None
+            target = sim_now.replace(day=day)
+        else:
+            year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+            if day > calendar.monthrange(year, month)[1]:
+                return None
+            target = sim_now.replace(year=year, month=month, day=day)
+        return target.replace(hour=8, minute=0, second=0, microsecond=0).isoformat()
+    if period == "WEEKLY":
+        target_wd = int(_WEEKDAYS[weekday])
+        days_ahead = (target_wd - sim_now.weekday()) % 7 or 7
+        target = sim_now + timedelta(days=days_ahead)
+        return target.replace(hour=8, minute=0, second=0, microsecond=0).isoformat()
+    return None
 
 
 def scope_is_complete(scope: NormalizedScope) -> bool:
@@ -555,6 +610,8 @@ def parse(
     commands = [_clause(clause) for clause in clauses]
     if any(command is None for command in commands):
         return Parsed()
+    owned = [account for account in state.accounts.values() if account.customer_id == customer_id]
+    payees = [payee for payee in state.payees.values() if payee.customer_id == customer_id]
     # Merge add_payee + _payee_attr clauses: property clauses (账号/卡号 <digits>, 他行/本行)
     # only valid alongside a single add_payee main clause.  Any other tool in the mix
     # (or _payee_attr without add_payee) is rejected so unrelated commands don't leak.
@@ -578,6 +635,51 @@ def parse(
             return Parsed()  # _payee_attr without add_payee
         payee_main.fields.update(payee_attrs)
         commands = [c for c in commands if c.tool != "_payee_attr"]
+    # Merge a shared-expense total + participant clause into create_split_request.
+    # "昨晚聚餐400元，我和小林、小周、小陈AA": the total clause is the only bare
+    # transfer and its target names the expense (never a payee/account); the
+    # participant clause carries 我和 + names + AA/分摊.  Anything else is rejected
+    # so no amount/participant is ever inferred.
+    if any(cmd.tool == "_split_participants" for cmd in commands):
+        splits = [cmd for cmd in commands if cmd.tool == "_split_participants"]
+        totals = [cmd for cmd in commands if cmd.tool == "transfer" and cmd.bare]
+        others = [
+            cmd
+            for cmd in commands
+            if cmd.tool != "_split_participants" and not (cmd.tool == "transfer" and cmd.bare)
+        ]
+        if len(splits) != 1 or len(totals) != 1 or others:
+            return Parsed()
+        total, split = totals[0], splits[0]
+        if _accounts(total.target, owned) or _payees(total.target, payees):
+            return Parsed()  # the total names a payee/account, not a shared expense
+        ids: list[str] = []
+        for name in split.fields.get("participants") or []:
+            matches = _payees(name, payees)
+            exact = [
+                payee
+                for payee in matches
+                if normalize(name) in {normalize(payee.name), normalize(payee.alias or "")}
+            ]
+            if len(exact) != 1:
+                return Parsed()  # unknown / ambiguous participant
+            ids.append(exact[0].id)
+        if len(set(ids)) != len(ids) or not 1 <= len(ids) <= 20:
+            return Parsed()
+        defaults = _accounts(None, owned)
+        if len(defaults) != 1:
+            return Parsed()
+        commands = [
+            Command(
+                "create_split_request",
+                fields={
+                    "account_id": defaults[0].id,
+                    "total_cents": total.amount_cents,
+                    "participant_payee_ids": ids,
+                    "include_self": bool(split.fields.get("include_self")),
+                },
+            )
+        ]
     writes = [command for command in commands if command.tool not in {"read", "reserve"}]
     if not writes:
         return Parsed(status=ParseStatus.NO_WRITE)
@@ -585,13 +687,11 @@ def parse(
         len(writes) >= 2 and all(command.tool == "transfer" for command in writes)
     ):
         return Parsed()
-    owned = [account for account in state.accounts.values() if account.customer_id == customer_id]
     cards = [
         card
         for card in state.cards.values()
         if card.account_id in {account.id for account in owned}
     ]
-    payees = [payee for payee in state.payees.values() if payee.customer_id == customer_id]
     result = Parsed()
     fields: dict[str, Any] = {}
     kinds: list[str] = []
@@ -689,7 +789,22 @@ def parse(
             for key, value in command.fields.items():
                 if key == "period":
                     period = value
+                elif key in {"anchor_day", "weekday", "continuous"}:
+                    continue  # internal anchor slots, not contract fields
                 elif not put(key, value):
+                    return Parsed()
+            if (
+                tool == "schedule_transfer"
+                and not command.future
+                and not command.fields.get("derived_template")
+            ):
+                first = _first_run_at(
+                    state.sim_now,
+                    period,
+                    anchor_day=command.fields.get("anchor_day"),
+                    weekday=command.fields.get("weekday"),
+                )
+                if first is None or not put("first_run_at", first):
                     return Parsed()
         elif tool in {
             "freeze_card",
@@ -806,6 +921,31 @@ def parse(
                 if not put("bank_name", bank_name):
                     return Parsed()
             kinds.append("PAYEE_ADD")
+        elif tool == "create_split_request":
+            total = command.fields.get("total_cents")
+            account_id = command.fields.get("account_id")
+            participant_ids = command.fields.get("participant_payee_ids")
+            if (
+                type(total) is not int
+                or not 0 < total <= 2**63 - 1
+                or not account_id
+                or not isinstance(participant_ids, list)
+                or not 1 <= len(participant_ids) <= 20
+                or len(set(participant_ids)) != len(participant_ids)
+            ):
+                return Parsed()
+            sources.add(account_id)
+            if len(sources) > 1:
+                return Parsed()
+            if not put("account_id", account_id):
+                return Parsed()
+            if not put("total_cents", total):
+                return Parsed()
+            if not put("participant_payee_ids", participant_ids):
+                return Parsed()
+            if not put("include_self", bool(command.fields.get("include_self"))):
+                return Parsed()
+            kinds.append(action_kind(tool, {}, state).value)
     if len(result.required_fields) > 1 or (transfer_count > 1 and result.required_fields):
         return Parsed()  # No indexed slots exist in the frozen clarification model.
     source = next(iter(sources), None)

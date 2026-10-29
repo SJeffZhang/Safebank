@@ -604,8 +604,19 @@ def validate_seed(seed: dict[str, Any]) -> list[str]:
         if billing.get("account_id") not in account_ids:
             problems.append(f"billing {billing.get('id')!r} 的 account_id 不在 accounts 中")
 
+    merchant_ids = {m["id"] for m in seed.get("merchants", [])}
+    billing_ids = {b["id"] for b in seed.get("billings", [])}
     for instruction in seed.get("standing_instructions", []):
-        if instruction.get("payee_id") not in payee_ids:
+        if instruction.get("kind") == "MERCHANT_MANDATE":
+            if instruction.get("merchant_id") not in merchant_ids:
+                problems.append(
+                    f"standing_instruction {instruction.get('id')!r} 的 merchant_id 不在 merchants"
+                )
+            if instruction.get("billing_id") not in billing_ids:
+                problems.append(
+                    f"standing_instruction {instruction.get('id')!r} 的 billing_id 不在 billings"
+                )
+        elif instruction.get("payee_id") not in payee_ids:
             problems.append(
                 f"standing_instruction {instruction.get('id')!r} 的 payee_id 不在 payees"
             )

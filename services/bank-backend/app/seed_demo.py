@@ -173,6 +173,28 @@ async def install_demo(conn, fingerprint_key: str) -> dict[str, Any]:
     for instruction in new_instructions:
         await conn.execute(m.standing_instructions.insert().values(**instruction))
 
+    # Already-installed customers may predate the obligations part of the demo seed:
+    # backfill their merchant billings and MERCHANT_MANDATE instructions idempotently by
+    # id. Accounts, transfers and transactions are never touched here.
+    backfilled_billings = 0
+    backfilled_mandates = 0
+    for billing in prepared["billings"]:
+        if billing["customer_id"] not in skipped_customer_ids:
+            continue
+        result = await conn.execute(
+            pg_insert(m.merchant_billing).values(**billing).on_conflict_do_nothing()
+        )
+        backfilled_billings += result.rowcount or 0
+    for instruction in prepared["standing_instructions"]:
+        if instruction["customer_id"] not in skipped_customer_ids:
+            continue
+        if instruction["kind"] != "MERCHANT_MANDATE":
+            continue
+        result = await conn.execute(
+            pg_insert(m.standing_instructions).values(**instruction).on_conflict_do_nothing()
+        )
+        backfilled_mandates += result.rowcount or 0
+
     # Already-installed customers keep their ledger (append-only), but payee creation
     # times are reference data: converge them to the seed so a corrected seed takes
     # effect on rerun (the new-payee rule reads this column).
@@ -203,6 +225,8 @@ async def install_demo(conn, fingerprint_key: str) -> dict[str, Any]:
         "added_transactions": len(new_transactions),
         "added_billings": len(new_billings),
         "added_standing_instructions": len(new_instructions),
+        "backfilled_billings": backfilled_billings,
+        "backfilled_mandates": backfilled_mandates,
         "funding_transfers": funding_count,
         "funding_total_cents": total_funding,
         "clearing_debits_delta": in_delta,

@@ -1,7 +1,17 @@
-from safebank_contracts.state import BankState
+from safebank_contracts.enums import CardStatus, Risk
+from safebank_contracts.state import BankState, Card
 from safebank_contracts.tools import WRITE_ARGS
 
-from services.gateway.app.policy.registry import action_kind, load_policies, outflow, policy
+from services.gateway.app.pipeline.context import EvalContext, ResolvedStep
+from services.gateway.app.pipeline.decision import DecisionStage
+from services.gateway.app.policy.registry import (
+    action_kind,
+    load_policies,
+    outflow,
+    policy,
+    step_base_risk,
+)
+from services.gateway.app.schemas.decision import DecisionValue
 from services.gateway.app.schemas.enums import ActionKind
 
 
@@ -144,3 +154,109 @@ def test_outflow_matches_external_transfer_and_schedule_r4():
         outflow("redeem_product", {"account_id": "a", "product_id": "p", "units": "1.0000"}, None)
         is False
     )
+
+
+def _card_state(
+    *,
+    single_limit_cents: int = 500_000,
+    daily_limit_cents: int = 2_000_000,
+    online: bool = False,
+    overseas: bool = False,
+    atm: bool = False,
+    quickpass: bool = False,
+) -> BankState:
+    card = Card(
+        id="crd_1",
+        account_id="acc_1",
+        last4="0000",
+        status=CardStatus.ACTIVE,
+        single_limit_cents=single_limit_cents,
+        daily_limit_cents=daily_limit_cents,
+        controls={"online": online, "overseas": overseas, "atm": atm, "quickpass": quickpass},
+        created_at="2026-10-15T09:00:00+08:00",
+    )
+    return BankState(
+        sim_now="2026-10-15T09:00:00+08:00",
+        clock_version=0,
+        versions={},
+        accounts={},
+        customers={},
+        cards={"crd_1": card},
+        payees={},
+    )
+
+
+def test_step_base_risk_limit_raise_is_red():
+    state = _card_state(single_limit_cents=500_000)
+    assert (
+        step_base_risk(
+            "update_card_limits",
+            {"card_id": "crd_1", "single_limit_cents": 800_000},
+            state,
+        )
+        == "RED"
+    )
+
+
+def test_step_base_risk_limit_lower_is_yellow():
+    state = _card_state(single_limit_cents=800_000)
+    assert (
+        step_base_risk(
+            "update_card_limits",
+            {"card_id": "crd_1", "single_limit_cents": 100_000},
+            state,
+        )
+        == "YELLOW"
+    )
+
+
+def test_step_base_risk_channel_on_is_red():
+    state = _card_state(online=False)
+    assert (
+        step_base_risk(
+            "update_card_controls",
+            {"card_id": "crd_1", "online": True},
+            state,
+        )
+        == "RED"
+    )
+
+
+def test_step_base_risk_channel_off_is_yellow():
+    state = _card_state(online=True)
+    assert (
+        step_base_risk(
+            "update_card_controls",
+            {"card_id": "crd_1", "online": False},
+            state,
+        )
+        == "YELLOW"
+    )
+
+
+def test_mixed_plan_with_loosen_step_aggregates_red():
+    state = _card_state(single_limit_cents=500_000)
+    transfer_args = {"to_account_id": "acc_2", "amount_cents": 10_000}
+    limit_args = {"card_id": "crd_1", "single_limit_cents": 800_000}
+    steps = (
+        ResolvedStep(
+            step_id="stp_1",
+            tool="transfer",
+            args=transfer_args,
+            action_kind=ActionKind.TRANSFER_SELF.value,
+            base_risk=step_base_risk("transfer", transfer_args, state),
+            outflow=False,
+        ),
+        ResolvedStep(
+            step_id="stp_2",
+            tool="update_card_limits",
+            args=limit_args,
+            action_kind=ActionKind.CARD_LIMIT_LOOSEN.value,
+            base_risk=step_base_risk("update_card_limits", limit_args, state),
+            outflow=False,
+        ),
+    )
+    ctx = EvalContext(steps=steps)
+    decision, risk = DecisionStage()._aggregate(ctx)
+    assert decision is DecisionValue.REQUIRE_APPROVAL
+    assert risk is Risk.RED

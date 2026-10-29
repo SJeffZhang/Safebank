@@ -426,6 +426,22 @@
       "account_id": "acc_zs_chk",
       "amount_cents": 19900,
       "day_of_month": 25
+    },
+    {
+      "id": "blg_ls_video",
+      "merchant_id": "mer_video",
+      "customer_id": "cus_ls",
+      "account_id": "acc_ls_chk",
+      "amount_cents": 3000,
+      "day_of_month": 20
+    },
+    {
+      "id": "blg_ls_music",
+      "merchant_id": "mer_music",
+      "customer_id": "cus_ls",
+      "account_id": "acc_ls_chk",
+      "amount_cents": 1500,
+      "day_of_month": 22
     }
   ],
   "standing_instructions": [
@@ -438,6 +454,60 @@
       "period": "MONTHLY",
       "day_of_month": 5,
       "next_run_at": "2026-11-05T06:00:00+08:00"
+    },
+    {
+      "id": "si_zs_video",
+      "kind": "MERCHANT_MANDATE",
+      "customer_id": "cus_zs",
+      "from_account_id": "acc_zs_chk",
+      "merchant_id": "mer_video",
+      "billing_id": "blg_video",
+      "max_amount_cents": 3600
+    },
+    {
+      "id": "si_zs_music",
+      "kind": "MERCHANT_MANDATE",
+      "customer_id": "cus_zs",
+      "from_account_id": "acc_zs_chk",
+      "merchant_id": "mer_music",
+      "billing_id": "blg_music",
+      "max_amount_cents": 1800
+    },
+    {
+      "id": "si_zs_cloud",
+      "kind": "MERCHANT_MANDATE",
+      "customer_id": "cus_zs",
+      "from_account_id": "acc_zs_chk",
+      "merchant_id": "mer_cloud",
+      "billing_id": "blg_cloud",
+      "max_amount_cents": 2520
+    },
+    {
+      "id": "si_zs_gym",
+      "kind": "MERCHANT_MANDATE",
+      "customer_id": "cus_zs",
+      "from_account_id": "acc_zs_chk",
+      "merchant_id": "mer_gym",
+      "billing_id": "blg_gym",
+      "max_amount_cents": 23880
+    },
+    {
+      "id": "si_ls_video",
+      "kind": "MERCHANT_MANDATE",
+      "customer_id": "cus_ls",
+      "from_account_id": "acc_ls_chk",
+      "merchant_id": "mer_video",
+      "billing_id": "blg_ls_video",
+      "max_amount_cents": 3600
+    },
+    {
+      "id": "si_ls_music",
+      "kind": "MERCHANT_MANDATE",
+      "customer_id": "cus_ls",
+      "from_account_id": "acc_ls_chk",
+      "merchant_id": "mer_music",
+      "billing_id": "blg_ls_music",
+      "max_amount_cents": 1800
     }
   ],
   "transactions": [

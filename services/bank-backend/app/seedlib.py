@@ -178,11 +178,12 @@ def prepare_seed(
     merchant_ids = _unique_ids(merchants, "merchant")
     _unique_ids(products, "product")
     _unique_ids(transactions, "transaction")
-    _unique_ids(billings, "billing")
+    billing_ids = _unique_ids(billings, "billing")
     _unique_ids(standing_instructions, "standing_instruction")
 
     cards_by_id = {c["id"]: c for c in cards}
     accounts_by_id = {a["id"]: a for a in accounts}
+    billings_by_id = {b["id"]: b for b in billings}
 
     # --- cards -------------------------------------------------------------
     prepared_cards: list[dict[str, Any]] = []
@@ -485,6 +486,83 @@ def prepare_seed(
                 f"standing_instruction {si_id} account {from_account_id} "
                 "belongs to another customer"
             )
+        kind = item.get("kind", "SCHEDULED_TRANSFER")
+        if kind == "MERCHANT_MANDATE":
+            merchant_id = item.get("merchant_id")
+            if merchant_id not in merchant_ids:
+                raise SeedError(
+                    f"standing_instruction {si_id} references unknown merchant {merchant_id!r}"
+                )
+            billing_id = item.get("billing_id")
+            if billing_id not in billing_ids:
+                raise SeedError(
+                    f"standing_instruction {si_id} references unknown billing {billing_id!r}"
+                )
+            billing = billings_by_id[billing_id]
+            if billing["merchant_id"] != merchant_id:
+                raise SeedError(
+                    f"standing_instruction {si_id} merchant {merchant_id!r} does not match "
+                    f"billing {billing_id} merchant {billing['merchant_id']!r}"
+                )
+            if billing["customer_id"] != customer_id:
+                raise SeedError(
+                    f"standing_instruction {si_id} billing {billing_id} belongs to another customer"
+                )
+            if billing["account_id"] != from_account_id:
+                raise SeedError(
+                    f"standing_instruction {si_id} billing {billing_id} is paid from "
+                    f"{billing['account_id']!r}, not {from_account_id!r}"
+                )
+            for extra in (
+                "payee_id",
+                "to_account_id",
+                "amount_cents",
+                "period",
+                "day_of_month",
+                "weekday",
+                "next_run_at",
+            ):
+                if item.get(extra) is not None:
+                    raise SeedError(
+                        f"standing_instruction {si_id} MERCHANT_MANDATE must not set {extra}"
+                    )
+            max_amount = _require_int(
+                item.get("max_amount_cents"), f"standing_instruction {si_id} max_amount_cents"
+            )
+            if not 0 < max_amount <= 100_000_000:
+                raise SeedError(
+                    f"standing_instruction {si_id} max_amount_cents must be 1..100000000"
+                )
+            prepared_instructions.append(
+                {
+                    "id": si_id,
+                    "customer_id": customer_id,
+                    "status": "ACTIVE",
+                    "kind": "MERCHANT_MANDATE",
+                    "amount_type": "DUES",
+                    "from_account_id": from_account_id,
+                    "payee_id": None,
+                    "to_account_id": None,
+                    "merchant_id": merchant_id,
+                    "billing_id": billing_id,
+                    "amount_cents": None,
+                    "max_amount_cents": max_amount,
+                    "recurrence": "AS_PER_DUES",
+                    "period": None,
+                    "anchor_day": None,
+                    "weekday": None,
+                    "time_of_day": None,
+                    "next_run_at": None,
+                    "end_at": None,
+                    "priority": "HIGH",
+                    "grant_scope_hash": DEFAULT_GRANT_SCOPE_HASH,
+                    "source_plan_id": DEMO_PLAN_ID,
+                    "created_at": sim_now,
+                }
+            )
+            continue
+        if kind != "SCHEDULED_TRANSFER":
+            raise SeedError(f"standing_instruction {si_id} has invalid kind {kind!r}")
         payee_id = item.get("payee_id")
         to_account_id = item.get("to_account_id")
         if (payee_id is None) == (to_account_id is None):
