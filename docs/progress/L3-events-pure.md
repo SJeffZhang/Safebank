@@ -62,3 +62,39 @@ L3 scheduler events consuming an immutable payload (id + due_at).
 - No scheduler/event-job producer; these functions only consume due payloads.
 - Merchant `MERCHANT_MANDATE` vs `MERCHANT_CHARGE` kind mismatch (item 4) is
   left for the coordinator.
+
+## Fix round 1
+
+Independent review (`docs/reviews/L3-events-pure-review.md`) returned
+REQUEST_CHANGES. Addressed:
+
+- **P1-1 — external scheduled transfers now enforce the same transfer controls
+  as `apply_transfer`.** `apply_scheduled_transfer` resolves the payee from
+  `state.payees`, then runs `transfer_control_violation` (card state
+  `CARD_STATE_CONFLICT`, card/account single-daily `CARD_SINGLE_LIMIT` /
+  `CARD_DAILY_LIMIT`, customer `DAILY_OUTFLOW_LIMIT`) before posting; on
+  external success it calls `bump_outflow_counters` so scheduled outflows feed
+  `daily_outflow_cents` / `rolling_outflow_cents` / `daily_used_cents`. Hard
+  violations at due time are `BLOCKED` with no money moved; insufficient funds
+  still map to `FAILED_INSUFFICIENT`. Credit resolution now reuses the payee's
+  `target_account_id` (or the clearing account) instead of the derived
+  `InstructionTarget`, matching banking.py.
+- **P2-1 — non-ACTIVE block branch advances `next_run_at`.** The DISABLED/
+  DELETED branch now consumes the stale period (advances `next_run_at` via
+  `_next_scheduled_due`), so re-activation can't leave an instruction
+  permanently due.
+- **P2-2 — merchant `MERCHANT_MANDATE` vs `MERCHANT_CHARGE` kind mismatch.**
+  Not fixable here (frozen `ScheduleEventJob.kind` literal vs persist/CHECK
+  value); remains a documented coordinator gap (item 4).
+
+Red tests first (commit `f444602`), then the rewrite. `_finish_scheduled`
+extracts the shared "advance once + terminal run" path for ACTIVE
+instructions.
+
+Actual results after fix:
+
+- `.venv/bin/pytest tests/bankcore/test_events.py -q` → **13 passed**.
+- `.venv/bin/pytest tests/bankcore -q` → **394 passed**.
+- `make lint` → all checks passed / 431 files already formatted.
+- `make test` → **3383 passed, 903 skipped**.
+- `make contracts-check` → **PASS: contracts v1 match frozen schemas**.
