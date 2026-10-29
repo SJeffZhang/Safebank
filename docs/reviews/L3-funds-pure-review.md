@@ -50,3 +50,15 @@ Scope: `git diff origin/main..HEAD` (pure bankcore fund domain: apply_subscribe,
 - [x] **契约变更 additive**：state.py 仅新增 `FundOrderRecord`、`BankState.fund_orders` 字段；FUTURE_EFFECTS 中 `InsertFundOrder/UpdateFundOrder.order` 由 `FundOrderView` → `FundOrderRecord`（ADR-011 保留占位「可重定义一次」）。全仓 grep 确认无其他生产/消费者引用这两个效果，重定义合法。v1.json 仅 5 行删除（恰为该效果 `$ref` 与定义键重排），其余为新增。
 
 **核对结论**：除 P1-1 外全部通过。修复 P1-1（`apply_subscribe`/`apply_redeem` 增加 `account.type == AccountType.CHECKING` 校验并补红测，验证 SAVINGS 账户被拒）后建议复审。
+
+## Round 2
+
+复审对象：仅 `git show 9648305`（fix: subscribe/redeem require the customer's own CHECKING account）。
+
+- **P1-1 已修复**：`apply_subscribe`（funds.py:208）与 `apply_redeem`（funds.py:332）在本人归属校验之后新增 `account.type != "CHECKING" → Code.CONTRACT_INVALID` 拒绝，符合 PRD §8.2；funds 领域无更专用的账户类型错误码，`CONTRACT_INVALID` 合理。
+- **红测有效**：`test_subscribe_and_redeem_require_own_checking_account` 以 `acc_s`（cus_a 的 SAVINGS，tests/bankcore/fixtures.py:18-24）断言 CONTRACT_INVALID 且 `debits_posted_cents == 0`，并断言默认 CHECKING（`acc_a`）申购成功、赎回 `acc_s` 被拒；测试真实走到新分支而非误拒。
+- **无其他改动**：提交仅 3 文件——funds.py +4 行（两处 guard）、test_funds.py +19 行（`from safebank_contracts.codes import Code` + 新测试）、docs/reviews 报告；无契约/其他生产/其他测试变更。
+- **测试通过**：`.venv/bin/pytest tests/bankcore/test_funds.py -q` → 15 passed（0.09s）。
+- **P2（不阻塞）**：guard 使用魔法字符串 `"CHECKING"` 而非 `AccountType.CHECKING`（enums.py:5 为 StrEnum，功能等价；state.py:64 等处惯例用枚举，建议后续统一）。
+
+**Verdict: APPROVE**
