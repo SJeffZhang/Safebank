@@ -742,3 +742,91 @@ products = Table(
     CheckConstraint("settle_days >= 0", name="products_settle_days_check"),
     CheckConstraint("min_amount_cents > 0", name="products_min_amount_cents_check"),
 )
+
+
+FUND_ORDER_TYPE_CHECK = "type IN ('SUB','RED')"
+FUND_ORDER_STATUS_CHECK = (
+    "status IN ('PENDING_CONFIRM','PENDING_SETTLEMENT','SETTLED','FAILED','EXPIRED')"
+)
+EVENT_EXECUTION_STATUS_CHECK = (
+    "status IN ('SUCCESS','FAILED_INSUFFICIENT','BLOCKED','SKIPPED_REAPPROVAL')"
+)
+
+holdings = Table(
+    "holdings",
+    metadata,
+    Column("customer_id", ForeignKey("customers.id"), nullable=False),
+    Column("account_id", String(256), nullable=False),
+    Column(
+        "product_id",
+        ForeignKey("products.id", name="holdings_product_id_fkey"),
+        nullable=False,
+    ),
+    Column("units", Numeric(18, 4), nullable=False),
+    Column("reserved_units", Numeric(18, 4), nullable=False),
+    Column("cost_cents", BigInteger, nullable=False),
+    Column("reserved_cost_cents", BigInteger, nullable=False),
+    CheckConstraint("units >= reserved_units AND reserved_units >= 0", name="holdings_units_check"),
+    CheckConstraint(
+        "cost_cents >= reserved_cost_cents AND reserved_cost_cents >= 0",
+        name="holdings_cost_check",
+    ),
+    ForeignKeyConstraint(
+        ["account_id", "customer_id"],
+        ["accounts.id", "accounts.customer_id"],
+        name="holdings_account_customer_fkey",
+    ),
+    UniqueConstraint("customer_id", "account_id", "product_id", name="holdings_owner_product_key"),
+)
+
+fund_orders = Table(
+    "fund_orders",
+    metadata,
+    idcol(primary_key=True),
+    Column("customer_id", ForeignKey("customers.id"), nullable=False),
+    Column("account_id", String(256), nullable=False),
+    Column(
+        "product_id",
+        ForeignKey("products.id", name="fund_orders_product_id_fkey"),
+        nullable=False,
+    ),
+    Column("type", String, nullable=False),
+    Column("status", String, nullable=False),
+    Column("amount_cents", BigInteger, nullable=False),
+    Column("units", Numeric(18, 4), nullable=False),
+    Column("nav", Numeric(18, 4)),
+    Column("reserved_cost_cents", BigInteger, nullable=False),
+    Column("pending_transfer_id", String(256)),
+    Column("plan_id", String(256), nullable=False),
+    Column("step_id", String(256), nullable=False),
+    Column("trade_date", DateTime(timezone=True), nullable=False),
+    Column("confirm_at", DateTime(timezone=True)),
+    Column("settle_at", DateTime(timezone=True)),
+    Column("expires_at", DateTime(timezone=True)),
+    Column("failure_code", String),
+    CheckConstraint(FUND_ORDER_TYPE_CHECK, name="fund_orders_type_check"),
+    CheckConstraint(FUND_ORDER_STATUS_CHECK, name="fund_orders_status_check"),
+    CheckConstraint("amount_cents > 0", name="fund_orders_amount_cents_check"),
+    CheckConstraint("units > 0", name="fund_orders_units_check"),
+    CheckConstraint("reserved_cost_cents >= 0", name="fund_orders_reserved_cost_cents_check"),
+    ForeignKeyConstraint(
+        ["account_id", "customer_id"],
+        ["accounts.id", "accounts.customer_id"],
+        name="fund_orders_account_customer_fkey",
+    ),
+)
+
+event_executions = Table(
+    "event_executions",
+    metadata,
+    Column(
+        "event_id",
+        ForeignKey("event_jobs.id", name="event_executions_event_id_fkey"),
+        primary_key=True,
+    ),
+    Column("status", String, nullable=False),
+    Column("authorization_evidence", JSONB, nullable=False),
+    Column("result_json", JSONB, nullable=False),
+    Column("committed_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint(EVENT_EXECUTION_STATUS_CHECK, name="event_executions_status_check"),
+)
