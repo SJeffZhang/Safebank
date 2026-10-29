@@ -298,7 +298,6 @@ def _clause(clause: str) -> Command | None:
         return Command(
             "schedule_transfer",
             target=scheduled["target"],
-            future=True,
             fields={
                 "anchor_day": int(scheduled["day"]),
                 "continuous": True,
@@ -549,11 +548,15 @@ def scope_is_complete(scope: NormalizedScope) -> bool:
         return False
     for kind in scope.action_kinds:
         if kind in {"TRANSFER_EXTERNAL", "TRANSFER_SELF", "SCHEDULE_CREATE"}:
+            # A derived-template schedule carries a 0 placeholder amount; any
+            # other transfer must carry a strictly positive amount.
+            derived = kind == "SCHEDULE_CREATE" and fields.get("derived_template")
             if (
                 not scope.from_account_id
                 or not scope.transfers
                 or any(
-                    item.amount_cents <= 0 or item.from_account_id != scope.from_account_id
+                    (item.amount_cents != 0 if derived else item.amount_cents <= 0)
+                    or item.from_account_id != scope.from_account_id
                     for item in scope.transfers
                 )
             ):
@@ -740,6 +743,12 @@ def parse(
                 ):
                     return Parsed()
                 amount = 0
+                # Defense-in-depth: "省下来的钱转到储蓄" is inherently a self
+                # schedule, so only a single own SAVINGS account is a valid target
+                # (mirrors provenance._is_own_savings). A payee or any other
+                # target is rejected at parse time rather than left to REPLAN.
+                if len([a for a in _accounts(command.target, owned) if a.type == "SAVINGS"]) != 1:
+                    return Parsed()
             targets = _accounts(command.target, owned)
             if targets:
                 if len(targets) != 1 or targets[0].id == source:
@@ -793,11 +802,7 @@ def parse(
                     continue  # internal anchor slots, not contract fields
                 elif not put(key, value):
                     return Parsed()
-            if (
-                tool == "schedule_transfer"
-                and not command.future
-                and not command.fields.get("derived_template")
-            ):
+            if tool == "schedule_transfer" and not command.future:
                 first = _first_run_at(
                     state.sim_now,
                     period,
