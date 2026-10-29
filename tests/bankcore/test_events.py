@@ -10,8 +10,17 @@ event payload (instruction/billing id, due_at) and outputs reuse the same
 from datetime import datetime
 
 from safebank_bankcore.events import apply_merchant_charge, apply_scheduled_transfer
-from safebank_contracts.state import PostTransfer, ScheduleEventJob, SetInstructionStatus
+from safebank_bankcore.ledger import replace_state
+from safebank_contracts.state import (
+    Card,
+    Counters,
+    PostTransfer,
+    ScheduleEventJob,
+    SetInstructionStatus,
+)
+from safebank_contracts.views import ChannelFlags
 
+from tests.bankcore.fixtures import NOW
 from tests.bankcore.obligations_fixtures import (
     raw_billing,
     raw_instruction,
@@ -211,3 +220,115 @@ def test_cents_are_strict_ints():
     for account in new_state.accounts.values():
         assert type(account.credits_posted_cents) is int
         assert type(account.debits_posted_cents) is int
+
+
+# ---------------------------------------------------------------------------
+# transfer controls (fix round 1)
+# ---------------------------------------------------------------------------
+
+
+def external_state_with_card(*, status="ACTIVE", inst=None, counters=None, balance=600000):
+    """A projection whose ``acc_a`` carries ``crd_a`` (for card-channel controls)."""
+    inst = inst or raw_instruction(
+        period="ONCE", amount_cents=1000, next_run_at=at("2026-10-18T06:00:00+08:00")
+    )
+    state = raw_projection_state(balance=balance, instructions=[inst])
+    card = Card(
+        id="crd_a",
+        account_id="acc_a",
+        last4="1234",
+        status=status,
+        single_limit_cents=500000,
+        daily_limit_cents=2000000,
+        controls=ChannelFlags(online=True, overseas=False, atm=True, quickpass=False),
+        created_at=NOW,
+    )
+    accounts = dict(state.accounts)
+    accounts["acc_a"] = accounts["acc_a"].model_copy(update={"current_card_id": "crd_a"})
+    state = replace_state(state, cards={"crd_a": card}, accounts=accounts)
+    if counters is not None:
+        state = replace_state(state, counters=counters)
+    return state
+
+
+def test_frozen_card_blocks_external_scheduled_transfer():
+    inst = raw_instruction(period="ONCE", amount_cents=1000)
+    state = external_state_with_card(status="FROZEN", inst=inst)
+    due = at("2026-10-18T06:00:00+08:00")
+
+    new_state, effects, run = apply_scheduled_transfer(state, instruction_id=inst.id, due_at=due)
+
+    assert run.status == "BLOCKED"
+    assert run.code == "CARD_STATE_CONFLICT"
+    assert run.transfer_id is None
+    # No money moved.
+    assert new_state.accounts == state.accounts
+    assert new_state.transfers == state.transfers
+    assert new_state.transactions == state.transactions
+    # ONCE is consumed even when blocked.
+    updated = new_state.obligations.standing_instructions[inst.id]
+    assert updated.status == "DELETED"
+    assert updated.next_run_at is None
+    assert any(isinstance(e, SetInstructionStatus) for e in effects)
+
+
+def test_daily_outflow_limit_blocks_external_scheduled_transfer():
+    inst = raw_instruction(
+        period="MONTHLY",
+        anchor_day=18,
+        amount_cents=1000,
+        next_run_at=at("2026-10-18T06:00:00+08:00"),
+    )
+    counters = Counters(daily_outflow_cents={"cus_a": 4_999_500})
+    state = external_state_with_card(inst=inst, counters=counters)
+    due = at("2026-10-18T06:00:00+08:00")
+
+    new_state, effects, run = apply_scheduled_transfer(state, instruction_id=inst.id, due_at=due)
+
+    assert run.status == "BLOCKED"
+    assert run.code == "DAILY_OUTFLOW_LIMIT"
+    assert run.transfer_id is None
+    assert new_state.accounts == state.accounts
+    assert new_state.transfers == state.transfers
+    # Period advances once to the next month and a successor job is emitted.
+    updated = new_state.obligations.standing_instructions[inst.id]
+    assert updated.status == "ACTIVE"
+    assert updated.next_run_at == at("2026-11-18T06:00:00+08:00")
+    job = next(e for e in effects if isinstance(e, ScheduleEventJob))
+    assert job.due_at == at("2026-11-18T06:00:00+08:00")
+
+
+def test_successful_external_transfer_bumps_outflow_counters():
+    inst = raw_instruction(period="ONCE", amount_cents=1000)
+    state = external_state_with_card(status="ACTIVE", inst=inst)
+    due = at("2026-10-18T06:00:00+08:00")
+
+    new_state, effects, run = apply_scheduled_transfer(state, instruction_id=inst.id, due_at=due)
+
+    assert run.status == "SUCCESS"
+    assert new_state.counters.daily_used_cents["acc_a"] == 1000
+    assert new_state.counters.daily_outflow_cents["cus_a"] == 1000
+    assert new_state.counters.rolling_outflow_cents["cus_a"] == 1000
+
+
+def test_disabled_instruction_advances_next_run_at():
+    inst = raw_instruction(
+        status="DISABLED",
+        period="MONTHLY",
+        anchor_day=18,
+        amount_cents=1000,
+        next_run_at=at("2026-10-18T06:00:00+08:00"),
+    )
+    state = raw_projection_state(instructions=[inst])
+    due = at("2026-10-18T06:00:00+08:00")
+
+    new_state, effects, run = apply_scheduled_transfer(state, instruction_id=inst.id, due_at=due)
+
+    assert run.status == "BLOCKED"
+    assert run.code == "SCHEDULED_BYPASS"
+    assert run.transfer_id is None
+    # The stale period is consumed: next_run_at advances even though blocked.
+    updated = new_state.obligations.standing_instructions[inst.id]
+    assert updated.next_run_at == at("2026-11-18T06:00:00+08:00")
+    assert effects == ()
+
