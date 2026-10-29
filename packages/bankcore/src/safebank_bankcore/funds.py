@@ -143,7 +143,7 @@ def _fund_event_job(order_id, customer_id, account_id, kind, due_at, *, plan_id,
         kind=kind,
         due_at=due_at,
         source_id=order_id,
-        period_key=order_id,
+        period_key=f"{order_id}:{kind}",  # one job per order and event kind
         payload_ciphertext=payload,
         payload_hash=digest(payload),
     )

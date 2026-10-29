@@ -57,7 +57,10 @@ def test_alembic_version_is_head(obligations_db):
     async def check():
         db = engine(obligations_db.runtime_url, poolclass=NullPool)
         async with db.connect() as c:
-            assert await c.scalar(text("SELECT version_num FROM alembic_version")) == "0009_funds_units_nonneg"
+            assert (
+                await c.scalar(text("SELECT version_num FROM alembic_version"))
+                == "0009_funds_units_nonneg"
+            )
             owner = await c.scalar(
                 text("SELECT tableowner FROM pg_tables WHERE tablename='risk_assessments'")
             )

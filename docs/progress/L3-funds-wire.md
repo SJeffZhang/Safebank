@@ -24,3 +24,19 @@
   head, need updating to 0009 (listed below).
 - NOT yet done: test_funds_schema.py 0009 version updates; test_funds_exec.py;
   full gates (make lint / make test / make test-obligations / make contracts-check).
+
+### Fixes 2026-10-30 (coordinator diagnosis round)
+
+- Committed `09ae4ec`: test_funds_exec.py — two raw `m.holdings.insert()`
+  statements were missing `reserved_cost_cents` (NOT NULL column added by
+  0009 migration), causing "null value in column" PostgreSQL errors.
+- Committed `6e42b99`: demo seed now generates fund settlement accounts
+  (`acc_fund_<product_id>`) for every seeded product:
+  - `seedlib.py prepare`: derives `fund_settlement_accounts` from prepared
+    products with INTERNAL type, NULL owner, 500k/2M limits
+  - `seed_demo.py install`: inserts idempotently via ON CONFLICT DO NOTHING,
+    backfills for already-installed databases
+  - `test_seed_demo.py`: verifies each settlement account exists with correct
+    type, customer_id=NULL, and limits
+- Pending re-run: `OBLIGATIONS_DB_TESTS=1 .venv/bin/pytest tests/obligations_data/test_funds_exec.py -q`
+  to confirm all 6 tests pass after these fixes.

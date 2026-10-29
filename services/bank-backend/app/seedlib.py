@@ -445,12 +445,8 @@ def prepare_seed(
                 "credits_posted_cents": 0,
                 "debits_pending_cents": 0,
                 "credits_pending_cents": 0,
-                "balance_cents": 0,
-                "available_cents": 0,
-                "last_transaction_cents": 0,
                 "single_limit_cents": 500_000,
                 "daily_limit_cents": 2_000_000,
-                "created_at": sim_now,
             }
         )
 

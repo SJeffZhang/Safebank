@@ -463,10 +463,7 @@ def read(state, tool, args, customer_id):
             account_id=getattr(args, "account_id", None),
             product_id=getattr(args, "product_id", None),
         )
-        data = dict(
-            holdings=result["holdings"],
-            orders=result["orders"],
-        )
+        data = result.model_dump(mode="json")
     else:
         raise BankError(Code.TOOL_NOT_ALLOWED, 403)
     return READ_RESULTS[tool].model_validate(data)

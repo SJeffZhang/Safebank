@@ -7,7 +7,8 @@ database served via HTTP.  Run with make test-obligations (OBLIGATIONS_DB_TESTS=
 import asyncio
 import socket
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
+from decimal import Decimal
 
 import httpx
 import pytest
@@ -35,7 +36,7 @@ _PRODUCTS = [
         risk_level=1,
         risk_label="R1",
         base_nav="1.0000",
-        base_date=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        base_date=datetime(2026, 1, 1, tzinfo=UTC),
         confirm_days=0,
         settle_days=0,
         min_amount_cents=100,
@@ -49,7 +50,7 @@ _PRODUCTS = [
         risk_level=3,
         risk_label="R3",
         base_nav="1.0000",
-        base_date=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        base_date=datetime(2026, 1, 1, tzinfo=UTC),
         confirm_days=1,
         settle_days=2,
         min_amount_cents=100,
@@ -63,7 +64,7 @@ _PRODUCTS = [
         risk_level=4,
         risk_label="R4",
         base_nav="1.0000",
-        base_date=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        base_date=datetime(2026, 1, 1, tzinfo=UTC),
         confirm_days=2,
         settle_days=3,
         min_amount_cents=100,
@@ -95,9 +96,7 @@ async def _seed_products(conn):
     from sqlalchemy.dialects.postgresql import insert as pg_insert
 
     for p in _PRODUCTS:
-        await conn.execute(
-            pg_insert(m.products).values(**p).on_conflict_do_nothing()
-        )
+        await conn.execute(pg_insert(m.products).values(**p).on_conflict_do_nothing())
         settlement_id = f"acc_fund_{p['id']}"
         await conn.execute(
             pg_insert(m.accounts)
@@ -282,37 +281,42 @@ def test_non_mmf_subscribe_creates_pending_order_and_fund_confirm_job(obligation
             body = await _prepare_execute(
                 client, "pln_fund_sub_1", "hash_fund_sub_1", steps, expected_versions=0
             )
-            if body["status"] != "EXECUTED":
-                import json
-                print("DEBUG BODY:", json.dumps(body, indent=2, default=str))
             assert body["status"] == "EXECUTED", body
             snapshot = await _snapshot(client, steps)
         assert snapshot.status_code == 200, snapshot.text
         state = BankState.model_validate_json(snapshot.text)
         acc = state.accounts["acc_ls_chk"]
-        # Funds debited but not yet posted (PENDING_CONFIRM): balance down, available down
-        assert acc.balance_cents == 1_200_000 - 1_195_500
+        # Funds frozen as pending (PENDING_CONFIRM): balance unchanged, available down
+        assert acc.balance_cents == 1_200_000
         assert acc.available_cents == 1_200_000 - 1_195_500
 
         async with admin.connect() as conn:
             # Fund order is PENDING_CONFIRM
-            orders = (await conn.execute(sa_text("SELECT id, type, status, amount_cents FROM fund_orders"))).fetchall()
+            orders = (
+                await conn.execute(
+                    sa_text("SELECT id, type, status, amount_cents FROM fund_orders")
+                )
+            ).fetchall()
             assert len(orders) == 1
             assert orders[0].type == "SUB"
             assert orders[0].status == "PENDING_CONFIRM"
             assert orders[0].amount_cents == 1_195_500
 
             # FUND_CONFIRM event_job exists
-            jobs = (await conn.execute(
-                sa_text("SELECT id, kind, status FROM event_jobs WHERE kind='FUND_CONFIRM'")
-            )).fetchall()
+            jobs = (
+                await conn.execute(
+                    sa_text("SELECT id, kind, status FROM event_jobs WHERE kind='FUND_CONFIRM'")
+                )
+            ).fetchall()
             assert len(jobs) == 1
             assert jobs[0].status == "PENDING"
 
             # FUND_EXPIRY event_job exists
-            expiry = (await conn.execute(
-                sa_text("SELECT id, kind, status FROM event_jobs WHERE kind='FUND_EXPIRY'")
-            )).fetchall()
+            expiry = (
+                await conn.execute(
+                    sa_text("SELECT id, kind, status FROM event_jobs WHERE kind='FUND_EXPIRY'")
+                )
+            ).fetchall()
             assert len(expiry) == 1
 
             # Plan execution recorded once
@@ -354,12 +358,16 @@ def test_mmf_subscribe_creates_holding_immediately(obligations_db):
         assert acc.balance_cents == 1_200_000 - 500_000
 
         async with admin.connect() as conn:
-            orders = (await conn.execute(sa_text("SELECT status, type FROM fund_orders"))).fetchall()
+            orders = (
+                await conn.execute(sa_text("SELECT status, type FROM fund_orders"))
+            ).fetchall()
             assert len(orders) == 1
             assert orders[0].status == "SETTLED"
             assert orders[0].type == "SUB"
 
-            holdings = (await conn.execute(sa_text("SELECT product_id, units FROM holdings"))).fetchall()
+            holdings = (
+                await conn.execute(sa_text("SELECT product_id, units FROM holdings"))
+            ).fetchall()
             assert len(holdings) == 1
             assert holdings[0].product_id == "prd_mmf_01"
 
@@ -381,12 +389,13 @@ def test_redeem_reserves_units_and_creates_fund_settle_job(obligations_db):
             await _seed_risk_assessment(conn, "cus_ls", 3)
             # First subscribe MMF to get some units
             from app import models as m
+
             _today = datetime(2026, 10, 15, 9, 0, 0, tzinfo=timezone(timedelta(hours=8)))
             await conn.execute(
                 m.holdings.insert().values(
                     customer_id="cus_ls",
                     account_id="acc_ls_chk",
-                    product_id="prd_mmf_01",
+                    product_id="prd_r3_gain",
                     units="500.0000",
                     reserved_units="0.0000",
                     cost_cents=500_000,
@@ -396,10 +405,10 @@ def test_redeem_reserves_units_and_creates_fund_settle_job(obligations_db):
             # Also need a fund order for the initial subscription
             await conn.execute(
                 m.fund_orders.insert().values(
-                    id="ord_ls_sub_mmf",
+                    id="ord_ls_sub_r3",
                     customer_id="cus_ls",
                     account_id="acc_ls_chk",
-                    product_id="prd_mmf_01",
+                    product_id="prd_r3_gain",
                     type="SUB",
                     status="SETTLED",
                     amount_cents=500_000,
@@ -407,8 +416,8 @@ def test_redeem_reserves_units_and_creates_fund_settle_job(obligations_db):
                     nav="1.0000",
                     reserved_cost_cents=0,
                     pending_transfer_id=None,
-                    plan_id="pln_seed_mmf",
-                    step_id="stp_seed_mmf",
+                    plan_id="pln_seed_r3",
+                    step_id="stp_seed_r3",
                     trade_date=_today,
                     confirm_at=_today,
                     settle_at=_today,
@@ -420,7 +429,7 @@ def test_redeem_reserves_units_and_creates_fund_settle_job(obligations_db):
         app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
         port = free_port()
         _serve(app, port)
-        steps = _redeem_step(product_id="prd_mmf_01", units="100.0000")
+        steps = _redeem_step(product_id="prd_r3_gain", units="100.0000")
         async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
             body = await _prepare_execute(
                 client, "pln_fund_red_1", "hash_fund_red_1", steps, expected_versions=0
@@ -428,28 +437,39 @@ def test_redeem_reserves_units_and_creates_fund_settle_job(obligations_db):
             assert body["status"] == "EXECUTED", body
             snapshot = await _snapshot(client, steps)
         assert snapshot.status_code == 200, snapshot.text
-        state = BankState.model_validate_json(snapshot.text)
+        _ = BankState.model_validate_json(snapshot.text)
 
         # Available reduced by redeem amount + units reserved
         async with admin.connect() as conn:
-            orders = (await conn.execute(
-                sa_text("SELECT id, type, status, amount_cents, units FROM fund_orders WHERE type='RED'")
-            )).fetchall()
+            orders = (
+                await conn.execute(
+                    sa_text(
+                        "SELECT id, type, status, amount_cents, units "
+                        "FROM fund_orders WHERE type='RED'"
+                    )
+                )
+            ).fetchall()
             assert len(orders) == 1
             assert orders[0].status == "PENDING_SETTLEMENT"
             assert orders[0].units == 100.0
 
-            holdings = (await conn.execute(
-                sa_text("SELECT units, reserved_units FROM holdings WHERE product_id='prd_mmf_01'")
-            )).fetchall()
+            holdings = (
+                await conn.execute(
+                    sa_text(
+                        "SELECT units, reserved_units FROM holdings WHERE product_id='prd_r3_gain'"
+                    )
+                )
+            ).fetchall()
             assert len(holdings) == 1
-            assert holdings[0].units == "500.0000"  # total unchanged
-            assert holdings[0].reserved_units == "100.0000"  # reserved
+            assert holdings[0].units == Decimal("500.0000")  # total unchanged
+            assert holdings[0].reserved_units == Decimal("100.0000")  # reserved
 
             # FUND_SETTLE event_job exists
-            jobs = (await conn.execute(
-                sa_text("SELECT id, kind, status FROM event_jobs WHERE kind='FUND_SETTLE'")
-            )).fetchall()
+            jobs = (
+                await conn.execute(
+                    sa_text("SELECT id, kind, status FROM event_jobs WHERE kind='FUND_SETTLE'")
+                )
+            ).fetchall()
             assert len(jobs) == 1
             assert jobs[0].status == "PENDING"
 
@@ -476,6 +496,7 @@ def test_get_holdings_returns_holdings_and_orders(obligations_db):
             await _seed_products(conn)
             await _seed_risk_assessment(conn, "cus_ls", 3)
             from app import models as m
+
             _today = datetime(2026, 10, 15, 9, 0, 0, tzinfo=timezone(timedelta(hours=8)))
             await conn.execute(
                 m.holdings.insert().values(
@@ -493,7 +514,7 @@ def test_get_holdings_returns_holdings_and_orders(obligations_db):
         port = free_port()
         _serve(app, port)
         async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
-            resp = await _read(client, "get_holdings", {})
+            resp = await _read(client, "get_holdings", {"account_id": None, "product_id": None})
         assert resp.status_code == 200, resp.text
         data = resp.json()
         assert len(data["holdings"]) == 1

@@ -244,9 +244,8 @@ def test_0002_data_survives_0003_upgrade_and_execution_replays(obligations_0002_
 
         async with admin.connect() as conn:
             after = await _capture(conn)
-            assert (
-                await conn.scalar(text("SELECT version_num FROM alembic_version")) == "0009_funds_units_nonneg"
-            )
+            version = await conn.scalar(text("SELECT version_num FROM alembic_version"))
+            assert version == "0009_funds_units_nonneg"
         assert after == baseline
 
         async with admin.connect() as conn:
