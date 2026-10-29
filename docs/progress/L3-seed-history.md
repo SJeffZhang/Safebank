@@ -15,6 +15,11 @@ sim_now = `2026-10-15T09:00:00+08:00`. Authoritative data spec (6 points) and re
       `l1_seed_v1.json`, commit `3655de8`; lint/format fix `aa9099b`).
 - [x] Gates green: `make lint`, `make test`, `make test-obligations`, `make test-e0b`,
       `make contracts-check` (tail -1 each).
+- [x] Review REQUEST_CHANGES resolved (`docs/reviews/L3-seed-history-review.md`,
+      commit `6ebc64b`): P1-1 (branch behind main) fixed by the coordinator merging
+      origin/main; P1-2 fixed by moving the everyday spends to the spec window
+      2026-07-17..2026-10-12 (commit `f09c37c`) + monthly-coverage test (`e37da24`);
+      P2-1 fixed by listing the generator's actual categories in this doc.
 
 ## Design (validated against source, do not re-derive)
 
@@ -42,6 +47,18 @@ category (default "其他"), merchant_id, card_id, memo, balance_after_cents`.
 All kind=CARD_SPEND. Categories: 夜色酒吧/美味外卖/星耀电子 = 娱乐/外卖/数码.
 Test asserts `sorted(amounts) == [26800, 128000, 349900]` and codes ⊇ the three codes.
 
+### Everyday spends (spec window 2026-07-17 .. 2026-10-14)
+- 140 CARD_SPEND rows on `crd_zs_1`, spread across 2026-07-17 .. 2026-10-12 via
+  `day_offset = (i * 88) // 140` (offsets 0..87), at daytime hours 09:00-16:59,
+  so **every month Jul/Aug/Sep/Oct has everyday spending**.
+- Categories **日用 / 零食 / 茶饮 / 生鲜** (`mer_daily` 日用百货 / `mer_snack` 便利零食 /
+  `mer_tea` 街角茶饮 / `mer_fresh` 社区生鲜) — disjoint from the anomaly categories
+  (娱乐/外卖/数码) and the enriched October rows (餐饮/出行/零售).
+- Constant per-merchant amounts (1500 / 800 / 1800 / 3200) give σ=0, so
+  CATEGORY_OUTLIER (`amount > μ + 3σ`) can never fire; daytime hours avoid
+  NIGHT_LARGE; amounts < 100000 avoid NEW_MERCHANT_LARGE; `(i * 7) % 60` minute
+  spacing keeps same-merchant charges >= 44 minutes apart (no DUPLICATE).
+
 ### Subscriptions (analytics.py 343-525) — exactly 4, gym idle
 - MANDATE charges (kind="MANDATE", merchant_id set), 3 each at 06:00, MONTHLY intervals
   (28-31 days): 爱看视频 3000 day18 (07/08/09), 乐听音乐 1500 day20 (07/08/09),
@@ -65,10 +82,11 @@ must remain the latest (balance_after 600000).
    `Merchant` model (model fields: id, name, mcc, category, usage_expected — see
    `tests/obligations_data/fixtures.py` lines 153-166).
 2. Write `scripts/generate_seed_history.py`: deterministic generator emitting concrete
-   rows (existing 13 + ~140 daily CARD_SPEND 餐饮/交通/购物/娱乐 + 12 MANDATE charges +
-   6 gym visits + 4 anomaly txns), recomputing the balance_after chain and acc_zs_chk
-   credits/debits, adding new everyday merchants + 夜色酒吧/美味外卖/星耀电子, setting
-   `usage_expected: true` on mer_gym, explicit category/card_id everywhere.
+   rows (existing 13 + ~140 daily CARD_SPEND 日用/零食/茶饮/生鲜 across 07-17..10-12 +
+   12 MANDATE charges + 6 gym visits + 4 anomaly txns), recomputing the balance_after
+   chain and acc_zs_chk credits/debits, adding new everyday merchants +
+   夜色酒吧/美味外卖/星耀电子, setting `usage_expected: true` on mer_gym, explicit
+   category/card_id everywhere.
 3. Regenerate `services/bank-backend/fixtures/l1_seed_v1.json`; run `make test-obligations`
    (tail) until the two red analytics tests turn green; commit after each passing step.
 4. Gates: `make lint`, `make test`, `make test-obligations`, `make test-e0b`,
@@ -93,6 +111,13 @@ must remain the latest (balance_after 600000).
 - `make test-obligations`: **158 passed, 1 warning**.
 - `make test-e0b`: **119 passed**.
 - `make contracts-check`: **PASS: contracts v1 match frozen schemas**.
+
+### Review-fix round (this session)
+
+- `.venv/bin/python scripts/generate_seed_history.py` (after P1-2): `wrote 175
+  transactions (new OUT 891480 cents, credits 2099430, debits 1499430)` — everyday
+  spends now span 2026-07-17..2026-10-12 in 日用/零食/茶饮/生鲜.
+- `make test-obligations` (after P1-2 + monthly-coverage test): **159 passed, 1 warning**.
 
 Note: the E0 runner suite uses `mini_seed.json`, not `l1_seed_v1.json`, so no old transaction-count
 assertion needed updating.
