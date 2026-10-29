@@ -569,6 +569,155 @@ Index(
     postgresql_where=instruction_runs.c.transfer_id.isnot(None),
 )
 
+EVENT_KIND_CHECK = (
+    "kind IN ("
+    "'FUND_CONFIRM','FUND_SETTLE','FUND_EXPIRY',"
+    "'SCHEDULED_TRANSFER','MERCHANT_CHARGE','REMINDER','DEMO_EVENT'"
+    ")"
+)
+EVENT_STATUS_CHECK = "status IN ('PENDING','RUNNING','DONE','RETRYING')"
+
+event_jobs = Table(
+    "event_jobs",
+    metadata,
+    idcol(primary_key=True),
+    Column("kind", String, nullable=False),
+    Column("rank", Integer, nullable=False),
+    timestamp("due_at", nullable=False),
+    Column("immutable_payload", JSONB, nullable=False),
+    Column("payload_hash", String, nullable=False),
+    Column("source_id", String(256), nullable=False),
+    Column("period_key", String, nullable=False),
+    Column("status", String, nullable=False),
+    timestamp("lease_until_wall"),
+    Column("attempt_count", Integer, nullable=False, server_default="0"),
+    CheckConstraint(EVENT_KIND_CHECK, name="event_jobs_kind_check"),
+    CheckConstraint(EVENT_STATUS_CHECK, name="event_jobs_status_check"),
+    CheckConstraint("rank >= 0", name="event_jobs_rank_check"),
+    CheckConstraint("attempt_count >= 0", name="event_jobs_attempt_count_check"),
+    UniqueConstraint("payload_hash", name="event_jobs_payload_hash_key"),
+    UniqueConstraint("source_id", "period_key", name="event_jobs_source_period_key"),
+)
+Index(
+    "event_jobs_pending_due",
+    event_jobs.c.status,
+    event_jobs.c.due_at,
+    event_jobs.c.rank,
+    event_jobs.c.id,
+    postgresql_where=(event_jobs.c.status == "PENDING"),
+)
+
+risk_assessments = Table(
+    "risk_assessments",
+    metadata,
+    idcol(primary_key=True),
+    Column(
+        "customer_id",
+        ForeignKey("customers.id", name="risk_assessments_customer_id_fkey"),
+        nullable=False,
+    ),
+    Column("questionnaire_id", String, nullable=False),
+    Column("answers", JSONB, nullable=False),
+    Column("score", Integer, nullable=False),
+    Column("level", String, nullable=False),
+    timestamp("assessed_at", nullable=False),
+    timestamp("valid_until", nullable=False),
+    Column("plan_id", String(256), nullable=False),
+    CheckConstraint("score BETWEEN 6 AND 24", name="risk_assessments_score_check"),
+    CheckConstraint("level IN ('R1','R2','R3','R4','R5')", name="risk_assessments_level_check"),
+    CheckConstraint("valid_until > assessed_at", name="risk_assessments_valid_until_check"),
+    CheckConstraint("questionnaire_id <> ''", name="risk_assessments_questionnaire_id_check"),
+    UniqueConstraint("plan_id", name="risk_assessments_plan_id_key"),
+)
+Index(
+    "risk_assessments_customer_time",
+    risk_assessments.c.customer_id,
+    risk_assessments.c.assessed_at,
+    risk_assessments.c.id,
+)
+Index(
+    "risk_assessments_customer_valid",
+    risk_assessments.c.customer_id,
+    risk_assessments.c.valid_until,
+    risk_assessments.c.id,
+)
+
+SPLIT_REQUESTS_SELF_CHECK = (
+    "(include_self IS TRUE AND self_share_cents>=0) OR "
+    "(include_self IS FALSE AND self_share_cents=0)"
+)
+
+split_requests = Table(
+    "split_requests",
+    metadata,
+    idcol(primary_key=True),
+    Column(
+        "customer_id",
+        ForeignKey("customers.id", name="split_requests_customer_id_fkey"),
+        nullable=False,
+    ),
+    Column("account_id", String(256), nullable=False),
+    Column("total_cents", BigInteger, nullable=False),
+    Column("include_self", Boolean, nullable=False),
+    Column("self_share_cents", BigInteger, nullable=False),
+    timestamp("created_at", nullable=False),
+    CheckConstraint(
+        "total_cents>0 AND total_cents<=100000000",
+        name="split_requests_total_cents_check",
+    ),
+    CheckConstraint("self_share_cents>=0", name="split_requests_self_share_cents_check"),
+    CheckConstraint(SPLIT_REQUESTS_SELF_CHECK, name="split_requests_include_self_check"),
+    ForeignKeyConstraint(
+        ["account_id", "customer_id"],
+        ["accounts.id", "accounts.customer_id"],
+        name="split_requests_account_customer_fkey",
+    ),
+    UniqueConstraint(
+        "id", "customer_id", "account_id", name="split_requests_id_customer_account_key"
+    ),
+)
+
+SPLIT_ITEM_STATUS_CHECK = "status IN ('UNPAID','PAID')"
+SPLIT_ITEM_PAID_CHECK = (
+    "(status='PAID' AND paid_at IS NOT NULL) OR (status='UNPAID' AND paid_at IS NULL)"
+)
+
+split_items = Table(
+    "split_items",
+    metadata,
+    idcol(primary_key=True),
+    Column("request_id", String(256), nullable=False),
+    Column(
+        "customer_id",
+        ForeignKey("customers.id", name="split_items_customer_id_fkey"),
+        nullable=False,
+    ),
+    Column("account_id", String(256), nullable=False),
+    Column("payee_id", String(256), nullable=False),
+    Column("amount_cents", BigInteger, nullable=False),
+    Column("status", String, nullable=False),
+    Column("paid_at", DateTime(timezone=True)),
+    Column("payment_event_id", String(256)),
+    CheckConstraint("amount_cents>0", name="split_items_amount_cents_check"),
+    CheckConstraint(SPLIT_ITEM_STATUS_CHECK, name="split_items_status_check"),
+    CheckConstraint(SPLIT_ITEM_PAID_CHECK, name="split_items_paid_check"),
+    ForeignKeyConstraint(
+        ["request_id", "customer_id", "account_id"],
+        [
+            "split_requests.id",
+            "split_requests.customer_id",
+            "split_requests.account_id",
+        ],
+        name="split_items_request_owner_fkey",
+    ),
+    ForeignKeyConstraint(
+        ["payee_id", "customer_id"],
+        ["payees.id", "payees.customer_id"],
+        name="split_items_payee_customer_fkey",
+    ),
+    UniqueConstraint("request_id", "payee_id", name="split_items_request_payee_key"),
+)
+
 PRODUCTS_TYPE_CHECK = "product_type IN ('MMF','BOND','MIXED','EQUITY')"
 
 products = Table(

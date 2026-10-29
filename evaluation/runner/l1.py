@@ -84,14 +84,8 @@ class RecordingBridgeTransport(httpx.BaseTransport):
             ):
                 raise EvaluationComplete()
 
-        # GatewayClient.evaluate sends the PlanDraft directly, while the real
-        # gateway G4 handler expects ``{"plan_draft": ..., "request_id": ...}``.
-        # Adapt that wire shape here (transport only, no services/** change).
-        if request.method == "POST" and "/plans/evaluate" in str(request.url):
-            draft = _try_json(body) or {}
-            body = json.dumps(
-                {"plan_draft": draft, "request_id": draft.get("request_id", "")}
-            ).encode()
+        # GatewayClient.evaluate sends the PlanDraft directly, matching the
+        # G4 A-caller wire shape (PRD §9.5); no wrapping is needed.
         async_req = httpx.Request(
             request.method,
             str(request.url),

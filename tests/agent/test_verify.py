@@ -165,6 +165,61 @@ class TestExtractCardLast4:
     def test_none(self):
         assert extract_card_last4("没有卡") == []
 
+    # ── card tail bug (2026-10-29): non-4-digit tails are extracted as malformed ─
+
+    def test_malformed_id_tail(self):
+        items = extract_card_last4("已为您解冻尾号 zs_1 的卡")
+        assert len(items) == 1
+        assert items[0]["kind"] == ExtractedKind.CARD_LAST4
+        assert items[0]["last4"] is None
+
+    def test_malformed_card_id_tail(self):
+        items = extract_card_last4("尾号crd_zs_1")
+        assert len(items) == 1
+        assert items[0]["last4"] is None
+
+    def test_malformed_five_digits(self):
+        items = extract_card_last4("尾号12345")
+        assert len(items) == 1
+        assert items[0]["last4"] is None
+
+    def test_malformed_mixed(self):
+        items = extract_card_last4("尾号 ab12")
+        assert len(items) == 1
+        assert items[0]["last4"] is None
+
+    def test_valid_four_digits(self):
+        items = extract_card_last4("尾号1234")
+        assert len(items) == 1
+        assert items[0]["last4"] == "1234"
+
+    # ── P1-1 copula variants (尾号为/尾号是/卡号尾号为) ───────────────
+
+    def test_copula_wei_malformed(self):
+        items = extract_card_last4("尾号为zs_1")
+        assert len(items) == 1
+        assert items[0]["last4"] is None
+
+    def test_copula_shi_malformed(self):
+        items = extract_card_last4("尾号是zs_1")
+        assert len(items) == 1
+        assert items[0]["last4"] is None
+
+    def test_copula_kahaowei_malformed(self):
+        items = extract_card_last4("卡号尾号为zs_1")
+        assert len(items) == 1
+        assert items[0]["last4"] is None
+
+    def test_copula_wei_valid(self):
+        items = extract_card_last4("尾号为1234")
+        assert len(items) == 1
+        assert items[0]["last4"] == "1234"
+
+    def test_copula_amounts_after_untouched(self):
+        items = extract_card_last4("尾号为1234，转账80000元，余额6000元")
+        assert len(items) == 1
+        assert items[0]["last4"] == "1234"
+
 
 # ── build_fact_set ──────────────────────────────────────────────────────
 
@@ -260,6 +315,15 @@ class TestCheckAgainstFacts:
         ]
         uv = check_against_facts(extracted, facts)
         assert len(uv) == 1
+
+    def test_card_tail_malformed_reason(self):
+        facts = {"amounts": [], "percentages": [], "last4s": ["1234"]}
+        extracted = [
+            {"span": (0, 8), "raw": "尾号 zs_1", "last4": None, "kind": ExtractedKind.CARD_LAST4}
+        ]
+        uv = check_against_facts(extracted, facts)
+        assert len(uv) == 1
+        assert uv[0]["reason"] == "card_tail_malformed"
 
 
 # ── mask_long_numbers ───────────────────────────────────────────────────
@@ -504,3 +568,75 @@ class TestOutputVerifierNoLLM:
         result = verifier(state, None)
         # Falls through to original + masking
         assert len(result) > 0
+
+    # ── card tail bug (2026-10-29): unverified card tail must not reach the user ─
+
+    def test_malformed_card_tail_scrubbed(self):
+        """'尾号 zs_1' with no LLM → replaced by 该卡, card ID never leaks."""
+        verifier = OutputVerifier(llm=None)
+        state = {
+            "reply_draft": "已为您解冻尾号 zs_1 的卡",
+            "reads": [
+                ReadRecord(
+                    source_ref="src_a",
+                    tool="get_cards",
+                    args={},
+                    data={"cards": [{"id": "crd_zs_1", "last4": "1234"}]},
+                ),
+            ],
+        }
+        result = verifier(state, None)
+        assert "zs_1" not in result
+        assert "该卡" in result
+
+    def test_valid_card_tail_unchanged(self):
+        """'尾号1234' that matches facts stays unchanged."""
+        verifier = OutputVerifier(llm=None)
+        state = {
+            "reply_draft": "已为您解冻尾号 1234 的卡",
+            "reads": [
+                ReadRecord(
+                    source_ref="src_a",
+                    tool="get_cards",
+                    args={},
+                    data={"cards": [{"id": "crd_zs_1", "last4": "1234"}]},
+                ),
+            ],
+        }
+        result = verifier(state, None)
+        assert "1234" in result
+        assert "该卡" not in result
+
+    def test_scrub_deka_collapses(self):
+        """'尾号 zs_1 的卡' → '该卡' (no doubled 的卡)."""
+        verifier = OutputVerifier(llm=None)
+        state = {
+            "reply_draft": "已为您解冻尾号 zs_1 的卡",
+            "reads": [
+                ReadRecord(
+                    source_ref="src_a",
+                    tool="get_cards",
+                    args={},
+                    data={"cards": [{"id": "crd_zs_1", "last4": "1234"}]},
+                ),
+            ],
+        }
+        result = verifier(state, None)
+        assert result == "已为您解冻该卡"
+
+    def test_scrub_without_deka(self):
+        """'尾号 zs_1' with no trailing 的卡 → replaced with 该卡."""
+        verifier = OutputVerifier(llm=None)
+        state = {
+            "reply_draft": "已为您解冻尾号 zs_1",
+            "reads": [
+                ReadRecord(
+                    source_ref="src_a",
+                    tool="get_cards",
+                    args={},
+                    data={"cards": [{"id": "crd_zs_1", "last4": "1234"}]},
+                ),
+            ],
+        }
+        result = verifier(state, None)
+        assert result == "已为您解冻该卡"
