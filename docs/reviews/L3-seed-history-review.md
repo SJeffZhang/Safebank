@@ -62,3 +62,14 @@ The task spec says "~130-150 daily card spends 2026-07-17..10-14". The 140 gener
 ### Check 5 — Tests assert real values; E0 changes justified — PASS
 - `tests/obligations_data/test_seed_history.py` asserts real values, not just shape: exactly 3 anomalies with sorted amounts `[26800, 128000, 349900]` and codes ⊇ `{NIGHT_LARGE, DUPLICATE, NEW_MERCHANT_LARGE}`; exactly 4 subscriptions with `mer_gym` idle (`previous_usage_count==6`, `recent==0`); `acc_zs_chk` credits−debits == 600000; `txn_zs_013.memo` equals the verbatim `REFUND_MEMO`; global `sum(debits)==sum(credits)` and pending == 0.
 - E0 changes: none. `git diff --stat origin/main..HEAD` contains no `evaluation/` files; the progress doc confirms the E0 runner uses `mini_seed.json`, not `l1_seed_v1.json`, so no old transaction-count assertion needed updating.
+
+## Round 2 (fix re-review)
+
+- **P1-1 — branch now contains current main: PASS.** `git diff --stat origin/main..HEAD` touches only the 5 seed-history files (fixture JSON, generator script, `test_seed_history.py`, progress doc, review doc); HEAD = 2bba835 "Merge remote-tracking branch 'origin/main' into feat/l3-seed-history". No unrelated regressions.
+- **P1-2 — daily card spends now across 2026-07..10: PASS.** 140 everyday rows span 2026-07-17..2026-10-12 (monthly counts Jul 24 / Aug 50 / Sep 47 / Oct 19), categories 日用/零食/茶饮/生鲜 — disjoint from the anomaly categories (娱乐/外卖/数码) and the enriched October rows (餐饮/出行/零售), constant per-merchant amounts (σ=0), daytime hours 09:00–16:59, all amounts < 100000, minute spacing ≥ 44 min apart → no extra anomaly flags. `usage_expected` is set only on mer_gym, so gym remains the sole idle subscription. `acc_zs_chk` = 2099430 / 1499430 / 600000.
+- **P2-1 — progress-doc categories: PASS.** `docs/progress/L3-seed-history.md` now lists the everyday categories as 日用/零食/茶饮/生鲜, matching the generator.
+- **New (P2, non-blocking) — stale unused merchants remain in the JSON.** mer_coffee (晨光咖啡/餐饮), mer_taxi (快捷出行/出行), mer_grocery (便民超市/零售) are still present in `seed["merchants"]`, but no transaction references them (jq: the referenced `merchant_id` set is {mer_video, mer_music, mer_cloud, mer_gym, mer_dining, mer_metro, mer_market, mer_nightbar, mer_waimai, mer_electronic, mer_daily, mer_snack, mer_tea, mer_fresh}). Cause: the generator prunes only `id in NEW_MERCHANT_IDS`, and the round-1 everyday merchants are no longer in that set, so re-running over round-1 output leaves them orphaned. Harmless to analytics (no transactions → no anomaly/subscription flags); cosmetic dead rows. Recommend deleting them (and adding them to the prune set if regeneration-on-old-output must stay safe).
+
+## Round 2 Verdict
+
+**APPROVE** — the three required fixes (P1-1 branch sync, P1-2 date window, P2-1 progress-doc categories) are all in place; the stale-merchant note is a minor cleanup, not a blocker.
