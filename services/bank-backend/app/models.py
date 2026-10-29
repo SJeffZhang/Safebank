@@ -766,9 +766,7 @@ holdings = Table(
     Column("reserved_units", Numeric(18, 4), nullable=False),
     Column("cost_cents", BigInteger, nullable=False),
     Column("reserved_cost_cents", BigInteger, nullable=False),
-    CheckConstraint(
-        "units >= reserved_units AND reserved_units >= 0", name="holdings_units_check"
-    ),
+    CheckConstraint("units >= reserved_units AND reserved_units >= 0", name="holdings_units_check"),
     CheckConstraint(
         "cost_cents >= reserved_cost_cents AND reserved_cost_cents >= 0",
         name="holdings_cost_check",
@@ -778,9 +776,7 @@ holdings = Table(
         ["accounts.id", "accounts.customer_id"],
         name="holdings_account_customer_fkey",
     ),
-    UniqueConstraint(
-        "customer_id", "account_id", "product_id", name="holdings_owner_product_key"
-    ),
+    UniqueConstraint("customer_id", "account_id", "product_id", name="holdings_owner_product_key"),
 )
 
 fund_orders = Table(

@@ -57,7 +57,8 @@ _EVENT_JOB = text(
 _EXECUTION = text(
     "INSERT INTO event_executions (event_id,status,authorization_evidence,"
     "result_json,committed_at) VALUES "
-    "(:event_id,:status,:authorization_evidence,:result_json,:committed_at)"
+    "(:event_id,:status,CAST(:authorization_evidence AS jsonb),"
+    "CAST(:result_json AS jsonb),:committed_at)"
 )
 
 
@@ -73,12 +74,8 @@ async def _seed_env(conn, tag):
     prd = f"prd_{tag}"
     await conn.execute(_CUSTOMER, {"id": cus})
     for a, no in ((acc, f"no_{tag}"), (acc2, f"no2_{tag}")):
-        await conn.execute(
-            _ACCOUNT, {"id": a, "customer_id": cus, "account_no": no}
-        )
-    await conn.execute(
-        _PRODUCT, {"id": prd, "base_nav": Decimal("1.0000"), "base_date": NOW}
-    )
+        await conn.execute(_ACCOUNT, {"id": a, "customer_id": cus, "account_no": no})
+    await conn.execute(_PRODUCT, {"id": prd, "base_nav": Decimal("1.0000"), "base_date": NOW})
     return {"cus": cus, "acc": acc, "acc2": acc2, "prd": prd}
 
 
@@ -332,8 +329,8 @@ def test_event_executions_terminal_immutable(obligations_db):
                     {
                         "event_id": "evj_imm",
                         "status": "SUCCESS",
-                        "authorization_evidence": {},
-                        "result_json": {},
+                        "authorization_evidence": "{}",
+                        "result_json": "{}",
                         "committed_at": NOW,
                     },
                 )

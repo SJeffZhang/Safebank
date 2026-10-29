@@ -29,9 +29,7 @@ def upgrade() -> None:
 
     op.create_table(
         "holdings",
-        sa.Column(
-            "customer_id", sa.String(256), sa.ForeignKey("customers.id"), nullable=False
-        ),
+        sa.Column("customer_id", sa.String(256), sa.ForeignKey("customers.id"), nullable=False),
         sa.Column("account_id", sa.String(256), nullable=False),
         sa.Column(
             "product_id",
@@ -63,9 +61,7 @@ def upgrade() -> None:
     op.create_table(
         "fund_orders",
         sa.Column("id", sa.String(256), primary_key=True),
-        sa.Column(
-            "customer_id", sa.String(256), sa.ForeignKey("customers.id"), nullable=False
-        ),
+        sa.Column("customer_id", sa.String(256), sa.ForeignKey("customers.id"), nullable=False),
         sa.Column("account_id", sa.String(256), nullable=False),
         sa.Column(
             "product_id",
