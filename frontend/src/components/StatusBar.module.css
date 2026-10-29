@@ -1,0 +1,85 @@
+/* 系统状态区：尺寸与目标 .sbar / .island 对齐 */
+.sbar {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--sb-sbar-h);
+  padding: 0 17px;
+  font-size: 9px;
+  font-weight: 650;
+  color: var(--sb-ink);
+  z-index: 8;
+}
+
+.time {
+  letter-spacing: 0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.icons {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--sb-ink);
+}
+
+.sig {
+  width: 12px;
+  height: 8px;
+  opacity: 0.85;
+  background:
+    linear-gradient(currentColor, currentColor) left bottom / 3px 3px no-repeat,
+    linear-gradient(currentColor, currentColor) center bottom / 3px 5px no-repeat,
+    linear-gradient(currentColor, currentColor) right bottom / 3px 8px no-repeat;
+}
+
+.wifi {
+  width: 9px;
+  height: 8px;
+  border: 1.3px solid currentColor;
+  border-bottom-color: transparent;
+  border-left-color: transparent;
+  border-right-color: transparent;
+  border-radius: 50%;
+  position: relative;
+  top: 2px;
+  opacity: 0.8;
+}
+
+.batt {
+  width: 16px;
+  height: 7px;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  position: relative;
+  opacity: 0.85;
+}
+
+.batt::after {
+  content: '';
+  position: absolute;
+  inset: 1.5px;
+  width: 9px;
+  background: currentColor;
+  border-radius: 0.5px;
+}
+
+.island {
+  position: absolute;
+  top: 7px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: var(--sb-island-w);
+  height: var(--sb-island-h);
+  border-radius: 999px;
+  background: #08090c;
+  z-index: 9;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .island {
+    background: #000;
+  }
+}

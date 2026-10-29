@@ -57,7 +57,7 @@ def test_upgrade_head_twice_succeeds(obligations_db):
         try:
             async with admin.connect() as conn:
                 version = await conn.scalar(text("SELECT version_num FROM alembic_version"))
-                assert version == "0007_products"
+                assert version == "0008_funds"
                 columns = {
                     row.column_name
                     for row in (
@@ -280,7 +280,7 @@ def test_0003_to_0007_preserves_existing_data(obligations_0002_db):
 
             async with admin.connect() as conn:
                 version = await conn.scalar(text("SELECT version_num FROM alembic_version"))
-                assert version == "0007_products"
+                assert version == "0008_funds"
 
                 new_count = await conn.scalar(
                     text("SELECT count(*) FROM merchants WHERE id='mer_seed'")

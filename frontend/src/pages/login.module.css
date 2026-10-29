@@ -1,0 +1,232 @@
+/* 登录页：三客户平铺 + 6 位 PIN + 自定义键盘。 */
+
+.page {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  padding: var(--sb-space-5) var(--sb-space-4);
+  background: var(--sb-surface);
+  color: var(--sb-ink);
+  overflow-x: hidden;
+}
+
+.screen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sb-space-3);
+  max-width: 520px;
+  margin: 0 auto;
+  width: 100%;
+  min-width: 0;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--sb-space-2);
+}
+
+.logo {
+  width: 26px;
+  height: 26px;
+  border-radius: 9px;
+  background: var(--sb-brand);
+  color: var(--sb-brand-contrast);
+  display: grid;
+  place-items: center;
+  font-size: var(--sb-text-2xs);
+  font-weight: var(--sb-weight-bold);
+}
+
+.brandText {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.brandName {
+  font-size: var(--sb-text-sm);
+  font-weight: var(--sb-weight-bold);
+}
+
+.brandSub {
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  color: var(--sb-muted);
+  font-weight: var(--sb-weight-semibold);
+}
+
+.hello {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: var(--sb-space-2);
+}
+
+.helloTitle {
+  margin: 0;
+  font-size: var(--sb-text-xl);
+  font-weight: var(--sb-weight-bold);
+  letter-spacing: -0.02em;
+}
+
+.helloSub {
+  margin: 0;
+  font-size: var(--sb-text-xs);
+  color: var(--sb-muted);
+}
+
+.cust {
+  display: flex;
+  align-items: center;
+  gap: var(--sb-space-3);
+  width: 100%;
+  min-height: 56px;
+  padding: var(--sb-space-3);
+  border-radius: var(--sb-radius-md);
+  border: var(--sb-border-width) solid var(--sb-line-strong);
+  background: var(--sb-surface-raised);
+  color: var(--sb-ink);
+  text-align: left;
+}
+
+.custOn {
+  border-color: var(--sb-brand);
+  background: var(--sb-surface);
+}
+
+.av {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--sb-brand);
+  color: var(--sb-brand-contrast);
+  display: grid;
+  place-items: center;
+  font-weight: var(--sb-weight-semibold);
+}
+
+.custMain {
+  flex: 1;
+  min-width: 0;
+}
+
+.custName {
+  display: block;
+  font-size: var(--sb-text-md);
+  font-weight: var(--sb-weight-semibold);
+}
+
+.custSub {
+  display: block;
+  font-size: var(--sb-text-2xs);
+  color: var(--sb-muted);
+  overflow-wrap: anywhere;
+}
+
+.tick {
+  flex: none;
+  color: var(--sb-brand);
+  font-size: var(--sb-text-md);
+}
+
+/* PIN 圆点 */
+.pinRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sb-space-3);
+  padding: var(--sb-space-2) 0;
+}
+
+.dots {
+  display: flex;
+  gap: var(--sb-space-2);
+}
+
+.dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: var(--sb-border-width) solid var(--sb-line-strong);
+  background: transparent;
+}
+
+.dotOn {
+  background: var(--sb-brand);
+  border-color: var(--sb-brand);
+}
+
+.pinCount {
+  font-size: var(--sb-text-xs);
+  color: var(--sb-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 键盘 */
+.keypad {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sb-space-2);
+}
+
+.key {
+  min-height: 52px;
+  border-radius: var(--sb-radius-md);
+  border: var(--sb-border-width) solid var(--sb-line);
+  background: var(--sb-surface-raised);
+  color: var(--sb-ink);
+  font-size: var(--sb-text-lg);
+  font-weight: var(--sb-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.key:disabled {
+  opacity: 0.5;
+}
+
+.keyBlank {
+  min-height: 52px;
+  visibility: hidden;
+}
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: var(--sb-space-2);
+  padding: var(--sb-space-2) var(--sb-space-3);
+  border-radius: var(--sb-radius-md);
+  background: var(--sb-surface-sunken);
+  color: var(--sb-muted);
+  font-size: var(--sb-text-xs);
+  flex-wrap: wrap;
+}
+
+.bannerText {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.danger {
+  background: var(--sb-danger-soft);
+  color: var(--sb-danger);
+}
+
+.foot {
+  margin-top: auto;
+  padding-top: var(--sb-space-3);
+  text-align: center;
+  font-size: var(--sb-text-2xs);
+  color: var(--sb-faint);
+  line-height: var(--sb-leading-snug);
+}
+
+.demoPin {
+  font-size: var(--sb-text-2xs);
+  color: var(--sb-faint);
+  text-align: center;
+  overflow-wrap: anywhere;
+}

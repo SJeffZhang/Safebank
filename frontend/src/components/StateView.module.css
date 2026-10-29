@@ -1,0 +1,68 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sb-space-2);
+  padding: var(--sb-space-8) var(--sb-space-4);
+  text-align: center;
+  min-height: 200px;
+}
+
+.compact {
+  padding: var(--sb-space-5) var(--sb-space-3);
+  min-height: 120px;
+}
+
+.icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--sb-surface-sunken);
+  color: var(--sb-ink-2);
+}
+
+.successIcon {
+  background: var(--sb-success-soft);
+  color: var(--sb-success);
+}
+
+.dangerIcon {
+  background: var(--sb-danger-soft);
+  color: var(--sb-danger);
+}
+
+.title {
+  font-size: var(--sb-text-md);
+  font-weight: var(--sb-weight-semibold);
+  color: var(--sb-ink);
+}
+
+.description {
+  max-width: 34em;
+  font-size: var(--sb-text-sm);
+  line-height: var(--sb-leading-normal);
+  color: var(--sb-muted);
+}
+
+.actions {
+  margin-top: var(--sb-space-2);
+  display: flex;
+  gap: var(--sb-space-2);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.loadingText {
+  font-size: var(--sb-text-sm);
+  color: var(--sb-muted);
+}
+
+.skeleton {
+  width: min(100%, 260px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
