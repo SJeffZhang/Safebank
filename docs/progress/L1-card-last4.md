@@ -22,3 +22,14 @@
 
 - 红：实现前 `tests/agent/test_verify.py` 6 failed / 72 passed；`test_respond_cards.py` 因 `_build_executed_user_prompt`/`_card_facts` 不存在 ImportError。
 - 绿：实现后 `pytest tests/agent -q -k "verify or respond"` → **147 passed**；`pytest tests/agent -q` → **508 passed, 38 skipped**；`make lint` 通过。
+
+## Fix round 1（独立评审 `docs/reviews/L1-card-last4-review.md` 后）
+
+评审 **REQUEST_CHANGES**：P1-1（尾号为/是/卡号尾号为 系动词变体漏配）+ P2-1（`_card_facts_block` 把卡 ID 重新写回提示）+ P2-2（pydantic `data` 与纯 dict read 记录路径无测试）。
+
+- **P1-1**：`_CARD_LAST4_RE` 由 `尾号\s*([A-Za-z0-9_]+)` 改为 `尾号(?:为|是)?\s*([A-Za-z0-9_]+)`，`尾号为zs_1`/`尾号是zs_1`/`卡号尾号为zs_1` 均提取为 `last4=None`，`尾号为1234` 仍为合法尾号，其后金额不受影响。
+- **Scrub 措辞**：`_scrub_unverified_card_tails` 在未校验尾号后紧跟 `的卡`（`\s*的卡`）时把 `的卡` 一并吞入替换，`已为您解冻尾号 zs_1 的卡` → `已为您解冻该卡`（不再产生 `该卡 的卡`）。
+- **P2-1**：`_card_facts_block` 只输出 `- 尾号<last4>`（排序、去重），不再输出 `- <卡ID>: 尾号<last4>`。
+- **P2-2**：新增 `TestCardFactsDataShapes`（pydantic `data` 走 `model_dump`、纯 dict read 记录走 `_attr_or_get` dict 分支）与 `TestCardFactsBlock`（无卡 ID、排序去重）、`test_prompt_has_no_card_id`。
+
+红→绿：红测先行（9 failed），实现后 `pytest tests/agent -q` → **520 passed, 38 skipped**；`make lint` 通过（`ruff format --check` 417 files）。
