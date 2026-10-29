@@ -8,7 +8,8 @@ from safebank_bankcore.analytics import detect_anomalies, detect_subscriptions, 
 from safebank_bankcore.banking import card_view
 from safebank_bankcore.funds import holdings_view
 from safebank_bankcore.ids import digest
-from safebank_bankcore.reserve import BUSINESS_TIMEZONE, _business_time, upcoming_window
+from safebank_bankcore.reserve import _business_time, upcoming_window
+from safebank_bankcore.risk import risk_valid_until_date
 from safebank_contracts.codes import Code
 from safebank_contracts.risk_questionnaire import QUESTIONNAIRE
 from safebank_contracts.views import READ_RESULTS
@@ -55,15 +56,12 @@ def mask(value):
 
 
 def _risk_still_valid(valid_until: str, sim_now: datetime) -> bool:
-    """Whether a stored risk_valid_until (date or aware datetime string) covers sim_now.
+    """Whether a stored risk_valid_until (date or datetime string) covers sim_now.
 
     Validity is by business date: the assessment is valid through the whole day it
     expires on, so compare the Asia/Shanghai dates rather than instants.
     """
-    dt = datetime.fromisoformat(valid_until)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=BUSINESS_TIMEZONE)
-    return _business_time(dt).date() >= _business_time(sim_now).date()
+    return risk_valid_until_date(valid_until) >= _business_time(sim_now).date()
 
 
 def require_account(state, account_id, customer_id):
@@ -253,7 +251,11 @@ def read(state, tool, args, customer_id):
                     and customer.risk_valid_until is not None
                     and _risk_still_valid(customer.risk_valid_until, state.sim_now)
                 ),
-                valid_until=customer.risk_valid_until,
+                valid_until=(
+                    risk_valid_until_date(customer.risk_valid_until)
+                    if customer.risk_valid_until is not None
+                    else None
+                ),
             ),
             sim_now=state.sim_now,
         )

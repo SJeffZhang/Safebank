@@ -17,6 +17,8 @@ from safebank_contracts.risk_questionnaire import (
     VALIDITY_MONTHS,
 )
 
+from .reserve import BUSINESS_TIMEZONE
+
 
 @dataclass(frozen=True, slots=True)
 class RiskAssessmentResult:
@@ -88,3 +90,16 @@ def apply_risk_assessment(
 
     valid_until = _add_calendar_months(assessed_at.date(), VALIDITY_MONTHS)
     return RiskAssessmentResult(score=total, level=level, valid_until=valid_until)
+
+
+def risk_valid_until_date(value: str) -> date:
+    """Business date (Asia/Shanghai) through which a stored assessment is valid.
+
+    ``risk_valid_until`` is either an ISO date or an ISO datetime (the demo seed
+    stores aware datetimes); a naive datetime is read as business time. Raises
+    ``ValueError`` for anything else.
+    """
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        return parsed.date()
+    return parsed.astimezone(BUSINESS_TIMEZONE).date()
