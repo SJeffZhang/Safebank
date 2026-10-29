@@ -678,6 +678,9 @@ def build_gateway_graph(
             if reads is None:
                 raise PortFailure("gather port returned None")
             update: dict = {"reads": list(reads)}
+            business_date = getattr(adapter, "last_business_date", "")
+            if business_date:
+                update["business_date"] = business_date
             decision_raw = state.get("decision")
             if decision_raw is not None:
                 value = (
