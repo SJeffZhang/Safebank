@@ -1,19 +1,19 @@
 """L3 scheduler – real PostgreSQL acceptance tests (make test-obligations)."""
 
 import asyncio
-import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from app import models as m
 from app.db import engine
-from app.scheduler import ClockAdvancer, ClockAdvanceRequest, Scheduler
-from safebank_contracts.state import EVENT_KIND_RANK
+from app.scheduler import ClockAdvancer, Scheduler
 from sqlalchemy import text, update
 from sqlalchemy.pool import NullPool
 
 from tests.obligations_data.fixtures import (
-    KEY, NOW, install_core, install_obligations,
+    NOW,
+    install_core,
+    install_obligations,
 )
 
 pytestmark = pytest.mark.integration
@@ -22,12 +22,14 @@ pytestmark = pytest.mark.integration
 @pytest.fixture(autouse=True)
 def clean_database(obligations_db):
     """Truncate every application table before each test."""
+
     async def _truncate():
         admin = engine(obligations_db.admin_url, poolclass=NullPool)
         async with admin.begin() as conn:
             names = ",".join(m.metadata.tables)
             await conn.execute(text(f"TRUNCATE {names} CASCADE"))
         await admin.dispose()
+
     asyncio.run(_truncate())
     yield
 
@@ -97,13 +99,16 @@ class TestScanDue:
 
             async with admin.connect() as conn:
                 jobs = (
-                    (await conn.execute(
-                        text(
-                            "SELECT kind, status, due_at, source_id, period_key "
-                            "FROM event_jobs WHERE kind='SCHEDULED_TRANSFER'"
+                    (
+                        await conn.execute(
+                            text(
+                                "SELECT kind, status, due_at, source_id, period_key "
+                                "FROM event_jobs WHERE kind='SCHEDULED_TRANSFER'"
+                            )
                         )
-                    ))
-                    .mappings().all()
+                    )
+                    .mappings()
+                    .all()
                 )
                 assert len(jobs) >= 1
                 for j in jobs:
@@ -146,21 +151,19 @@ class TestScanDue:
             until = _tomorrow_6am() + timedelta(days=1)
             sched = await _make_scheduler(obligations_db.runtime_url)
             async with admin.begin() as conn:
-                created = await sched.scan_due(conn, until)
+                await sched.scan_due(conn, until)
 
             async with admin.connect() as conn:
                 si_jobs = (
-                    (await conn.execute(
+                    await conn.execute(
                         text("SELECT count(*) FROM event_jobs WHERE kind='SCHEDULED_TRANSFER'")
-                    ))
-                    .scalar()
-                )
+                    )
+                ).scalar()
                 charge_jobs = (
-                    (await conn.execute(
+                    await conn.execute(
                         text("SELECT count(*) FROM event_jobs WHERE kind='MERCHANT_CHARGE'")
-                    ))
-                    .scalar()
-                )
+                    )
+                ).scalar()
             # At least one of each kind should be created.
             assert si_jobs >= 1
             assert charge_jobs >= 1
@@ -186,7 +189,9 @@ class TestRunOnce:
             # Advance clock to after due_at so jobs are eligible.
             async with admin.begin() as conn:
                 await conn.execute(
-                    update(m.clock).where(m.clock.c.id == 1).values(
+                    update(m.clock)
+                    .where(m.clock.c.id == 1)
+                    .values(
                         sim_now=_tomorrow_6am() + timedelta(hours=1),
                         version=2,
                     )
@@ -244,7 +249,9 @@ class TestRunOnce:
             until = _tomorrow_6am() + timedelta(days=1)
             async with admin.begin() as conn:
                 await conn.execute(
-                    update(m.clock).where(m.clock.c.id == 1).values(
+                    update(m.clock)
+                    .where(m.clock.c.id == 1)
+                    .values(
                         sim_now=_tomorrow_6am() + timedelta(hours=1),
                         version=2,
                     )
@@ -277,7 +284,9 @@ class TestRunOnce:
             # Create two due standing instructions with different next_run_at.
             async with admin.begin() as conn:
                 await conn.execute(
-                    update(m.clock).where(m.clock.c.id == 1).values(
+                    update(m.clock)
+                    .where(m.clock.c.id == 1)
+                    .values(
                         sim_now=_tomorrow_6am() + timedelta(days=30),
                         version=5,
                     )
@@ -296,7 +305,8 @@ class TestRunOnce:
 
             # At most 2 jobs processed.
             async with admin.connect() as conn:
-                done = await conn.scalar(text("SELECT count(*) FROM event_jobs WHERE status='DONE'"))
+                q = "SELECT count(*) FROM event_jobs WHERE status='DONE'"
+                done = await conn.scalar(text(q))
             assert done <= 2
 
             await admin.dispose()
@@ -320,7 +330,9 @@ class TestRecover:
             # Manually set a job to RUNNING with an expired lease.
             async with admin.begin() as conn:
                 await conn.execute(
-                    update(m.clock).where(m.clock.c.id == 1).values(
+                    update(m.clock)
+                    .where(m.clock.c.id == 1)
+                    .values(
                         sim_now=_tomorrow_6am() + timedelta(hours=1),
                         version=2,
                     )
@@ -350,9 +362,7 @@ class TestRecover:
 
             async with admin.connect() as conn:
                 status = (
-                    await conn.execute(
-                        text(f"SELECT status FROM event_jobs WHERE id='{row}'")
-                    )
+                    await conn.execute(text(f"SELECT status FROM event_jobs WHERE id='{row}'"))
                 ).scalar()
                 assert status == "RETRYING"
 
@@ -371,7 +381,9 @@ class TestRecover:
 
             async with admin.begin() as conn:
                 await conn.execute(
-                    update(m.clock).where(m.clock.c.id == 1).values(
+                    update(m.clock)
+                    .where(m.clock.c.id == 1)
+                    .values(
                         sim_now=_tomorrow_6am() + timedelta(hours=1),
                         version=2,
                     )
@@ -400,9 +412,7 @@ class TestRecover:
 
             async with admin.connect() as conn:
                 status = (
-                    await conn.execute(
-                        text(f"SELECT status FROM event_jobs WHERE id='{row}'")
-                    )
+                    await conn.execute(text(f"SELECT status FROM event_jobs WHERE id='{row}'"))
                 ).scalar()
                 assert status == "RUNNING"
 

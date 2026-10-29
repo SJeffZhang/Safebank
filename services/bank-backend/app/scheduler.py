@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from safebank_bankcore.ids import digest
 from safebank_contracts.state import EVENT_KIND_RANK
 from sqlalchemy import func, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from . import models as m
 from .execution import utcnow
@@ -92,7 +93,10 @@ class Scheduler:
         ).all()
         for row in rows:
             created += await self._insert_job(
-                conn, "MERCHANT_CHARGE", row.id, row.next_due_at,
+                conn,
+                "MERCHANT_CHARGE",
+                row.id,
+                row.next_due_at,
                 f"{row.id}|{row.amount_cents}|{row.account_id}",
             )
         return created
@@ -100,7 +104,7 @@ class Scheduler:
     async def _insert_job(self, conn, kind, source_id, due_at, payload) -> int:
         job_id = digest([kind, source_id, due_at.isoformat()])
         result = await conn.execute(
-            m.event_jobs.insert()
+            pg_insert(m.event_jobs)
             .values(
                 id=job_id,
                 kind=kind,
@@ -142,21 +146,25 @@ class Scheduler:
     async def _claim_next(self, conn, sim_now):
         now = utcnow()
         job = (
-            await conn.execute(
-                select(m.event_jobs)
-                .where(
-                    m.event_jobs.c.status.in_(PENDING_RETRYING),
-                    m.event_jobs.c.due_at <= sim_now,
-                    or_(
-                        m.event_jobs.c.lease_until_wall.is_(None),
-                        m.event_jobs.c.lease_until_wall <= now,
-                    ),
+            (
+                await conn.execute(
+                    select(m.event_jobs)
+                    .where(
+                        m.event_jobs.c.status.in_(PENDING_RETRYING),
+                        m.event_jobs.c.due_at <= sim_now,
+                        or_(
+                            m.event_jobs.c.lease_until_wall.is_(None),
+                            m.event_jobs.c.lease_until_wall <= now,
+                        ),
+                    )
+                    .order_by(m.event_jobs.c.due_at, m.event_jobs.c.rank, m.event_jobs.c.id)
+                    .limit(1)
+                    .with_for_update(skip_locked=True)
                 )
-                .order_by(m.event_jobs.c.due_at, m.event_jobs.c.rank, m.event_jobs.c.id)
-                .limit(1)
-                .with_for_update(skip_locked=True)
             )
-        ).mappings().first()
+            .mappings()
+            .first()
+        )
         if job is None:
             return None
         lease_until = now + timedelta(seconds=LEASE_SECONDS)
@@ -274,8 +282,11 @@ class ClockAdvancer:
                             blocked += 1
                 remaining = await self._count_due(target_at)
                 state.update(
-                    status="DONE", sim_now=sim_now, processed=processed,
-                    blocked=blocked, remaining=remaining,
+                    status="DONE",
+                    sim_now=sim_now,
+                    processed=processed,
+                    blocked=blocked,
+                    remaining=remaining,
                 )
             except Exception:
                 logger.exception("clock advance %s failed", job_id)
