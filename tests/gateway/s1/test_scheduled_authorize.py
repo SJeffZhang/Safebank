@@ -376,6 +376,102 @@ def test_insufficient_funds_returns_failed_insufficient(app_config):
     asyncio.run(run())
 
 
+def test_scope_hash_mismatch_returns_blocked(app_config):
+    """Grant exists but scope_hash != event.grant_scope_hash → BLOCKED."""
+
+    async def run():
+        app = await build_app(app_config)
+        db = _runtime_db(app)
+        async with db.begin() as conn:
+            await _seed_grant(
+                conn,
+                instruction_id="ins_scope_mismatch",
+                scope_hash="different_hash_not_matching_the_event_hash",
+                approved_risk="YELLOW",
+            )
+
+        app.fake.set_snapshot(_s1_state())
+        app.fake.set_event(
+            make_event_def(
+                event_id="evt_scope_mismatch",
+                source_id="ins_scope_mismatch",
+                grant_scope_hash="s" * 64,  # different from the seed
+                to_account_id="acc_b",
+                payee_id=None,
+                amount_cents=80000,
+            )
+        )
+
+        resp = await app.client.post(
+            URL,
+            json={"event_id": "evt_scope_mismatch", "attempt": 1},
+            headers=app.scheduler_headers(),
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["event_id"] == "evt_scope_mismatch"
+        assert body["status"] == "BLOCKED"
+        assert body["code"] == Code.SCHEDULED_BYPASS.value
+
+        # event_block was called on L3
+        block_calls = [c for c in app.fake.calls if c["op"] == "event_block"]
+        assert len(block_calls) == 1
+
+        # No execute calls
+        exec_calls = [c for c in app.fake.calls if c["op"] == "event_execute"]
+        assert len(exec_calls) == 0
+
+        await db.dispose()
+
+    asyncio.run(run())
+
+
+def test_non_committed_backfill_returns_blocked(app_config):
+    """No grant seeded; L3 execution returns non-COMMITTED → BLOCKED (no grant
+    can exist)."""
+
+    async def run():
+        app = await build_app(app_config)
+        db = _runtime_db(app)
+
+        # L3 execution returns CANCELLED (not COMMITTED)
+        app.fake.intents[("cus_a", "plan_sched_1")] = {
+            "status": "CANCELLED",
+            "result": None,
+            "plan_hash": "unused",
+            "attempt": 1,
+        }
+
+        app.fake.set_snapshot(_s1_state())
+        app.fake.set_event(
+            make_event_def(
+                event_id="evt_non_committed",
+                source_id="ins_non_committed",
+            )
+        )
+
+        resp = await app.client.post(
+            URL,
+            json={"event_id": "evt_non_committed", "attempt": 1},
+            headers=app.scheduler_headers(),
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["event_id"] == "evt_non_committed"
+        assert body["status"] == "BLOCKED"
+        assert body["code"] == Code.SCHEDULED_BYPASS.value
+
+        # event_block called, not event_execute
+        block_calls = [c for c in app.fake.calls if c["op"] == "event_block"]
+        assert len(block_calls) == 1
+        exec_calls = [c for c in app.fake.calls if c["op"] == "event_execute"]
+        assert len(exec_calls) == 0
+
+        await db.dispose()
+
+    asyncio.run(run())
+
+
 def test_happy_path_success_executes_once(app_config):
     """Full flow: ACTIVE grant, sufficient balance, approved_risk=YELLOW → SUCCESS."""
 
