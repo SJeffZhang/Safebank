@@ -29,7 +29,23 @@ SUPPORTED_READS = {
     "get_split_status",
     "detect_anomalies",
     "detect_subscriptions",
+    "list_products",
+    "compare_products",
+    "get_product",
 }
+
+# Ordered field list shown by R15; mirrors bankcore compare_products.
+COMPARISON_FIELDS = [
+    "name",
+    "risk_level",
+    "risk_label",
+    "product_type",
+    "nav",
+    "recent_return_bp",
+    "min_amount_cents",
+    "confirm_days",
+    "settle_days",
+]
 
 
 def mask(value):
@@ -402,6 +418,30 @@ def read(state, tool, args, customer_id):
             customer_id=customer_id,
             lookback_days=args.lookback_days,
         )
+    elif tool == "list_products":
+        items = list(state.products)
+        if args.max_risk_level is not None:
+            items = [p for p in items if p.risk_level <= args.max_risk_level]
+        if args.product_type is not None:
+            items = [p for p in items if p.product_type == args.product_type]
+        page, cursor = paginate(items, args, customer_id, lambda p: (p.id,), "list_products")
+        data = dict(
+            items=[p.model_dump(mode="json") for p in page],
+            next_cursor=cursor,
+        )
+    elif tool == "compare_products":
+        by_id = {p.id: p for p in state.products}
+        if any(pid not in by_id for pid in args.product_ids):
+            raise BankError(Code.NOT_FOUND, 404)
+        data = dict(
+            items=[by_id[pid].model_dump(mode="json") for pid in args.product_ids],
+            comparison_fields=COMPARISON_FIELDS,
+        )
+    elif tool == "get_product":
+        target = next((p for p in state.products if p.id == args.product_id), None)
+        if target is None:
+            raise BankError(Code.NOT_FOUND, 404)
+        data = target.model_dump(mode="json")
     else:
         raise BankError(Code.TOOL_NOT_ALLOWED, 403)
     return READ_RESULTS[tool].model_validate(data)

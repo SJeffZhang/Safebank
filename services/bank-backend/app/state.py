@@ -3,9 +3,11 @@
 import hashlib
 import hmac
 from datetime import datetime, timedelta
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from safebank_bankcore.ledger import account_deltas
+from safebank_bankcore.products import ProductDef, get_product
 from safebank_bankcore.scope import scope_for
 from safebank_contracts.obligations import (
     InstructionRun,
@@ -41,7 +43,15 @@ from safebank_contracts.state import (
     Transaction,
     UpsertCard,
 )
-from safebank_contracts.views import RunView, ScheduledView, SplitItem, SplitView, SubscriptionView
+from safebank_contracts.views import (
+    NavPoint,
+    ProductView,
+    RunView,
+    ScheduledView,
+    SplitItem,
+    SplitView,
+    SubscriptionView,
+)
 from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
@@ -460,6 +470,52 @@ async def load_bank_state(conn, scope: StateScope, now, *, customer_id: str) -> 
         )
         for sv in _splits
     ]
+    # Global product catalog (customer-agnostic). Project rows through bankcore
+    # at the snapshot time; order by id for stable pagination.
+    product_rows = (
+        (await conn.execute(select(m.products).order_by(m.products.c.id))).mappings().all()
+    )
+    product_defs = [
+        ProductDef(
+            id=r["id"],
+            name=r["name"],
+            product_type=r["product_type"],
+            risk_level=r["risk_level"],
+            risk_label=r["risk_label"],
+            base_nav=r["base_nav"],
+            base_date=r["base_date"].date(),
+            confirm_days=r["confirm_days"],
+            settle_days=r["settle_days"],
+            min_amount_cents=r["min_amount_cents"],
+            risk_disclosure=r["risk_disclosure"],
+            disclosure_version=r["disclosure_version"],
+        )
+        for r in product_rows
+    ]
+    _products: list[ProductView] = []
+    for p in product_defs:
+        view = get_product(tuple(product_defs), p.id, now.date())
+        _products.append(
+            ProductView(
+                id=view["id"],
+                name=view["name"],
+                product_type=view["product_type"],
+                risk_level=view["risk_level"],
+                risk_label=view["risk_label"],
+                nav=view["nav"],
+                nav_date=view["nav_date"],
+                recent_return_bp=view["recent_return_bp"],
+                confirm_days=view["confirm_days"],
+                settle_days=view["settle_days"],
+                min_amount_cents=view["min_amount_cents"],
+                risk_disclosure=view["risk_disclosure"],
+                disclosure_version=view["disclosure_version"],
+                nav_history=tuple(
+                    NavPoint(date=pt["date"], nav=Decimal(pt["nav"]))
+                    for pt in view["nav_history"]
+                ),
+            )
+        )
     return BankState(
         sim_now=now,
         clock_version=clock["version"],
@@ -481,6 +537,7 @@ async def load_bank_state(conn, scope: StateScope, now, *, customer_id: str) -> 
         instructions=instructions,
         subscriptions=subscriptions,
         splits=tuple(_splits),
+        products=tuple(_products),
         dataset_revision=clock["dataset_revision"],
         assessments=tuple(assessments),
     )
