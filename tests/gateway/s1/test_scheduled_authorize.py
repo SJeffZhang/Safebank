@@ -529,3 +529,125 @@ def test_happy_path_success_executes_once(app_config):
         await db.dispose()
 
     asyncio.run(run())
+
+
+# ── P1 security review fixes ─────────────────────────────────────────────────
+
+
+def test_concurrent_callbacks_exactly_one_execute(app_config):
+    """P1-1: two concurrent scheduler callbacks for the same event → exactly one
+    L3 event_execute call, the second gets RETRYING/EXECUTION_IN_PROGRESS."""
+
+    async def run():
+        app = await build_app(app_config)
+        db = _runtime_db(app)
+        async with db.begin() as conn:
+            await _seed_grant(conn, instruction_id="ins_concurrent", approved_risk="YELLOW")
+
+        app.fake.set_snapshot(_s1_state())
+        app.fake.set_event(
+            make_event_def(
+                event_id="evt_concurrent",
+                source_id="ins_concurrent",
+                to_account_id="acc_b",
+                payee_id=None,
+                amount_cents=80000,
+            )
+        )
+        # Add a 0.3s delay inside event_execute so the second callback races
+        # past the Step-1 terminal-decision check before the first persists.
+        app.fake.set_event_execute_delay(0.3)
+        app.fake.calls.clear()
+
+        async def call():
+            resp = await app.client.post(
+                URL,
+                json={"event_id": "evt_concurrent", "attempt": 1},
+                headers=app.scheduler_headers(),
+            )
+            return resp
+
+        r1, r2 = await asyncio.gather(call(), call())
+
+        assert r1.status_code == 200, r1.text
+        assert r2.status_code == 200, r2.text
+        b1, b2 = r1.json(), r2.json()
+        statuses = {b1["status"], b2["status"]}
+        assert "SUCCESS" in statuses, f"expected SUCCESS in {statuses}"
+        assert "RETRYING" in statuses, f"expected RETRYING in {statuses}"
+
+        exec_calls = [c for c in app.fake.calls if c["op"] == "event_execute"]
+        assert len(exec_calls) == 1, f"expected 1 execute, got {len(exec_calls)}"
+
+        await db.dispose()
+
+    asyncio.run(run())
+
+
+def test_persist_failure_retry_records_original_result(app_config):
+    """P1-2: if _persist_decision fails after L3 committed, the retry calls L3
+    again, receives the stored idempotent result, and persists it."""
+
+    async def run():
+        app = await build_app(app_config)
+        db = _runtime_db(app)
+        async with db.begin() as conn:
+            await _seed_grant(conn, instruction_id="ins_retry", approved_risk="YELLOW")
+
+        app.fake.set_snapshot(_s1_state())
+        app.fake.set_event(
+            make_event_def(
+                event_id="evt_retry",
+                source_id="ins_retry",
+                to_account_id="acc_b",
+                payee_id=None,
+                amount_cents=80000,
+            )
+        )
+
+        # First call: succeeds
+        resp = await app.client.post(
+            URL,
+            json={"event_id": "evt_retry", "attempt": 1},
+            headers=app.scheduler_headers(),
+        )
+        assert resp.status_code == 200, resp.text
+        b1 = resp.json()
+        assert b1["status"] == "SUCCESS"
+        original_run_id = b1.get("instruction_run_id")
+        assert original_run_id is not None
+
+        # Simulate persist failure: delete the event_decisions row
+        async with db.begin() as conn:
+            await conn.execute(text("DELETE FROM event_decisions WHERE event_id = 'evt_retry'"))
+
+        app.fake.calls.clear()
+
+        # Retry with same event_id
+        resp2 = await app.client.post(
+            URL,
+            json={"event_id": "evt_retry", "attempt": 2},
+            headers=app.scheduler_headers(),
+        )
+        assert resp2.status_code == 200, resp2.text
+        b2 = resp2.json()
+        assert b2["status"] == "SUCCESS"
+        assert b2.get("instruction_run_id") == original_run_id
+
+        # L3 was called again but returned the stored idempotent result
+        exec_calls = [c for c in app.fake.calls if c["op"] == "event_execute"]
+        assert len(exec_calls) == 1
+
+        # event_decisions row is back
+        async with db.connect() as conn:
+            row = (
+                await conn.execute(
+                    text("SELECT status FROM event_decisions WHERE event_id = 'evt_retry'")
+                )
+            ).first()
+        assert row is not None
+        assert row.status == "SUCCESS"
+
+        await db.dispose()
+
+    asyncio.run(run())

@@ -97,6 +97,7 @@ class FakeL3:
         self.events: dict[str, dict[str, Any]] = {}
         self.event_executions: dict[str, dict[str, Any]] = {}
         self.event_blocks: dict[str, dict[str, Any]] = {}
+        self._event_execute_delay: float = 0.0
 
     # ---- programmable state -------------------------------------------------
     def set_snapshot(self, state: Any) -> None:
@@ -107,6 +108,10 @@ class FakeL3:
 
     def set_event(self, definition: dict[str, Any]) -> None:
         self.events[definition["event_id"]] = dict(definition)
+
+    def set_event_execute_delay(self, seconds: float) -> None:
+        """Add an async sleep inside event_execute so concurrent callbacks race."""
+        self._event_execute_delay = seconds
 
     def _resolve(self, op: str) -> str:
         spec = self.behaviors.get(op, "ok")
@@ -354,6 +359,10 @@ class FakeL3:
             gated = await _gate(request, "event_execute")
             if gated is not None:
                 return gated
+            if self._event_execute_delay > 0:
+                import asyncio as _asyncio
+
+                await _asyncio.sleep(self._event_execute_delay)
             existing = self.event_executions.get(event_id)
             if existing is not None:
                 return {**existing, "replayed": True}

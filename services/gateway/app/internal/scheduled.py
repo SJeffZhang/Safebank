@@ -14,7 +14,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 from safebank_contracts.codes import Code
 from safebank_contracts.plan import PlanDraft, ScheduledEvidence
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from .. import tables as t
@@ -243,37 +243,67 @@ async def scheduled_authorize(request: Request, body: AuthorizeRequest) -> dict[
     db = app.db
     l3 = app.l3
 
-    # Step 1: a terminal decision for this event is idempotently replayed without
-    # re-evaluation and without touching L3.
-    async with db.connect() as conn:
+    # Step 1: acquire an advisory lock on the event_id to serialize concurrent
+    # scheduler callbacks. Two callbacks for the same event_id racing through the
+    # non-locking terminal-decision check would both proceed to L3 event_execute;
+    # the advisory lock makes the check + execute atomic at the gateway layer.
+    lock_acquired = False
+    lock_key = f"s1_event:{body.event_id}"
+    lock_conn = await db.connect()
+    try:
+        acquired = (
+            await lock_conn.execute(
+                text("SELECT pg_try_advisory_lock(hashtext(:key))"),
+                {"key": lock_key},
+            )
+        ).scalar()
+        if not acquired:
+            return {
+                "event_id": body.event_id,
+                "status": "RETRYING",
+                "code": Code.EXECUTION_IN_PROGRESS.value,
+            }
+        lock_acquired = True
+
+        # Double-check the terminal decision under the lock.
         row = (
-            await conn.execute(
+            await lock_conn.execute(
                 select(t.event_decisions).where(t.event_decisions.c.event_id == body.event_id)
             )
         ).first()
-    if row is not None:
-        return {"event_id": body.event_id, "status": row.status, "code": row.code}
+        if row is not None:
+            return {"event_id": body.event_id, "status": row.status, "code": row.code}
 
-    # Step 2: fetch the L3 event definition (never trust callback amounts). Any
-    # L3 transport failure is retryable: report RETRYING and persist nothing.
-    try:
-        event = await l3.event(body.event_id)
-    except L3Error:
-        return _retrying(body.event_id)
-
-    customer_id = event["customer_id"]
-
-    # Step 3: load the grant by instruction id; backfill from the L3 committed
-    # execution when missing.
-    async with db.connect() as conn:
-        grant = await _load_grant(conn, event["source_id"])
-    if grant is None:
+        # Step 2: fetch the L3 event definition (never trust callback amounts). Any
+        # L3 transport failure is retryable: report RETRYING and persist nothing.
         try:
-            grant = await _backfill_grant(db, l3, event, app.wall_now)
+            event = await l3.event(body.event_id)
         except L3Error:
             return _retrying(body.event_id)
+
+        customer_id = event["customer_id"]
+
+        # Step 3: load the grant by instruction id; backfill from the L3 committed
+        # execution when missing.
+        async with db.connect() as conn:
+            grant = await _load_grant(conn, event["source_id"])
         if grant is None:
-            # The source plan was never committed: no grant can exist, refuse.
+            try:
+                grant = await _backfill_grant(db, l3, event, app.wall_now)
+            except L3Error:
+                return _retrying(body.event_id)
+            if grant is None:
+                # The source plan was never committed: no grant can exist, refuse.
+                return await _block(
+                    request,
+                    event,
+                    "BLOCKED",
+                    Code.SCHEDULED_BYPASS.value,
+                    ctx=None,
+                )
+
+        # Revoked grants and fingerprint mismatches refuse without re-evaluation.
+        if grant["status"] == "REVOKED" or grant["scope_hash"] != event["grant_scope_hash"]:
             return await _block(
                 request,
                 event,
@@ -282,69 +312,66 @@ async def scheduled_authorize(request: Request, body: AuthorizeRequest) -> dict[
                 ctx=None,
             )
 
-    # Revoked grants and fingerprint mismatches refuse without re-evaluation.
-    if grant["status"] == "REVOKED" or grant["scope_hash"] != event["grant_scope_hash"]:
-        return await _block(
-            request,
-            event,
-            "BLOCKED",
-            Code.SCHEDULED_BYPASS.value,
-            ctx=None,
-        )
+        # Step 4: re-evaluate the transfer on a fresh snapshot.
+        try:
+            ctx = await _re_evaluate(request, event)
+        except L3Error:
+            return _retrying(body.event_id)
+        if ctx.decision is None:
+            raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503, "pipeline produced no decision")
 
-    # Step 4: re-evaluate the transfer on a fresh snapshot.
-    try:
-        ctx = await _re_evaluate(request, event)
-    except L3Error:
-        return _retrying(body.event_id)
-    if ctx.decision is None:
-        raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503, "pipeline produced no decision")
+        decision_value = ctx.decision.decision
+        risk_value = ctx.decision.risk.value
 
-    decision_value = ctx.decision.decision
-    risk_value = ctx.decision.risk.value
-
-    # Step 5: decision → block/execute mapping (PRD §7.11).
-    approved_risk = grant["approved_risk"] or "GREEN"
-    if _RISK_ORDER[risk_value] > _RISK_ORDER.get(approved_risk, 0):
-        return await _block(
-            request,
-            event,
-            "SKIPPED_REAPPROVAL",
-            Code.SCHEDULED_REAPPROVAL_REQUIRED.value,
-            ctx=ctx,
-        )
-    if decision_value in (DecisionValue.DENY, DecisionValue.REPLAN):
-        if any(f.code is Code.INSUFFICIENT_FUNDS for f in ctx.decision.findings):
+        # Step 5: decision → block/execute mapping (PRD §7.11).
+        approved_risk = grant["approved_risk"] or "GREEN"
+        if _RISK_ORDER[risk_value] > _RISK_ORDER.get(approved_risk, 0):
             return await _block(
-                request, event, "FAILED_INSUFFICIENT", Code.INSUFFICIENT_FUNDS.value, ctx=ctx
+                request,
+                event,
+                "SKIPPED_REAPPROVAL",
+                Code.SCHEDULED_REAPPROVAL_REQUIRED.value,
+                ctx=ctx,
             )
-        return await _block(request, event, "BLOCKED", Code.SCHEDULED_BYPASS.value, ctx=ctx)
+        if decision_value in (DecisionValue.DENY, DecisionValue.REPLAN):
+            if any(f.code is Code.INSUFFICIENT_FUNDS for f in ctx.decision.findings):
+                return await _block(
+                    request, event, "FAILED_INSUFFICIENT", Code.INSUFFICIENT_FUNDS.value, ctx=ctx
+                )
+            return await _block(request, event, "BLOCKED", Code.SCHEDULED_BYPASS.value, ctx=ctx)
 
-    # Otherwise the grant still holds: authorize execution on L3.
-    evidence = ScheduledEvidence(
-        type="SCHEDULED_GRANT",
-        grant_id=event["source_id"],
-        scope_hash=grant["scope_hash"],
-        source_plan_id=grant["source_plan_id"],
-        approved_risk=ctx.decision.risk,
-    )
-    versions, clock_version = _pinned(ctx)
-    try:
-        result = await l3.event_execute(
-            body.event_id,
-            {
-                "expected_versions": versions,
-                "clock_version": clock_version,
-                "expected_payload_hash": event["payload_hash"],
-                "authorization_evidence": evidence.model_dump(mode="json"),
-            },
+        # Otherwise the grant still holds: authorize execution on L3.
+        evidence = ScheduledEvidence(
+            type="SCHEDULED_GRANT",
+            grant_id=event["source_id"],
+            scope_hash=grant["scope_hash"],
+            source_plan_id=grant["source_plan_id"],
+            approved_risk=ctx.decision.risk,
         )
-    except L3Error:
-        return _retrying(body.event_id)
+        versions, clock_version = _pinned(ctx)
+        try:
+            result = await l3.event_execute(
+                body.event_id,
+                {
+                    "expected_versions": versions,
+                    "clock_version": clock_version,
+                    "expected_payload_hash": event["payload_hash"],
+                    "authorization_evidence": evidence.model_dump(mode="json"),
+                },
+            )
+        except L3Error:
+            return _retrying(body.event_id)
 
-    await _persist_decision(request, customer_id, body.event_id, "SUCCESS", None)
-    return {
-        "event_id": body.event_id,
-        "status": "SUCCESS",
-        "instruction_run_id": result.get("instruction_run_id"),
-    }
+        await _persist_decision(request, customer_id, body.event_id, "SUCCESS", None)
+        return {
+            "event_id": body.event_id,
+            "status": "SUCCESS",
+            "instruction_run_id": result.get("instruction_run_id"),
+        }
+    finally:
+        if lock_acquired:
+            await lock_conn.execute(
+                text("SELECT pg_advisory_unlock(hashtext(:key))"),
+                {"key": lock_key},
+            )
+        await lock_conn.close()
