@@ -807,7 +807,7 @@ fund_orders = Table(
     CheckConstraint(FUND_ORDER_TYPE_CHECK, name="fund_orders_type_check"),
     CheckConstraint(FUND_ORDER_STATUS_CHECK, name="fund_orders_status_check"),
     CheckConstraint("amount_cents > 0", name="fund_orders_amount_cents_check"),
-    CheckConstraint("units > 0", name="fund_orders_units_check"),
+    CheckConstraint("units >= 0", name="fund_orders_units_check"),
     CheckConstraint("reserved_cost_cents >= 0", name="fund_orders_reserved_cost_cents_check"),
     ForeignKeyConstraint(
         ["account_id", "customer_id"],

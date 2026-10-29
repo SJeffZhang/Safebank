@@ -140,6 +140,16 @@ async def install_demo(conn, fingerprint_key: str) -> dict[str, Any]:
         )
         added_products += result.rowcount or 0
 
+    # Fund settlement accounts are derivable from products — insert them
+    # idempotently (ON CONFLICT DO NOTHING) so already-installed databases
+    # also receive any accounts that were previously missing.
+    added_fund_accounts = 0
+    for account in prepared.get("fund_settlement_accounts", []):
+        result = await conn.execute(
+            pg_insert(m.accounts).values(**account).on_conflict_do_nothing()
+        )
+        added_fund_accounts += result.rowcount or 0
+
     new_holdings = [h for h in prepared["holdings"] if h["customer_id"] in new_customer_ids]
     for holding in new_holdings:
         await conn.execute(m.holdings.insert().values(**holding))
@@ -260,6 +270,7 @@ async def install_demo(conn, fingerprint_key: str) -> dict[str, Any]:
         "added_payees": len(new_payees),
         "added_merchants": added_merchants,
         "added_products": added_products,
+        "added_fund_settlement_accounts": added_fund_accounts,
         "added_holdings": len(new_holdings),
         "added_transactions": len(new_transactions),
         "added_billings": len(new_billings),
@@ -291,6 +302,7 @@ async def main() -> None:
             f"{summary['added_accounts']} account(s), {summary['added_cards']} card(s), "
             f"{summary['added_payees']} payee(s), {summary['added_merchants']} merchant(s), "
             f"{summary['added_products']} product(s), "
+            f"{summary['added_fund_settlement_accounts']} fund settlement account(s), "
             f"{summary['added_transactions']} transaction(s), "
             f"{summary['added_billings']} billing(s), "
             f"{summary['added_standing_instructions']} standing instruction(s); "

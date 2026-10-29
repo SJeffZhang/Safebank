@@ -9592,8 +9592,14 @@
             },
             "kind": {
               "enum": [
+                "FUND_CONFIRM",
+                "FUND_SETTLE",
+                "FUND_EXPIRY",
                 "SCHEDULED_TRANSFER",
-                "MERCHANT_MANDATE"
+                "MERCHANT_MANDATE",
+                "MERCHANT_CHARGE",
+                "REMINDER",
+                "DEMO_EVENT"
               ],
               "title": "Kind",
               "type": "string"

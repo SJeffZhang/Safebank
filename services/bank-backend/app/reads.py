@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 
 from safebank_bankcore.analytics import detect_anomalies, detect_subscriptions, spending_summary
 from safebank_bankcore.banking import card_view
+from safebank_bankcore.funds import holdings_view
 from safebank_bankcore.ids import digest
 from safebank_bankcore.reserve import BUSINESS_TIMEZONE, _business_time, upcoming_window
 from safebank_contracts.codes import Code
@@ -32,6 +33,7 @@ SUPPORTED_READS = {
     "list_products",
     "compare_products",
     "get_product",
+    "get_holdings",
 }
 
 # Ordered field list shown by R15; mirrors bankcore compare_products.
@@ -454,6 +456,14 @@ def read(state, tool, args, customer_id):
         if target is None:
             raise BankError(Code.NOT_FOUND, 404)
         data = target.model_dump(mode="json")
+    elif tool == "get_holdings":
+        result = holdings_view(
+            state,
+            customer_id,
+            account_id=getattr(args, "account_id", None),
+            product_id=getattr(args, "product_id", None),
+        )
+        data = result.model_dump(mode="json")
     else:
         raise BankError(Code.TOOL_NOT_ALLOWED, 403)
     return READ_RESULTS[tool].model_validate(data)

@@ -27,6 +27,7 @@ from safebank_contracts.state import (
     LedgerTransfer,
     Operation,
     OperationEvent,
+    ScheduleEventJob,
 )
 from safebank_contracts.views import (
     READ_RESULTS,
@@ -36,7 +37,7 @@ from safebank_contracts.views import (
 )
 
 from .calendar import next_trading_day, trade_date
-from .ids import derive
+from .ids import derive, digest
 from .ledger import post_transfer, replace_state
 from .nav import nav
 from .reserve import BUSINESS_TIMEZONE, _business_time
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
 
 InsertFundOrder = FUTURE_EFFECTS["InsertFundOrder"]
 UpdateFundOrder = FUTURE_EFFECTS["UpdateFundOrder"]
+UpdateHolding = FUTURE_EFFECTS["UpdateHolding"]
 
 
 def _reject(state, ctx, code):
@@ -127,6 +129,26 @@ def _holding_index(state: BankState) -> dict[tuple[str, str], HoldingView]:
     return {(h.account_id, h.product_id): h for h in state.holdings}
 
 
+def _fund_event_job(order_id, customer_id, account_id, kind, due_at, *, plan_id, step_id):
+    """Create a ScheduleEventJob for fund order lifecycle events."""
+    payload = f"{order_id}|{kind}|{customer_id}|{account_id}"
+    job_id = derive(plan_id, step_id, f"job_{kind.lower()}")
+    event_id = derive(plan_id, step_id, f"evt_{kind.lower()}")
+    return ScheduleEventJob(
+        job_id=job_id,
+        instruction_id=order_id,
+        customer_id=customer_id,
+        account_id=account_id,
+        event_id=event_id,
+        kind=kind,
+        due_at=due_at,
+        source_id=order_id,
+        period_key=f"{order_id}:{kind}",  # one job per order and event kind
+        payload_ciphertext=payload,
+        payload_hash=digest(payload),
+    )
+
+
 def _rebuild_holdings(state: BankState, now: datetime) -> BankState:
     products = {p.id: p for p in state.products}
     receivables: dict[tuple[str, str], int] = {}
@@ -169,7 +191,7 @@ def _apply_holding(
     cost_delta: int = 0,
     reserved_cost_delta: int = 0,
     now: datetime,
-) -> BankState:
+) -> tuple[BankState, HoldingView]:
     index = _holding_index(state)
     holding = index.get((account_id, product_id))
     if holding is None:
@@ -198,7 +220,8 @@ def _apply_holding(
         }
     )
     index[(account_id, product_id)] = raw
-    return _rebuild_holdings(replace_state(state, holdings=tuple(index.values())), now)
+    after = _rebuild_holdings(replace_state(state, holdings=tuple(index.values())), now)
+    return after, _holding_index(after)[(account_id, product_id)]
 
 
 def apply_subscribe(state: BankState, args, now: datetime, ctx: Context):
@@ -263,7 +286,7 @@ def apply_subscribe(state: BankState, args, now: datetime, ctx: Context):
             failure_code=None,
         )
         after = _put_order(after, order)
-        after = _apply_holding(
+        after, holding = _apply_holding(
             after, account.id, product.id, units_delta=units, cost_delta=args.amount_cents, now=now
         )
         return (
@@ -271,6 +294,7 @@ def apply_subscribe(state: BankState, args, now: datetime, ctx: Context):
             (
                 *effects,
                 InsertFundOrder(order=order),
+                UpdateHolding(holding=holding),
                 _op(state, ctx, now, "FUND_SUBSCRIBE", target=product.id, amount=args.amount_cents),
             ),
             (),
@@ -320,6 +344,24 @@ def apply_subscribe(state: BankState, args, now: datetime, ctx: Context):
         (
             *effects,
             InsertFundOrder(order=order),
+            _fund_event_job(
+                order_id,
+                ctx.customer_id,
+                account.id,
+                "FUND_CONFIRM",
+                confirm_at,
+                plan_id=ctx.plan_id,
+                step_id=ctx.step_id,
+            ),
+            _fund_event_job(
+                order_id,
+                ctx.customer_id,
+                account.id,
+                "FUND_EXPIRY",
+                expires_at,
+                plan_id=ctx.plan_id,
+                step_id=ctx.step_id,
+            ),
             _op(state, ctx, now, "FUND_SUBSCRIBE", target=product.id, amount=args.amount_cents),
         ),
         (),
@@ -394,7 +436,7 @@ def apply_redeem(state: BankState, args, now: datetime, ctx: Context):
             failure_code=None,
         )
         after = _put_order(after, order)
-        after = _apply_holding(
+        after, holding = _apply_holding(
             after, account.id, product.id, units_delta=-units, cost_delta=-reserved_cost, now=now
         )
         return (
@@ -402,6 +444,7 @@ def apply_redeem(state: BankState, args, now: datetime, ctx: Context):
             (
                 *effects,
                 InsertFundOrder(order=order),
+                UpdateHolding(holding=holding),
                 _op(state, ctx, now, "FUND_REDEEM", target=product.id, amount=amount_cents),
             ),
             (),
@@ -428,7 +471,7 @@ def apply_redeem(state: BankState, args, now: datetime, ctx: Context):
         failure_code=None,
     )
     after = _put_order(state, order)
-    after = _apply_holding(
+    after, holding = _apply_holding(
         after,
         account.id,
         product.id,
@@ -440,6 +483,16 @@ def apply_redeem(state: BankState, args, now: datetime, ctx: Context):
         after,
         (
             InsertFundOrder(order=order),
+            UpdateHolding(holding=holding),
+            _fund_event_job(
+                order_id,
+                ctx.customer_id,
+                account.id,
+                "FUND_SETTLE",
+                settle_at,
+                plan_id=ctx.plan_id,
+                step_id=ctx.step_id,
+            ),
             _op(state, ctx, now, "FUND_REDEEM", target=product.id, amount=amount_cents),
         ),
         (),
@@ -502,7 +555,7 @@ def apply_fund_confirm(state: BankState, order_id: str, at: datetime, ctx: Conte
         }
     )
     after = _put_order(after, updated)
-    after = _apply_holding(
+    after, holding = _apply_holding(
         after,
         order.account_id,
         order.product_id,
@@ -510,7 +563,7 @@ def apply_fund_confirm(state: BankState, order_id: str, at: datetime, ctx: Conte
         cost_delta=order.amount_cents,
         now=at,
     )
-    return after, (*effects, UpdateFundOrder(order=updated)), ()
+    return after, (*effects, UpdateFundOrder(order=updated), UpdateHolding(holding=holding)), ()
 
 
 def _fail_confirm(
@@ -574,7 +627,7 @@ def apply_fund_settle(state: BankState, order_id: str, at: datetime, ctx: Contex
         return after, effects, errors
     updated = order.model_copy(update={"status": "SETTLED", "settle_at": at})
     after = _put_order(after, updated)
-    after = _apply_holding(
+    after, holding = _apply_holding(
         after,
         order.account_id,
         order.product_id,
@@ -584,7 +637,7 @@ def apply_fund_settle(state: BankState, order_id: str, at: datetime, ctx: Contex
         reserved_cost_delta=-order.reserved_cost_cents,
         now=at,
     )
-    return after, (*effects, UpdateFundOrder(order=updated)), ()
+    return after, (*effects, UpdateFundOrder(order=updated), UpdateHolding(holding=holding)), ()
 
 
 def order_view(order: FundOrderRecord) -> FundOrderView:

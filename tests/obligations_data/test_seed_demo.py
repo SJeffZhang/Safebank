@@ -352,6 +352,25 @@ def test_seed_demo_installs_products_idempotently(obligations_db):
             second = await install_demo(conn, KEY)
         assert second["added_products"] == 0
 
+        # Fund settlement accounts exist for every seeded product.
+        async with admin.connect() as conn:
+            for product_id in EXPECTED_PRODUCTS:
+                settlement_id = f"acc_fund_{product_id}"
+                row = (
+                    await conn.execute(
+                        text(
+                            "SELECT id, customer_id, type, single_limit_cents, "
+                            "daily_limit_cents FROM accounts WHERE id=:id"
+                        ),
+                        {"id": settlement_id},
+                    )
+                ).one_or_none()
+                assert row is not None, f"missing settlement account {settlement_id}"
+                assert row.customer_id is None
+                assert row.type == "INTERNAL"
+                assert row.single_limit_cents == 500_000
+                assert row.daily_limit_cents == 2_000_000
+
         # NAV projections via bankcore on the loaded product definitions.
         async with admin.connect() as conn:
             rows = (
