@@ -249,16 +249,67 @@ def test_gather_rejects_write_and_unknown_tools():
             GatherAdapter(llm, executor)(plan_state(), ctx())
 
 
-def test_gather_stops_at_round_limit():
-    scripted = ScriptedLLM([tool_response("get_accounts", {"history_days": 1}) for _ in range(3)])
-    llm = build(scripted)
+def test_gather_returns_collected_reads_at_round_cap():
+    executed = []
 
     def executor(name, args):
+        executed.append((name, args))
         return ReadResult(data={}, source_ref="src_a")
 
+    # The model keeps requesting reads on every round, even past the cap.
+    scripted = ScriptedLLM(
+        [tool_response("get_accounts", {"history_days": i}) for i in range(1, 5)]
+    )
+    llm = build(scripted)
+    result = GatherAdapter(llm, executor, max_rounds=3)(plan_state(), ctx())
+    # No exception: the reads collected so far are returned instead of raising.
+    assert len(result) == 3
+    assert executed == [
+        ("get_accounts", {"history_days": 1}),
+        ("get_accounts", {"history_days": 2}),
+        ("get_accounts", {"history_days": 3}),
+    ]
+    # The final round is invoked without tools so the model must stop.
+    assert len(scripted.requests) == 4
+    assert "tools" not in body_of(scripted, 3)
+
+
+def test_gather_final_round_stops_with_text():
+    executed = []
+
+    def executor(name, args):
+        executed.append((name, args))
+        return ReadResult(data={}, source_ref="src_a")
+
+    scripted = ScriptedLLM(
+        [
+            tool_response("get_accounts", {"history_days": 1}),
+            tool_response("get_accounts", {"history_days": 2}),
+            tool_response("get_accounts", {"history_days": 3}),
+            text_response("done"),
+        ]
+    )
+    llm = build(scripted)
+    result = GatherAdapter(llm, executor, max_rounds=3)(plan_state(), ctx())
+    assert len(result) == 3
+    assert len(executed) == 3
+    assert "tools" not in body_of(scripted, 3)
+
+
+def test_gather_zero_reads_at_cap_still_raises():
+    executed = []
+
+    def executor(name, args):
+        executed.append((name, args))
+        return ReadResult(data={}, source_ref="src_a")
+
+    # Every round is rejected (missing required history_days), so nothing is
+    # collected; when the model still wants reads past the cap, that is an error.
+    scripted = ScriptedLLM([tool_response("get_accounts", {}) for _ in range(4)])
+    llm = build(scripted)
     with pytest.raises(LlmToolError):
         GatherAdapter(llm, executor, max_rounds=3)(plan_state(), ctx())
-    assert len(scripted.requests) == 3
+    assert executed == []
 
 
 def test_gather_rejects_invalid_tool_calls():

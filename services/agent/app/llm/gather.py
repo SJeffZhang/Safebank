@@ -64,6 +64,7 @@ class GatherAdapter:
             raise ValueError(f"max_rounds must be between 1 and {_MAX_ROUNDS}")
         self._read_executor = read_executor
         self._model = llm.bind_tools(read_tools())
+        self._plain_model = llm
         self._max_rounds = max_rounds
         self._observer = observer
         self.supplement_transfer_reads = supplement_transfer_reads
@@ -122,7 +123,35 @@ class GatherAdapter:
             for call, name, args in prepared:
                 reads.append(self._execute(name, args, call, messages))
         # Loop completed without the model stopping: it still wanted more reads.
-        raise LlmToolError(f"gather exceeded max rounds ({self._max_rounds})")
+        # Ask once more without tools bound so the model must stop, instead of
+        # looping forever; return whatever reads were collected so far.
+        return self._finish_without_tools(messages, reads, state, tools_attempted)
+
+    def _finish_without_tools(
+        self,
+        messages: list,
+        reads: list[ReadRecord],
+        state: AgentState,
+        tools_attempted: set[str],
+    ) -> list[ReadRecord]:
+        """Final tools-free call after the round cap so the model must stop.
+
+        With no tools bound the model cannot request further reads; it must produce
+        a final answer. If it still emits tool calls anyway, return the reads
+        collected so far — but with nothing collected that is an error.
+        """
+        message = self._plain_model.invoke(messages)
+        if self._observer is not None:
+            self._observer(message)
+        if getattr(message, "invalid_tool_calls", None):
+            raise LlmToolError("model returned malformed tool call arguments")
+        if message.tool_calls:
+            if not reads:
+                raise LlmToolError(f"gather exceeded max rounds ({self._max_rounds})")
+            # Fall through and return the reads collected so far.
+        if self.supplement_transfer_reads:
+            return self._supplement_reads(reads, state, tools_attempted)
+        return reads
 
     def _validate_calls(self, calls: list) -> tuple[list, list]:
         prepared = []

@@ -132,6 +132,14 @@ async def install_demo(conn, fingerprint_key: str) -> dict[str, Any]:
         )
         added_merchants += result.rowcount or 0
 
+    # Products are global (not customer-scoped); re-runs must not duplicate them.
+    added_products = 0
+    for product in prepared["products"]:
+        result = await conn.execute(
+            pg_insert(m.products).values(**product).on_conflict_do_nothing()
+        )
+        added_products += result.rowcount or 0
+
     new_transactions = [t for t in prepared["transactions"] if t["customer_id"] in new_customer_ids]
     new_txn_ids = {t["id"] for t in new_transactions}
     new_transfers = [t for t in prepared["transfers"] if t["step_id"] in new_txn_ids]
@@ -191,6 +199,7 @@ async def install_demo(conn, fingerprint_key: str) -> dict[str, Any]:
         "added_cards": len(new_cards),
         "added_payees": len(new_payees),
         "added_merchants": added_merchants,
+        "added_products": added_products,
         "added_transactions": len(new_transactions),
         "added_billings": len(new_billings),
         "added_standing_instructions": len(new_instructions),
@@ -217,6 +226,7 @@ async def main() -> None:
             f"Demo seed installed: {summary['added_customers']} customer(s), "
             f"{summary['added_accounts']} account(s), {summary['added_cards']} card(s), "
             f"{summary['added_payees']} payee(s), {summary['added_merchants']} merchant(s), "
+            f"{summary['added_products']} product(s), "
             f"{summary['added_transactions']} transaction(s), "
             f"{summary['added_billings']} billing(s), "
             f"{summary['added_standing_instructions']} standing instruction(s); "

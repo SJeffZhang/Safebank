@@ -16,7 +16,7 @@ def test_migration_exists_and_runtime_does_not_own_tables():
         db = engine(database_url(), poolclass=NullPool)
         async with db.connect() as c:
             assert (
-                await c.scalar(text("SELECT version_num FROM alembic_version")) == "0004_event_jobs"
+                await c.scalar(text("SELECT version_num FROM alembic_version")) == "0007_products"
             )
             assert (
                 await c.scalar(text("SELECT tableowner FROM pg_tables WHERE tablename='accounts'"))

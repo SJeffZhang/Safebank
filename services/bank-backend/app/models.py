@@ -11,6 +11,7 @@ from sqlalchemy import (
     Index,
     Integer,
     MetaData,
+    Numeric,
     String,
     Table,
     Text,
@@ -715,4 +716,29 @@ split_items = Table(
         name="split_items_payee_customer_fkey",
     ),
     UniqueConstraint("request_id", "payee_id", name="split_items_request_payee_key"),
+)
+
+PRODUCTS_TYPE_CHECK = "product_type IN ('MMF','BOND','MIXED','EQUITY')"
+
+products = Table(
+    "products",
+    metadata,
+    idcol(primary_key=True),
+    Column("name", Text, nullable=False),
+    Column("product_type", String, nullable=False),
+    Column("risk_level", Integer, nullable=False),
+    Column("risk_label", Text, nullable=False),
+    Column("base_nav", Numeric(18, 4), nullable=False),
+    Column("base_date", DateTime(timezone=True), nullable=False),
+    Column("confirm_days", Integer, nullable=False),
+    Column("settle_days", Integer, nullable=False),
+    Column("min_amount_cents", BigInteger, nullable=False),
+    Column("risk_disclosure", Text, nullable=False),
+    Column("disclosure_version", String, nullable=False),
+    CheckConstraint(PRODUCTS_TYPE_CHECK, name="products_product_type_check"),
+    CheckConstraint("risk_level BETWEEN 1 AND 5", name="products_risk_level_check"),
+    CheckConstraint("base_nav > 0", name="products_base_nav_check"),
+    CheckConstraint("confirm_days >= 0", name="products_confirm_days_check"),
+    CheckConstraint("settle_days >= 0", name="products_settle_days_check"),
+    CheckConstraint("min_amount_cents > 0", name="products_min_amount_cents_check"),
 )
