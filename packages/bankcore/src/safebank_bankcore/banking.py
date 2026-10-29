@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from safebank_contracts.codes import Code
 from safebank_contracts.plan import Effect, StepResult, Violation
 from safebank_contracts.state import (
+    Account,
     BankState,
     Card,
     Counters,
@@ -58,6 +59,58 @@ def operation(state, ctx, now, kind, *, target=None, amount=0):
     )
 
 
+def transfer_control_violation(
+    state: BankState,
+    *,
+    source: Account,
+    amount_cents: int,
+    customer_id: str,
+    daily_outflow_limit_cents: int = 5_000_000,
+) -> Code | None:
+    """First hard violation for a card-channel / external outflow, or None.
+
+    Shared by user-initiated ``apply_transfer`` and the L3 system events
+    (scheduled transfers), so both paths enforce the same card state, single /
+    daily limits and customer daily outflow limit. Balance/available is enforced
+    separately by ``post_transfer`` (INSUFFICIENT_FUNDS).
+    """
+    if source.current_card_id:
+        card = state.cards.get(source.current_card_id)
+        if not card or card.status != "ACTIVE":
+            return Code.CARD_STATE_CONFLICT
+        single, daily = card.single_limit_cents, card.daily_limit_cents
+    else:
+        single, daily = source.single_limit_cents, source.daily_limit_cents
+    if amount_cents > single:
+        return Code.CARD_SINGLE_LIMIT
+    if state.counters.daily_used_cents.get(source.id, 0) + amount_cents > daily:
+        return Code.CARD_DAILY_LIMIT
+    if (
+        state.counters.daily_outflow_cents.get(customer_id, 0) + amount_cents
+        > daily_outflow_limit_cents
+    ):
+        return Code.DAILY_OUTFLOW_LIMIT
+    return None
+
+
+def bump_outflow_counters(
+    state: BankState, *, customer_id: str, account_id: str, amount_cents: int
+) -> BankState:
+    """Increment the daily/rolling outflow and per-account used counters."""
+    daily = dict(state.counters.daily_outflow_cents)
+    rolling = dict(state.counters.rolling_outflow_cents)
+    used = dict(state.counters.daily_used_cents)
+    daily[customer_id] = daily.get(customer_id, 0) + amount_cents
+    rolling[customer_id] = rolling.get(customer_id, 0) + amount_cents
+    used[account_id] = used.get(account_id, 0) + amount_cents
+    return replace_state(
+        state,
+        counters=Counters(
+            daily_outflow_cents=daily, rolling_outflow_cents=rolling, daily_used_cents=used
+        ),
+    )
+
+
 def apply_transfer(state: BankState, args, now: datetime, ctx: Context):
     source = state.accounts.get(args.from_account_id)
     if source is None or source.customer_id != ctx.customer_id:
@@ -76,22 +129,15 @@ def apply_transfer(state: BankState, args, now: datetime, ctx: Context):
         # A payee pointing to one's own account must use the explicit self-transfer path.
         if target.customer_id == ctx.customer_id:
             return reject(state, ctx, Code.CONTRACT_INVALID)
-        if source.current_card_id:
-            card = state.cards.get(source.current_card_id)
-            if not card or card.status != "ACTIVE":
-                return reject(state, ctx, Code.CARD_STATE_CONFLICT)
-            single, daily = card.single_limit_cents, card.daily_limit_cents
-        else:
-            single, daily = source.single_limit_cents, source.daily_limit_cents
-        if args.amount_cents > single:
-            return reject(state, ctx, Code.CARD_SINGLE_LIMIT)
-        if state.counters.daily_used_cents.get(source.id, 0) + args.amount_cents > daily:
-            return reject(state, ctx, Code.CARD_DAILY_LIMIT)
-        if (
-            state.counters.daily_outflow_cents.get(ctx.customer_id, 0) + args.amount_cents
-            > ctx.daily_outflow_limit_cents
-        ):
-            return reject(state, ctx, Code.DAILY_OUTFLOW_LIMIT)
+        violation = transfer_control_violation(
+            state,
+            source=source,
+            amount_cents=args.amount_cents,
+            customer_id=ctx.customer_id,
+            daily_outflow_limit_cents=ctx.daily_outflow_limit_cents,
+        )
+        if violation is not None:
+            return reject(state, ctx, violation)
         code = "P2P_INTERNAL" if payee.target_account_id else "P2P_EXTERNAL"
     else:
         target = state.accounts.get(args.to_account_id)
@@ -124,17 +170,8 @@ def apply_transfer(state: BankState, args, now: datetime, ctx: Context):
     if not effects:
         return after, effects, ()
     if external:
-        daily = dict(state.counters.daily_outflow_cents)
-        rolling = dict(state.counters.rolling_outflow_cents)
-        used = dict(state.counters.daily_used_cents)
-        daily[ctx.customer_id] = daily.get(ctx.customer_id, 0) + args.amount_cents
-        rolling[ctx.customer_id] = rolling.get(ctx.customer_id, 0) + args.amount_cents
-        used[source.id] = used.get(source.id, 0) + args.amount_cents
-        after = replace_state(
-            after,
-            counters=Counters(
-                daily_outflow_cents=daily, rolling_outflow_cents=rolling, daily_used_cents=used
-            ),
+        after = bump_outflow_counters(
+            after, customer_id=ctx.customer_id, account_id=source.id, amount_cents=args.amount_cents
         )
     kind = "TRANSFER_EXTERNAL" if external else "TRANSFER_SELF"
     return (

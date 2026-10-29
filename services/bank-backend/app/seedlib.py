@@ -170,13 +170,14 @@ def prepare_seed(
     merchants = seed["merchants"]
     transactions = seed["transactions"]
     products = seed.get("products") or []
+    holdings = seed.get("holdings") or []
 
     customer_ids = _unique_ids(customers, "customer")
     account_ids = _unique_ids(accounts, "account")
     card_ids = _unique_ids(cards, "card")
     payee_ids = _unique_ids(payees, "payee")
     merchant_ids = _unique_ids(merchants, "merchant")
-    _unique_ids(products, "product")
+    product_ids = _unique_ids(products, "product")
     _unique_ids(transactions, "transaction")
     billing_ids = _unique_ids(billings, "billing")
     _unique_ids(standing_instructions, "standing_instruction")
@@ -424,6 +425,54 @@ def prepare_seed(
                     product.get("disclosure_version"),
                     f"product {product_id} disclosure_version",
                 ),
+            }
+        )
+
+    # --- holdings ---------------------------------------------------------
+    # Customer fund holdings bought before the seed window: these carry cost
+    # only and never generate ledger rows. ``units`` / ``reserved_units`` are
+    # Decimal(18,4) values; the settlement account must belong to the customer.
+    prepared_holdings: list[dict[str, Any]] = []
+    for holding in holdings:
+        customer_id = holding.get("customer_id")
+        if customer_id not in customer_ids:
+            raise SeedError(f"holding references unknown customer {customer_id!r}")
+        account_id = holding.get("account_id")
+        if account_id not in account_ids:
+            raise SeedError(f"holding references unknown account {account_id!r}")
+        if accounts_by_id[account_id]["customer_id"] != customer_id:
+            raise SeedError(
+                f"holding account {account_id!r} belongs to "
+                f"{accounts_by_id[account_id]['customer_id']!r}, not {customer_id!r}"
+            )
+        product_id = holding.get("product_id")
+        if product_id not in product_ids:
+            raise SeedError(f"holding references unknown product {product_id!r}")
+        units = _parse_decimal(holding.get("units"), f"holding {customer_id}/{product_id} units")
+        reserved_units = _parse_decimal(
+            holding.get("reserved_units", 0),
+            f"holding {customer_id}/{product_id} reserved_units",
+        )
+        cost_cents = _require_int(
+            holding.get("cost_cents"), f"holding {customer_id}/{product_id} cost_cents"
+        )
+        reserved_cost_cents = _require_int(
+            holding.get("reserved_cost_cents", 0),
+            f"holding {customer_id}/{product_id} reserved_cost_cents",
+        )
+        if units < reserved_units or reserved_units < 0:
+            raise SeedError(f"holding {customer_id}/{product_id} units/reserved_units out of order")
+        if cost_cents < reserved_cost_cents or reserved_cost_cents < 0:
+            raise SeedError(f"holding {customer_id}/{product_id} cost/reserved_cost out of order")
+        prepared_holdings.append(
+            {
+                "customer_id": customer_id,
+                "account_id": account_id,
+                "product_id": product_id,
+                "units": units,
+                "reserved_units": reserved_units,
+                "cost_cents": cost_cents,
+                "reserved_cost_cents": reserved_cost_cents,
             }
         )
 
@@ -787,6 +836,7 @@ def prepare_seed(
         "payees": prepared_payees,
         "merchants": prepared_merchants,
         "products": prepared_products,
+        "holdings": prepared_holdings,
         "billings": prepared_billings,
         "standing_instructions": prepared_instructions,
         "transfers": prepared_transfers,
