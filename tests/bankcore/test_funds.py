@@ -129,7 +129,9 @@ def test_non_mmf_subscribe_freezes_then_confirms_demo():
     assert order.status == "PENDING_CONFIRM"
     assert order.trade_date == NOW.date()
     assert order.confirm_at == datetime.fromisoformat("2026-10-16T09:00:00+08:00")
-    conf = apply_fund_confirm(result.state, order.id, order.confirm_at, Context("cus_a", "pln_conf", "s1"))
+    conf = apply_fund_confirm(
+        result.state, order.id, order.confirm_at, Context("cus_a", "pln_conf", "s1")
+    )
     assert conf[2] == ()
     settled = conf[0].fund_orders[0]
     assert settled.status == "SETTLED"
@@ -153,7 +155,9 @@ def test_non_mmf_subscribe_freezes_then_confirms_demo():
 )
 def test_trade_date_cutoff_and_weekend(now_iso, expected_trade, expected_confirm):
     state = replace_state(funds_state(), sim_now=datetime.fromisoformat(now_iso))
-    result = simulate(state, [step("subscribe_product", product_id="prd_bond", amount_cents=100_000)])
+    result = simulate(
+        state, [step("subscribe_product", product_id="prd_bond", amount_cents=100_000)]
+    )
     assert result.error is None
     order = result.state.fund_orders[0]
     assert order.trade_date == expected_trade
@@ -163,14 +167,18 @@ def test_trade_date_cutoff_and_weekend(now_iso, expected_trade, expected_confirm
 def test_suitability_mismatch_and_missing_assessment():
     state = funds_state()
     assert (
-        simulate(state, [step("subscribe_product", product_id="prd_equity", amount_cents=100_000)]).error
+        simulate(
+            state, [step("subscribe_product", product_id="prd_equity", amount_cents=100_000)]
+        ).error
         == "SUITABILITY_MISMATCH"
     )
     missing = replace_state(
         base_state(balance=2_000_000), products=state.products, accounts=dict(state.accounts)
     )
     assert (
-        simulate(missing, [step("subscribe_product", product_id="prd_bond", amount_cents=100_000)]).error
+        simulate(
+            missing, [step("subscribe_product", product_id="prd_bond", amount_cents=100_000)]
+        ).error
         == "ASSESSMENT_MISSING"
     )
 
@@ -183,10 +191,15 @@ def test_min_purchase_not_met():
 
 def test_redeem_reserves_and_settles():
     state = funds_state()
-    sub = simulate(state, [step("subscribe_product", product_id="prd_bond", amount_cents=1_195_500)])
+    sub = simulate(
+        state, [step("subscribe_product", product_id="prd_bond", amount_cents=1_195_500)]
+    )
     assert sub.error is None
     conf = apply_fund_confirm(
-        sub.state, sub.state.fund_orders[0].id, sub.state.fund_orders[0].confirm_at, Context("cus_a", "pln_conf", "s1")
+        sub.state,
+        sub.state.fund_orders[0].id,
+        sub.state.fund_orders[0].confirm_at,
+        Context("cus_a", "pln_conf", "s1"),
     )
     assert conf[2] == ()
     holding = next(h for h in conf[0].holdings if h.product_id == "prd_bond")
@@ -194,7 +207,14 @@ def test_redeem_reserves_and_settles():
     before_checking = conf[0].accounts["acc_a"].credits_posted_cents
     red = simulate(
         conf[0],
-        [step("redeem_product", account_id="acc_a", product_id="prd_bond", units=str(holding.available_units))],
+        [
+            step(
+                "redeem_product",
+                account_id="acc_a",
+                product_id="prd_bond",
+                units=str(holding.available_units),
+            )
+        ],
         plan_id="pln_redeem",
     )
     assert red.error is None
@@ -204,7 +224,9 @@ def test_redeem_reserves_and_settles():
     assert h2.reserved_units == holding.available_units
     assert h2.available_units == Decimal("0")
     assert red.state.accounts["acc_a"].credits_posted_cents == before_checking
-    stl = apply_fund_settle(red.state, red_order.id, red_order.settle_at, Context("cus_a", "pln_settle", "s1"))
+    stl = apply_fund_settle(
+        red.state, red_order.id, red_order.settle_at, Context("cus_a", "pln_settle", "s1")
+    )
     assert stl[2] == ()
     settled_order = next(o for o in stl[0].fund_orders if o.id == red_order.id)
     assert settled_order.status == "SETTLED"
@@ -220,19 +242,31 @@ def test_redeem_cannot_double_sell():
     assert sub.error is None
     holding = next(h for h in sub.state.holdings if h.product_id == "prd_mmf")
     assert holding.available_units == Decimal("1000.0000")
-    red = simulate(sub.state, [step("redeem_product", product_id="prd_mmf", units="1000.0000")], plan_id="pln_redeem")
+    red = simulate(
+        sub.state,
+        [step("redeem_product", product_id="prd_mmf", units="1000.0000")],
+        plan_id="pln_redeem",
+    )
     assert red.error is None
-    again = simulate(red.state, [step("redeem_product", product_id="prd_mmf", units="0.0001")], plan_id="pln_redeem2")
+    again = simulate(
+        red.state,
+        [step("redeem_product", product_id="prd_mmf", units="0.0001")],
+        plan_id="pln_redeem2",
+    )
     assert again.error == "HOLDING_INSUFFICIENT"
 
 
 def test_pending_subscribe_expires_and_releases_freeze():
     state = funds_state()
-    result = simulate(state, [step("subscribe_product", product_id="prd_bond", amount_cents=1_000_000)])
+    result = simulate(
+        state, [step("subscribe_product", product_id="prd_bond", amount_cents=1_000_000)]
+    )
     assert result.error is None
     order = result.state.fund_orders[0]
     assert order.status == "PENDING_CONFIRM"
-    exp = apply_fund_expiry(result.state, order.id, order.expires_at, Context("cus_a", "pln_exp", "s1"))
+    exp = apply_fund_expiry(
+        result.state, order.id, order.expires_at, Context("cus_a", "pln_exp", "s1")
+    )
     assert exp[2] == ()
     expired = exp[0].fund_orders[0]
     assert expired.status == "EXPIRED"
@@ -243,13 +277,17 @@ def test_pending_subscribe_expires_and_releases_freeze():
 
 def test_confirm_suitability_failure_releases_and_marks_failed():
     state = funds_state()
-    result = simulate(state, [step("subscribe_product", product_id="prd_bond", amount_cents=1_000_000)])
+    result = simulate(
+        state, [step("subscribe_product", product_id="prd_bond", amount_cents=1_000_000)]
+    )
     assert result.error is None
     order = result.state.fund_orders[0]
     customers = dict(result.state.customers)
     customers["cus_a"] = customers["cus_a"].model_copy(update={"risk_level": 1})
     downgraded = replace_state(result.state, customers=customers)
-    conf = apply_fund_confirm(downgraded, order.id, order.confirm_at, Context("cus_a", "pln_conf", "s1"))
+    conf = apply_fund_confirm(
+        downgraded, order.id, order.confirm_at, Context("cus_a", "pln_conf", "s1")
+    )
     assert conf[2] == ()
     failed = conf[0].fund_orders[0]
     assert failed.status == "FAILED"

@@ -261,10 +261,16 @@ def apply_subscribe(state: BankState, args, now: datetime, ctx: Context):
             failure_code=None,
         )
         after = _put_order(after, order)
-        after = _apply_holding(after, account.id, product.id, units_delta=units, cost_delta=args.amount_cents, now=now)
+        after = _apply_holding(
+            after, account.id, product.id, units_delta=units, cost_delta=args.amount_cents, now=now
+        )
         return (
             after,
-            (*effects, InsertFundOrder(order=order), _op(state, ctx, now, "FUND_SUBSCRIBE", target=product.id, amount=args.amount_cents)),
+            (
+                *effects,
+                InsertFundOrder(order=order),
+                _op(state, ctx, now, "FUND_SUBSCRIBE", target=product.id, amount=args.amount_cents),
+            ),
             (),
         )
     confirm_date = _plus_trading_days(t_date, product.confirm_days)
@@ -309,7 +315,11 @@ def apply_subscribe(state: BankState, args, now: datetime, ctx: Context):
     after = _put_order(after, order)
     return (
         after,
-        (*effects, InsertFundOrder(order=order), _op(state, ctx, now, "FUND_SUBSCRIBE", target=product.id, amount=args.amount_cents)),
+        (
+            *effects,
+            InsertFundOrder(order=order),
+            _op(state, ctx, now, "FUND_SUBSCRIBE", target=product.id, amount=args.amount_cents),
+        ),
         (),
     )
 
@@ -337,7 +347,9 @@ def apply_redeem(state: BankState, args, now: datetime, ctx: Context):
         reserved_cost = holding.cost_cents - holding.reserved_cost_cents
     else:
         reserved_cost = _round_cents(
-            Decimal(holding.cost_cents - holding.reserved_cost_cents) * units / holding.available_units
+            Decimal(holding.cost_cents - holding.reserved_cost_cents)
+            * units
+            / holding.available_units
         )
     order_id = derive(ctx.plan_id, ctx.step_id, "ord")
     if product.product_type == "MMF":
@@ -378,10 +390,16 @@ def apply_redeem(state: BankState, args, now: datetime, ctx: Context):
             failure_code=None,
         )
         after = _put_order(after, order)
-        after = _apply_holding(after, account.id, product.id, units_delta=-units, cost_delta=-reserved_cost, now=now)
+        after = _apply_holding(
+            after, account.id, product.id, units_delta=-units, cost_delta=-reserved_cost, now=now
+        )
         return (
             after,
-            (*effects, InsertFundOrder(order=order), _op(state, ctx, now, "FUND_REDEEM", target=product.id, amount=amount_cents)),
+            (
+                *effects,
+                InsertFundOrder(order=order),
+                _op(state, ctx, now, "FUND_REDEEM", target=product.id, amount=amount_cents),
+            ),
             (),
         )
     settle_at = _at_09(_plus_trading_days(t_date, product.settle_days))
@@ -407,17 +425,30 @@ def apply_redeem(state: BankState, args, now: datetime, ctx: Context):
     )
     after = _put_order(state, order)
     after = _apply_holding(
-        after, account.id, product.id, reserved_units_delta=units, reserved_cost_delta=reserved_cost, now=now
+        after,
+        account.id,
+        product.id,
+        reserved_units_delta=units,
+        reserved_cost_delta=reserved_cost,
+        now=now,
     )
     return (
         after,
-        (InsertFundOrder(order=order), _op(state, ctx, now, "FUND_REDEEM", target=product.id, amount=amount_cents)),
+        (
+            InsertFundOrder(order=order),
+            _op(state, ctx, now, "FUND_REDEEM", target=product.id, amount=amount_cents),
+        ),
         (),
     )
 
 
 def _resolve_pending(
-    state: BankState, order: FundOrderRecord, settlement_id: str, at: datetime, phase: Phase, leg: str
+    state: BankState,
+    order: FundOrderRecord,
+    settlement_id: str,
+    at: datetime,
+    phase: Phase,
+    leg: str,
 ):
     cmd = LedgerTransfer(
         id=derive(order.plan_id, order.step_id, "trf", leg),
@@ -452,24 +483,43 @@ def apply_fund_confirm(state: BankState, order_id: str, at: datetime, ctx: Conte
         return _fail_confirm(state, order, settlement.id, at, Code.SUITABILITY_MISMATCH)
     nav_value = nav(product.nav, product.nav_date, product.product_type, _business_time(at).date())
     units = _floor4(Decimal(order.amount_cents) / Decimal(100) / nav_value)
-    after, effects, errors = _resolve_pending(state, order, settlement.id, at, Phase.POST_PENDING, "confirm")
+    after, effects, errors = _resolve_pending(
+        state, order, settlement.id, at, Phase.POST_PENDING, "confirm"
+    )
     if errors:
         return after, effects, errors
     updated = order.model_copy(
-        update={"status": "SETTLED", "units": units, "nav": nav_value, "settle_at": at, "expires_at": None}
+        update={
+            "status": "SETTLED",
+            "units": units,
+            "nav": nav_value,
+            "settle_at": at,
+            "expires_at": None,
+        }
     )
     after = _put_order(after, updated)
     after = _apply_holding(
-        after, order.account_id, order.product_id, units_delta=units, cost_delta=order.amount_cents, now=at
+        after,
+        order.account_id,
+        order.product_id,
+        units_delta=units,
+        cost_delta=order.amount_cents,
+        now=at,
     )
     return after, (*effects, UpdateFundOrder(order=updated)), ()
 
 
-def _fail_confirm(state: BankState, order: FundOrderRecord, settlement_id: str, at: datetime, code: Code):
-    after, effects, errors = _resolve_pending(state, order, settlement_id, at, Phase.VOID_PENDING, "void")
+def _fail_confirm(
+    state: BankState, order: FundOrderRecord, settlement_id: str, at: datetime, code: Code
+):
+    after, effects, errors = _resolve_pending(
+        state, order, settlement_id, at, Phase.VOID_PENDING, "void"
+    )
     if errors:
         return after, effects, errors
-    updated = order.model_copy(update={"status": "FAILED", "failure_code": code.value, "expires_at": None})
+    updated = order.model_copy(
+        update={"status": "FAILED", "failure_code": code.value, "expires_at": None}
+    )
     after = _put_order(after, updated)
     return after, (*effects, UpdateFundOrder(order=updated)), ()
 
@@ -483,7 +533,9 @@ def apply_fund_expiry(state: BankState, order_id: str, at: datetime, ctx: Contex
     settlement = state.accounts.get(_settlement_account_id(order.product_id))
     if settlement is None:
         return _reject(state, ctx, Code.DEPENDENCY_UNMET)
-    after, effects, errors = _resolve_pending(state, order, settlement.id, at, Phase.VOID_PENDING, "void")
+    after, effects, errors = _resolve_pending(
+        state, order, settlement.id, at, Phase.VOID_PENDING, "void"
+    )
     if errors:
         return after, effects, errors
     updated = order.model_copy(update={"status": "EXPIRED", "expires_at": None})

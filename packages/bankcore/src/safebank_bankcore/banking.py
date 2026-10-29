@@ -23,11 +23,11 @@ from safebank_contracts.state import (
 from safebank_contracts.tools import EntityRef
 from safebank_contracts.views import WRITE_RESULTS, CardView, ChannelFlags
 
+from .funds import apply_redeem, apply_subscribe, order_view
 from .ids import derive
 from .ledger import post_transfer, replace_state
 from .risk import apply_risk_assessment as score_risk
 from .split import apply_create_split_request
-from .funds import apply_redeem, apply_subscribe, order_view
 from .standing import apply_cancel_scheduled, apply_cancel_subscription, apply_schedule_transfer
 
 
@@ -464,7 +464,9 @@ def step_result(before, after, step, ctx, effects):
             result = {}
             created = {}
     elif step.tool == "subscribe_product":
-        order = next(o for o in after.fund_orders if o.id == derive(ctx.plan_id, ctx.step_id, "ord"))
+        order = next(
+            o for o in after.fund_orders if o.id == derive(ctx.plan_id, ctx.step_id, "ord")
+        )
         result = dict(
             order=order_view(order).model_dump(mode="json"),
             available_after_cents=after.accounts[args.account_id].available_cents,
@@ -473,9 +475,13 @@ def step_result(before, after, step, ctx, effects):
         )
         created = {"order_id": order.id}
     elif step.tool == "redeem_product":
-        order = next(o for o in after.fund_orders if o.id == derive(ctx.plan_id, ctx.step_id, "ord"))
+        order = next(
+            o for o in after.fund_orders if o.id == derive(ctx.plan_id, ctx.step_id, "ord")
+        )
         holding = next(
-            h for h in after.holdings if h.account_id == order.account_id and h.product_id == order.product_id
+            h
+            for h in after.holdings
+            if h.account_id == order.account_id and h.product_id == order.product_id
         )
         result = dict(
             order=order_view(order).model_dump(mode="json"),
