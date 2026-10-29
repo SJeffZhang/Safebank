@@ -12,6 +12,7 @@ from safebank_bankcore.funds import (
     holdings_view,
 )
 from safebank_bankcore.ledger import replace_state
+from safebank_contracts.codes import Code
 from safebank_contracts.plan import PlanBody
 from safebank_contracts.state import Account
 from safebank_contracts.views import ProductView
@@ -336,3 +337,21 @@ def test_no_float_in_fund_arithmetic():
     assert isinstance(order.units, Decimal) and isinstance(order.nav, Decimal)
     holding = next(h for h in result.state.holdings if h.product_id == "prd_mmf")
     assert isinstance(holding.market_value_cents, int) and isinstance(holding.cost_cents, int)
+
+
+def test_subscribe_and_redeem_require_own_checking_account():
+    """PRD §8.2: subscription debits and redemption payouts use the customer's CHECKING account."""
+    state = funds_state()
+    sub = simulate(
+        state,
+        [step("subscribe_product", account_id="acc_s", product_id="prd_mmf", amount_cents=10_000)],
+    )
+    assert sub.error == Code.CONTRACT_INVALID
+    assert sub.state.accounts["acc_s"].debits_posted_cents == 0
+    held = simulate(state, [step("subscribe_product", product_id="prd_mmf", amount_cents=10_000)])
+    assert held.error is None
+    red = simulate(
+        held.state,
+        [step("redeem_product", account_id="acc_s", product_id="prd_mmf", units="10.0000")],
+    )
+    assert red.error == Code.CONTRACT_INVALID

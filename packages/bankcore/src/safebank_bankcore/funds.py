@@ -205,6 +205,8 @@ def apply_subscribe(state: BankState, args, now: datetime, ctx: Context):
     account = state.accounts.get(args.account_id)
     if account is None or account.customer_id != ctx.customer_id:
         return _reject(state, ctx, Code.NOT_FOUND)
+    if account.type != "CHECKING":  # PRD §8.2: debits and payouts use the own CHECKING account
+        return _reject(state, ctx, Code.CONTRACT_INVALID)
     product = _product(state, args.product_id)
     if product is None:
         return _reject(state, ctx, Code.NOT_FOUND)
@@ -328,6 +330,8 @@ def apply_redeem(state: BankState, args, now: datetime, ctx: Context):
     account = state.accounts.get(args.account_id)
     if account is None or account.customer_id != ctx.customer_id:
         return _reject(state, ctx, Code.NOT_FOUND)
+    if account.type != "CHECKING":  # PRD §8.2: debits and payouts use the own CHECKING account
+        return _reject(state, ctx, Code.CONTRACT_INVALID)
     product = _product(state, args.product_id)
     if product is None:
         return _reject(state, ctx, Code.NOT_FOUND)
