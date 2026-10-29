@@ -133,9 +133,14 @@ class TestGatherBusinessDate:
         result = GatherAdapter(llm, executor)(gather_state(reads=existing), ctx())
         # Should NOT have called get_profile via executor
         assert ("get_profile", {}) not in read_log
-        # The existing record stays; no duplicate
+        # The existing record stays in state; gather returns only *new* reads
         profile_records = [r for r in result if r.tool == "get_profile"]
-        assert len(profile_records) == 1
+        assert len(profile_records) == 0
+        # Date line still appears in prompt (extracted from existing read)
+        all_text = ""
+        for msg in scripted.requests[0]["body"]["messages"]:
+            all_text += msg.get("content", "")
+        assert "当前业务时间：2026-10-15 09:00" in all_text
 
     def test_failing_profile_read_does_not_block(self):
         """When get_profile fails, gather continues without the date line."""
@@ -170,7 +175,12 @@ class TestPlanBusinessDate:
                     "submit_action_plan",
                     {
                         "intents": ["detect_anomalies"],
-                        "steps": [],
+                        "steps": [
+                            {
+                                "tool": "detect_anomalies",
+                                "args": {"history_days": 30},
+                            }
+                        ],
                         "rationale": "test",
                     },
                 ),
@@ -204,7 +214,12 @@ class TestPlanBusinessDate:
                     "submit_action_plan",
                     {
                         "intents": ["detect_anomalies"],
-                        "steps": [],
+                        "steps": [
+                            {
+                                "tool": "detect_anomalies",
+                                "args": {"history_days": 30},
+                            }
+                        ],
                         "rationale": "test",
                     },
                 ),
