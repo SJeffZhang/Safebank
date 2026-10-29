@@ -125,7 +125,7 @@ async def _load_grant(conn, instruction_id: str) -> dict[str, Any] | None:
     return dict(row) if row is not None else None
 
 
-async def _backfill_grant(db, l3, event: dict[str, Any]) -> dict[str, Any] | None:
+async def _backfill_grant(db, l3, event: dict[str, Any], wall_now) -> dict[str, Any] | None:
     """Reconstruct a missing grant from the L3 committed execution of the
     source plan (PRD §7.11). Returns None when the grant cannot be established
     (caller distinguishes L3 unreachable via L3Error).
@@ -146,7 +146,7 @@ async def _backfill_grant(db, l3, event: dict[str, Any]) -> dict[str, Any] | Non
         "scope_hash": event["grant_scope_hash"],
         "approved_risk": approved_risk,
         "status": "ACTIVE",
-        "created_at": None,
+        "created_at": wall_now(),
         "revoked_at": None,
     }
     async with db.begin() as conn:
@@ -267,7 +267,7 @@ async def scheduled_authorize(request: Request, body: AuthorizeRequest) -> dict[
         grant = await _load_grant(conn, event["source_id"])
     if grant is None:
         try:
-            grant = await _backfill_grant(db, l3, event)
+            grant = await _backfill_grant(db, l3, event, app.wall_now)
         except L3Error:
             return _retrying(body.event_id)
         if grant is None:
