@@ -7,7 +7,7 @@ database served via HTTP.  Run with make test-obligations (OBLIGATIONS_DB_TESTS=
 import asyncio
 import socket
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -45,7 +45,7 @@ _PRODUCTS = [
     dict(
         id="prd_r3_gain",
         name="稳健增利",
-        product_type="NON_MMF",
+        product_type="MIXED",
         risk_level=3,
         risk_label="R3",
         base_nav="1.0000",
@@ -59,7 +59,7 @@ _PRODUCTS = [
     dict(
         id="prd_r4_growth",
         name="进取成长",
-        product_type="NON_MMF",
+        product_type="MIXED",
         risk_level=4,
         risk_label="R4",
         base_nav="1.0000",

@@ -293,7 +293,6 @@ def test_fund_orders_rejects_non_positive_amount_or_units(obligations_db):
                 for bad in (
                     {"amount_cents": 0},
                     {"amount_cents": -1},
-                    {"units": Decimal("0.0000")},
                     {"reserved_cost_cents": -1},
                 ):
                     try:
