@@ -65,6 +65,21 @@ _READ_TOOL_CARD_TYPE: dict[str, _CardType] = {
     "detect_anomalies": "ANOMALIES",
 }
 
+# Read tools with no suitable card type (payees / scheduled / split / risk profile).
+# They are deliberately skipped — their data reaches the user through the
+# assistant reply, not a card.  Kept as an explicit set so the mapping guard can
+# prove every real read tool is either mapped or intentionally skipped.
+_SKIPPED_READ_TOOLS: frozenset[str] = frozenset(
+    {
+        "list_payees",
+        "list_scheduled",
+        "get_split_status",
+        "get_risk_questionnaire",
+        "get_risk_profile",
+        "get_profile",
+    }
+)
+
 
 class CardAction(Contract):
     """Deterministic card action — no visible text (frontend fetches labels from L2)."""
