@@ -298,7 +298,6 @@ def _clause(clause: str) -> Command | None:
         return Command(
             "schedule_transfer",
             target=scheduled["target"],
-            future=True,
             fields={
                 "anchor_day": int(scheduled["day"]),
                 "continuous": True,
@@ -549,11 +548,15 @@ def scope_is_complete(scope: NormalizedScope) -> bool:
         return False
     for kind in scope.action_kinds:
         if kind in {"TRANSFER_EXTERNAL", "TRANSFER_SELF", "SCHEDULE_CREATE"}:
+            # A derived-template schedule carries a 0 placeholder amount; any
+            # other transfer must carry a strictly positive amount.
+            derived = kind == "SCHEDULE_CREATE" and fields.get("derived_template")
             if (
                 not scope.from_account_id
                 or not scope.transfers
                 or any(
-                    item.amount_cents <= 0 or item.from_account_id != scope.from_account_id
+                    (item.amount_cents != 0 if derived else item.amount_cents <= 0)
+                    or item.from_account_id != scope.from_account_id
                     for item in scope.transfers
                 )
             ):
@@ -796,7 +799,6 @@ def parse(
             if (
                 tool == "schedule_transfer"
                 and not command.future
-                and not command.fields.get("derived_template")
             ):
                 first = _first_run_at(
                     state.sim_now,
