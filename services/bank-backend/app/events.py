@@ -24,9 +24,9 @@ from pydantic import BaseModel, Field
 from safebank_bankcore import events as bank_events
 from safebank_bankcore import external as bank_external
 from safebank_bankcore import funds as bank_funds
-from safebank_contracts.obligations import InstructionRun
 from safebank_bankcore.banking import Context
 from safebank_contracts.codes import Code
+from safebank_contracts.obligations import InstructionRun
 from safebank_contracts.state import StateScope
 from sqlalchemy import select, text
 
