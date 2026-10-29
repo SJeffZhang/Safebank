@@ -1,0 +1,23 @@
+@property --sb-theme-radius {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+html.theme-reveal-active::view-transition-group(root),
+html.theme-reveal-active::view-transition-old(root),
+html.theme-reveal-active::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+html.theme-reveal-active::view-transition-old(root) { z-index: 1; }
+html.theme-reveal-active::view-transition-new(root) {
+  z-index: 2;
+  mask-image: radial-gradient(
+    circle at var(--sb-theme-origin-x) var(--sb-theme-origin-y),
+    #000 max(0px, calc(var(--sb-theme-radius) - 22px)),
+    transparent var(--sb-theme-radius)
+  );
+}
+@media (prefers-reduced-motion: reduce) {
+  html.theme-reveal-active::view-transition-new(root) { mask-image: none; }
+}

@@ -1,0 +1,205 @@
+/* SafeBank UI · design tokens
+   Extracted from SafeBank-界面简报-C3.html (C2 · Graphite & Champagne).
+   Do not hard-code these values in components. */
+
+:root {
+  color-scheme: light;
+
+  /* ---- surfaces ---- */
+  --sb-canvas: #f1f2ef;
+  --sb-surface: #fafaf7;
+  --sb-surface-raised: #ffffff;
+  --sb-surface-sunken: #ecedE9;
+  --sb-overlay: rgba(17, 19, 24, 0.38);
+
+  /* ---- text ---- */
+  --sb-ink: #111318;
+  --sb-ink-2: #3a3d45;
+  --sb-muted: #6e6c66;
+  --sb-faint: #8c8b84;
+
+  /* ---- lines ---- */
+  --sb-line: rgba(17, 19, 24, 0.08);
+  --sb-line-strong: #e4e4dd;
+
+  /* ---- brand / accent ---- */
+  --sb-brand: #111318;
+  --sb-brand-strong: #000000;
+  --sb-brand-contrast: #ffffff;
+  --sb-brand-soft: #ecedE9;
+  --sb-copper: #c08a34;
+  --sb-copper-deep: #7c5410;
+  --sb-copper-soft: #f8f0df;
+  --sb-gold: #e7d7a4;
+  --sb-gold-deep: #b9a268;
+  --sb-gold-ink: #7a6532;
+  --sb-gold-line: rgba(231, 215, 164, 0.62);
+
+  /* ---- semantic ---- */
+  --sb-danger: #c6433c;
+  --sb-danger-ink: #8e2b26;
+  --sb-danger-soft: #fbedeb;
+  --sb-on-danger: #ffffff;
+  --sb-success: #2f7d5f;
+  --sb-success-ink: #1f5c44;
+  --sb-success-soft: #e8f2ed;
+  --sb-warning: #8a5a00;
+  --sb-warning-soft: #fff4e0;
+  --sb-info: #3b4a6b;
+  --sb-info-soft: #eef0f5;
+  --sb-gain: #c6433c;
+  --sb-loss: #2f7d5f;
+
+  /* ---- interaction states ---- */
+  --sb-hover: rgba(17, 19, 24, 0.04);
+  --sb-pressed: rgba(17, 19, 24, 0.08);
+  --sb-disabled-opacity: 0.45;
+  --sb-focus-color: #7c5410;
+  --sb-focus-ring: 0 0 0 3px rgba(192, 138, 52, 0.34);
+
+  /* ---- type ---- */
+  --sb-font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
+    "PingFang SC", "Helvetica Neue", "Microsoft YaHei", sans-serif;
+  --sb-font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Roboto Mono", monospace;
+  --sb-text-2xs: 10px;
+  --sb-text-xs: 11px;
+  --sb-text-sm: 12px;
+  --sb-text-md: 14px;
+  --sb-text-lg: 16px;
+  --sb-text-xl: 20px;
+  --sb-text-2xl: 24px;
+  --sb-text-3xl: 30px;
+  --sb-text-4xl: 36px;
+  --sb-weight-regular: 400;
+  --sb-weight-medium: 500;
+  --sb-weight-semibold: 600;
+  --sb-weight-bold: 650;
+  --sb-leading-tight: 1.25;
+  --sb-leading-snug: 1.4;
+  --sb-leading-normal: 1.6;
+
+  /* ---- spacing (4pt grid) ---- */
+  --sb-space-1: 4px;
+  --sb-space-2: 8px;
+  --sb-space-3: 12px;
+  --sb-space-4: 16px;
+  --sb-space-5: 20px;
+  --sb-space-6: 24px;
+  --sb-space-8: 32px;
+  --sb-space-10: 40px;
+  --sb-space-12: 48px;
+  --sb-space-16: 64px;
+
+  /* ---- radius ---- */
+  --sb-radius-xs: 6px;
+  --sb-radius-sm: 10px;
+  --sb-radius-md: 14px;
+  --sb-radius-lg: 18px;
+  --sb-radius-xl: 24px;
+  --sb-radius-pill: 999px;
+
+  /* ---- border / shadow ---- */
+  --sb-border-width: 1px;
+  --sb-shadow-card: 0 1px 2px rgba(17, 19, 24, 0.04), 0 12px 28px -24px rgba(17, 19, 24, 0.4);
+  --sb-shadow-raised: 0 2px 6px rgba(17, 19, 24, 0.05), 0 18px 40px -28px rgba(17, 19, 24, 0.45);
+  --sb-shadow-sheet: 0 -18px 50px rgba(17, 19, 24, 0.18);
+
+  /* ---- motion ---- */
+  --sb-duration-fast: 120ms;
+  --sb-duration-base: 180ms;
+  --sb-duration-slow: 280ms;
+  --sb-ease-standard: cubic-bezier(0.2, 0.8, 0.3, 1);
+  --sb-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* ---- motion: iOS spring set (interaction upgrade) ----
+     press = 手指按下的即刻反馈；move = 位移/指示器滑动；spring 只用于“归位”类动作，
+     过冲控制在 2–4%，避免看起来像弹球。 */
+  --sb-duration-press: 90ms;
+  --sb-duration-move: 320ms;
+  --sb-duration-spring: 420ms;
+  --sb-ease-ios: cubic-bezier(0.32, 0.72, 0, 1);
+  --sb-ease-spring: cubic-bezier(0.34, 1.46, 0.64, 1);
+  --sb-ease-emphasized: cubic-bezier(0.2, 0.9, 0, 1);
+  --sb-press-scale: 0.972;
+  /* 按下时向内凹陷的高光/阴影，模拟实体按键被压进表面 */
+  --sb-shadow-press: inset 0 2px 5px rgba(17, 19, 24, 0.2), inset 0 0 0 1px rgba(17, 19, 24, 0.07);
+  --sb-shadow-gloss: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  /* 材质高光（卡片指针跟随 / 金色描边） */
+  --sb-sheen: rgba(231, 215, 164, 0.16);
+  --sb-sheen-strong: rgba(231, 215, 164, 0.34);
+
+  /* ---- layout ---- */
+  --sb-backdrop: #e6e6e0;
+  --sb-app-max: 375px;
+  --sb-app-height: 812px;
+  --sb-sbar-h: 30px;
+  --sb-island-w: 64px;
+  --sb-island-h: 18px;
+  --sb-touch-target: 44px;
+  --sb-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --sb-safe-top: env(safe-area-inset-top, 0px);
+  --sb-z-nav: 20;
+  --sb-z-scrim: 40;
+  --sb-z-sheet: 50;
+  --sb-z-toast: 60;
+}
+
+html[data-theme='dark'] {
+  color-scheme: dark;
+
+  --sb-backdrop: #08090b;
+  --sb-canvas: #0e0f12;
+  --sb-surface: #15161a;
+  --sb-surface-raised: #1b1c21;
+  --sb-surface-sunken: #22242a;
+  --sb-overlay: rgba(0, 0, 0, 0.55);
+
+  --sb-ink: #f2f2ee;
+  --sb-ink-2: #c9c9c2;
+  --sb-muted: #8f8e88;
+  --sb-faint: #6e7078;
+
+  --sb-line: rgba(242, 242, 238, 0.1);
+  --sb-line-strong: #2a2c32;
+
+  --sb-brand: #f2f2ee;
+  --sb-brand-strong: #ffffff;
+  --sb-brand-contrast: #111318;
+  --sb-brand-soft: #23252b;
+  --sb-copper: #c08a34;
+  --sb-copper-deep: #e3b778;
+  --sb-copper-soft: #2a2419;
+  --sb-gold: #e7d7a4;
+  --sb-gold-deep: #c8b27c;
+  --sb-gold-ink: #d9c58c;
+  --sb-gold-line: rgba(231, 215, 164, 0.32);
+
+  --sb-danger: #e07a74;
+  --sb-danger-ink: #f2b3ae;
+  --sb-danger-soft: #2e1c1b;
+  --sb-on-danger: #111318;
+  --sb-success: #6fbf9b;
+  --sb-success-ink: #a9ddc7;
+  --sb-success-soft: #16261f;
+  --sb-warning: #e0b36a;
+  --sb-warning-soft: #2b2418;
+  --sb-info: #9aa8c7;
+  --sb-info-soft: #1e2433;
+  --sb-gain: #e07a74;
+  --sb-loss: #6fbf9b;
+
+  --sb-hover: rgba(242, 242, 238, 0.06);
+  --sb-pressed: rgba(242, 242, 238, 0.1);
+  --sb-focus-color: #e7d7a4;
+  --sb-focus-ring: 0 0 0 3px rgba(231, 215, 164, 0.34);
+
+  --sb-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 14px 30px -24px rgba(0, 0, 0, 0.8);
+  --sb-shadow-raised: 0 2px 8px rgba(0, 0, 0, 0.45), 0 22px 44px -28px rgba(0, 0, 0, 0.9);
+  --sb-shadow-sheet: 0 -18px 50px rgba(0, 0, 0, 0.6);
+
+  /* 深色下按钮本身是浅色，凹陷阴影要压得更重，玻璃高光要更亮才看得出层次 */
+  --sb-shadow-press: inset 0 2px 6px rgba(0, 0, 0, 0.42), inset 0 0 0 1px rgba(0, 0, 0, 0.16);
+  --sb-shadow-gloss: inset 0 1px 0 rgba(255, 255, 255, 0.46);
+  --sb-sheen: rgba(231, 215, 164, 0.1);
+  --sb-sheen-strong: rgba(231, 215, 164, 0.22);
+}
