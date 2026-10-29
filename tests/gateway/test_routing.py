@@ -49,7 +49,7 @@ def test_scheduled_authorize_rejects_wrong_token():
         transport = httpx.ASGITransport(app=build_internal_app(_settings(), env=ENV))
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
             resp = await client.post(
-                "/internal/scheduled/authorize", headers={"X-Service-Token": "bad-token-very-long-string-xxxxx"}
+                "/internal/scheduled/authorize", headers={"X-Service-Token": "bad-token-xxxxx"}
             )
             assert resp.status_code == 401
             assert resp.json()["error"]["code"] == "UNAUTHENTICATED"
