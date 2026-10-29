@@ -7,7 +7,7 @@ from collections.abc import Callable
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import ValidationError
-from safebank_contracts.plan import PlanBody, PlanDraft
+from safebank_contracts.plan import ArgSource, PlanBody, PlanDraft, ReadSource
 from safebank_contracts.schema import from_strict_plan, plan_tool
 
 from services.agent.app.graph.state import AgentContext, AgentState, UtteranceKind
@@ -43,8 +43,9 @@ _SYSTEM = (
     "不要自填 request_id/session_id/utterance_ids；这些由代码补齐。"
     "用户未明确提出的可选参数（memo、phone、alias、end_at）一律用哨兵 __NULL__，"
     "不得从收款人名、其他文字或上下文推断填充。"
-    "付款账户未指定时，若已读数据中恰好有一个可用付款账户则用其 id 并以 read 来源引用；"
-    "多个或零个账户时不要编造、不要空串。"
+    "付款账户未指定时，从已读账户数据中选恰好一个活期账户（type=CHECKING）作为付款账户，"
+    "并用 read 来源引用其 id；没有活期账户或存在多个活期账户时不要猜测付款账户。"
+    "用户明确指定了付款账户（如「从储蓄账户」）时，保留用户指定的账户。"
     "update_card_controls 的渠道开关（online/overseas/atm/quickpass）若从用户原话取值，"
     "utterance span 必须恰好对应动作词本身（关闭/关掉/开启/打开/开通），"
     "不要包含渠道名或其他文字；例如「关掉我卡的线上支付」中 online=false 的 span 只对应"
@@ -90,7 +91,80 @@ _PARAM_LABELS: dict[str, str] = {
     "account_no": "收款账号",
     "bank_name": "开户银行",
     "amount_cents": "转账金额",
+    "from_account_id": "付款账户",
 }
+
+# Tools whose from_account_id obeys the default CHECKING rule.
+_DEFAULT_SOURCE_TOOLS: frozenset[str] = frozenset({"transfer", "schedule_transfer"})
+
+# Words that mean the user explicitly named a source account type.
+_NAMED_SOURCE_KEYWORDS: tuple[str, ...] = ("储蓄", "活期", "支票", "定期")
+
+
+def _user_named_source_account(state: AgentState) -> bool:
+    """True if the user's utterance explicitly names a source account type."""
+    for utterance in state.get("utterances", []):
+        text = getattr(utterance, "text", "") or ""
+        if any(keyword in text for keyword in _NAMED_SOURCE_KEYWORDS):
+            return True
+    return False
+
+
+def _checking_accounts(state: AgentState) -> list[tuple[str, str, str]]:
+    """All CHECKING accounts across get_accounts reads as (id, source_ref, pointer)."""
+    found: list[tuple[str, str, str]] = []
+    for read in state.get("reads", []):
+        if getattr(read, "tool", "") != "get_accounts":
+            continue
+        data = getattr(read, "data", None) or {}
+        accounts = data.get("accounts", []) if isinstance(data, dict) else []
+        for index, account in enumerate(accounts):
+            if isinstance(account, dict) and account.get("type") == "CHECKING":
+                found.append(
+                    (account.get("id") or "", read.source_ref, f"/accounts/{index}/id")
+                )
+    return found
+
+
+def _default_source_account_overrides(body: PlanBody, state: AgentState) -> PlanBody:
+    """Apply the default source-account rule (PRD §7.6).
+
+    When the user named no source account and exactly one CHECKING account is
+    available, point from_account_id at it with a read source.  Multiple
+    CHECKING accounts cannot be disambiguated → ExhaustedClarify.  Zero
+    CHECKING accounts (or a named source) leave the plan untouched for L2.
+    """
+    if "transfer" not in body.intents and "schedule_transfer" not in body.intents:
+        return body
+    if _user_named_source_account(state):
+        return body
+    checking = _checking_accounts(state)
+    has_from = any(
+        step.tool in _DEFAULT_SOURCE_TOOLS and step.args.from_account_id is not None
+        for step in body.steps
+    )
+    if not has_from or not checking:
+        return body
+    if len(checking) > 1:
+        raise ExhaustedClarify(["from_account_id"], ["付款账户"])
+    account_id, source_ref, pointer = checking[0]
+    new_steps = []
+    for step in body.steps:
+        if step.tool in _DEFAULT_SOURCE_TOOLS and step.args.from_account_id is not None:
+            args = step.args.model_copy(update={"from_account_id": account_id})
+            sources = [s for s in step.arg_sources if s.param != "from_account_id"]
+            sources.append(
+                ArgSource(
+                    param="from_account_id",
+                    source=ReadSource(kind="read", ref=source_ref, pointer=pointer),
+                )
+            )
+            new_steps.append(
+                step.model_copy(update={"args": args, "arg_sources": tuple(sources)})
+            )
+        else:
+            new_steps.append(step)
+    return body.model_copy(update={"steps": tuple(new_steps)})
 
 
 def _exhausted_clarify_fields(
@@ -448,6 +522,7 @@ class PlanAdapter:
             try:
                 args = single_tool_call(message, _PLAN_TOOL)
                 body = PlanBody.model_validate(from_strict_plan(args))
+                body = _default_source_account_overrides(body, state)
                 draft = self._to_draft(body, state)
                 ref_problems = _reference_problems(draft, state)
                 val_problems = _required_value_problems(draft, state)
