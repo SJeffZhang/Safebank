@@ -198,7 +198,11 @@ def apply_external_credit(state: BankState, args: ExternalCredit, now: datetime,
     )
     if errors or not effects:
         return after, effects, errors
-    return after, (*effects, _operation(ctx, now, "EXTERNAL_CREDIT", account.id, args.amount_cents)), ()
+    return (
+        after,
+        (*effects, _operation(ctx, now, "EXTERNAL_CREDIT", account.id, args.amount_cents)),
+        (),
+    )
 
 
 def apply_external_debit(state: BankState, args: ExternalDebit, now: datetime, ctx):
@@ -244,7 +248,11 @@ def apply_external_debit(state: BankState, args: ExternalDebit, now: datetime, c
             daily_used_cents=used_map,
         ),
     )
-    return after, (*effects, _operation(ctx, now, "EXTERNAL_DEBIT", account.id, args.amount_cents)), ()
+    return (
+        after,
+        (*effects, _operation(ctx, now, "EXTERNAL_DEBIT", account.id, args.amount_cents)),
+        (),
+    )
 
 
 def apply_split_payment(state: BankState, args: SplitPayment, now: datetime, ctx):

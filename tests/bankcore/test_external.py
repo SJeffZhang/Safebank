@@ -119,16 +119,28 @@ def _split_state():
         created_at=NOW,
         items=(
             SplitItem(
-                id="spi_1", payee_id="pye_f1", payee_name="小林",
-                amount_cents=3334, status="UNPAID", paid_at=None,
+                id="spi_1",
+                payee_id="pye_f1",
+                payee_name="小林",
+                amount_cents=3334,
+                status="UNPAID",
+                paid_at=None,
             ),
             SplitItem(
-                id="spi_2", payee_id="pye_f2", payee_name="小周",
-                amount_cents=3333, status="UNPAID", paid_at=None,
+                id="spi_2",
+                payee_id="pye_f2",
+                payee_name="小周",
+                amount_cents=3333,
+                status="UNPAID",
+                paid_at=None,
             ),
             SplitItem(
-                id="spi_3", payee_id="pye_f3", payee_name="小陈",
-                amount_cents=3333, status="UNPAID", paid_at=None,
+                id="spi_3",
+                payee_id="pye_f3",
+                payee_name="小陈",
+                amount_cents=3333,
+                status="UNPAID",
+                paid_at=None,
             ),
         ),
     )
@@ -153,7 +165,11 @@ class TestExternalCredit:
     def test_posts_memo_and_balance_after(self):
         state = _state()
         args = ExternalCredit(
-            account_id="acc_a", amount_cents=12345, counterparty="某公司", memo="工资", kind="SALARY"
+            account_id="acc_a",
+            amount_cents=12345,
+            counterparty="某公司",
+            memo="工资",
+            kind="SALARY",
         )
         after, effects, errors = apply_external_credit(state, args, NOW, _ctx())
         assert not errors
@@ -326,11 +342,17 @@ class TestSplitPayment:
     def test_unknown_split_or_item(self):
         state = _split_state()
         _, _, e1 = apply_split_payment(
-            state, SplitPayment(split_id="spl_nope", item_id="spi_1", amount_cents=3334), NOW, _ctx()
+            state,
+            SplitPayment(split_id="spl_nope", item_id="spi_1", amount_cents=3334),
+            NOW,
+            _ctx(),
         )
         assert e1[0].code == Code.NOT_FOUND
         _, _, e2 = apply_split_payment(
-            state, SplitPayment(split_id="spl_x", item_id="spi_nope", amount_cents=3334), NOW, _ctx()
+            state,
+            SplitPayment(split_id="spl_x", item_id="spi_nope", amount_cents=3334),
+            NOW,
+            _ctx(),
         )
         assert e2[0].code == Code.SPLIT_INVALID
 
