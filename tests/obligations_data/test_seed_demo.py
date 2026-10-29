@@ -112,6 +112,15 @@ def _serve(app, port):
     return server
 
 
+def _read(client, tool, args, *, customer_id="cus_zs", auth=SERVICE_TOKEN, timeout=10.0):
+    return client.post(
+        f"/internal/read/{tool}",
+        json={"args": args, "customer_id": customer_id},
+        headers={"X-Service-Token": auth},
+        timeout=timeout,
+    )
+
+
 async def _row_counts(conn) -> dict[str, int]:
     return {
         table: await conn.scalar(text(f"SELECT count(*) FROM {table}")) for table in COUNTED_TABLES
@@ -378,6 +387,149 @@ def test_seed_demo_installs_products_idempotently(obligations_db):
             assert on_seed_day is not None and on_seed_day["nav"] == Decimal("1.2310")
             next_trading_day = get_product(defs, "prd_stable", date(2026, 10, 16))
             assert next_trading_day is not None and next_trading_day["nav"] == Decimal("1.2311")
+
+        await admin.dispose()
+
+    asyncio.run(check())
+
+
+def test_seed_demo_installs_merchant_mandates(obligations_db):
+    """张三's four billings get MERCHANT_MANDATE instructions; 李四 gets two billings+mandates."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+
+        async with admin.begin() as conn:
+            assert await seed_core(conn, KEY) is True
+            await install_demo(conn, KEY)
+
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            for _ in range(40):
+                try:
+                    response = await _read(
+                        client, "list_subscriptions", {"status": "ACTIVE", "limit": 50}
+                    )
+                    break
+                except httpx.TransportError:
+                    await asyncio.sleep(0.2)
+            else:
+                raise RuntimeError("uvicorn listener never became ready")
+
+            assert response.status_code == 200, response.text
+            body = response.json()
+            items = body["items"]
+            assert len(items) == 4
+            assert all(i["status"] == "ACTIVE" for i in items)
+            assert body["total_annual_cents"] == 318000
+            assert {i["billing_id"] for i in items} == {
+                "blg_video",
+                "blg_music",
+                "blg_cloud",
+                "blg_gym",
+            }
+            assert {i["account_id"] for i in items} == {"acc_zs_chk"}
+
+            r = await _read(client, "upcoming_charges", {"days": 7, "account_id": "acc_zs_chk"})
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["charges_total_cents"] == 4500
+            assert {i["billing_id"] for i in body["items"]} == {"blg_video", "blg_music"}
+
+            r = await _read(
+                client,
+                "list_subscriptions",
+                {"status": "ACTIVE", "limit": 50},
+                customer_id="cus_ls",
+            )
+            assert r.status_code == 200, r.text
+            ls = r.json()["items"]
+            assert len(ls) == 2
+            assert {i["billing_id"] for i in ls} == {"blg_ls_video", "blg_ls_music"}
+            assert {i["account_id"] for i in ls} == {"acc_ls_chk"}
+
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+def test_seed_demo_backfills_mandates_for_existing_customers(obligations_db):
+    """Rerunning the seed over customers missing mandates/billings re-adds only those rows."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+
+        async with admin.begin() as conn:
+            assert await seed_core(conn, KEY) is True
+            await install_demo(conn, KEY)
+
+        async with admin.connect() as conn:
+            balances_before = (
+                await conn.execute(
+                    text(
+                        "SELECT sum(credits_posted_cents), sum(debits_posted_cents), "
+                        "sum(credits_pending_cents), sum(debits_pending_cents) FROM accounts"
+                    )
+                )
+            ).one()
+            txns_before = await conn.scalar(text("SELECT count(*) FROM transactions"))
+            transfers_before = await conn.scalar(text("SELECT count(*) FROM transfers"))
+
+        # Simulate an older seed: 张三 has billings but no mandates; 李四 has neither.
+        async with admin.begin() as conn:
+            await conn.execute(
+                text("DELETE FROM standing_instructions WHERE kind = 'MERCHANT_MANDATE'")
+            )
+            await conn.execute(
+                text("DELETE FROM merchant_billing WHERE id IN ('blg_ls_video', 'blg_ls_music')")
+            )
+
+        async with admin.begin() as conn:
+            summary = await install_demo(conn, KEY)
+        assert summary["added_customers"] == 0
+        assert summary["backfilled_mandates"] == 6
+        assert summary["backfilled_billings"] == 2
+
+        async with admin.connect() as conn:
+            mandate_ids = set(
+                (
+                    await conn.execute(
+                        text("SELECT id FROM standing_instructions WHERE kind = 'MERCHANT_MANDATE'")
+                    )
+                ).scalars()
+            )
+            assert mandate_ids == {
+                "si_zs_video",
+                "si_zs_music",
+                "si_zs_cloud",
+                "si_zs_gym",
+                "si_ls_video",
+                "si_ls_music",
+            }
+            ls_billings = set(
+                (
+                    await conn.execute(
+                        text("SELECT id FROM merchant_billing WHERE customer_id = 'cus_ls'")
+                    )
+                ).scalars()
+            )
+            assert ls_billings == {"blg_ls_video", "blg_ls_music"}
+
+            balances_after = (
+                await conn.execute(
+                    text(
+                        "SELECT sum(credits_posted_cents), sum(debits_posted_cents), "
+                        "sum(credits_pending_cents), sum(debits_pending_cents) FROM accounts"
+                    )
+                )
+            ).one()
+            assert tuple(balances_after) == tuple(balances_before)
+            assert await conn.scalar(text("SELECT count(*) FROM transactions")) == txns_before
+            assert await conn.scalar(text("SELECT count(*) FROM transfers")) == transfers_before
 
         await admin.dispose()
 
