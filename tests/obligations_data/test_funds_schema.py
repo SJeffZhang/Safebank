@@ -120,7 +120,7 @@ def test_upgrade_head_twice_succeeds(obligations_db):
         try:
             async with admin.connect() as conn:
                 version = await conn.scalar(text("SELECT version_num FROM alembic_version"))
-                assert version == "0008_funds"
+                assert version == "0009_funds_units_nonneg"
                 for table, expected in (
                     (
                         "holdings",
@@ -293,7 +293,6 @@ def test_fund_orders_rejects_non_positive_amount_or_units(obligations_db):
                 for bad in (
                     {"amount_cents": 0},
                     {"amount_cents": -1},
-                    {"units": Decimal("0.0000")},
                     {"reserved_cost_cents": -1},
                 ):
                     try:
@@ -403,7 +402,7 @@ def test_0002_to_head_preserves_existing_data(obligations_0002_db):
 
             async with admin.connect() as conn:
                 version = await conn.scalar(text("SELECT version_num FROM alembic_version"))
-                assert version == "0008_funds"
+                assert version == "0009_funds_units_nonneg"
 
                 new_count = await conn.scalar(
                     text("SELECT count(*) FROM merchants WHERE id='mer_funds'")

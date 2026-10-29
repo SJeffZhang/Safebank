@@ -308,7 +308,16 @@ class ScheduleEventJob(Contract):
     customer_id: Id
     account_id: Id
     event_id: Id
-    kind: Literal["SCHEDULED_TRANSFER", "MERCHANT_MANDATE"]
+    kind: Literal[
+        "FUND_CONFIRM",
+        "FUND_SETTLE",
+        "FUND_EXPIRY",
+        "SCHEDULED_TRANSFER",
+        "MERCHANT_MANDATE",
+        "MERCHANT_CHARGE",
+        "REMINDER",
+        "DEMO_EVENT",
+    ]
     due_at: Timestamp
     source_id: Id
     period_key: str
