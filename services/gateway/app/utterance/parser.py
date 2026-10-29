@@ -317,6 +317,9 @@ def _clause(clause: str) -> Command | None:
             return None
         name = "single_limit_cents" if limit["limit"] == "单笔" else "daily_limit_cents"
         return Command("update_card_limits", target=limit["target"], fields={name: amount})
+    lost = re.fullmatch(r"(?P<card>我的?卡|我的银行卡)(?:丢了|丢失了|丢失|丢)", clause)
+    if lost:
+        return Command("report_card_lost", target=lost["card"], fields={"replace": False})
     for tool in ("unfreeze_card", "freeze_card", "report_card_lost"):
         verb = _verbs(tool)
         match = re.fullmatch(rf"{verb}(?P<target>.*)", clause) or re.fullmatch(
@@ -395,6 +398,9 @@ def _clause(clause: str) -> Command | None:
     cancel_schedule = re.fullmatch(r"(?:取消定时|取消自动转账)(?P<target>.+)", clause)
     if cancel_schedule:
         return Command("cancel_scheduled", target=cancel_schedule["target"])
+    cancel_schedule_gei = re.fullmatch(r"取消给(?P<target>.+?)(?:的)?定时转账", clause)
+    if cancel_schedule_gei:
+        return Command("cancel_scheduled", target=cancel_schedule_gei["target"])
     # add_payee: verb-prefix pattern  (新增收款人李阿姨)
     add_verb = _verbs("add_payee")
     m = re.fullmatch(rf"({add_verb})(?P<name>.+)", clause)
@@ -414,8 +420,9 @@ def _clause(clause: str) -> Command | None:
     m = re.fullmatch(r"(?:账号|卡号)(?P<acct>\d{8,})", clause)
     if m:
         return Command("_payee_attr", fields={"account_no": m["acct"]})
-    if clause in ("他行", "本行"):
-        return Command("_payee_attr", fields={"bank_name": clause})
+    bank = re.fullmatch(r"(?:开户行(?:是|为)?)?(?P<bank>他行|本行)", clause)
+    if bank:
+        return Command("_payee_attr", fields={"bank_name": bank["bank"]})
     # Recognized future commands remain partial and always require a complete form.
     future = re.fullmatch(r"(?:明天|后天|定时)(?P<body>.+)", clause)
     monthly = re.fullmatch(r"每月\s*(?P<day>\d{1,2})\s*[号日](?:自动)?(?P<body>.+)", clause)
