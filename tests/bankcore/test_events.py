@@ -72,10 +72,10 @@ def test_monthly_transfer_executes_and_clamps_next_run():
 def test_insufficient_funds_blocks_and_advances_once():
     inst = raw_instruction(
         period="ONCE",
-        amount_cents=700000,
+        amount_cents=500000,
         next_run_at=at("2026-10-18T06:00:00+08:00"),
     )
-    state = raw_projection_state(balance=600000, instructions=[inst])
+    state = raw_projection_state(balance=400000, instructions=[inst])
     due = at("2026-10-18T06:00:00+08:00")
 
     new_state, effects, run = apply_scheduled_transfer(state, instruction_id=inst.id, due_at=due)

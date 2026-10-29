@@ -43,6 +43,7 @@ from safebank_contracts.state import (
     SetInstructionStatus,
 )
 
+from .banking import bump_outflow_counters, transfer_control_violation
 from .ids import derive, digest
 from .ledger import post_transfer
 from .reserve import _business_time, _next_month
@@ -136,6 +137,54 @@ def _status_for(code: Code) -> str:
     return "FAILED_INSUFFICIENT" if code == Code.INSUFFICIENT_FUNDS else "BLOCKED"
 
 
+def _finish_scheduled(
+    state: BankState,
+    *,
+    inst: ScheduledInstruction,
+    due: datetime,
+    period: str,
+    event_id: str | None,
+    status: str,
+    code: str | None,
+    transfer_id: str | None,
+):
+    """Advance the period once and record the terminal run (ACTIVE instructions).
+
+    ``ONCE``/``end_at``-bounded instructions terminate via
+    ``SetInstructionStatus`` and no successor job; continuing instructions emit
+    the next ``ScheduleEventJob``. Only called while ``inst.status == "ACTIVE"``.
+    """
+    next_due = _next_scheduled_due(inst, due)
+    ends = next_due is None
+    updated = inst.model_copy(
+        update={"next_run_at": next_due, **({"status": "DELETED"} if ends else {})}
+    )
+    state = _refresh(state, inst=updated)
+    if ends:
+        new_fx = (
+            SetInstructionStatus(
+                instruction_id=inst.id, old_status="ACTIVE", new_status="DELETED"
+            ),
+        )
+    else:
+        new_fx = (_next_job(inst, next_due),)
+    run = InstructionRun(
+        id=derive(inst.id, period, "run"),
+        customer_id=inst.customer_id,
+        account_id=inst.from_account_id,
+        kind="SCHEDULED_TRANSFER",
+        instruction_id=inst.id,
+        billing_id=None,
+        due_at=due,
+        event_id=event_id or digest(["SCHEDULED_TRANSFER", inst.id, due.isoformat()]),
+        status=status,
+        code=code,
+        amount_cents=inst.amount_cents,
+        transfer_id=transfer_id,
+    )
+    return _refresh(state, run=run), new_fx, run
+
+
 def apply_scheduled_transfer(
     state: BankState,
     *,
@@ -147,10 +196,12 @@ def apply_scheduled_transfer(
     """Execute one due period of a standing instruction (PRD §7.11, §8.6).
 
     A due ``SCHEDULED_TRANSFER`` instruction is executed against its resolved
-    target (OWN/OTHER credited directly, EXTERNAL credited to the clearing
-    account). The period is consumed exactly once: the run is recorded and the
-    next run is advanced regardless of success, and replaying the same
-    ``due_at`` is a no-op.
+    target: OWN transfers credit the counterpart account directly, while
+    payee-based (OTHER/EXTERNAL) transfers credit the resolved payee's account
+    (or the clearing account) and enforce the same card state / single-daily /
+    customer daily outflow controls as user-initiated transfers. The period is
+    consumed exactly once: the run is recorded and the next run is advanced
+    regardless of success, and replaying the same ``due_at`` is a no-op.
     """
     snap = state.obligations
     if snap is None:
@@ -165,6 +216,10 @@ def apply_scheduled_transfer(
         return state, (), None
 
     if inst.status != "ACTIVE":
+        # Consume the stale period even when blocked (P2-1) so a later
+        # re-activated instruction is not permanently due. No successor job.
+        next_due = _next_scheduled_due(inst, due)
+        updated = inst.model_copy(update={"next_run_at": next_due})
         run = InstructionRun(
             id=derive(inst.id, period, "run"),
             customer_id=inst.customer_id,
@@ -179,12 +234,42 @@ def apply_scheduled_transfer(
             amount_cents=inst.amount_cents,
             transfer_id=None,
         )
-        return _refresh(state, run=run), (), run
+        return _refresh(_refresh(state, inst=updated), run=run), (), run
 
-    target = snap.instruction_targets.get(inst.id)
-    if target is None:
-        raise ValueError(f"instruction target not resolved: {inst.id}")
-    credit = "acc_external_clearing" if target.ownership == "EXTERNAL" else target.target_account_id
+    external = inst.payee_id is not None
+    source = state.accounts.get(inst.from_account_id)
+    credit = None
+    block_code = None
+    if source is None or source.customer_id != inst.customer_id:
+        block_code = Code.NOT_FOUND
+    elif external:
+        payee = state.payees.get(inst.payee_id)
+        if not payee or payee.customer_id != inst.customer_id:
+            block_code = Code.PAYEE_NOT_FOUND
+        else:
+            credit = payee.target_account_id or "acc_external_clearing"
+            block_code = transfer_control_violation(
+                state,
+                source=source,
+                amount_cents=inst.amount_cents,
+                customer_id=inst.customer_id,
+            )
+    else:
+        credit = inst.to_account_id
+
+    if block_code is not None:
+        # Hard control violation at due time → BLOCKED, no money moved.
+        return _finish_scheduled(
+            state,
+            inst=inst,
+            due=due,
+            period=period,
+            event_id=event_id,
+            status="BLOCKED",
+            code=block_code.value,
+            transfer_id=None,
+        )
+
     cmd = LedgerTransfer(
         id=derive(inst.id, period, "trf"),
         debit_account_id=inst.from_account_id,
@@ -199,54 +284,32 @@ def apply_scheduled_transfer(
         expires_at=None,
     )
     after, fx, errors = post_transfer(state, cmd, due)
-
-    next_due = _next_scheduled_due(inst, due)
-    ends = next_due is None
-    updated = inst.model_copy(
-        update={"next_run_at": next_due, **({"status": "DELETED"} if ends else {})}
-    )
-    after = _refresh(after, inst=updated)
-
-    new_fx: list = []
-    if ends:
-        new_fx.append(
-            SetInstructionStatus(instruction_id=inst.id, old_status="ACTIVE", new_status="DELETED")
-        )
-    else:
-        new_fx.append(_next_job(inst, next_due))
-
     if errors:
         code = errors[0].code
-        run = InstructionRun(
-            id=derive(inst.id, period, "run"),
-            customer_id=inst.customer_id,
-            account_id=inst.from_account_id,
-            kind="SCHEDULED_TRANSFER",
-            instruction_id=inst.id,
-            billing_id=None,
-            due_at=due,
-            event_id=event_id or digest(["SCHEDULED_TRANSFER", inst.id, due.isoformat()]),
+        return _finish_scheduled(
+            state,
+            inst=inst,
+            due=due,
+            period=period,
+            event_id=event_id,
             status=_status_for(code),
             code=code.value,
-            amount_cents=inst.amount_cents,
             transfer_id=None,
         )
-    else:
-        run = InstructionRun(
-            id=derive(inst.id, period, "run"),
-            customer_id=inst.customer_id,
-            account_id=inst.from_account_id,
-            kind="SCHEDULED_TRANSFER",
-            instruction_id=inst.id,
-            billing_id=None,
-            due_at=due,
-            event_id=event_id or digest(["SCHEDULED_TRANSFER", inst.id, due.isoformat()]),
-            status="SUCCESS",
-            code=None,
-            amount_cents=inst.amount_cents,
-            transfer_id=cmd.id,
+    if external:
+        after = bump_outflow_counters(
+            after, customer_id=inst.customer_id, account_id=source.id, amount_cents=inst.amount_cents
         )
-    after = _refresh(after, run=run)
+    after, new_fx, run = _finish_scheduled(
+        after,
+        inst=inst,
+        due=due,
+        period=period,
+        event_id=event_id,
+        status="SUCCESS",
+        code=None,
+        transfer_id=cmd.id,
+    )
     return after, (*fx, *new_fx), run
 
 
