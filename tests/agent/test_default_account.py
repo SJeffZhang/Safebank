@@ -171,9 +171,7 @@ def test_earlier_turn_keyword_is_not_named_source():
         UtteranceRef(id="utt_prev", kind="typed", text="我活期余额多少"),
         UtteranceRef(id="utt_typed", kind="typed", text="给王五转100元"),
     ]
-    draft = adapter(
-        _state_with(utterances, [_accounts_read("src_acc", ONE_CHECKING)]), _ctx()
-    )
+    draft = adapter(_state_with(utterances, [_accounts_read("src_acc", ONE_CHECKING)]), _ctx())
     _assert_override_to_checking(draft)
 
 

@@ -162,9 +162,7 @@ def _checking_accounts(state: AgentState) -> list[tuple[str, str, str]]:
             account_id = account.get("id") or ""
             if not account_id:
                 continue
-            found.setdefault(
-                account_id, (account_id, read.source_ref, f"/accounts/{index}/id")
-            )
+            found.setdefault(account_id, (account_id, read.source_ref, f"/accounts/{index}/id"))
     return list(found.values())
 
 
