@@ -287,9 +287,7 @@ def main() -> None:
             account["debits_posted_cents"] = debits
             assert credits - debits == account["ledger_balance_cents"] == FINAL_BALANCE
 
-    SEED_PATH.write_text(
-        json.dumps(seed, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    SEED_PATH.write_text(json.dumps(seed, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(
         f"wrote {len(all_txns)} transactions "
         f"(new OUT {new_out_total} cents, credits {credits}, debits {debits})"

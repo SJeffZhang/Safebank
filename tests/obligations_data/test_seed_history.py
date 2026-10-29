@@ -127,8 +127,7 @@ def test_zhangsan_checking_balance_refund_memo_and_ledger(obligations_db):
 
     row = _sql(
         obligations_db,
-        "SELECT credits_posted_cents, debits_posted_cents "
-        "FROM accounts WHERE id='acc_zs_chk'",
+        "SELECT credits_posted_cents, debits_posted_cents FROM accounts WHERE id='acc_zs_chk'",
     )[0]
     assert row[0] - row[1] == 600000
 
@@ -141,4 +140,7 @@ def test_zhangsan_checking_balance_refund_memo_and_ledger(obligations_db):
     )[0]
     assert debits_posted == credits_posted
     assert _sql(obligations_db, "SELECT sum(debits_pending_cents) FROM accounts")[0][0] in (None, 0)
-    assert _sql(obligations_db, "SELECT sum(credits_pending_cents) FROM accounts")[0][0] in (None, 0)
+    assert _sql(obligations_db, "SELECT sum(credits_pending_cents) FROM accounts")[0][0] in (
+        None,
+        0,
+    )
