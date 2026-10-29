@@ -5,8 +5,6 @@ subscribe/redeem against a tmpfs PostgreSQL database.
 """
 
 import asyncio
-import hashlib
-import json
 import socket
 import threading
 from datetime import UTC, datetime, timedelta, timezone
@@ -177,9 +175,7 @@ def _green_evidence(plan_hash: str) -> InteractiveEvidence:
     )
 
 
-def _subscribe_step(
-    account_id="acc_ls_chk", product_id="prd_r3_gain", amount_cents=1_195_500
-):
+def _subscribe_step(account_id="acc_ls_chk", product_id="prd_r3_gain", amount_cents=1_195_500):
     return [
         step(
             tool="subscribe_product",
@@ -271,14 +267,36 @@ async def _prepare_execute(
 
 async def _balances(conn) -> tuple[int, int]:
     """Return (total_debits, total_credits) across all account ledgers."""
-    debits = (await conn.execute(text("SELECT coalesce(sum(debits_posted),0) FROM accounts"))).scalar()
-    credits = (
-        await conn.execute(text("SELECT coalesce(sum(credits_posted),0) FROM accounts"))
-    ).scalar()
-    return int(debits), int(credits)
+    r = (
+        (
+            await conn.execute(
+                text(
+                    "SELECT coalesce(sum(debits_posted_cents),0) AS d,"
+                    " coalesce(sum(credits_posted_cents),0) AS c FROM accounts"
+                )
+            )
+        )
+        .mappings()
+        .first()
+    )
+    return int(r["d"]), int(r["c"])
 
 
 # ── test 1: execute FUND_CONFIRM ────────────────────────────────────────
+
+
+async def _assert_ledger_balanced(admin):
+    """Whole-ledger conservation: posted and pending debits equal credits."""
+    async with admin.connect() as conn:
+        row = (
+            await conn.execute(
+                text(
+                    "SELECT SUM(debits_posted_cents) - SUM(credits_posted_cents),"
+                    " SUM(debits_pending_cents) - SUM(credits_pending_cents) FROM accounts"
+                )
+            )
+        ).one()
+    assert row[0] == 0 and row[1] == 0, row
 
 
 def test_execute_fund_confirm(obligations_db):
@@ -369,9 +387,7 @@ def test_execute_fund_confirm(obligations_db):
         async with runtime.connect() as conn:
             # Order is now SETTLED
             updated = (
-                await conn.execute(
-                    select(m.fund_orders).where(m.fund_orders.c.id == order_id)
-                )
+                await conn.execute(select(m.fund_orders).where(m.fund_orders.c.id == order_id))
             ).first()
             assert updated.status == "SETTLED"
             assert updated.units is not None and updated.units > 0
@@ -393,9 +409,7 @@ def test_execute_fund_confirm(obligations_db):
 
             # Event job → DONE
             job_after = (
-                await conn.execute(
-                    select(m.event_jobs).where(m.event_jobs.c.id == event_id)
-                )
+                await conn.execute(select(m.event_jobs).where(m.event_jobs.c.id == event_id))
             ).first()
             assert job_after.status == "DONE"
 
@@ -406,9 +420,7 @@ def test_execute_fund_confirm(obligations_db):
 
             # Account: pending resolved → balance down by subscription amount
             acc_after = (
-                await conn.execute(
-                    select(m.accounts).where(m.accounts.c.id == "acc_ls_chk")
-                )
+                await conn.execute(select(m.accounts).where(m.accounts.c.id == "acc_ls_chk"))
             ).first()
             net = acc_after.credits_posted_cents - acc_after.debits_posted_cents
             avail = net - acc_after.debits_pending_cents
@@ -440,6 +452,7 @@ def test_execute_fund_confirm(obligations_db):
             ).scalar()
             assert exec_count == 1
 
+        await _assert_ledger_balanced(admin)
         await admin.dispose()
         await runtime.dispose()
 
@@ -525,24 +538,18 @@ def test_execute_fund_expiry(obligations_db):
         # Verify: order EXPIRED, no holdings, freeze released
         async with runtime.connect() as conn:
             updated = (
-                await conn.execute(
-                    select(m.fund_orders).where(m.fund_orders.c.id == order_id)
-                )
+                await conn.execute(select(m.fund_orders).where(m.fund_orders.c.id == order_id))
             ).first()
             assert updated.status == "EXPIRED"
 
             holdings = (
-                await conn.execute(
-                    select(m.holdings).where(m.holdings.c.customer_id == "cus_ls")
-                )
+                await conn.execute(select(m.holdings).where(m.holdings.c.customer_id == "cus_ls"))
             ).fetchall()
             assert len(holdings) == 0
 
             # Balance restored (pending freeze released)
             acc_after = (
-                await conn.execute(
-                    select(m.accounts).where(m.accounts.c.id == "acc_ls_chk")
-                )
+                await conn.execute(select(m.accounts).where(m.accounts.c.id == "acc_ls_chk"))
             ).first()
             # No posted debit (credit and debit unchanged from freeze release)
             assert acc_after.debits_posted_cents == before_debit
@@ -552,9 +559,7 @@ def test_execute_fund_expiry(obligations_db):
 
             # Event job → DONE
             job_after = (
-                await conn.execute(
-                    select(m.event_jobs).where(m.event_jobs.c.id == event_id)
-                )
+                await conn.execute(select(m.event_jobs).where(m.event_jobs.c.id == event_id))
             ).first()
             assert job_after.status == "DONE"
 
@@ -562,6 +567,190 @@ def test_execute_fund_expiry(obligations_db):
             assert exec_row is not None
             assert exec_row["status"] == "SUCCESS"
 
+        await _assert_ledger_balanced(admin)
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
+
+
+# ── test 3: execute FUND_SETTLE after redeem ───────────────────────────
+
+
+def test_execute_fund_settle(obligations_db):
+    """Redeem prd_r3_gain → execute FUND_SETTLE.
+    Order → SETTLED, credits posted to account, holding units & reserved reduced."""
+
+    async def check():
+        await _setup(obligations_db)
+        admin = _admin_conn(obligations_db)
+        runtime = _runtime_conn(obligations_db)
+
+        # Pre-seed a settled SUB order and holding for prd_r3_gain
+        _today = datetime(2026, 10, 15, 9, 0, 0, tzinfo=CST)
+        async with admin.begin() as conn:
+            await conn.execute(
+                m.holdings.insert().values(
+                    customer_id="cus_ls",
+                    account_id="acc_ls_chk",
+                    product_id="prd_r3_gain",
+                    units="500.0000",
+                    reserved_units="0.0000",
+                    cost_cents=500_000,
+                    reserved_cost_cents=0,
+                )
+            )
+            await conn.execute(
+                m.fund_orders.insert().values(
+                    id="ord_ls_sub_r3_ev3",
+                    customer_id="cus_ls",
+                    account_id="acc_ls_chk",
+                    product_id="prd_r3_gain",
+                    type="SUB",
+                    status="SETTLED",
+                    amount_cents=500_000,
+                    units="500.0000",
+                    nav="1.0000",
+                    reserved_cost_cents=0,
+                    pending_transfer_id=None,
+                    plan_id="pln_seed_r3_ev3",
+                    step_id="stp_seed_r3_ev3",
+                    trade_date=_today,
+                    confirm_at=_today,
+                    settle_at=_today,
+                    expires_at=None,
+                    failure_code=None,
+                )
+            )
+
+        # Step 1 — redeem via HTTP
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        steps = _redeem_step(product_id="prd_r3_gain", units="100.0000")
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            body = await _prepare_execute(
+                client, "pln_fund_red_ev3", "hash_fund_red_ev3", steps, expected_versions=0
+            )
+            assert body["status"] == "EXECUTED", body
+
+        # Find the redeem order and FUND_SETTLE event_job
+        async with admin.connect() as conn:
+            orders = (
+                await conn.execute(
+                    select(m.fund_orders).where(
+                        m.fund_orders.c.plan_id == "pln_fund_red_ev3",
+                        m.fund_orders.c.type == "RED",
+                    )
+                )
+            ).fetchall()
+            assert len(orders) == 1
+            order = orders[0]
+            assert order.status == "PENDING_SETTLEMENT"
+            order_id = order.id
+            redeem_amount = order.amount_cents
+
+            settle_jobs = (
+                await conn.execute(
+                    select(m.event_jobs).where(
+                        m.event_jobs.c.source_id == order_id,
+                        m.event_jobs.c.kind == "FUND_SETTLE",
+                    )
+                )
+            ).fetchall()
+            assert len(settle_jobs) == 1
+            event_id = settle_jobs[0].id
+            payload_hash = settle_jobs[0].payload_hash
+
+            # Snapshot pre-settle account state
+            acc_before = (
+                await conn.execute(select(m.accounts).where(m.accounts.c.id == "acc_ls_chk"))
+            ).first()
+            credits_before = acc_before.credits_posted_cents
+            debits_before = acc_before.debits_posted_cents
+
+        # Step 2 — execute FUND_SETTLE
+        async with runtime.connect() as conn:
+            clock_ver, _ = await _clock_and_version(conn, "cus_ls")
+
+        async with runtime.begin() as conn:
+            svc = EventService()
+            result = await svc.execute_event(
+                conn,
+                event_id,
+                expected_versions={"cus_ls": 1},
+                clock_version=clock_ver,
+                expected_payload_hash=payload_hash,
+                authorization_evidence={"by": "test"},
+            )
+        assert result["event_id"] == event_id
+        assert result["status"] == "SUCCESS"
+        assert result.get("replayed") is None
+
+        # Verify DB state
+        async with runtime.connect() as conn:
+            # Order → SETTLED
+            updated = (
+                await conn.execute(select(m.fund_orders).where(m.fund_orders.c.id == order_id))
+            ).first()
+            assert updated.status == "SETTLED"
+            assert updated.settle_at is not None
+
+            # Credits posted to account
+            acc_after = (
+                await conn.execute(select(m.accounts).where(m.accounts.c.id == "acc_ls_chk"))
+            ).first()
+            assert acc_after.credits_posted_cents == credits_before + redeem_amount
+            assert acc_after.debits_posted_cents == debits_before
+
+            # Holding: units and reserved_units both decreased
+            holdings = (
+                await conn.execute(
+                    select(m.holdings).where(
+                        m.holdings.c.product_id == "prd_r3_gain",
+                        m.holdings.c.customer_id == "cus_ls",
+                    )
+                )
+            ).fetchall()
+            assert len(holdings) == 1
+            h = holdings[0]
+            assert h.units == Decimal("400.0000")
+            assert h.reserved_units == Decimal("0.0000")
+
+            # Event job → DONE
+            job_after = (
+                await conn.execute(select(m.event_jobs).where(m.event_jobs.c.id == event_id))
+            ).first()
+            assert job_after.status == "DONE"
+
+            exec_row = await _event_execution(conn, event_id)
+            assert exec_row is not None
+            assert exec_row["status"] == "SUCCESS"
+
+        # Step 3 — replay
+        async with runtime.begin() as conn:
+            svc = EventService()
+            result2 = await svc.execute_event(
+                conn,
+                event_id,
+                expected_versions={"cus_ls": 1},
+                clock_version=clock_ver,
+                expected_payload_hash=payload_hash,
+                authorization_evidence={"by": "test"},
+            )
+        assert result2["replayed"] is True
+        assert result2["status"] == "SUCCESS"
+
+        async with runtime.connect() as conn:
+            exec_count = (
+                await conn.execute(
+                    text("SELECT count(*) FROM event_executions WHERE event_id = :eid"),
+                    {"eid": event_id},
+                )
+            ).scalar()
+            assert exec_count == 1
+
+        await _assert_ledger_balanced(admin)
         await admin.dispose()
         await runtime.dispose()
 
