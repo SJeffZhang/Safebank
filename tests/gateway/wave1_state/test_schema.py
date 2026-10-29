@@ -25,7 +25,7 @@ NEW_COLUMNS = {
 
 
 def test_wave1_metadata_requires_incremental_schema():
-    assert GATEWAY_REVISION == "0003_plan_draft"
+    assert GATEWAY_REVISION == "0004_in_progress"
     assert {"FENCING", "PAUSED"} <= {v.value for v in ExecutionJobStatus}
     for table, columns in NEW_COLUMNS.items():
         for name in columns:

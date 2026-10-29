@@ -44,15 +44,15 @@ def test_internal_app_only_has_internal_routes():
     asyncio.run(run())
 
 
-def test_scheduled_authorize_is_registered_but_stubbed():
+def test_scheduled_authorize_rejects_wrong_token():
     async def run():
         transport = httpx.ASGITransport(app=build_internal_app(_settings(), env=ENV))
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
             resp = await client.post(
-                "/internal/scheduled/authorize", headers={"X-Service-Token": "sched-secret"}
+                "/internal/scheduled/authorize", headers={"X-Service-Token": "bad-token-xxxxx"}
             )
-            assert resp.status_code == 503
-            assert resp.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+            assert resp.status_code == 401
+            assert resp.json()["error"]["code"] == "UNAUTHENTICATED"
 
     asyncio.run(run())
 

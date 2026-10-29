@@ -277,7 +277,9 @@ event_decisions = Table(
     Column("status", String(32), nullable=False),
     Column("code", String(64)),
     timestamp("decided_at_wall", nullable=False),
-    CheckConstraint("status IN ('SUCCESS','BLOCKED','FAILED_INSUFFICIENT','SKIPPED_REAPPROVAL')"),
+    CheckConstraint(
+        "status IN ('IN_PROGRESS','SUCCESS','BLOCKED','FAILED_INSUFFICIENT','SKIPPED_REAPPROVAL')"
+    ),
 )
 
 workflow_events = Table(
