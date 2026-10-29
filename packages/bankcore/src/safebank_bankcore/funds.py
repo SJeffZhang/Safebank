@@ -2,7 +2,7 @@
 
 No IO, no database, no randomness.  ``apply_subscribe`` / ``apply_redeem`` are
 invoked through :func:`banking.apply_plan`; ``apply_fund_confirm``,
-``apply_fund_settle`` and ``apply_fund_expiry`` are order-driven system events
+``apply_fund_settle`` and ``apply_pending_expiry`` are order-driven system events
 that operate only on stored order data (re-checking suitability before confirm,
 releasing the freeze on confirm failure or expiry).
 
@@ -524,7 +524,7 @@ def _fail_confirm(
     return after, (*effects, UpdateFundOrder(order=updated)), ()
 
 
-def apply_fund_expiry(state: BankState, order_id: str, at: datetime, ctx: Context):
+def apply_pending_expiry(state: BankState, order_id: str, at: datetime, ctx: Context):
     order = _find_order(state, order_id)
     if order is None or order.type != "SUB":
         return _reject(state, ctx, Code.NOT_FOUND)

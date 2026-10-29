@@ -7,8 +7,8 @@ import pytest
 from safebank_bankcore.banking import Context, apply_plan
 from safebank_bankcore.funds import (
     apply_fund_confirm,
-    apply_fund_expiry,
     apply_fund_settle,
+    apply_pending_expiry,
     holdings_view,
 )
 from safebank_bankcore.ledger import replace_state
@@ -264,7 +264,7 @@ def test_pending_subscribe_expires_and_releases_freeze():
     assert result.error is None
     order = result.state.fund_orders[0]
     assert order.status == "PENDING_CONFIRM"
-    exp = apply_fund_expiry(
+    exp = apply_pending_expiry(
         result.state, order.id, order.expires_at, Context("cus_a", "pln_exp", "s1")
     )
     assert exp[2] == ()
