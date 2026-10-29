@@ -211,7 +211,9 @@ def test_r14_returns_all_products_sorted(obligations_db):
         app, port, admin, runtime = await _prepare_app(obligations_db)
         async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
             await _await_app(client, port)
-            r = await _read(client, "list_products", {"limit": 50})
+            r = await _read(
+                client, "list_products", {"limit": 50, "max_risk_level": None, "product_type": None}
+            )
             assert r.status_code == 200, r.text
             body = r.json()
             ids = [i["id"] for i in body["items"]]
@@ -228,7 +230,11 @@ def test_r14_filters_max_risk_level(obligations_db):
         app, port, admin, runtime = await _prepare_app(obligations_db)
         async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
             await _await_app(client, port)
-            r = await _read(client, "list_products", {"limit": 50, "max_risk_level": 1})
+            r = await _read(
+                client,
+                "list_products",
+                {"limit": 50, "max_risk_level": 1, "product_type": None},
+            )
             assert r.status_code == 200, r.text
             ids = [i["id"] for i in r.json()["items"]]
             assert ids == ["prod_zmf"]
@@ -243,7 +249,11 @@ def test_r14_filters_product_type(obligations_db):
         app, port, admin, runtime = await _prepare_app(obligations_db)
         async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
             await _await_app(client, port)
-            r = await _read(client, "list_products", {"limit": 50, "product_type": "EQUITY"})
+            r = await _read(
+                client,
+                "list_products",
+                {"limit": 50, "max_risk_level": None, "product_type": "EQUITY"},
+            )
             assert r.status_code == 200, r.text
             ids = [i["id"] for i in r.json()["items"]]
             assert ids == ["prod_gp"]
@@ -258,12 +268,18 @@ def test_r14_pagination_respects_limit(obligations_db):
         app, port, admin, runtime = await _prepare_app(obligations_db)
         async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
             await _await_app(client, port)
-            r1 = await _read(client, "list_products", {"limit": 1})
+            r1 = await _read(
+                client, "list_products", {"limit": 1, "max_risk_level": None, "product_type": None}
+            )
             assert r1.status_code == 200, r1.text
             b1 = r1.json()
             assert len(b1["items"]) == 1
             assert b1["next_cursor"] is not None
-            r2 = await _read(client, "list_products", {"limit": 50, "cursor": b1["next_cursor"]})
+            r2 = await _read(
+                client,
+                "list_products",
+                {"limit": 50, "max_risk_level": None, "product_type": None, "cursor": b1["next_cursor"]},
+            )
             assert r2.status_code == 200, r2.text
             b2 = r2.json()
             assert len(b2["items"]) == len(PRODUCTS) - 1
