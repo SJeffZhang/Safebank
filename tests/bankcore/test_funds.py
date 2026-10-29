@@ -195,6 +195,7 @@ def test_redeem_reserves_and_settles():
     red = simulate(
         conf[0],
         [step("redeem_product", account_id="acc_a", product_id="prd_bond", units=str(holding.available_units))],
+        plan_id="pln_redeem",
     )
     assert red.error is None
     red_order = red.state.fund_orders[-1]
@@ -219,9 +220,9 @@ def test_redeem_cannot_double_sell():
     assert sub.error is None
     holding = next(h for h in sub.state.holdings if h.product_id == "prd_mmf")
     assert holding.available_units == Decimal("1000.0000")
-    red = simulate(sub.state, [step("redeem_product", product_id="prd_mmf", units="1000.0000")])
+    red = simulate(sub.state, [step("redeem_product", product_id="prd_mmf", units="1000.0000")], plan_id="pln_redeem")
     assert red.error is None
-    again = simulate(red.state, [step("redeem_product", product_id="prd_mmf", units="0.0001")])
+    again = simulate(red.state, [step("redeem_product", product_id="prd_mmf", units="0.0001")], plan_id="pln_redeem2")
     assert again.error == "HOLDING_INSUFFICIENT"
 
 
