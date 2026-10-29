@@ -142,9 +142,7 @@ def outflow(tool: str, args: Any, shadow_state: Any) -> bool:
     return False
 
 
-_LOOSEN_RED_KINDS = frozenset(
-    {ActionKind.CARD_LIMIT_LOOSEN, ActionKind.CARD_CONTROL_LOOSEN}
-)
+_LOOSEN_RED_KINDS = frozenset({ActionKind.CARD_LIMIT_LOOSEN, ActionKind.CARD_CONTROL_LOOSEN})
 
 
 def step_base_risk(tool: str, args: Any, shadow_state: Any) -> str:
