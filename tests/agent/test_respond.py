@@ -323,6 +323,141 @@ class TestReadsSummary:
         assert "无读取数据" in result
 
 
+class TestReadsSummaryLiveCase:
+    """The live bug: anomaly reads (one populated, one empty) must keep every item."""
+
+    def _anomaly_read(self, account_id, items):
+        return ReadRecord(
+            source_ref=f"src_{account_id}",
+            tool="detect_anomalies",
+            args={
+                "from_at": "2026-09-01T00:00:00+08:00",
+                "to_at": "2026-10-01T00:00:00+08:00",
+                "account_id": account_id,
+            },
+            data={"items": items},
+        )
+
+    def test_anomaly_live_case_keeps_all_items_and_account_attribution(self):
+        reads = [
+            self._anomaly_read(
+                "acc_zs_chk",
+                [
+                    {
+                        "transaction": {
+                            "amount_cents": 100000,
+                            "counterparty": "深夜商户甲",
+                            "occurred_at": "2026-09-15T02:10:00+08:00",
+                            "category": "购物",
+                        },
+                        "codes": ["ANOMALY_NIGHT_LARGE"],
+                        "evidence": {},
+                    },
+                    {
+                        "transaction": {
+                            "amount_cents": 250000,
+                            "counterparty": "新商户乙",
+                            "occurred_at": "2026-09-18T14:00:00+08:00",
+                            "category": "数码",
+                        },
+                        "codes": ["ANOMALY_NEW_MERCHANT_LARGE"],
+                        "evidence": {},
+                    },
+                    {
+                        "transaction": {
+                            "amount_cents": 150000,
+                            "counterparty": "重复商户丙",
+                            "occurred_at": "2026-09-22T20:00:00+08:00",
+                            "category": "餐饮",
+                        },
+                        "codes": ["ANOMALY_DUPLICATE"],
+                        "evidence": {},
+                    },
+                ],
+            ),
+            self._anomaly_read("acc_zs_sav", []),
+        ]
+        result = _reads_summary({"reads": reads})
+        assert "detect_anomalies" in result
+        assert "acc_zs_chk" in result  # account attribution from args
+        assert "acc_zs_sav" in result
+        assert "深夜商户甲" in result
+        assert "新商户乙" in result
+        assert "重复商户丙" in result
+        assert "1000.00元" in result
+        assert "2500.00元" in result
+        assert "1500.00元" in result
+        assert "2026-09-15" in result
+        assert "ANOMALY_NIGHT_LARGE" in result
+        assert "无异常" in result  # empty savings read still reported as no data
+
+    def test_spending_summary_keeps_category_shares(self):
+        read = ReadRecord(
+            source_ref="src_spend",
+            tool="get_spending_summary",
+            args={"month": "2026-09", "account_id": "acc_zs_chk"},
+            data={
+                "month": "2026-09",
+                "total_cents": 300000,
+                "previous_total_cents": 250000,
+                "mom_change_cents": 50000,
+                "mom_change_bp": 2000,
+                "categories": [
+                    {
+                        "category": "餐饮",
+                        "amount_cents": 120000,
+                        "share_bp": 4000,
+                        "previous_amount_cents": 90000,
+                    },
+                    {
+                        "category": "购物",
+                        "amount_cents": 100000,
+                        "share_bp": 3333,
+                        "previous_amount_cents": 80000,
+                    },
+                    {
+                        "category": "交通",
+                        "amount_cents": 80000,
+                        "share_bp": 2667,
+                        "previous_amount_cents": 80000,
+                    },
+                ],
+                "daily": [],
+                "transfer_out_cents": 0,
+            },
+        )
+        result = _reads_summary({"reads": [read]})
+        assert "get_spending_summary" in result
+        assert "餐饮" in result
+        assert "购物" in result
+        assert "交通" in result
+        assert "40.00%" in result
+        assert "33.33%" in result
+        assert "26.67%" in result
+        assert "2026-09" in result
+
+    def test_no_raw_long_numbers(self):
+        read = ReadRecord(
+            source_ref="src_bal",
+            tool="get_balances",
+            args={},
+            data={"account_no": "6222021234567890", "balance_cents": 600000},
+        )
+        result = _reads_summary({"reads": [read]})
+        assert "6222021234567890" not in result
+        assert "7890" in result
+
+    def test_empty_reads_say_no_data(self):
+        read = ReadRecord(
+            source_ref="src_anom_empty",
+            tool="detect_anomalies",
+            args={},
+            data={"items": []},
+        )
+        result = _reads_summary({"reads": [read]})
+        assert "无异常" in result
+
+
 class TestBuildPrompt:
     def test_builds_sections(self):
         result = _build_prompt("system", utterance="hello", extra="world")
