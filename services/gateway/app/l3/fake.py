@@ -46,6 +46,12 @@ def _op_for(method: str, path: str) -> str:
         return "outbox"
     if path == "/internal/outbox/ack":
         return "ack"
+    if "/internal/events/" in path and path.endswith("/execute"):
+        return "event_execute"
+    if "/internal/events/" in path and path.endswith("/block"):
+        return "event_block"
+    if "/internal/events/" in path:
+        return "event"
     return "other"
 
 
@@ -88,6 +94,9 @@ class FakeL3:
         self.intents: dict[tuple[str, str], dict[str, Any]] = {}
         self._snapshot: dict[str, Any] | None = None
         self._execute_result: dict[str, Any] | None = None
+        self.events: dict[str, dict[str, Any]] = {}
+        self.event_executions: dict[str, dict[str, Any]] = {}
+        self.event_blocks: dict[str, dict[str, Any]] = {}
 
     # ---- programmable state -------------------------------------------------
     def set_snapshot(self, state: Any) -> None:
@@ -95,6 +104,9 @@ class FakeL3:
 
     def set_result(self, result: Any) -> None:
         self._execute_result = result.model_dump(mode="json")
+
+    def set_event(self, definition: dict[str, Any]) -> None:
+        self.events[definition["event_id"]] = dict(definition)
 
     def _resolve(self, op: str) -> str:
         spec = self.behaviors.get(op, "ok")
@@ -319,6 +331,52 @@ class FakeL3:
             except SchemaValidationError:
                 return _reject(request)
             return {"acknowledged": len(data.get("event_ids", []))}
+
+        @app.get("/internal/events/{event_id}")
+        async def event(event_id: str, request: Request):
+            self.calls.append({"op": "event", "event_id": event_id})
+            if not await _require_token(request):
+                return self._error(Code.UNAUTHENTICATED.value, 401)
+            gated = await _gate(request, "event")
+            if gated is not None:
+                return gated
+            definition = self.events.get(event_id)
+            if definition is None:
+                return self._error(Code.DEPENDENCY_UNAVAILABLE.value, 404)
+            return definition
+
+        @app.post("/internal/events/{event_id}/execute")
+        async def event_execute(event_id: str, request: Request):
+            self.calls.append({"op": "event_execute", "event_id": event_id})
+            if not await _require_token(request):
+                return self._error(Code.UNAUTHENTICATED.value, 401)
+            data = await _body(request)
+            gated = await _gate(request, "event_execute")
+            if gated is not None:
+                return gated
+            existing = self.event_executions.get(event_id)
+            if existing is not None:
+                return {**existing, "replayed": True}
+            result = {
+                "event_id": event_id,
+                "status": "EXECUTED",
+                "instruction_run_id": f"ir_{event_id}",
+                "replayed": False,
+            }
+            self.event_executions[event_id] = result
+            return result
+
+        @app.post("/internal/events/{event_id}/block")
+        async def event_block(event_id: str, request: Request):
+            self.calls.append({"op": "event_block", "event_id": event_id})
+            if not await _require_token(request):
+                return self._error(Code.UNAUTHENTICATED.value, 401)
+            data = await _body(request)
+            gated = await _gate(request, "event_block")
+            if gated is not None:
+                return gated
+            self.event_blocks[event_id] = dict(data)
+            return {"event_id": event_id, "status": data.get("status"), "instruction_run_id": None}
 
         return app
 
