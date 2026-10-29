@@ -281,7 +281,7 @@ export function Overview(p: PageProps) {
                   {a.display_name}
                   <small>{a.account_no_masked}</small>
                 </span>
-                <strong>{hidden ? "••••" : money(a.available_cents)}</strong>
+                <strong><Money value={a.available_cents} hide={hidden} className="account-strip-amount" /></strong>
               </div>
             ))}
           </div>

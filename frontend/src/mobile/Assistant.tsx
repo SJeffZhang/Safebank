@@ -10,12 +10,19 @@ import {
 } from "./types";
 import type { PageProps } from "./Banking";
 import { Icon, Button, Alert, Badge } from "./ui";
+import { AssistantWorkspace, detectTopic, type AssistantTopic } from "./AssistantWorkspace";
 interface Message {
   id: string;
   role: "user" | "assistant";
   text: string;
   cards?: UICard[];
+  business?: AssistantTopic;
 }
+const topics = [
+  { icon: "chart", title: "账单分析", description: "消费分类与异常依据" },
+  { icon: "transfer", title: "资金安排", description: "转账、定时与 AA 收款" },
+  { icon: "repeat", title: "跨场景联动", description: "先分析，再预演整份计划" },
+];
 export function Assistant(
   p: PageProps & {
     openApproval: (id: string) => void;
@@ -27,11 +34,17 @@ export function Assistant(
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState("");
+  const [steps, setSteps] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [pending, setPending] = useState<string>();
   const [clar, setClar] = useState<Clarification | null>(null);
   const controller = useRef<AbortController>();
   const end = useRef<HTMLDivElement>(null);
+  const input = useRef<HTMLTextAreaElement>(null);
+  function openTopic(topic: (typeof topics)[number]) {
+    if (busy || pending) return;
+    void send(topic.title);
+  }
   useEffect(() => () => controller.current?.abort(), []);
   useEffect(() => {
     end.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -73,7 +86,10 @@ export function Assistant(
     }
     if (event.event === "updates") {
       const progress = data.progress as { label?: string } | undefined;
-      if (progress?.label) setStage(progress.label);
+      if (progress?.label) {
+        setStage(progress.label);
+        setSteps(s => s.includes(progress.label!) ? s : [...s,progress.label!]);
+      }
       const reply = data.reply as { id: string; content: string } | undefined;
       if (reply && typeof reply.content === "string")
         setMessages((m) => [
@@ -109,20 +125,29 @@ export function Assistant(
   async function run(body: Fields, resume = false) {
     if (busy) return;
     setBusy(true);
+    setSteps([]);
     setError("");
-    controller.current = new AbortController();
+    const current = new AbortController();
+    controller.current = current;
+    const active = () => controller.current === current && !current.signal.aborted;
     try {
-      await stream(p.sid, body, handle, controller.current.signal, resume);
+      await stream(p.sid, body, event => { if (active()) handle(event); }, current.signal, resume);
+      if (!active()) return false;
       const c = await request<{ clarification: Clarification | null }>(
         `/sessions/${p.sid}/clarifications/current`,
       );
+      if (!active()) return false;
       setClar(c.clarification);
+      return true;
     } catch (e) {
-      if (!controller.current.signal.aborted)
+      if (active())
         setError(e instanceof Error ? e.message : "连接中断，请检查任务状态");
+      return false;
     } finally {
-      setBusy(false);
-      setStage("");
+      if (controller.current === current) {
+        setBusy(false);
+        setStage("");
+      }
     }
   }
   useEffect(() => {
@@ -131,12 +156,12 @@ export function Assistant(
       await run({ approval_id: id }, true);
     });
   });
-  async function send() {
-    if (!text.trim() || busy || pending) return;
-    const value = text.trim();
+  async function send(selected?: string) {
+    const value = (selected ?? text).trim();
+    if (!value || busy || pending) return;
     setText("");
     setMessages((m) => [...m, { id: uid(), role: "user", text: value }]);
-    await run({
+    const completed = await run({
       request_id: uid(),
       kind: "typed",
       text: value,
@@ -144,6 +169,9 @@ export function Assistant(
       action_id: null,
       clarification_id: clar?.id ?? null,
     });
+    const topic = detectTopic(value);
+    if (completed && topic) setMessages(m => [...m,{id:uid(),role:"assistant",text:"",business:topic}]);
+    input.current?.focus();
   }
   async function choose(c: Clarification["candidates"][number]) {
     try {
@@ -202,16 +230,13 @@ export function Assistant(
                   跨场景的资金计划。
                 </p>
                 <div className="capability-list">
-                  {[
-                    ["chart", "账单分析", "消费分类与异常依据"],
-                    ["transfer", "资金安排", "转账、定时与 AA 收款"],
-                    ["repeat", "跨场景联动", "先分析，再预演整份计划"],
-                  ].map(([i, t, d]) => (
-                    <div key={t}>
-                      <Icon name={i} />
-                      <strong>{t}</strong>
-                      <small>{d}</small>
-                    </div>
+                  {topics.map((topic) => (
+                    <button type="button" key={topic.title} aria-label={topic.title}
+                      disabled={busy || !!pending} onClick={() => openTopic(topic)}>
+                      <Icon name={topic.icon} />
+                      <strong>{topic.title}</strong>
+                      <small>{topic.description}</small>
+                    </button>
                   ))}
                 </div>
                 <small className="helper">
@@ -228,6 +253,7 @@ export function Assistant(
                   )}
                   <div>
                     {m.text && <p>{m.text}</p>}
+                    {m.business && <AssistantWorkspace {...p} topic={m.business}/>}
                     {m.cards?.map((card) => (
                       <SafeCard
                         card={card}
@@ -252,13 +278,15 @@ export function Assistant(
               ))
             )}
             {busy && (
-              <div className="chat-progress">
+              <div className="chat-progress assistant-thinking" role="status" aria-label="小安处理进度">
+                <span className="thinking-orb"><Icon name="assistant" size={18}/></span>
+                <div><strong>{stage || "正在理解您的需求"}</strong><small>{isPreview ? "合成预览处理中" : "正在处理，请稍候"}</small>
+                {steps.length > 0 && <ol>{steps.map((s,i)=><li key={s} className={i===steps.length-1 ? "active" : "done"}>{i===steps.length-1 ? "◦" : "✓"} {s}</li>)}</ol>}</div>
                 <span className="typing-dots">
                   <i />
                   <i />
                   <i />
                 </span>
-                {stage || "小安正在处理"}
               </div>
             )}
             {clar && (
@@ -312,6 +340,7 @@ export function Assistant(
               向小安描述您的需求
             </label>
             <textarea
+              ref={input}
               id="chat-input"
               value={text}
               onChange={(e) => setText(e.target.value)}
