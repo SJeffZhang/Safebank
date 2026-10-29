@@ -13,7 +13,11 @@ from __future__ import annotations
 from safebank_contracts.tools import READ_ARGS
 
 from services.agent.app.graph.state import ReadRecord
-from services.agent.app.llm.cards import _READ_TOOL_CARD_TYPE, generate_cards
+from services.agent.app.llm.cards import (
+    _READ_TOOL_CARD_TYPE,
+    _SKIPPED_READ_TOOLS,
+    generate_cards,
+)
 
 
 def _analysis_state(read: ReadRecord) -> dict:
@@ -40,6 +44,9 @@ class TestMappingGuard:
             "detect_anomalies",
         ):
             assert tool in _READ_TOOL_CARD_TYPE, tool
+
+    def test_every_read_tool_is_mapped_or_skipped(self):
+        assert set(_READ_TOOL_CARD_TYPE) | set(_SKIPPED_READ_TOOLS) == set(READ_ARGS)
 
 
 class TestCardTypesFromReads:
