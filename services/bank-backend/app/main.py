@@ -1,5 +1,7 @@
 """L3 HTTP surface, isolated on bank-net and authenticated on every route."""
 
+import asyncio
+import logging
 import os
 import secrets
 from contextlib import asynccontextmanager
@@ -32,11 +34,27 @@ from .errors import BankError
 from .events import BlockEventRequest, EventService, ExecuteEventRequest
 from .execution import ExecutionService, utcnow
 from .reads import SUPPORTED_READS, read
+from .scheduler import ClockAdvancer, ClockAdvanceRequest, Scheduler
 from .state import load_bank_state, resolve_scope
+
+logger = logging.getLogger(__name__)
 
 
 def _env_flag(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+_SCHEDULER_IDLE_SECONDS = 5.0
+
+
+async def _scheduler_loop(sched: Scheduler) -> None:
+    """Run the scheduler dispatch loop forever; cancelled on shutdown."""
+    while True:
+        try:
+            await sched.run_once()
+        except (SQLAlchemyError, OSError):
+            logger.warning("scheduler loop error", exc_info=True)
+        await asyncio.sleep(_SCHEDULER_IDLE_SECONDS)
 
 
 def create_app(
@@ -46,6 +64,9 @@ def create_app(
     fingerprint_key=None,
     demo_mode=None,
     admin_db=None,
+    scheduler_enabled=None,
+    s1_url=None,
+    s1_token=None,
 ):
     token = service_token or os.environ.get("GATEWAY_SERVICE_TOKEN")
     key = fingerprint_key or os.environ.get("FINGERPRINT_KEY")
@@ -64,14 +85,34 @@ def create_app(
             admin_database = engine(
                 os.environ.get("BANK_MIGRATION_DATABASE_URL") or os.environ["BANK_DATABASE_URL"]
             )
+    if scheduler_enabled is None:
+        scheduler_enabled = _env_flag("SCHEDULER_ENABLED")
+    _s1_url = s1_url or os.environ.get("S1_URL", "http://gateway:8200")
+    _s1_token = s1_token or os.environ.get("SCHEDULER_SERVICE_TOKEN", token)
+    sched = Scheduler(database, s1_url=_s1_url, s1_token=_s1_token)
+    advancer: ClockAdvancer | None = ClockAdvancer(sched) if demo_mode else None
+
+    # ── lifespan (with optional scheduler background loop) ──────────────────
 
     @asynccontextmanager
     async def lifespan(app):
-        yield
-        if owned:
-            await database.dispose()
-        if admin_owned and admin_database is not None:
-            await admin_database.dispose()
+        _task = None
+        if scheduler_enabled:
+            await sched.recover()
+            _task = asyncio.get_running_loop().create_task(_scheduler_loop(sched))
+        try:
+            yield
+        finally:
+            if _task is not None:
+                _task.cancel()
+                try:
+                    await _task
+                except asyncio.CancelledError:
+                    pass
+            if owned:
+                await database.dispose()
+            if admin_owned and admin_database is not None:
+                await admin_database.dispose()
 
     async def authenticate(x_service_token: str | None = Header(default=None)):
         if not x_service_token or not secrets.compare_digest(token, x_service_token):
@@ -267,6 +308,20 @@ def create_app(
 
     if demo_mode:
         register_demo_routes(app, database, admin_database, key)
+
+        if advancer is not None:
+
+            @app.post("/internal/clock/advance")
+            async def clock_advance(body: ClockAdvanceRequest):
+                job_id = advancer.advance(body.target_at, body.request_id)
+                return {"job_id": job_id}
+
+            @app.get("/internal/clock/advances/{job_id}")
+            async def clock_advance_status(job_id: str):
+                state = advancer.status(job_id)
+                if state is None:
+                    raise BankError(Code.NOT_FOUND, 404)
+                return state
 
     return app
 
