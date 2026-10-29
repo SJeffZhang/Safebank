@@ -1,0 +1,6 @@
+packages:
+  - '.'
+
+# 允许 esbuild 执行安装脚本（Vite 依赖）
+allowBuilds:
+  esbuild: true

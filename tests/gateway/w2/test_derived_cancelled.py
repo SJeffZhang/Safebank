@@ -166,6 +166,13 @@ def test_cancelled_fees_require_own_savings_target(monkeypatch):
     assert any(f.code is Code.INTENT_SCOPE_EXCEEDED for f in ctx.findings)
 
 
+def test_cancelled_fees_reject_wrong_amount(monkeypatch):
+    """A schedule amount that does not equal the sum of cancelled fees is REPLAN."""
+    ctx = cancelled_ctx([cancel("c1")], schedule_updates={"amount_cents": 10000})
+    assert run(ctx, monkeypatch) == "unknown"
+    assert any(f.code is Code.UNKNOWN_SENSITIVE_ARG for f in ctx.findings)
+
+
 def test_cancelled_fees_reject_weekly_subscription(monkeypatch):
     ctx = cancelled_ctx([cancel("c1")], subscription_updates={"period": "WEEKLY"})
     assert run(ctx, monkeypatch) == "unknown"

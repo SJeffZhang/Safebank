@@ -1,0 +1,157 @@
+/* 手机视口：375×812，桌面居中，内容内部滚动 */
+.page {
+  position: relative;
+  width: 100%;
+  max-width: var(--sb-app-max);
+  height: 100dvh;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--sb-canvas);
+  /* 供子元素用 cqw 计算 --u（1u = 1/375 屏宽） */
+  container-type: inline-size;
+  container-name: screen;
+}
+
+/* 桌面演示：居中的手机屏（不加金属外框），四周留出中性底 */
+@media (min-width: 431px) {
+  .page {
+    max-height: var(--sb-app-height);
+    border-radius: 38px;
+    box-shadow:
+      0 34px 66px -22px rgba(17, 19, 24, 0.38),
+      0 0 0 1px rgba(17, 19, 24, 0.06);
+  }
+}
+
+.main {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 2px 12px 8px;
+  scrollbar-width: none;
+}
+
+.main::-webkit-scrollbar {
+  display: none;
+}
+
+.main:focus {
+  outline: none;
+}
+
+.main:focus-visible {
+  outline: 2px solid var(--sb-focus-color);
+  outline-offset: -2px;
+}
+
+.withoutNav {
+  padding-bottom: 18px;
+}
+
+.skip {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 1000;
+  background: var(--sb-brand);
+  color: var(--sb-brand-contrast);
+  padding: var(--sb-space-3) var(--sb-space-4);
+  border-radius: 0 0 var(--sb-radius-md) 0;
+  font-weight: var(--sb-weight-semibold);
+  text-decoration: none;
+}
+
+.skip:focus {
+  left: 0;
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sb-space-4);
+  min-width: 0;
+}
+
+.intro {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sb-space-2);
+}
+
+.introTitle {
+  font-size: var(--sb-text-xl);
+  font-weight: var(--sb-weight-bold);
+  letter-spacing: -0.02em;
+  line-height: var(--sb-leading-tight);
+}
+
+.introText {
+  font-size: var(--sb-text-sm);
+  color: var(--sb-muted);
+  line-height: var(--sb-leading-normal);
+}
+
+.hint {
+  font-size: var(--sb-text-xs);
+  color: var(--sb-muted);
+  line-height: var(--sb-leading-normal);
+}
+
+.sectionCard {
+  padding: var(--sb-space-4);
+  background: var(--sb-surface);
+  border: var(--sb-border-width) solid var(--sb-line);
+  border-radius: var(--sb-radius-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sb-space-3);
+  min-width: 0;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sb-space-3);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sb-space-2);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sb-space-3);
+  min-width: 0;
+}
+
+.sectionLabel {
+  font-family: var(--sb-font-mono);
+  font-size: var(--sb-text-2xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--sb-faint);
+}
+
+.badge {
+  font-family: var(--sb-font-mono);
+  font-size: var(--sb-text-2xs);
+  letter-spacing: 0.04em;
+  color: var(--sb-muted);
+  background: var(--sb-surface);
+  border: var(--sb-border-width) solid var(--sb-line);
+  border-radius: var(--sb-radius-pill);
+  padding: 3px 8px;
+}
+
+/* Entry button carried by ListItem; full 44px hit area, chevron aligned. */
+.entryValue {
+  color: var(--sb-copper-deep);
+}

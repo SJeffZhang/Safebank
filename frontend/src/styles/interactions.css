@@ -1,0 +1,74 @@
+/* ===========================================================================
+   SafeBank · interaction upgrade
+   ---------------------------------------------------------------------------
+   逐条参考 uiverse.io 的交互思路，但全部按「克制 iOS」重新实现：
+   只动 transform / opacity / 极轻的高光，不做霓虹、不做位移过大的弹跳。
+
+   ▶ 整体开关：注释掉 src/main.tsx 里 `import './styles/interactions.css'`，
+     下面的指针高光 + 页面进入过渡会一起停用，其余按压反馈仍在各组件自身
+     的 module.css 中（见 SafeBank-交互升级说明.md 的回溯表）。
+   =========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   1) 指针跟随高光（来源：uiverse 的 spotlight / glow card）
+   做法：把淡金径向渐变直接画在元素自己的背景层上（--sb-sx / --sb-sy 由 JS
+   在 pointermove 时写入），因此它永远在内容之下，不会给文字蒙一层金光。
+   透明度走注册过的 --sb-sheen-alpha，可以用 transition 淡入淡出；
+   不支持 @property 的浏览器会退化成"瞬间出现"，不影响可读性。
+
+   只在真有指针的设备启用；触屏不注册 JS，也不会出现粘住的悬停态。
+   --------------------------------------------------------------------------- */
+@property --sb-sheen-alpha {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 0;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  /* 双重属性选择器是为了压过页面级 `.card { background: ... }` 这类简写，
+     否则简写会把 background-image 一起重置掉。 */
+  [data-sb-sheen][data-sb-sheen] {
+    background-image: radial-gradient(
+      240px circle at var(--sb-sx, 50%) var(--sb-sy, 0%),
+      rgb(231 215 164 / calc(var(--sb-sheen-alpha) * 1)) 0%,
+      rgb(231 215 164 / calc(var(--sb-sheen-alpha) * 0.55)) 44%,
+      transparent 72%
+    );
+    transition: --sb-sheen-alpha var(--sb-duration-slow) var(--sb-ease-ios);
+  }
+
+  [data-sb-sheen][data-sb-sheen]:hover {
+    --sb-sheen-alpha: 0.34;
+  }
+
+  html[data-theme='dark'] [data-sb-sheen][data-sb-sheen]:hover {
+    --sb-sheen-alpha: 0.22;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   2) 页面进入过渡（来源：uiverse 的 fade-up 卡片）
+   只在路由切换、新页面根节点挂载时跑一次；4px + 淡入，不做横向滑动，
+   避免和 iOS 的返回手势语义冲突。
+   --------------------------------------------------------------------------- */
+@keyframes sb-page-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+#main-content > * {
+  animation: sb-page-in var(--sb-duration-move) var(--sb-ease-ios);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #main-content > * {
+    animation: none;
+  }
+
+  [data-sb-sheen][data-sb-sheen] {
+    background-image: none;
+    transition: none;
+  }
+}
