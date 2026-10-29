@@ -112,6 +112,8 @@ services:
     environment:
       SERVICE_NAME: bank-backend
       PORT: '8300'
+      SCHEDULER_ENABLED: 'true'
+      S1_URL: http://gateway:8201
     env_file:
     - .secrets/bank.env
     networks:
