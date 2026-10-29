@@ -4,10 +4,33 @@
 bank-net :8201 with ``SCHEDULER_SERVICE_TOKEN`` (caller kind S, no JWT). S1 never
 trusts callback amounts: it re-fetches the L3 event definition and re-evaluates
 the transfer on a fresh snapshot before authorizing execution.
+
+Concurrency is handled with a two-phase stale-claim pattern (no long-held locks
+on pooled connections):
+
+1. **Phase A — claim** (short, with advisory lock): atomically try to become the
+   exclusive handler for this event_id by inserting an ``IN_PROGRESS`` row into
+   ``event_decisions``.  If a terminal row already exists the stored result is
+   returned immediately.  If another callback's ``IN_PROGRESS`` row is fresh,
+   respond ``RETRYING``.  If the row is stale (older than the claim lease),
+   take it over.  The advisory lock is released and the connection returned
+   to the pool *before* any L3 HTTP call.
+
+2. **Phase B — evaluate** (no lock, no held connection): fetch the L3 event
+   definition, load or backfill the grant, re-evaluate on a fresh snapshot,
+   and call ``event_execute`` or ``event_block`` on L3.  All HTTP.
+
+3. **Phase C — finalize** (short, with advisory lock): in a second short
+   transaction, atomically promote the ``IN_PROGRESS`` row to the terminal
+   status (SUCCESS / BLOCKED / …) together with its audit record.  When L3
+   was unavailable during Phase B the claim row is **deleted** so the next
+   callback can try immediately (the handler returns ``RETRYING``).
 """
 
 from __future__ import annotations
 
+import enum
+from datetime import timedelta
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -47,6 +70,16 @@ _STAGES = (
 
 _TERMINAL_STATUSES = frozenset({"SUCCESS", "BLOCKED", "FAILED_INSUFFICIENT", "SKIPPED_REAPPROVAL"})
 
+# Stale-claim lease: an IN_PROGRESS row older than this can be taken over by the
+# next callback (the original handler is presumed dead).
+_CLAIM_LEASE = timedelta(minutes=5)
+
+
+class _ClaimResult(enum.StrEnum):
+    CLAIMED = "claimed"
+    TERMINAL = "terminal"
+    RETRYING = "retrying"
+
 
 class AuthorizeRequest(BaseModel):
     event_id: str
@@ -55,7 +88,19 @@ class AuthorizeRequest(BaseModel):
 
 
 def _retrying(event_id: str) -> dict[str, Any]:
-    return {"event_id": event_id, "status": "RETRYING", "code": Code.DEPENDENCY_UNAVAILABLE.value}
+    return {
+        "event_id": event_id,
+        "status": "RETRYING",
+        "code": Code.DEPENDENCY_UNAVAILABLE.value,
+    }
+
+
+def _execution_in_progress(event_id: str) -> dict[str, Any]:
+    return {
+        "event_id": event_id,
+        "status": "RETRYING",
+        "code": Code.EXECUTION_IN_PROGRESS.value,
+    }
 
 
 def _build_plan_draft(event: dict[str, Any]) -> PlanDraft:
@@ -90,6 +135,132 @@ def _build_plan_draft(event: dict[str, Any]) -> PlanDraft:
             "rationale": "scheduled transfer grant execution",
         }
     )
+
+
+# ── Phase A: claim ────────────────────────────────────────────────────────────
+
+
+async def _claim_event(db, event_id: str, wall_now) -> tuple[_ClaimResult, dict[str, Any] | None]:
+    """Atomically claim the event in a short locked transaction.
+
+    Returns (CLAIMED, None) when this callback is the exclusive handler.
+    Returns (TERMINAL, stored-dict) when a terminal decision already exists.
+    Returns (RETRYING, dict) when another callback is already handling it.
+
+    The advisory lock is released and the connection returned to the pool
+    before the caller continues — no lock is held across L3 HTTP calls.
+    """
+    lock_key = f"s1_event:{event_id}"
+    async with db.connect() as conn:
+        acquired = (
+            await conn.execute(
+                text("SELECT pg_try_advisory_lock(hashtext(:key))"),
+                {"key": lock_key},
+            )
+        ).scalar()
+        if not acquired:
+            return _ClaimResult.RETRYING, _execution_in_progress(event_id)
+
+        try:
+            row = (
+                await conn.execute(
+                    select(t.event_decisions).where(t.event_decisions.c.event_id == event_id)
+                )
+            ).first()
+
+            if row is not None:
+                if row.status in _TERMINAL_STATUSES:
+                    return _ClaimResult.TERMINAL, {
+                        "event_id": event_id,
+                        "status": row.status,
+                        "code": row.code,
+                    }
+
+                # IN_PROGRESS row exists — check staleness.
+                age = wall_now() - row.decided_at_wall
+                if age < _CLAIM_LEASE:
+                    return _ClaimResult.RETRYING, _execution_in_progress(event_id)
+
+                # Stale — take over.
+                await conn.execute(
+                    text(
+                        "UPDATE event_decisions SET decided_at_wall = :now "
+                        "WHERE event_id = :eid AND status = 'IN_PROGRESS'"
+                    ),
+                    {"now": wall_now(), "eid": event_id},
+                )
+            else:
+                # No row — insert a fresh claim.
+                await conn.execute(
+                    text(
+                        "INSERT INTO event_decisions (event_id, status, "
+                        "decided_at_wall) VALUES (:eid, 'IN_PROGRESS', :now)"
+                    ),
+                    {"eid": event_id, "now": wall_now()},
+                )
+
+            await conn.commit()
+            return _ClaimResult.CLAIMED, None
+
+        finally:
+            await conn.execute(
+                text("SELECT pg_advisory_unlock(hashtext(:key))"),
+                {"key": lock_key},
+            )
+
+
+# ── Phase C: finalize / release ───────────────────────────────────────────────
+
+
+async def _finalize_claim(
+    db,
+    event_id: str,
+    customer_id: str,
+    status: str,
+    code: str | None,
+    wall_now,
+    trace_id: str | None,
+) -> None:
+    """Promote the IN_PROGRESS row to a terminal status with audit in one
+    transaction.  Only succeeds if the row is still IN_PROGRESS."""
+    async with db.begin() as conn:
+        result = await conn.execute(
+            text(
+                "UPDATE event_decisions SET status = :status, code = :code, "
+                "decided_at_wall = :now "
+                "WHERE event_id = :eid AND status = 'IN_PROGRESS'"
+            ),
+            {"status": status, "code": code, "now": wall_now, "eid": event_id},
+        )
+        if result.rowcount == 0:
+            # Someone else already finalized or took over — nothing to do.
+            return
+
+        try:
+            await audit_append(
+                conn,
+                customer_id=customer_id,
+                event_type="SCHEDULE_RESULT",
+                payload={"event_id": event_id, "status": status, "code": code},
+                event_id=new_id("evt"),
+                trace_id=trace_id,
+                plan_id=None,
+                now_wall=wall_now,
+            )
+        except Exception as exc:
+            raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503, "audit write failed") from exc
+
+
+async def _release_claim(db, event_id: str) -> None:
+    """Delete the IN_PROGRESS claim row so the next callback can try."""
+    async with db.begin() as conn:
+        await conn.execute(
+            text("DELETE FROM event_decisions WHERE event_id = :eid AND status = 'IN_PROGRESS'"),
+            {"eid": event_id},
+        )
+
+
+# ── Phase B helpers (no lock, no held connection) ─────────────────────────────
 
 
 async def _re_evaluate(request: Request, event: dict[str, Any]) -> EvalContext:
@@ -174,13 +345,18 @@ async def _backfill_grant(db, l3, event: dict[str, Any], wall_now) -> dict[str, 
 
 async def _block(
     request: Request,
+    db,
     event: dict[str, Any],
     status: str,
     code: str,
     *,
     ctx: EvalContext | None,
 ) -> dict[str, Any]:
-    """Record a refusal on L3 and persist the terminal event decision + audit."""
+    """Record a refusal on L3 and persist the terminal event decision + audit.
+
+    When L3 is unreachable the IN_PROGRESS claim is released so the next
+    callback can try immediately — no stale-claim wait.
+    """
     app = request.app.state
     versions, clock_version = _pinned(ctx)
     try:
@@ -195,8 +371,17 @@ async def _block(
             },
         )
     except L3Error:
+        await _release_claim(db, event["event_id"])
         return _retrying(event["event_id"])
-    await _persist_decision(request, event["customer_id"], event["event_id"], status, code)
+    await _finalize_claim(
+        app.db,
+        event["event_id"],
+        event["customer_id"],
+        status,
+        code,
+        app.wall_now(),
+        getattr(request.state, "trace_id", None),
+    )
     return {"event_id": event["event_id"], "status": status, "code": code}
 
 
@@ -206,31 +391,7 @@ def _pinned(ctx: EvalContext | None) -> tuple[dict[str, Any], int]:
     return {}, 0
 
 
-async def _persist_decision(
-    request: Request, customer_id: str, event_id: str, status: str, code: str | None
-) -> None:
-    """Persist event_decisions + audit in one write transaction (no HTTP)."""
-    app = request.app.state
-    now = app.wall_now()
-    async with app.db.begin() as conn:
-        await conn.execute(
-            pg_insert(t.event_decisions)
-            .values(event_id=event_id, status=status, code=code, decided_at_wall=now)
-            .on_conflict_do_nothing()
-        )
-        try:
-            await audit_append(
-                conn,
-                customer_id=customer_id,
-                event_type="SCHEDULE_RESULT",
-                payload={"event_id": event_id, "status": status, "code": code},
-                event_id=new_id("evt"),
-                trace_id=getattr(request.state, "trace_id", None),
-                plan_id=None,
-                now_wall=now,
-            )
-        except Exception as exc:
-            raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503, "audit write failed") from exc
+# ── Route ─────────────────────────────────────────────────────────────────────
 
 
 @router.post("/internal/scheduled/authorize")
@@ -242,60 +403,42 @@ async def scheduled_authorize(request: Request, body: AuthorizeRequest) -> dict[
     app = request.app.state
     db = app.db
     l3 = app.l3
+    event_id = body.event_id
+    trace_id = getattr(request.state, "trace_id", None)
 
-    # Step 1: acquire an advisory lock on the event_id to serialize concurrent
-    # scheduler callbacks. Two callbacks for the same event_id racing through the
-    # non-locking terminal-decision check would both proceed to L3 event_execute;
-    # the advisory lock makes the check + execute atomic at the gateway layer.
-    lock_acquired = False
-    lock_key = f"s1_event:{body.event_id}"
-    lock_conn = await db.connect()
+    # ── Phase A: claim the event ──────────────────────────────────────────
+    claim_result, claim_payload = await _claim_event(db, event_id, app.wall_now)
+    if claim_result is _ClaimResult.TERMINAL:
+        return claim_payload  # type: ignore[return-value]
+    if claim_result is _ClaimResult.RETRYING:
+        return claim_payload  # type: ignore[return-value]
+    # claim_result is CLAIMED — we are the exclusive handler.
+
+    # ── Phase B: evaluate (all HTTP — no lock, no held connection) ────────
     try:
-        acquired = (
-            await lock_conn.execute(
-                text("SELECT pg_try_advisory_lock(hashtext(:key))"),
-                {"key": lock_key},
-            )
-        ).scalar()
-        if not acquired:
-            return {
-                "event_id": body.event_id,
-                "status": "RETRYING",
-                "code": Code.EXECUTION_IN_PROGRESS.value,
-            }
-        lock_acquired = True
-
-        # Double-check the terminal decision under the lock.
-        row = (
-            await lock_conn.execute(
-                select(t.event_decisions).where(t.event_decisions.c.event_id == body.event_id)
-            )
-        ).first()
-        if row is not None:
-            return {"event_id": body.event_id, "status": row.status, "code": row.code}
-
-        # Step 2: fetch the L3 event definition (never trust callback amounts). Any
-        # L3 transport failure is retryable: report RETRYING and persist nothing.
+        # Step 1: fetch the L3 event definition (never trust callback amounts).
         try:
-            event = await l3.event(body.event_id)
+            event = await l3.event(event_id)
         except L3Error:
-            return _retrying(body.event_id)
+            await _release_claim(db, event_id)
+            return _retrying(event_id)
 
         customer_id = event["customer_id"]
 
-        # Step 3: load the grant by instruction id; backfill from the L3 committed
-        # execution when missing.
+        # Step 2: load the grant by instruction id; backfill when missing.
         async with db.connect() as conn:
             grant = await _load_grant(conn, event["source_id"])
         if grant is None:
             try:
                 grant = await _backfill_grant(db, l3, event, app.wall_now)
             except L3Error:
-                return _retrying(body.event_id)
+                await _release_claim(db, event_id)
+                return _retrying(event_id)
             if grant is None:
-                # The source plan was never committed: no grant can exist, refuse.
+                await _release_claim(db, event_id)
                 return await _block(
                     request,
+                    db,
                     event,
                     "BLOCKED",
                     Code.SCHEDULED_BYPASS.value,
@@ -306,28 +449,32 @@ async def scheduled_authorize(request: Request, body: AuthorizeRequest) -> dict[
         if grant["status"] == "REVOKED" or grant["scope_hash"] != event["grant_scope_hash"]:
             return await _block(
                 request,
+                db,
                 event,
                 "BLOCKED",
                 Code.SCHEDULED_BYPASS.value,
                 ctx=None,
             )
 
-        # Step 4: re-evaluate the transfer on a fresh snapshot.
+        # Step 3: re-evaluate the transfer on a fresh snapshot.
         try:
             ctx = await _re_evaluate(request, event)
         except L3Error:
-            return _retrying(body.event_id)
+            await _release_claim(db, event_id)
+            return _retrying(event_id)
         if ctx.decision is None:
+            await _release_claim(db, event_id)
             raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503, "pipeline produced no decision")
 
         decision_value = ctx.decision.decision
         risk_value = ctx.decision.risk.value
 
-        # Step 5: decision → block/execute mapping (PRD §7.11).
+        # Step 4: decision → block/execute mapping (PRD §7.11).
         approved_risk = grant["approved_risk"] or "GREEN"
         if _RISK_ORDER[risk_value] > _RISK_ORDER.get(approved_risk, 0):
             return await _block(
                 request,
+                db,
                 event,
                 "SKIPPED_REAPPROVAL",
                 Code.SCHEDULED_REAPPROVAL_REQUIRED.value,
@@ -336,9 +483,21 @@ async def scheduled_authorize(request: Request, body: AuthorizeRequest) -> dict[
         if decision_value in (DecisionValue.DENY, DecisionValue.REPLAN):
             if any(f.code is Code.INSUFFICIENT_FUNDS for f in ctx.decision.findings):
                 return await _block(
-                    request, event, "FAILED_INSUFFICIENT", Code.INSUFFICIENT_FUNDS.value, ctx=ctx
+                    request,
+                    db,
+                    event,
+                    "FAILED_INSUFFICIENT",
+                    Code.INSUFFICIENT_FUNDS.value,
+                    ctx=ctx,
                 )
-            return await _block(request, event, "BLOCKED", Code.SCHEDULED_BYPASS.value, ctx=ctx)
+            return await _block(
+                request,
+                db,
+                event,
+                "BLOCKED",
+                Code.SCHEDULED_BYPASS.value,
+                ctx=ctx,
+            )
 
         # Otherwise the grant still holds: authorize execution on L3.
         evidence = ScheduledEvidence(
@@ -351,7 +510,7 @@ async def scheduled_authorize(request: Request, body: AuthorizeRequest) -> dict[
         versions, clock_version = _pinned(ctx)
         try:
             result = await l3.event_execute(
-                body.event_id,
+                event_id,
                 {
                     "expected_versions": versions,
                     "clock_version": clock_version,
@@ -360,18 +519,27 @@ async def scheduled_authorize(request: Request, body: AuthorizeRequest) -> dict[
                 },
             )
         except L3Error:
-            return _retrying(body.event_id)
+            await _release_claim(db, event_id)
+            return _retrying(event_id)
 
-        await _persist_decision(request, customer_id, body.event_id, "SUCCESS", None)
+        # ── Phase C: finalize ─────────────────────────────────────────────
+        await _finalize_claim(
+            db,
+            event_id,
+            customer_id,
+            "SUCCESS",
+            None,
+            app.wall_now(),
+            trace_id,
+        )
         return {
-            "event_id": body.event_id,
+            "event_id": event_id,
             "status": "SUCCESS",
             "instruction_run_id": result.get("instruction_run_id"),
         }
-    finally:
-        if lock_acquired:
-            await lock_conn.execute(
-                text("SELECT pg_advisory_unlock(hashtext(:key))"),
-                {"key": lock_key},
-            )
-        await lock_conn.close()
+
+    except Exception:
+        # On any unhandled error, release the claim so the event isn't
+        # orphaned.  The caller (scheduler) can retry.
+        await _release_claim(db, event_id)
+        raise
