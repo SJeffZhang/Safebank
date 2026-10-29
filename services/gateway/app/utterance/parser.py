@@ -445,9 +445,7 @@ def _clause(clause: str) -> Command | None:
                 )
             elif weekly:
                 transfer.tool = "schedule_transfer"
-                transfer.fields.update(
-                    period="WEEKLY", weekday=weekly["weekday"], continuous=True
-                )
+                transfer.fields.update(period="WEEKLY", weekday=weekly["weekday"], continuous=True)
             else:
                 transfer.future = True
             return transfer
