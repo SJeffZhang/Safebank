@@ -36,17 +36,16 @@ def mask(value):
     return "****" + value[-4:]
 
 
-def _risk_valid_until(value: str) -> datetime:
-    """Parse customers.risk_valid_until, which may be a date or a (possibly aware) datetime string.
+def _risk_still_valid(valid_until: str, sim_now: datetime) -> bool:
+    """Whether a stored risk_valid_until (date or aware datetime string) covers sim_now.
 
-    Naive values are interpreted in the business timezone so a date-only string like
-    "2027-09-01" means the start of that day in Asia/Shanghai, matching the old
-    ``date.fromisoformat(...) >= sim_now.date()`` semantics for the normal writer path.
+    Validity is by business date: the assessment is valid through the whole day it
+    expires on, so compare the Asia/Shanghai dates rather than instants.
     """
-    dt = datetime.fromisoformat(value)
+    dt = datetime.fromisoformat(valid_until)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=BUSINESS_TIMEZONE)
-    return dt
+    return _business_time(dt).date() >= _business_time(sim_now).date()
 
 
 def require_account(state, account_id, customer_id):
@@ -234,7 +233,7 @@ def read(state, tool, args, customer_id):
                 is_valid=(
                     customer.risk_level is not None
                     and customer.risk_valid_until is not None
-                    and _risk_valid_until(customer.risk_valid_until) >= state.sim_now
+                    and _risk_still_valid(customer.risk_valid_until, state.sim_now)
                 ),
                 valid_until=customer.risk_valid_until,
             ),
@@ -398,7 +397,7 @@ def read(state, tool, args, customer_id):
             is_valid=(
                 customer.risk_level is not None
                 and customer.risk_valid_until is not None
-                and _risk_valid_until(customer.risk_valid_until) >= state.sim_now
+                and _risk_still_valid(customer.risk_valid_until, state.sim_now)
             ),
         )
     elif tool == "detect_anomalies":
