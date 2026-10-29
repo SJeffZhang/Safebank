@@ -1,0 +1,124 @@
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--sb-z-scrim);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: var(--sb-overlay);
+  /* 背景只糊 2px：够分出层级，又不会把底下的金额糊成马赛克（iOS 的 sheet 也是这个尺度） */
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  animation: sb-fade var(--sb-duration-base) var(--sb-ease-ios);
+}
+
+.sheet {
+  position: relative;
+  z-index: var(--sb-z-sheet);
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: var(--sb-app-max);
+  max-height: 88vh;
+  max-height: 88dvh;
+  background: var(--sb-surface-raised);
+  border-radius: var(--sb-radius-xl) var(--sb-radius-xl) 0 0;
+  box-shadow: var(--sb-shadow-sheet);
+  outline: none;
+  /* 上浮用弹簧：过冲很小，但能在停下前"沉"一下，接近 iOS 的 sheet */
+  animation: sb-sheet-in var(--sb-duration-spring) var(--sb-ease-spring);
+}
+
+/* The dialog itself receives programmatic focus; the visible focus ring belongs to its controls. */
+.sheet:focus,
+.sheet:focus-visible {
+  outline: none;
+  box-shadow: var(--sb-shadow-sheet);
+}
+
+.grab {
+  width: 36px;
+  height: 4px;
+  margin: 8px auto 0;
+  border-radius: 2px;
+  background: var(--sb-line-strong);
+  flex: none;
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sb-space-3);
+  padding: var(--sb-space-3) var(--sb-space-5) var(--sb-space-2);
+  flex: none;
+}
+
+.heading {
+  flex: 1;
+  min-width: 0;
+}
+
+.title {
+  font-size: var(--sb-text-lg);
+  font-weight: var(--sb-weight-bold);
+  letter-spacing: -0.01em;
+  line-height: var(--sb-leading-snug);
+  color: var(--sb-ink);
+}
+
+.description {
+  margin-top: 4px;
+  font-size: var(--sb-text-xs);
+  line-height: var(--sb-leading-normal);
+  color: var(--sb-muted);
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--sb-space-2) var(--sb-space-5) var(--sb-space-4);
+}
+
+.footer {
+  flex: none;
+  display: flex;
+  gap: var(--sb-space-2);
+  padding: var(--sb-space-3) var(--sb-space-5) calc(var(--sb-space-4) + var(--sb-safe-bottom));
+  border-top: var(--sb-border-width) solid var(--sb-line);
+  background: var(--sb-surface-raised);
+}
+
+.footer > * {
+  flex: 1;
+}
+
+@keyframes sb-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes sb-sheet-in {
+  from {
+    transform: translateY(28px);
+    opacity: 0;
+  }
+}
+
+@media (min-width: 600px) {
+  .scrim {
+    align-items: center;
+    padding: var(--sb-space-6);
+  }
+
+  .sheet {
+    border-radius: var(--sb-radius-xl);
+    max-height: 84dvh;
+  }
+
+  .grab {
+    display: none;
+  }
+}

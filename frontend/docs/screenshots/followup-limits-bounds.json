@@ -1,0 +1,23 @@
+{
+  "height": 672,
+  "horizontalOverflow": false,
+  "rows": [
+    {
+      "currencyLeftOfValue": true,
+      "label": "单笔限额",
+      "sameLine": true,
+      "text": "¥5,000.00"
+    },
+    {
+      "currencyLeftOfValue": true,
+      "label": "日累计限额",
+      "sameLine": true,
+      "text": "¥20,000.00"
+    }
+  ],
+  "viewportHeight": 720,
+  "viewportWidth": 1280,
+  "width": 375,
+  "x": 452.5,
+  "y": 24
+}
