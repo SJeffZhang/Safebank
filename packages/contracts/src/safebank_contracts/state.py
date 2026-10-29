@@ -14,7 +14,7 @@ from pydantic import (
     model_validator,
 )
 
-from .base import Cents, Contract, FrozenMap, Timestamp
+from .base import Cents, Contract, Decimal4, FrozenMap, Timestamp
 from .enums import AccountType, CardStatus, Phase
 from .obligations import (
     InstructionTarget,
@@ -193,6 +193,34 @@ class RiskAssessmentRecord(Contract):
     plan_id: Id
 
 
+class FundOrderRecord(Contract):
+    """Internal counterpart of a fund order (PRD §8.3 fund_orders).
+
+    ``FundOrderView`` is the public, read-only projection (no internal account
+    or idempotency keys); this record carries the persistence fields the domain
+    needs to drive confirm/settle/expiry system events without re-deriving them.
+    """
+
+    id: Id
+    customer_id: Id
+    account_id: Id
+    product_id: Id
+    type: Literal["SUB", "RED"]
+    status: Literal["PENDING_CONFIRM", "PENDING_SETTLEMENT", "SETTLED", "FAILED", "EXPIRED"]
+    amount_cents: Cents
+    units: Decimal4
+    nav: Decimal4 | None
+    reserved_cost_cents: Cents
+    pending_transfer_id: Id | None
+    plan_id: Id
+    step_id: Id
+    trade_date: date
+    confirm_at: Timestamp | None
+    settle_at: Timestamp | None
+    expires_at: Timestamp | None
+    failure_code: str | None
+
+
 class StateScope(Contract):
     customer_ids: tuple[Id, ...]
     directory: FrozenMap[DirectoryEntry] = Field(default_factory=dict)
@@ -217,6 +245,7 @@ class BankState(Contract):
     products: tuple[ProductView, ...] = ()
     holdings: tuple[HoldingView, ...] = ()
     orders: tuple[FundOrderView, ...] = ()
+    fund_orders: tuple[FundOrderRecord, ...] = ()
     assessments: tuple[RiskAssessmentRecord, ...] = ()
     splits: tuple[SplitView, ...] = ()
     dataset_revision: str = "p1_core_v1"
@@ -322,13 +351,13 @@ FUTURE_EFFECTS = {
         "InsertFundOrder",
         __base__=Contract,
         type=(Literal["InsertFundOrder"], "InsertFundOrder"),
-        order=(FundOrderView, ...),
+        order=(FundOrderRecord, ...),
     ),
     "UpdateFundOrder": create_model(
         "UpdateFundOrder",
         __base__=Contract,
         type=(Literal["UpdateFundOrder"], "UpdateFundOrder"),
-        order=(FundOrderView, ...),
+        order=(FundOrderRecord, ...),
     ),
     "UpdateHolding": create_model(
         "UpdateHolding",

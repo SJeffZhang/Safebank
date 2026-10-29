@@ -1,0 +1,153 @@
+.button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sb-space-2);
+  min-height: var(--sb-touch-target);
+  padding: 0 var(--sb-space-5);
+  border: var(--sb-border-width) solid transparent;
+  border-radius: var(--sb-radius-md);
+  font-family: inherit;
+  font-size: var(--sb-text-md);
+  font-weight: var(--sb-weight-semibold);
+  line-height: 1;
+  text-align: center;
+  text-decoration: none;
+  /* 松手用弹簧缓动回位，按下用 90ms 立刻收紧——快按慢放，才像真实的物理按键 */
+  transition:
+    background var(--sb-duration-fast) var(--sb-ease-standard),
+    border-color var(--sb-duration-fast) var(--sb-ease-standard),
+    color var(--sb-duration-fast) var(--sb-ease-standard),
+    box-shadow var(--sb-duration-base) var(--sb-ease-ios),
+    transform var(--sb-duration-spring) var(--sb-ease-spring);
+}
+
+.button:active:not(:disabled) {
+  transform: scale(var(--sb-press-scale));
+  transition-duration: var(--sb-duration-press);
+  transition-timing-function: var(--sb-ease-ios);
+}
+
+/* 填充按钮按下时向内凹陷：内阴影 + 顶部高光消失，做出「压进屏幕」的层次 */
+.primary:active:not(:disabled),
+.secondary:active:not(:disabled),
+.danger:active:not(:disabled) {
+  box-shadow: var(--sb-shadow-press);
+}
+
+.button:disabled {
+  opacity: var(--sb-disabled-opacity);
+}
+
+.primary {
+  /* 极轻的顶部高光渐变：远看是纯石墨，近看有玻璃厚度 */
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0) 46%),
+    var(--sb-brand);
+  color: var(--sb-brand-contrast);
+  box-shadow:
+    var(--sb-shadow-gloss),
+    0 1px 1px rgba(17, 19, 24, 0.1);
+}
+
+/* 悬停只在真有指针的设备生效，避免平板上留下「粘住的」悬停色 */
+@media (hover: hover) and (pointer: fine) {
+  .primary:hover:not(:disabled) {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0) 46%),
+      var(--sb-brand-strong);
+  }
+}
+
+.secondary {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0) 55%),
+    var(--sb-surface-raised);
+  border-color: var(--sb-line-strong);
+  color: var(--sb-ink);
+  box-shadow: var(--sb-shadow-gloss);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .secondary:hover:not(:disabled) {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0) 55%),
+      var(--sb-surface);
+    border-color: color-mix(in srgb, var(--sb-line-strong) 70%, var(--sb-muted));
+  }
+}
+
+.ghost {
+  background: transparent;
+  color: var(--sb-ink-2);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ghost:hover:not(:disabled) {
+    background: var(--sb-hover);
+  }
+}
+
+.ghost:active:not(:disabled) {
+  background: var(--sb-pressed);
+  box-shadow: none;
+}
+
+.danger {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0) 46%),
+    var(--sb-danger);
+  color: var(--sb-on-danger);
+  box-shadow: var(--sb-shadow-gloss);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .danger:hover:not(:disabled) {
+    filter: brightness(0.94);
+  }
+}
+
+.fullWidth {
+  width: 100%;
+}
+
+.lg {
+  min-height: 52px;
+  font-size: var(--sb-text-lg);
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: sb-spin 700ms linear infinite;
+  flex: none;
+}
+
+.iconButton {
+  width: var(--sb-touch-target);
+  height: var(--sb-touch-target);
+  min-height: var(--sb-touch-target);
+  padding: 0;
+  border-radius: var(--sb-radius-md);
+  flex: none;
+}
+
+.iconButton.secondary {
+  background: var(--sb-surface-raised);
+}
+
+@keyframes sb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button:active:not(:disabled) {
+    transform: none;
+  }
+}

@@ -1,0 +1,19 @@
+node_modules/
+dist/
+.verify/
+*.local
+
+# 本地验证用的 headless 浏览器配置（含 cookie/历史，禁止入库）
+verify/
+
+# 编辑器与系统
+.DS_Store
+Thumbs.db
+*.log
+coverage/
+
+# 测试时使用的可写临时目录（WorkBuddy 沙箱下 TMP 常不可写）
+.tmp-vitest/
+.env
+.env.*
+!.env.example

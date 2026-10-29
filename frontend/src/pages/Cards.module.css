@@ -1,0 +1,125 @@
+.card {
+  border: var(--sb-border-width) solid var(--sb-line);
+  border-radius: var(--sb-radius-lg);
+  background: var(--sb-surface);
+  padding: var(--sb-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sb-space-2);
+  min-width: 0;
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sb-space-3);
+  min-width: 0;
+}
+
+.cardTitle {
+  font-size: var(--sb-text-lg);
+  font-weight: var(--sb-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.cardNumber {
+  font-size: var(--sb-text-md);
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+  color: var(--sb-ink-2);
+  overflow-wrap: anywhere;
+}
+
+.statusRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sb-space-2);
+  font-size: var(--sb-text-xs);
+  color: var(--sb-muted);
+}
+
+.statusBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--sb-radius-pill);
+  font-weight: var(--sb-weight-semibold);
+}
+
+.normalBadge {
+  background: var(--sb-success-soft);
+  color: var(--sb-success);
+}
+
+.warnBadge {
+  background: var(--sb-copper-soft);
+  color: var(--sb-copper-deep);
+}
+
+.lockBadge {
+  background: var(--sb-surface-sunken);
+  color: var(--sb-muted);
+}
+
+.lostBadge {
+  background: var(--sb-danger-soft);
+  color: var(--sb-danger);
+}
+
+.ops {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sb-space-2);
+  margin-top: var(--sb-space-2);
+}
+
+.opBtn {
+  min-height: 44px;
+  padding: 0 var(--sb-space-3);
+}
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: var(--sb-space-2);
+  padding: var(--sb-space-3) var(--sb-space-4);
+  border-radius: var(--sb-radius-md);
+  background: var(--sb-surface-sunken);
+  color: var(--sb-muted);
+  font-size: var(--sb-text-sm);
+}
+
+.bannerText {
+  flex: 1;
+  min-width: 0;
+}
+
+.alertBanner {
+  background: var(--sb-danger-soft);
+  color: var(--sb-danger);
+}
+
+.demoPanel {
+  margin-top: var(--sb-space-2);
+  padding: var(--sb-space-4);
+  border: 1px dashed var(--sb-gold-line);
+  border-radius: var(--sb-radius-lg);
+  background: var(--sb-surface);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sb-space-3);
+}
+
+.demoGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sb-space-2);
+}
+
+.demoNote {
+  font-size: var(--sb-text-2xs);
+  color: var(--sb-faint);
+}

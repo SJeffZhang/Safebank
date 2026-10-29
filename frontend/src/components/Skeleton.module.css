@@ -1,0 +1,27 @@
+.skeleton {
+  display: block;
+  background: linear-gradient(
+    90deg,
+    var(--sb-surface-sunken) 0%,
+    var(--sb-surface) 40%,
+    var(--sb-surface-sunken) 80%
+  );
+  background-size: 200% 100%;
+  animation: sb-shimmer 1400ms ease-in-out infinite;
+  border-radius: var(--sb-radius-xs);
+}
+
+.text {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+@keyframes sb-shimmer {
+  0% {
+    background-position: 120% 0;
+  }
+  100% {
+    background-position: -20% 0;
+  }
+}

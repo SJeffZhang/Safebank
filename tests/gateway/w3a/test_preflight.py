@@ -141,20 +141,13 @@ def test_irreversible_step_is_red_not_failure():
     )
 
 
-def test_unsupported_domain_write_is_tool_not_allowed():
-    from safebank_bankcore.ledger import replace_state
-    from safebank_contracts.views import ProductView
+def test_every_registered_write_tool_is_implemented_in_bankcore():
+    from safebank_bankcore.banking import SUPPORTED_WRITES
+    from safebank_contracts.tools import WRITE_ARGS
 
-    from services.gateway.app.l3.fake import FakeL3
-    from tests.contracts.samples import step as raw_step
-
-    product = ProductView.model_validate(
-        FakeL3._minimal_read_result("get_product") | {"id": "prd_a"}
-    )
-    state = replace_state(w3_state(), products=(product,))
-    subscribe = raw_step(
-        "subscribe_product", account_id="acc_a", product_id="prd_a", amount_cents=100
-    )
-    ctx = run_entity(build_ctx([subscribe], state=state))
-    run(ctx)
-    assert any(f.code is Code.TOOL_NOT_ALLOWED for f in ctx.findings)
+    # Every write tool in the shared contract must be implemented in bankcore so
+    # apply_plan (the single preflight/execution rule set) never falls through to
+    # TOOL_NOT_ALLOWED for a well-formed plan. An unknown tool name can no longer
+    # reach preflight at all: PlanDraft.steps is a discriminated union over exactly
+    # WRITE_ARGS, so the old "subscribe_product is unsupported" fixture is obsolete.
+    assert set(WRITE_ARGS) <= SUPPORTED_WRITES

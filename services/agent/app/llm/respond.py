@@ -9,6 +9,8 @@ adapter that:
 from __future__ import annotations
 
 import json
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from services.agent.app.graph.state import AgentContext, AgentState
 from services.agent.app.llm.fixed_templates import (
@@ -16,6 +18,7 @@ from services.agent.app.llm.fixed_templates import (
     executed_fallback,
     respond_template,
 )
+from services.agent.app.llm.verify import mask_long_numbers
 
 # ── Prompt templates (kept minimal — LLM fills real numbers from state) ─────
 
@@ -34,6 +37,17 @@ _REPLAN_USER_SYSTEM = (
     "用中文回复，不超过三句话。"
     "只能引用下面提供的提示标签，**禁止捏造**金额、账户或人名。"
 )
+
+# Deterministic plain-Chinese explanations for REPLAN-user finding codes.
+# Never print internal ids/tokens; unknown codes fall back to the generic line.
+_REPLAN_USER_CODE_LABELS: dict[str, str] = {
+    "INTENT_SCOPE_EXCEEDED": "计划中的付款账户、金额或收款人与您的原话不一致",
+    "ENTITY_UNSEEN": "计划引用了尚未读取到的账户、卡或收款人",
+    "UNKNOWN_SENSITIVE_ARG": "计划中出现了来源不明的敏感信息",
+    "TAINTED_SENSITIVE_ARG": "计划中的敏感信息来源不可信",
+    "INTENT_UNCLEAR": "未能明确您的操作意图",
+    "PAYEE_NOT_FOUND": "未找到您指定的收款人",
+}
 
 
 _ANALYSIS_SYSTEM = (
@@ -135,20 +149,10 @@ class RespondAdapter:
         return text or executed_failed_fallback()
 
     def _respond_replan_user(self, state: AgentState, decision: dict[str, object]) -> str:
-        """LLM explanation with replan_hints labels."""
-        utterance_text = _utterance_text(state)
-        hints = _replan_hint_labels(decision)
-        hints_block = "\n".join(f"- {h}" for h in hints) if hints else "（无具体提示）"
-
-        user_prompt = _build_prompt(
-            _REPLAN_USER_SYSTEM,
-            utterance=utterance_text,
-            replan_hints=hints_block,
-        )
-        text = self._call_llm(_REPLAN_USER_SYSTEM, user_prompt)
-        if not text:
-            return respond_template("REPLAN_USER")
-        return text
+        """Deterministic finding list (no LLM, no internal ids)."""
+        items = _replan_user_items(decision)
+        body = "\n".join(f"- {item}" for item in items)
+        return respond_template("REPLAN_USER") + "\n" + body
 
     def _respond_analysis(self, state: AgentState) -> str:
         """LLM analysis response: utterance + reads data summary."""
@@ -341,21 +345,373 @@ def _replan_hint_labels(decision: dict[str, object]) -> list[str]:
     return labels
 
 
+def _finding_codes(decision: dict[str, object]) -> list[str]:
+    """Extract finding codes from a decision (dict or model findings)."""
+    findings = decision.get("findings", ()) or ()
+    codes: list[str] = []
+    for f in findings:
+        code = f.get("code") if isinstance(f, dict) else getattr(f, "code", None)
+        if code:
+            codes.append(str(code))
+    return codes
+
+
+def _replan_user_items(decision: dict[str, object]) -> list[str]:
+    """Deterministic, de-duplicated explanation items for a REPLAN-user decision."""
+    items: list[str] = []
+    for code in _finding_codes(decision):
+        label = _REPLAN_USER_CODE_LABELS.get(code)
+        if label:
+            items.append(label)
+    items.extend(_replan_hint_labels(decision))
+    if not items:
+        items.append("请补充必要信息后重新发起")
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for item in items:
+        if item not in seen:
+            seen.add(item)
+            ordered.append(item)
+    return ordered
+
+
+# ── Reads summary (C1e fix: compact per-tool summaries, never drop data) ─────
+
+_SHANGHAI = ZoneInfo("Asia/Shanghai")
+
+# Key args shown alongside the tool name so the model can attribute each result
+# to the account / date window / product the read was actually about.
+_READ_ARG_KEYS = (
+    "account_id",
+    "product_id",
+    "product_ids",
+    "month",
+    "from_at",
+    "to_at",
+    "lookback_days",
+    "days",
+    "status",
+    "query",
+    "request_id",
+)
+
+# Overall budget for the whole reads section. Non-empty blocks are always kept
+# ahead of empty ones, so an empty read can never crowd out real data.
+_MAX_READS_SUMMARY_CHARS = 6000
+
+
+def _cents_yuan(value: object) -> str:
+    """Format integer cents as a yuan string (``123456`` → ``1234.56元``)."""
+    if value is None or value == "":
+        return ""
+    try:
+        cents = int(value)
+    except (TypeError, ValueError):
+        return str(value)
+    return f"{cents // 100}.{cents % 100:02d}元"
+
+
+def _bp_percent(value: object) -> str:
+    """Format basis points as a percentage (``4000`` → ``40.00%``)."""
+    if value is None or value == "":
+        return ""
+    try:
+        bp = int(value)
+    except (TypeError, ValueError):
+        return str(value)
+    return f"{bp / 100:.2f}%"
+
+
+def _fmt_ts(value: object) -> str:
+    """Format an ISO timestamp as Asia/Shanghai ``YYYY-MM-DD HH:MM`` (best effort)."""
+    if value is None or value == "":
+        return ""
+    text = str(value)
+    try:
+        dt = datetime.fromisoformat(text)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=_SHANGHAI)
+        return dt.astimezone(_SHANGHAI).strftime("%Y-%m-%d %H:%M")
+    except (ValueError, TypeError):
+        return text
+
+
+def _item_value(obj: object, key: str, default: object = None) -> object:
+    """Read *key* from a dict or object, returning *default* when absent."""
+    if obj is None:
+        return default
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    if hasattr(obj, key):
+        return getattr(obj, key, default)
+    return default
+
+
+def _as_list(value: object) -> list:
+    """Normalise a value that may be a list, tuple or None into a list."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple):
+        return list(value)
+    return [value]
+
+
+def _first_present(obj: object, *keys: str) -> object:
+    """First value among *keys* that is present (not None and not '')."""
+    for key in keys:
+        value = _item_value(obj, key)
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def _args_label(args: object) -> str:
+    """Render the key arguments of a read, e.g. ``(account_id=acc_zs_chk; from_at=…)``."""
+    if args is None:
+        return ""
+    parts: list[str] = []
+    for key in _READ_ARG_KEYS:
+        value = _item_value(args, key)
+        if value is None or value == "":
+            continue
+        if key in ("from_at", "to_at"):
+            parts.append(f"{key}={_fmt_ts(value)}")
+        else:
+            parts.append(f"{key}={value}")
+    if not parts:
+        return ""
+    return "(" + "; ".join(parts) + ")"
+
+
+def _summarise_anomalies(data: object) -> tuple[str, bool]:
+    """detect_anomalies → count + per item (date, counterparty, amount, codes)."""
+    items = _as_list(_item_value(data, "items"))
+    if not items:
+        return "无异常交易", False
+    lines = [f"共 {len(items)} 笔异常"]
+    for i, item in enumerate(items, 1):
+        tx = _item_value(item, "transaction") or {}
+        codes = _item_value(item, "codes") or []
+        amount = _cents_yuan(_item_value(tx, "amount_cents"))
+        occurred = _fmt_ts(_item_value(tx, "occurred_at"))
+        counterparty = _item_value(tx, "counterparty") or ""
+        category = _item_value(tx, "category") or ""
+        code_text = " ".join(str(c) for c in codes) if codes else ""
+        line = f"{i}. {occurred} {amount}"
+        if counterparty:
+            line += f" 「{counterparty}」"
+        if category:
+            line += f" [{category}]"
+        if code_text:
+            line += f" {code_text}"
+        lines.append(line)
+    return "\n".join(lines), True
+
+
+def _summarise_spending(data: object) -> tuple[str, bool]:
+    """get_spending_summary → totals, month-over-month and category shares."""
+    month = _item_value(data, "month") or ""
+    total = _item_value(data, "total_cents")
+    prev = _item_value(data, "previous_total_cents")
+    mom_bp = _item_value(data, "mom_change_bp")
+    lines: list[str] = []
+    if month:
+        lines.append(f"{month} 支出 {_cents_yuan(total)}")
+    else:
+        lines.append(f"支出 {_cents_yuan(total)}")
+    prev_text = _cents_yuan(prev)
+    if prev_text:
+        if mom_bp is not None and mom_bp != "":
+            lines.append(f"上月 {prev_text}，环比 {_bp_percent(mom_bp)}")
+        else:
+            lines.append(f"上月 {prev_text}")
+    categories = _as_list(_item_value(data, "categories"))
+    if categories:
+        cat_lines = []
+        for cat in categories:
+            name = _item_value(cat, "category") or "?"
+            amount = _cents_yuan(_item_value(cat, "amount_cents"))
+            share = _bp_percent(_item_value(cat, "share_bp"))
+            cat_lines.append(f"{name} {amount}（{share}）")
+        lines.append("分类：" + "；".join(cat_lines))
+    return "\n".join(lines), True
+
+
+def _summarise_transactions(data: object) -> tuple[str, bool]:
+    """get_transactions → totals, count and top items."""
+    items = _as_list(_item_value(data, "items"))
+    income = _item_value(data, "income_cents")
+    expense = _item_value(data, "expense_cents")
+    lines: list[str] = []
+    if income is not None and expense is not None:
+        lines.append(f"收入 {_cents_yuan(income)}，支出 {_cents_yuan(expense)}")
+    if not items:
+        if not lines:
+            return "无交易记录", False
+        return "\n".join(lines), False
+    lines.append(f"共 {len(items)} 笔")
+    for i, tx in enumerate(items, 1):
+        direction = _item_value(tx, "direction") or ""
+        amount = _cents_yuan(_item_value(tx, "amount_cents"))
+        occurred = _fmt_ts(_item_value(tx, "occurred_at"))
+        counterparty = _item_value(tx, "counterparty") or ""
+        memo = _item_value(tx, "memo") or ""
+        category = _item_value(tx, "category") or ""
+        line = f"{i}. {occurred} {direction} {amount}"
+        if counterparty:
+            line += f" 「{counterparty}」"
+        if category:
+            line += f" [{category}]"
+        if memo:
+            line += f" 备注「{memo}」"
+        lines.append(line)
+    return "\n".join(lines), True
+
+
+def _summarise_subscriptions(data: object) -> tuple[str, bool]:
+    """list/detect_subscriptions, upcoming_charges → merchant, amount, period, idle flag."""
+    items = _as_list(_item_value(data, "items"))
+    if not items:
+        total_monthly = _item_value(data, "total_monthly_cents")
+        total_annual = _item_value(data, "total_annual_cents")
+        monthly_text = _cents_yuan(total_monthly)
+        annual_text = _cents_yuan(total_annual)
+        if monthly_text or annual_text:
+            parts = []
+            if monthly_text:
+                parts.append(f"月费 {monthly_text}")
+            if annual_text:
+                parts.append(f"年费 {annual_text}")
+            return "；".join(parts), True
+        return "无订阅", False
+    lines = []
+    for i, sub in enumerate(items, 1):
+        merchant = _first_present(sub, "merchant_name", "name", "merchant_id") or "?"
+        amount_value = _first_present(sub, "amount_cents", "typical_amount_cents")
+        amount = _cents_yuan(amount_value)
+        period = _item_value(sub, "period") or ""
+        next_due = _fmt_ts(_first_present(sub, "next_due_at", "due_at", "last_charged_at"))
+        is_idle = _item_value(sub, "is_idle")
+        line = f"{i}. {merchant} {amount}"
+        if period:
+            line += f" {period}"
+        if next_due:
+            line += f" 下次 {next_due}"
+        if is_idle is True:
+            line += " [疑似闲置]"
+        lines.append(line)
+    return "\n".join(lines), True
+
+
+def _summarise_accounts(data: object) -> tuple[str, bool]:
+    """get_accounts → label, masked number and balance per account."""
+    accounts = _as_list(_item_value(data, "accounts"))
+    lines: list[str] = []
+    for i, acc in enumerate(accounts, 1):
+        name = _first_present(acc, "display_name", "type") or ""
+        masked = _item_value(acc, "account_no_masked") or ""
+        balance = _item_value(acc, "balance_cents")
+        line = f"{i}. {name}" if name else f"{i}."
+        if masked:
+            line += f" ({masked})"
+        if balance is not None:
+            line += f" 余额 {_cents_yuan(balance)}"
+        lines.append(line)
+    if not lines:
+        return "无账户", False
+    outflow = _item_value(data, "daily_outflow_cents")
+    if outflow is not None:
+        lines.append(f"当日已转出 {_cents_yuan(outflow)}")
+    return "\n".join(lines), True
+
+
+def _summarise_cards(data: object) -> tuple[str, bool]:
+    """get_cards → last4, status and limits per card."""
+    items = _as_list(_item_value(data, "items"))
+    if not items:
+        return "无卡片", False
+    lines: list[str] = []
+    for i, card in enumerate(items, 1):
+        last4 = _item_value(card, "last4") or ""
+        status = _item_value(card, "status") or ""
+        single = _item_value(card, "single_limit_cents")
+        daily = _item_value(card, "daily_limit_cents")
+        line = f"{i}. 尾号{last4}" if last4 else f"{i}."
+        if status:
+            line += f" {status}"
+        if single is not None:
+            line += f" 单笔限额 {_cents_yuan(single)}"
+        if daily is not None:
+            line += f" 日限额 {_cents_yuan(daily)}"
+        lines.append(line)
+    return "\n".join(lines), True
+
+
+def _summarise_other(data: object) -> tuple[str, bool]:
+    """Fallback: raw JSON with a generous cap."""
+    text = json.dumps(data, ensure_ascii=False, default=str)
+    return _safe_truncate(text, 2000), True
+
+
+def _summarise_tool(tool: str, data: object) -> tuple[str, bool]:
+    """Dispatch a read result to its compact summariser (``(text, has_data)``)."""
+    if data is None:
+        return "(无数据)", False
+    if tool == "detect_anomalies":
+        return _summarise_anomalies(data)
+    if tool == "get_spending_summary":
+        return _summarise_spending(data)
+    if tool == "get_transactions":
+        return _summarise_transactions(data)
+    if tool in ("list_subscriptions", "detect_subscriptions", "upcoming_charges"):
+        return _summarise_subscriptions(data)
+    if tool == "get_accounts":
+        return _summarise_accounts(data)
+    if tool == "get_cards":
+        return _summarise_cards(data)
+    return _summarise_other(data)
+
+
+def _join_capped(blocks: list[tuple[str, bool]]) -> str:
+    """Join blocks under the size cap, keeping non-empty blocks ahead of empty ones."""
+    non_empty = [block for block, has_data in blocks if has_data]
+    empty = [block for block, has_data in blocks if not has_data]
+    parts: list[str] = []
+    used = 0
+    for block in non_empty + empty:
+        size = len(block)
+        if used + size > _MAX_READS_SUMMARY_CHARS:
+            remaining = _MAX_READS_SUMMARY_CHARS - used
+            if not parts and remaining > 20:
+                parts.append(_safe_truncate(block, remaining))
+            break
+        parts.append(block)
+        used += size
+    return "\n\n".join(parts)
+
+
 def _reads_summary(state: AgentState) -> str:
-    """Build a compact summary of reads data for the analysis prompt."""
+    """Build a compact, per-tool summary of reads data for the analysis prompt.
+
+    Unlike the old raw-truncated-JSON version, this keeps the tool's key
+    arguments (account, date window, product) and summarises each known tool's
+    payload so anomaly items, category shares and subscription rows survive.
+    """
     reads = state.get("reads") or []
     if not reads:
         return "（无读取数据）"
-    parts: list[str] = []
+    blocks: list[tuple[str, bool]] = []
     for r in reads:
         tool = getattr(r, "tool", "") or ""
         data = getattr(r, "data", None)
-        if data is not None:
-            text = json.dumps(data, ensure_ascii=False, default=str)
-            parts.append(f"{tool}: {_safe_truncate(text, 200)}")
-        else:
-            parts.append(f"{tool}: (无数据)")
-    return "\n".join(parts)
+        args = getattr(r, "args", None)
+        text, has_data = _summarise_tool(tool, data)
+        label = _args_label(args)
+        header = f"{tool}{label}" if label else tool
+        blocks.append((f"{header}:\n{text}", has_data))
+    return mask_long_numbers(_join_capped(blocks))
 
 
 def _safe_truncate(text: str, max_len: int) -> str:

@@ -49,17 +49,36 @@ _UNTRUSTED_FIELDS: frozenset[str] = frozenset(
     }
 )
 
-# Read-tool → card-type mapping
+# Read-tool → card-type mapping (keys are real tools in READ_ARGS, PRD §9.3)
 _READ_TOOL_CARD_TYPE: dict[str, _CardType] = {
     "get_accounts": "ACCOUNT",
-    "get_balance_history": "TRANSACTIONS",
     "get_transactions": "TRANSACTIONS",
+    "get_spending_summary": "TRANSACTIONS",
     "get_cards": "CARD",
-    "get_subscriptions": "SUBSCRIPTIONS",
-    "get_products": "PRODUCTS",
-    "get_portfolio": "HOLDINGS",
-    "get_anomalies": "ANOMALIES",
+    "list_subscriptions": "SUBSCRIPTIONS",
+    "upcoming_charges": "SUBSCRIPTIONS",
+    "detect_subscriptions": "SUBSCRIPTIONS",
+    "list_products": "PRODUCTS",
+    "compare_products": "PRODUCTS",
+    "get_product": "PRODUCTS",
+    "get_holdings": "HOLDINGS",
+    "detect_anomalies": "ANOMALIES",
 }
+
+# Read tools with no suitable card type (payees / scheduled / split / risk profile).
+# They are deliberately skipped — their data reaches the user through the
+# assistant reply, not a card.  Kept as an explicit set so the mapping guard can
+# prove every real read tool is either mapped or intentionally skipped.
+_SKIPPED_READ_TOOLS: frozenset[str] = frozenset(
+    {
+        "list_payees",
+        "list_scheduled",
+        "get_split_status",
+        "get_risk_questionnaire",
+        "get_risk_profile",
+        "get_profile",
+    }
+)
 
 
 class CardAction(Contract):

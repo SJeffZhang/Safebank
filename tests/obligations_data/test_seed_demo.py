@@ -27,6 +27,7 @@ COUNTED_TABLES = (
     "cards",
     "payees",
     "merchants",
+    "holdings",
     "transfers",
     "transactions",
     "merchant_billing",
@@ -530,6 +531,167 @@ def test_seed_demo_backfills_mandates_for_existing_customers(obligations_db):
             assert tuple(balances_after) == tuple(balances_before)
             assert await conn.scalar(text("SELECT count(*) FROM transactions")) == txns_before
             assert await conn.scalar(text("SELECT count(*) FROM transfers")) == transfers_before
+
+        await admin.dispose()
+
+    asyncio.run(check())
+
+
+def test_seed_demo_installs_lisi_holding_and_risk_dates(obligations_db):
+    """李四's 安心货币 holding and PRD risk-assessment dates land on first install."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+
+        async with admin.begin() as conn:
+            assert await seed_core(conn, KEY) is True
+            summary = await install_demo(conn, KEY)
+        assert summary["added_holdings"] == 1
+
+        async with admin.connect() as conn:
+            row = (
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT customer_id, account_id, product_id, units, reserved_units, "
+                            "cost_cents, reserved_cost_cents FROM holdings"
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            assert row["customer_id"] == "cus_ls"
+            assert row["account_id"] == "acc_ls_chk"
+            assert row["product_id"] == "prd_mmf"
+            assert row["units"] == Decimal("10000.0000")
+            assert row["reserved_units"] == Decimal("0.0000")
+            assert row["cost_cents"] == 1000000
+            assert row["reserved_cost_cents"] == 0
+
+            ls = (
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT risk_level, risk_assessed_at, risk_valid_until "
+                            "FROM customers WHERE id='cus_ls'"
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            assert ls["risk_level"] == 3
+            assert ls["risk_assessed_at"].date() == date(2026, 3, 1)
+            assert ls["risk_valid_until"] == "2027-03-01T10:00:00+08:00"
+            sb = (
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT risk_level, risk_assessed_at, risk_valid_until "
+                            "FROM customers WHERE id='cus_sb'"
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            assert sb["risk_level"] == 2
+            assert sb["risk_assessed_at"].date() == date(2026, 5, 1)
+            assert sb["risk_valid_until"] == "2027-05-01T10:00:00+08:00"
+
+            counts_after_first = await _row_counts(conn)
+
+        async with admin.begin() as conn:
+            second = await install_demo(conn, KEY)
+        assert second["added_holdings"] == 0
+        assert second["backfilled_holdings"] == 0
+        assert second["synced_risk_assessments"] == 0
+        async with admin.connect() as conn:
+            assert await _row_counts(conn) == counts_after_first
+
+        await admin.dispose()
+
+    asyncio.run(check())
+
+
+def test_seed_demo_backfills_holding_and_syncs_risk_dates_for_existing_customers(obligations_db):
+    """Rerunning the seed restores a missing holding and converges risk dates."""
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+
+        async with admin.begin() as conn:
+            assert await seed_core(conn, KEY) is True
+            await install_demo(conn, KEY)
+
+        async with admin.connect() as conn:
+            balances_before = (
+                await conn.execute(
+                    text(
+                        "SELECT sum(credits_posted_cents), sum(debits_posted_cents), "
+                        "sum(credits_pending_cents), sum(debits_pending_cents) FROM accounts"
+                    )
+                )
+            ).one()
+            txns_before = await conn.scalar(text("SELECT count(*) FROM transactions"))
+            transfers_before = await conn.scalar(text("SELECT count(*) FROM transfers"))
+
+        # Simulate an older seed: no 李四 holding, stale risk dates.
+        async with admin.begin() as conn:
+            await conn.execute(text("DELETE FROM holdings"))
+            await conn.execute(
+                text(
+                    "UPDATE customers SET risk_assessed_at='2026-09-01T10:00:00+08:00', "
+                    "risk_valid_until='2027-09-01T10:00:00+08:00' "
+                    "WHERE id IN ('cus_ls', 'cus_sb')"
+                )
+            )
+
+        async with admin.begin() as conn:
+            summary = await install_demo(conn, KEY)
+        assert summary["added_customers"] == 0
+        assert summary["backfilled_holdings"] == 1
+        assert summary["synced_risk_assessments"] == 2
+
+        async with admin.connect() as conn:
+            row = (
+                (
+                    await conn.execute(
+                        text("SELECT customer_id, product_id, units, cost_cents FROM holdings")
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            assert (row["customer_id"], row["product_id"]) == ("cus_ls", "prd_mmf")
+            assert row["units"] == Decimal("10000.0000")
+            assert row["cost_cents"] == 1000000
+            assert (
+                await conn.scalar(text("SELECT risk_valid_until FROM customers WHERE id='cus_ls'"))
+                == "2027-03-01T10:00:00+08:00"
+            )
+            assert (
+                await conn.scalar(text("SELECT risk_valid_until FROM customers WHERE id='cus_sb'"))
+                == "2027-05-01T10:00:00+08:00"
+            )
+
+            balances_after = (
+                await conn.execute(
+                    text(
+                        "SELECT sum(credits_posted_cents), sum(debits_posted_cents), "
+                        "sum(credits_pending_cents), sum(debits_pending_cents) FROM accounts"
+                    )
+                )
+            ).one()
+            assert tuple(balances_after) == tuple(balances_before)
+            assert await conn.scalar(text("SELECT count(*) FROM transactions")) == txns_before
+            assert await conn.scalar(text("SELECT count(*) FROM transfers")) == transfers_before
+
+        async with admin.begin() as conn:
+            third = await install_demo(conn, KEY)
+        assert third["backfilled_holdings"] == 0
+        assert third["synced_risk_assessments"] == 0
 
         await admin.dispose()
 

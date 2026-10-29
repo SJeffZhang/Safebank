@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import ValidationError
-from safebank_contracts.plan import PlanBody, PlanDraft
+from safebank_contracts.plan import ArgSource, PlanBody, PlanDraft, ReadSource
 from safebank_contracts.schema import from_strict_plan, plan_tool
 
 from services.agent.app.graph.state import AgentContext, AgentState, UtteranceKind
@@ -43,14 +44,38 @@ _SYSTEM = (
     "不要自填 request_id/session_id/utterance_ids；这些由代码补齐。"
     "用户未明确提出的可选参数（memo、phone、alias、end_at）一律用哨兵 __NULL__，"
     "不得从收款人名、其他文字或上下文推断填充。"
-    "付款账户未指定时，若已读数据中恰好有一个可用付款账户则用其 id 并以 read 来源引用；"
-    "多个或零个账户时不要编造、不要空串。"
+    "付款账户未指定时，从已读账户数据中选恰好一个活期账户（type=CHECKING）作为付款账户，"
+    "并用 read 来源引用其 id；没有活期账户或存在多个活期账户时不要猜测付款账户。"
+    "用户明确指定了付款账户（如「从储蓄账户」）时，保留用户指定的账户。"
     "update_card_controls 的渠道开关（online/overseas/atm/quickpass）若从用户原话取值，"
     "utterance span 必须恰好对应动作词本身（关闭/关掉/开启/打开/开通），"
     "不要包含渠道名或其他文字；例如「关掉我卡的线上支付」中 online=false 的 span 只对应"
     "「关掉」两个字（[0,2)），「开通境外支付」中 overseas=true 的 span 只对应「开通」；"
     "方向必须一致：true 用开类动词（开启/打开/开通），false 用关类动词（关闭/关掉）。"
     "update_card_controls 的渠道参数值为 KEEP 时不要声明来源。"
+    "cancel_subscription 的 instruction_id 必须从已读数据（list_subscriptions 或 "
+    "detect_subscriptions 的 items 里的 instruction_id，以 si_ 开头）用 read 来源引用，"
+    "不能自己编造或从原话直接取值。"
+    "订阅组合（找出没用的订阅取消掉并定时把省下的钱转走）里，schedule_transfer 的 "
+    "amount_cents 必须用 derived 来源且 template 只能是 cancelled_monthly_fees，"
+    "inputs 只能引用订阅读取（read）或取消步骤（step），不得引用原话字面金额；"
+    "付款/收款账户仍用 read 来源，first_run_at 按用户说的日期（如每月1号）。"
+    "账单分析类问题（月度/商户账单、分类占比与环比、异常交易、消费报告）是只读任务，"
+    "不要生成任何写计划；需要的数据用 gather 阶段读取，计划节点只负责整理或直接说明"
+    "没有可执行的写操作。"
+    "理财操作：subscribe_product 的 product_id 必须从已读产品数据（list_products 或 "
+    "get_product 的 items/id，以 prd_ 开头）用 read 来源引用，不能自己编造或从原话取值；"
+    "account_id 选自己名下唯一活期账户（type=CHECKING，acc_ 开头）并用 read 来源引用，"
+    "amount_cents 来自用户原话或 derived 的 available_less_7d_charges，"
+    "不要自行判断适当性（适当性由网关判定）。"
+    "redeem_product 的 units（赎回份额）必须从 get_holdings 的 holdings 里用 read 来源引用，"
+    "不能自己编造份额；product_id 同样从已读产品数据引用。"
+    "产品相关问题（产品列表/详情/比较）是只读任务，用 list_products / compare_products / "
+    "get_product 读取，不要生成任何写计划。"
+    "X-3「把下周要扣的会员费留够，剩下的钱买稳健型理财」：先读 upcoming_charges、"
+    "list_products 与 get_risk_profile；subscribe_product 的 amount_cents 用 derived 且 "
+    "template 只能是 available_less_7d_charges；当存在多个稳健/平衡类产品时不要自行挑一个"
+    "产品，把 product_id 留空交由澄清，让用户选择具体产品。"
 )
 
 
@@ -90,7 +115,213 @@ _PARAM_LABELS: dict[str, str] = {
     "account_no": "收款账号",
     "bank_name": "开户银行",
     "amount_cents": "转账金额",
+    "from_account_id": "付款账户",
 }
+
+# Tools whose from_account_id obeys the default CHECKING rule.
+_DEFAULT_SOURCE_TOOLS: frozenset[str] = frozenset({"transfer", "schedule_transfer"})
+
+# Words that mean the user explicitly named a source account type.
+_NAMED_SOURCE_KEYWORDS: tuple[str, ...] = ("储蓄", "活期", "支票", "定期")
+
+# Source-anchored phrasings: the keyword must be introduced by a source
+# preposition — "从<类型>(账户|卡)?" directly, or "用<类型>(账户|卡)? … 转/付/汇"
+# for the "用" form.  This is a closed list: other explicit phrasings (e.g.
+# "从主账户转") are NOT detected, per review P2b (documented, accepted).
+_NAMED_SOURCE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"从(?:我的)?(?:储蓄|活期|支票|定期)(?:账户|卡)?"),
+    re.compile(r"用(?:我的)?(?:储蓄|活期)(?:账户|卡)?[^，。；！？]*(?:转|付|汇)"),
+)
+
+
+def _negated_before(text: str, start: int) -> bool:
+    """True when the match at *start* is immediately preceded by a negation."""
+    prefix = text[max(0, start - 2) : start]
+    return any(marker in prefix for marker in ("不", "别", "勿", "莫"))
+
+
+def _current_turn_text(state: AgentState) -> str:
+    """Text of the current turn's typed utterance (last typed ``UtteranceRef``).
+
+    Earlier turns' typed utterances, hints, actions and context are skipped so a
+    keyword in a previous turn does not mark this turn's source as "named".
+    """
+    for utterance in reversed(state.get("utterances", [])):
+        if getattr(utterance, "kind", None) == UtteranceKind.TYPED:
+            return getattr(utterance, "text", "") or ""
+    return ""
+
+
+def _user_named_source_account(state: AgentState) -> bool:
+    """True if the CURRENT turn's utterance names a source account type.
+
+    Only source-anchored phrasings count ("从储蓄…", "用活期…转…"); the keyword
+    as a target ("转到他的活期"), inside a payee name, negated ("不要用活期"),
+    or in an earlier turn does not.
+    """
+    text = _current_turn_text(state)
+    for pattern in _NAMED_SOURCE_PATTERNS:
+        for match in pattern.finditer(text):
+            if not _negated_before(text, match.start()):
+                return True
+    return False
+
+
+def _checking_accounts(state: AgentState) -> list[tuple[str, str, str]]:
+    """Distinct CHECKING accounts across get_accounts reads as (id, source_ref, pointer).
+
+    De-duplicated by account id: the same single CHECKING account appearing in
+    several reads counts once, so it does not trigger a spurious clarification.
+    """
+    found: dict[str, tuple[str, str, str]] = {}
+    for read in state.get("reads", []):
+        if getattr(read, "tool", "") != "get_accounts":
+            continue
+        data = getattr(read, "data", None) or {}
+        accounts = data.get("accounts", []) if isinstance(data, dict) else []
+        for index, account in enumerate(accounts):
+            if not isinstance(account, dict) or account.get("type") != "CHECKING":
+                continue
+            account_id = account.get("id") or ""
+            if not account_id:
+                continue
+            found.setdefault(account_id, (account_id, read.source_ref, f"/accounts/{index}/id"))
+    return list(found.values())
+
+
+def _default_source_account_overrides(body: PlanBody, state: AgentState) -> PlanBody:
+    """Apply the default source-account rule (PRD §7.6).
+
+    When the user named no source account and exactly one CHECKING account is
+    available, point from_account_id at it with a read source.  Multiple
+    CHECKING accounts cannot be disambiguated → ExhaustedClarify.  Zero
+    CHECKING accounts (or a named source) leave the plan untouched for L2.
+    """
+    if "transfer" not in body.intents and "schedule_transfer" not in body.intents:
+        return body
+    if _user_named_source_account(state):
+        return body
+    checking = _checking_accounts(state)
+    has_from = any(
+        step.tool in _DEFAULT_SOURCE_TOOLS and step.args.from_account_id is not None
+        for step in body.steps
+    )
+    if not has_from or not checking:
+        return body
+    if len(checking) > 1:
+        raise ExhaustedClarify(["from_account_id"], ["付款账户"])
+    account_id, source_ref, pointer = checking[0]
+    new_steps = []
+    for step in body.steps:
+        if step.tool in _DEFAULT_SOURCE_TOOLS and step.args.from_account_id is not None:
+            args = step.args.model_copy(update={"from_account_id": account_id})
+            sources = [s for s in step.arg_sources if s.param != "from_account_id"]
+            sources.append(
+                ArgSource(
+                    param="from_account_id",
+                    source=ReadSource(kind="read", ref=source_ref, pointer=pointer),
+                )
+            )
+            new_steps.append(step.model_copy(update={"args": args, "arg_sources": tuple(sources)}))
+        else:
+            new_steps.append(step)
+    return body.model_copy(update={"steps": tuple(new_steps)})
+
+
+# Read tools that can provide a real product id for wealth plans.
+_WEALTH_PRODUCT_READS: frozenset[str] = frozenset({"list_products", "get_product"})
+
+# risk_label values the gateway treats as 稳健/平衡-class for X-3 disambiguation.
+_WEALTH_STEADY_LABELS: frozenset[str] = frozenset({"稳健", "平衡"})
+
+
+def _wealth_product_clarify(body: PlanBody, state: AgentState) -> PlanBody:
+    """X-3: when the user asks for 稳健型理财 but several 稳健/平衡 products
+    exist, L1 must not silently pick one — surface a clarification instead.
+
+    Only fires for subscribe_product plans whose current turn explicitly says
+    ``稳健型`` and whose list_products reads contain more than one 稳健/平衡
+    product.  The exact product choice is the user's; suitability is decided
+    by the gateway, never by L1.
+    """
+    if not any(step.tool == "subscribe_product" for step in body.steps):
+        return body
+    if "稳健型" not in _current_turn_text(state):
+        return body
+    steady_ids: set[str] = set()
+    for read in state.get("reads", []):
+        if getattr(read, "tool", "") != "list_products":
+            continue
+        data = getattr(read, "data", None) or {}
+        items = data.get("items", []) if isinstance(data, dict) else []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if item.get("risk_label") in _WEALTH_STEADY_LABELS:
+                steady_ids.add(item.get("id") or "")
+    if len(steady_ids) > 1:
+        raise ExhaustedClarify(["product_id"], ["理财产品"])
+    return body
+
+
+def _wealth_source_problems(draft: PlanDraft, state: AgentState) -> list[str]:
+    """Locally verifiable source rules for subscribe_product / redeem_product.
+
+    - subscribe_product.product_id must be read-sourced from list_products /
+      get_product; amount must come from the user's words or the
+      available_less_7d_charges derived template (never a read/step/hint/action
+      source or the wrong derived template).
+    - redeem_product.units must be read-sourced from get_holdings (never
+      invented from the utterance or another step).
+
+    These are bounded local checks, not authorization — L2 re-derives sources.
+    """
+
+    read_by_ref = {read.source_ref: read for read in state.get("reads", [])}
+    problems: list[str] = []
+    for index, step in enumerate(draft.steps):
+        sources = {source.param: source for source in step.arg_sources}
+        if step.tool == "subscribe_product":
+            product = sources.get("product_id")
+            if product is None or product.source.kind != "read":
+                problems.append(
+                    f"steps[{index}].product_id: 必须从已读产品数据（list_products/get_product）"
+                    "用 read 来源引用，不能自填或从原话取值"
+                )
+            else:
+                read = read_by_ref.get(product.source.ref)
+                if read is None or read.tool not in _WEALTH_PRODUCT_READS:
+                    problems.append(
+                        f"steps[{index}].product_id: read 来源必须指向 list_products 或 get_product"
+                    )
+            amount = sources.get("amount_cents")
+            if amount is not None:
+                kind = amount.source.kind
+                if kind == "derived":
+                    if amount.source.template != "available_less_7d_charges":
+                        problems.append(
+                            f"steps[{index}].amount_cents: 申购金额的 derived template 只能是 "
+                            "available_less_7d_charges"
+                        )
+                elif kind != "utterance":
+                    problems.append(
+                        f"steps[{index}].amount_cents: 申购金额只能来自用户原话或 "
+                        "available_less_7d_charges 派生模板"
+                    )
+        elif step.tool == "redeem_product":
+            units = sources.get("units")
+            if units is None or units.source.kind != "read":
+                problems.append(
+                    f"steps[{index}].units: 赎回份额必须从 get_holdings 的 holdings 里"
+                    "用 read 来源引用，不能自己编造或从原话取值"
+                )
+            else:
+                read = read_by_ref.get(units.source.ref)
+                if read is None or read.tool != "get_holdings":
+                    problems.append(
+                        f"steps[{index}].units: 赎回份额的 read 来源必须指向 get_holdings"
+                    )
+    return problems
 
 
 def _exhausted_clarify_fields(
@@ -366,6 +597,31 @@ def _channel_source_problems(draft: PlanDraft, state: AgentState) -> list[str]:
     return problems
 
 
+def _derived_schedule_problems(draft: PlanDraft, state: AgentState) -> list[str]:
+    """Reject derived-template schedule amounts that smuggle a literal utterance amount.
+
+    ``cancelled_monthly_fees`` means the amount comes from the cancelled subscriptions'
+    monthly fees, not from a figure the user typed.  A single param can only carry one
+    top-level source, so a literal amount would have to be smuggled inside
+    ``DerivedSource.inputs`` as an utterance leaf — reject it locally.
+    """
+
+    problems: list[str] = []
+    for index, step in enumerate(draft.steps):
+        if step.tool != "schedule_transfer":
+            continue
+        for source in step.arg_sources:
+            if source.param != "amount_cents" or source.source.kind != "derived":
+                continue
+            for leaf in source.source.inputs:
+                if leaf.kind == "utterance":
+                    problems.append(
+                        f"steps[{index}].amount_cents: cancelled_monthly_fees 派生金额不能携带"
+                        "原话字面金额来源，inputs 只能引用订阅读取（read）或取消步骤（step）"
+                    )
+    return problems
+
+
 def _reference_problems(draft: PlanDraft, state: AgentState) -> list[str]:
     """Local, bounded, generic reference-integrity checks (C1b boundary, not authorization).
 
@@ -448,12 +704,23 @@ class PlanAdapter:
             try:
                 args = single_tool_call(message, _PLAN_TOOL)
                 body = PlanBody.model_validate(from_strict_plan(args))
+                body = _default_source_account_overrides(body, state)
+                body = _wealth_product_clarify(body, state)
                 draft = self._to_draft(body, state)
                 ref_problems = _reference_problems(draft, state)
                 val_problems = _required_value_problems(draft, state)
                 sem_problems = _semantic_problems(draft, state)
                 ch_problems = _channel_source_problems(draft, state)
-                all_problems = ref_problems + val_problems + sem_problems + ch_problems
+                der_problems = _derived_schedule_problems(draft, state)
+                wealth_problems = _wealth_source_problems(draft, state)
+                all_problems = (
+                    ref_problems
+                    + val_problems
+                    + sem_problems
+                    + ch_problems
+                    + der_problems
+                    + wealth_problems
+                )
                 if all_problems:
                     raise ReferenceError(all_problems)
                 return draft
@@ -461,7 +728,13 @@ class PlanAdapter:
                 if attempt == self._max_retries:
                     # If ALL remaining problems are user-only missing params,
                     # produce a clarification instead of propagating the error.
-                    if not ref_problems and not sem_problems and not ch_problems:
+                    if (
+                        not ref_problems
+                        and not sem_problems
+                        and not ch_problems
+                        and not der_problems
+                        and not wealth_problems
+                    ):
                         fields = _exhausted_clarify_fields(val_problems)
                         if fields is not None:
                             labels = [_PARAM_LABELS[f] for f in fields]
