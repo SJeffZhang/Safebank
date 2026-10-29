@@ -127,9 +127,7 @@ async def build_app(config: AppConfig, *, truncate: bool = True) -> TestApp:
 
     db = engine(settings.database_url, poolclass=NullPool)
     fake = FakeL3(token=settings.gateway_service_token)
-    l3 = L3Client(
-        settings.l3_base_url, settings.gateway_service_token, transport=fake.transport()
-    )
+    l3 = L3Client(settings.l3_base_url, settings.gateway_service_token, transport=fake.transport())
 
     rt = GatewayRuntime(
         settings=settings,

@@ -350,7 +350,7 @@ class FakeL3:
             self.calls.append({"op": "event_execute", "event_id": event_id})
             if not await _require_token(request):
                 return self._error(Code.UNAUTHENTICATED.value, 401)
-            data = await _body(request)
+            await _body(request)  # consume body
             gated = await _gate(request, "event_execute")
             if gated is not None:
                 return gated

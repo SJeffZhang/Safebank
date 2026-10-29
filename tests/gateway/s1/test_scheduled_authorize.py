@@ -8,15 +8,15 @@ from __future__ import annotations
 import asyncio
 from datetime import timedelta
 
-from sqlalchemy import text
-from sqlalchemy.pool import NullPool
-
 from safebank_bankcore.ledger import replace_state
 from safebank_contracts.codes import Code
 from safebank_contracts.obligations import ObligationSnapshot
 from safebank_contracts.state import Account, BankState, Counters, Customer
+from sqlalchemy import text
+from sqlalchemy.pool import NullPool
+
 from services.gateway.app.db import engine
-from tests.bankcore.fixtures import NOW, base_state
+from tests.bankcore.fixtures import base_state
 from tests.gateway.s1.conftest import (
     WALL,
     _seed_event_decision,
@@ -94,9 +94,7 @@ def test_terminal_replay_returns_stored_result(app_config):
         app = await build_app(app_config)
         db = _runtime_db(app)
         async with db.begin() as conn:
-            await _seed_event_decision(
-                conn, event_id="evt_terminal_1", status="SUCCESS", code=None
-            )
+            await _seed_event_decision(conn, event_id="evt_terminal_1", status="SUCCESS", code=None)
 
         resp = await app.client.post(
             URL, json={"event_id": "evt_terminal_1", "attempt": 1}, headers=app.scheduler_headers()
@@ -185,7 +183,9 @@ def test_same_event_replay_never_executes_twice(app_config):
         assert body["status"] == "SUCCESS"
         # No event/execute/block calls on L3
         l3_ops = {c["op"] for c in app.fake.calls}
-        assert not (l3_ops & {"event", "event_execute", "event_block"}), f"unexpected L3 calls: {l3_ops}"
+        assert not (l3_ops & {"event", "event_execute", "event_block"}), (
+            f"unexpected L3 calls: {l3_ops}"
+        )
 
     asyncio.run(run())
 
@@ -204,9 +204,12 @@ def test_revoked_grant_returns_blocked(app_config):
                 revoked_at=WALL - timedelta(hours=1),
             )
 
-        app.fake.set_event(make_event_def(
-            event_id="evt_revoked", source_id="ins_revoked",
-        ))
+        app.fake.set_event(
+            make_event_def(
+                event_id="evt_revoked",
+                source_id="ins_revoked",
+            )
+        )
 
         resp = await app.client.post(
             URL, json={"event_id": "evt_revoked", "attempt": 1}, headers=app.scheduler_headers()
@@ -223,9 +226,11 @@ def test_revoked_grant_returns_blocked(app_config):
 
         # event_decisions row persisted
         async with db.connect() as conn:
-            row = (await conn.execute(
-                text("SELECT status, code FROM event_decisions WHERE event_id = 'evt_revoked'")
-            )).first()
+            row = (
+                await conn.execute(
+                    text("SELECT status, code FROM event_decisions WHERE event_id = 'evt_revoked'")
+                )
+            ).first()
         assert row is not None
         assert row.status == "BLOCKED"
         await db.dispose()
@@ -258,10 +263,15 @@ def test_missing_grant_backfill_and_success(app_config):
         }
 
         app.fake.set_snapshot(_s1_state())
-        app.fake.set_event(make_event_def(
-            event_id="evt_backfill", source_id="ins_backfill",
-            to_account_id="acc_b", payee_id=None, amount_cents=80000,
-        ))
+        app.fake.set_event(
+            make_event_def(
+                event_id="evt_backfill",
+                source_id="ins_backfill",
+                to_account_id="acc_b",
+                payee_id=None,
+                amount_cents=80000,
+            )
+        )
 
         resp = await app.client.post(
             URL, json={"event_id": "evt_backfill", "attempt": 1}, headers=app.scheduler_headers()
@@ -277,9 +287,11 @@ def test_missing_grant_backfill_and_success(app_config):
 
         # event_decisions row persisted
         async with db.connect() as conn:
-            row = (await conn.execute(
-                text("SELECT status FROM event_decisions WHERE event_id = 'evt_backfill'")
-            )).first()
+            row = (
+                await conn.execute(
+                    text("SELECT status FROM event_decisions WHERE event_id = 'evt_backfill'")
+                )
+            ).first()
         assert row is not None
         assert row.status == "SUCCESS"
         await db.dispose()
@@ -301,10 +313,15 @@ def test_risk_increase_returns_skipped_reapproval(app_config):
             )
 
         app.fake.set_snapshot(_s1_state())
-        app.fake.set_event(make_event_def(
-            event_id="evt_risk_up", source_id="ins_risk_up",
-            to_account_id="acc_b", payee_id=None, amount_cents=80000,
-        ))
+        app.fake.set_event(
+            make_event_def(
+                event_id="evt_risk_up",
+                source_id="ins_risk_up",
+                to_account_id="acc_b",
+                payee_id=None,
+                amount_cents=80000,
+            )
+        )
 
         resp = await app.client.post(
             URL, json={"event_id": "evt_risk_up", "attempt": 1}, headers=app.scheduler_headers()
@@ -336,10 +353,15 @@ def test_insufficient_funds_returns_failed_insufficient(app_config):
 
         # Balance is 600000, try to transfer 900000 → insufficient
         app.fake.set_snapshot(_s1_state(balance_cents=600_000))
-        app.fake.set_event(make_event_def(
-            event_id="evt_no_funds", source_id="ins_no_funds",
-            to_account_id="acc_b", payee_id=None, amount_cents=900_000,
-        ))
+        app.fake.set_event(
+            make_event_def(
+                event_id="evt_no_funds",
+                source_id="ins_no_funds",
+                to_account_id="acc_b",
+                payee_id=None,
+                amount_cents=900_000,
+            )
+        )
 
         resp = await app.client.post(
             URL, json={"event_id": "evt_no_funds", "attempt": 1}, headers=app.scheduler_headers()
@@ -364,10 +386,15 @@ def test_happy_path_success_executes_once(app_config):
             await _seed_grant(conn, instruction_id="ins_happy", approved_risk="YELLOW")
 
         app.fake.set_snapshot(_s1_state())
-        app.fake.set_event(make_event_def(
-            event_id="evt_happy", source_id="ins_happy",
-            to_account_id="acc_b", payee_id=None, amount_cents=80000,
-        ))
+        app.fake.set_event(
+            make_event_def(
+                event_id="evt_happy",
+                source_id="ins_happy",
+                to_account_id="acc_b",
+                payee_id=None,
+                amount_cents=80000,
+            )
+        )
 
         resp = await app.client.post(
             URL, json={"event_id": "evt_happy", "attempt": 1}, headers=app.scheduler_headers()
@@ -384,9 +411,11 @@ def test_happy_path_success_executes_once(app_config):
 
         # event_decisions persisted
         async with db.connect() as conn:
-            row = (await conn.execute(
-                text("SELECT status FROM event_decisions WHERE event_id = 'evt_happy'")
-            )).first()
+            row = (
+                await conn.execute(
+                    text("SELECT status FROM event_decisions WHERE event_id = 'evt_happy'")
+                )
+            ).first()
         assert row is not None
         assert row.status == "SUCCESS"
 
