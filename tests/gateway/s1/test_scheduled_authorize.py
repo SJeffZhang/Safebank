@@ -651,3 +651,168 @@ def test_persist_failure_retry_records_original_result(app_config):
         await db.dispose()
 
     asyncio.run(run())
+
+
+# ── Round 2 review: new tests ─────────────────────────────────────────────────
+
+
+def test_no_connection_held_during_l3_call(app_config):
+    """After Phase A (IN_PROGRESS claim written, advisory lock released), a
+    separate connection can read event_decisions without blocking — proving no
+    pooled connection holds a lock across L3 HTTP calls."""
+
+    async def run():
+        app = await build_app(app_config)
+        db = _runtime_db(app)
+        async with db.begin() as conn:
+            await _seed_grant(conn, instruction_id="ins_nolock", approved_risk="YELLOW")
+
+        app.fake.set_snapshot(_s1_state())
+        app.fake.set_event(
+            make_event_def(
+                event_id="evt_nolock",
+                source_id="ins_nolock",
+                to_account_id="acc_b",
+                payee_id=None,
+                amount_cents=80000,
+            )
+        )
+        # Hold event_execute for 0.5s so we can probe IN_PROGRESS state.
+        app.fake.set_event_execute_delay(0.5)
+        app.fake.calls.clear()
+
+        # Launch the handler asynchronously.
+        task = asyncio.create_task(
+            app.client.post(
+                URL,
+                json={"event_id": "evt_nolock", "attempt": 1},
+                headers=app.scheduler_headers(),
+            )
+        )
+
+        # Wait for Phase A to finish (IN_PROGRESS row inserted, lock released).
+        await asyncio.sleep(0.2)
+
+        # A different connection must be able to read the IN_PROGRESS row
+        # without blocking — proof that no advisory lock is held on the pool.
+        async with db.connect() as probe_conn:
+            row = (
+                await probe_conn.execute(
+                    text(
+                        "SELECT status FROM event_decisions "
+                        "WHERE event_id = 'evt_nolock'"
+                    )
+                )
+            ).first()
+        assert row is not None, "IN_PROGRESS row must exist after Phase A"
+        assert row.status == "IN_PROGRESS"
+
+        resp = await task
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["status"] == "SUCCESS"
+
+        # event_execute still called exactly once
+        exec_calls = [c for c in app.fake.calls if c["op"] == "event_execute"]
+        assert len(exec_calls) == 1
+
+        await db.dispose()
+
+    asyncio.run(run())
+
+
+def test_stale_claim_takeover(app_config):
+    """An IN_PROGRESS row older than the claim lease (5 min) is taken over by the
+    next callback rather than returning RETRYING."""
+
+    async def run():
+        app = await build_app(app_config)
+        db = _runtime_db(app)
+        async with db.begin() as conn:
+            await _seed_grant(conn, instruction_id="ins_stale", approved_risk="YELLOW")
+            # Insert a stale IN_PROGRESS row (6 minutes old).
+            await _seed_event_decision(
+                conn,
+                event_id="evt_stale",
+                status="IN_PROGRESS",
+                code=None,
+                decided_at=WALL - timedelta(minutes=6),
+            )
+
+        app.fake.set_snapshot(_s1_state())
+        app.fake.set_event(
+            make_event_def(
+                event_id="evt_stale",
+                source_id="ins_stale",
+                to_account_id="acc_b",
+                payee_id=None,
+                amount_cents=80000,
+            )
+        )
+
+        resp = await app.client.post(
+            URL,
+            json={"event_id": "evt_stale", "attempt": 1},
+            headers=app.scheduler_headers(),
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        # Must take over the stale claim, not return RETRYING.
+        assert body["status"] == "SUCCESS", f"expected SUCCESS, got {body}"
+
+        exec_calls = [c for c in app.fake.calls if c["op"] == "event_execute"]
+        assert len(exec_calls) == 1
+
+        await db.dispose()
+
+    asyncio.run(run())
+
+
+def test_retrying_releases_in_progress_row(app_config):
+    """When L3 is unavailable during event_execute, the RETRYING response deletes
+    the IN_PROGRESS claim row so the next callback can try immediately."""
+
+    async def run():
+        app = await build_app(app_config)
+        db = _runtime_db(app)
+        async with db.begin() as conn:
+            await _seed_grant(conn, instruction_id="ins_retry_rel", approved_risk="YELLOW")
+
+        app.fake.set_snapshot(_s1_state())
+        app.fake.set_event(
+            make_event_def(
+                event_id="evt_retry_rel",
+                source_id="ins_retry_rel",
+                to_account_id="acc_b",
+                payee_id=None,
+                amount_cents=80000,
+            )
+        )
+        # event_execute raises L3Error → handler releases claim → RETRYING.
+        app.fake.behaviors["event_execute"] = "unavailable_503"
+
+        resp = await app.client.post(
+            URL,
+            json={"event_id": "evt_retry_rel", "attempt": 1},
+            headers=app.scheduler_headers(),
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["status"] == "RETRYING"
+        assert body["code"] == Code.DEPENDENCY_UNAVAILABLE.value
+
+        # No IN_PROGRESS row left behind — claim was released.
+        async with db.connect() as conn:
+            rows = (
+                await conn.execute(
+                    text(
+                        "SELECT 1 FROM event_decisions "
+                        "WHERE event_id = 'evt_retry_rel'"
+                    )
+                )
+            ).all()
+        assert rows == [], "IN_PROGRESS row must be deleted on RETRYING"
+
+        await db.dispose()
+
+    asyncio.run(run())
