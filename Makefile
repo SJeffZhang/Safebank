@@ -4,7 +4,7 @@ PYTHON := .venv/bin/python
 LIMIT ?= 20
 .PHONY: setup keys test lint wheels build up down logs test-integration probe demo eval reset \
  test-postgres-bootstrap contracts-check contracts-generate p1-provision migrate seed-p1 test-p1-build \
- test-p1-db test-p1-concurrency test-p1-consistency test-p1 gateway-provision migrate-gateway test-obligations
+ test-p1-db test-p1-concurrency test-p1-consistency test-p1 gateway-provision migrate-gateway seed-demo test-obligations
 setup:
 	uv sync --frozen --group poc --python 3.12
 keys:
@@ -28,6 +28,8 @@ migrate-gateway:
 	docker compose run --rm gateway-maintenance
 seed-p1:
 	docker compose run --rm bank-maintenance python -m app.bootstrap
+seed-demo:
+	docker compose run --rm bank-maintenance python -m app.seed_demo
 up: build
 	docker compose up -d --wait postgres-bank postgres-agent
 	$(MAKE) p1-provision migrate seed-p1 gateway-provision migrate-gateway
@@ -134,6 +136,10 @@ test-cards:
 .PHONY: test-w4b2c
 test-w4b2c:
 	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w4b2c -q
+
+.PHONY: test-w5-sms
+test-w5-sms:
+	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w5_sms -q
 
 .PHONY: test-w3b
 .PHONY: test-w3b

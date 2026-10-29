@@ -1,6 +1,8 @@
 import asyncio
 
+from safebank_bankcore.ledger import replace_state
 from safebank_contracts.codes import Code
+from safebank_contracts.obligations import ObligationSnapshot
 from safebank_contracts.plan import PlanDraft
 
 from services.gateway.app.pipeline.entity import EntityStage
@@ -96,9 +98,28 @@ def test_period_cannot_be_added_to_one_off_transfer():
         first_run_at="2026-11-01T09:00:00+08:00",
         end_at=None,
     )
-    assert not evaluate(
-        [s], transfers=(ScopeTransfer(target_fingerprint="int:acc_s", amount_cents=100),)
-    ).intent.matched
+    ctx = authorized(
+        context([s]), transfers=(ScopeTransfer(target_fingerprint="int:acc_s", amount_cents=100),)
+    )
+    ctx._lazy_state = replace_state(
+        ctx._lazy_state,
+        obligations=ObligationSnapshot(
+            covered_customer_ids=("cus_a",),
+            merchants={},
+            billings={},
+            standing_instructions={},
+            runs=(),
+            instruction_targets={},
+        ),
+    )
+    ctx.origin = "app_form"
+
+    async def run():
+        await EntityStage().run(ctx)
+        await IntentStage().run(ctx)
+
+    asyncio.run(run())
+    assert not ctx.intent.matched
 
 
 def test_llm_intents_and_rationale_are_not_authority():

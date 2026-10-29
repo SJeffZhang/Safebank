@@ -1,6 +1,6 @@
 """E0a 确定性生成器（不调用 LLM）。
 
-生成 `evaluation/fixtures/l1_seed_v1.json`（L3 可加载的评测种子）与
+生成 `services/bank-backend/fixtures/l1_seed_v1.json`（L3 可加载的评测种子）与
 `evaluation/corpus/l1_stability/*.jsonl`（≥300 条语料）。
 
 运行：`.venv/bin/python -m tests.evaluation.corpus.generate`

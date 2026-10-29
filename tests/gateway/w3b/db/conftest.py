@@ -652,7 +652,11 @@ def make_body(
     request_id: str = "req_test_g4",
     plan_draft: dict | None = None,
 ) -> dict:
-    """Return a G4 request body dict."""
+    """Return a G4 request body dict.
+
+    PRD §9.5 G4: an assistant (A) caller posts the ``PlanDraft`` itself as the
+    body (``request_id`` lives inside it), so the body *is* the plan draft.
+    """
     if plan_draft is None:
         plan_draft = make_plan_draft_dict(request_id=request_id)
-    return {"request_id": request_id, "plan_draft": plan_draft}
+    return plan_draft

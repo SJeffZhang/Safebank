@@ -208,11 +208,10 @@ def extract_g4_evidence(transport_requests: list[dict[str, Any]]) -> dict[str, A
         req_body: dict[str, Any] | None = e.get("request")
         resp_body: dict[str, Any] | None = e.get("json")
 
-        # Last request's plan_draft wins (most recent attempt)
-        if isinstance(req_body, dict):
-            raw = req_body.get("plan_draft")
-            if isinstance(raw, dict) and "steps" in raw:
-                plan_draft = raw
+        # Last request's plan_draft wins (most recent attempt).  The G4 A-caller
+        # request body *is* the PlanDraft (PRD §9.5), so read it directly.
+        if isinstance(req_body, dict) and isinstance(req_body.get("steps"), list):
+            plan_draft = req_body
 
         attempt: dict[str, Any] = {
             "status": status,

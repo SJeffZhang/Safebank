@@ -11,11 +11,13 @@ from safebank_contracts.state import (
     BankState,
     Card,
     Counters,
+    InsertAssessment,
     InsertPayee,
     LedgerTransfer,
     Operation,
     OperationEvent,
     Payee,
+    RiskAssessmentRecord,
     UpsertCard,
 )
 from safebank_contracts.tools import EntityRef
@@ -23,6 +25,9 @@ from safebank_contracts.views import WRITE_RESULTS, CardView, ChannelFlags
 
 from .ids import derive
 from .ledger import post_transfer, replace_state
+from .risk import apply_risk_assessment as score_risk
+from .split import apply_create_split_request
+from .standing import apply_cancel_scheduled, apply_cancel_subscription, apply_schedule_transfer
 
 
 @dataclass(frozen=True)
@@ -280,6 +285,58 @@ def card_view(state: BankState, card: Card) -> CardView:
     )
 
 
+def apply_risk_assessment(state: BankState, args, now: datetime, ctx: Context):
+    """Score answers via the pure risk engine and produce an InsertAssessment effect.
+
+    Only app_form origin is allowed; L3 trusts the questionnaire answers and
+    computes score/level itself.
+    """
+    from .ids import derive as _derive
+
+    try:
+        result = score_risk(
+            questionnaire_id=args.questionnaire_id,
+            answers=tuple((a.question_id, a.option_id) for a in args.answers),
+            assessed_at=now,
+        )
+    except ValueError:
+        return reject(state, ctx, Code.CONTRACT_INVALID)
+
+    assessment_id = _derive(ctx.plan_id, ctx.step_id, "asm")
+    record = RiskAssessmentRecord(
+        id=assessment_id,
+        customer_id=ctx.customer_id,
+        questionnaire_id=args.questionnaire_id,
+        answers=tuple((a.question_id, a.option_id) for a in args.answers),
+        score=result.score,
+        level=f"R{result.level}",
+        assessed_at=now,
+        valid_until=result.valid_until,
+        plan_id=ctx.plan_id,
+    )
+
+    # Update customer summary
+    customers = dict(state.customers)
+    c = customers[ctx.customer_id]
+    customers[ctx.customer_id] = c.model_copy(
+        update={
+            "risk_level": result.level,
+            "risk_assessed_at": now,
+            "risk_valid_until": result.valid_until.isoformat(),
+        }
+    )
+
+    # Add to in-memory assessments
+    assessments = state.assessments + (record,)
+
+    new_state = replace_state(state, customers=customers, assessments=assessments)
+    effects = (
+        InsertAssessment(record=record),
+        operation(state, ctx, now, "ASSESSMENT_SUBMIT"),
+    )
+    return new_state, effects, ()
+
+
 def to_public_effects(before: BankState, after: BankState, customer_id: str):
     effects = []
     for account in after.accounts.values():
@@ -359,6 +416,52 @@ def step_result(before, after, step, ctx, effects):
             new_last4=new.last4 if new else None,
         )
         created = {"card_id": new.id} if new else {}
+    elif step.tool == "schedule_transfer":
+        from .standing import commitment_30d_cents
+
+        inst = after.obligations.standing_instructions[derive(ctx.plan_id, ctx.step_id, "si")]
+        result = dict(
+            instruction_id=inst.id,
+            next_run_at=inst.next_run_at,
+            grant_scope_hash=inst.grant_scope_hash,
+            commitment_30d_cents=commitment_30d_cents(inst, after.sim_now),
+        )
+        created = {"instruction_id": inst.id}
+    elif step.tool == "cancel_scheduled":
+        result = dict(instruction_id=args.instruction_id, status="DELETED", no_op=not bool(effects))
+    elif step.tool == "cancel_subscription":
+        inst = after.obligations.standing_instructions[args.instruction_id]
+        billing = after.obligations.billings.get(inst.billing_id)
+        no_op = not bool(effects)
+        monthly = 0 if no_op else (billing.amount_cents if (billing and billing.active) else 0)
+        annual = monthly * (12 if (billing and billing.period == "MONTHLY") else 52)
+        result = dict(
+            instruction_id=args.instruction_id,
+            status="DELETED",
+            monthly_saving_cents=monthly,
+            annual_saving_cents=annual,
+            no_op=no_op,
+        )
+    elif step.tool == "submit_risk_assessment":
+        record = next(e.record for e in effects if isinstance(e, InsertAssessment))
+        result = dict(
+            assessment_id=record.id,
+            score=record.score,
+            level=int(record.level[1:]),
+            assessed_at=record.assessed_at,
+            valid_until=record.valid_until,
+        )
+    elif step.tool == "create_split_request":
+        from safebank_contracts.state import FUTURE_EFFECTS
+
+        InsertSplit = FUTURE_EFFECTS["InsertSplit"]
+        split_effect = next((e for e in effects if isinstance(e, InsertSplit)), None)
+        if split_effect is not None:
+            result = split_effect.split.model_dump(mode="json")
+            created = {"split_request_id": split_effect.split.id}
+        else:
+            result = {}
+            created = {}
     else:
         result = dict(
             card_id=args.card_id, status=after.cards[args.card_id].status, no_op=not bool(effects)
@@ -390,6 +493,11 @@ SUPPORTED_WRITES = {
     "freeze_card",
     "unfreeze_card",
     "report_card_lost",
+    "schedule_transfer",
+    "cancel_scheduled",
+    "cancel_subscription",
+    "submit_risk_assessment",
+    "create_split_request",
 }
 
 
@@ -411,6 +519,16 @@ def apply_plan(state: BankState, steps, customer_id: str, plan_id: str) -> Simul
             state, changes, errors = apply_transfer(state, args, state.sim_now, ctx)
         elif step.tool == "add_payee":
             state, changes, errors = apply_add_payee(state, args, state.sim_now, ctx)
+        elif step.tool == "schedule_transfer":
+            state, changes, errors = apply_schedule_transfer(state, args, state.sim_now, ctx)
+        elif step.tool == "cancel_scheduled":
+            state, changes, errors = apply_cancel_scheduled(state, args, state.sim_now, ctx)
+        elif step.tool == "cancel_subscription":
+            state, changes, errors = apply_cancel_subscription(state, args, state.sim_now, ctx)
+        elif step.tool == "submit_risk_assessment":
+            state, changes, errors = apply_risk_assessment(state, args, state.sim_now, ctx)
+        elif step.tool == "create_split_request":
+            state, changes, errors = apply_create_split_request(state, args, state.sim_now, ctx)
         elif step.tool in SUPPORTED_WRITES:
             state, changes, errors = apply_card(state, args, state.sim_now, ctx, step.tool)
         else:

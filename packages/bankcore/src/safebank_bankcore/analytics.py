@@ -1,4 +1,5 @@
-"""Pure-function analytics: spending summary (R4) and anomaly detection (R5).
+"""Pure-function analytics: spending summary (R4), anomaly detection (R5),
+and subscription detection (R9).
 
 Consumption = CARD_SPEND / MANDATE, POSTED only.
 Transfer out = TRANSFER_EXTERNAL with direction OUT.
@@ -13,6 +14,12 @@ history that occurred *before* each transaction.  Four deterministic signals:
 * ANOMALY_CATEGORY_OUTLIER  – prior 90 days same category ≥ 10 txns, amount > mean + 3σ
 
 Multiple signals on the same transaction are merged into a single anomaly item.
+
+Subscription detection (R9) identifies recurring merchant charges from
+transactions (same merchant_id, ≥ 3 occurrences, amount variance ≤ 5 %, interval
+28–31 days (MONTHLY) or 7 days (WEEKLY)), cross-references with
+standing_instructions (MERCHANT_MANDATE), and computes idle status via usage
+evidence.
 """
 
 from __future__ import annotations
@@ -311,6 +318,207 @@ def detect_anomalies(
                 transaction=_tx_view(state, tx),
                 codes=tuple(codes),
                 evidence=evidence,
+            )
+        )
+
+    return {"items": tuple(items)}
+
+
+# ── R9: detect_subscriptions ────────────────────────────────────────────────
+
+# Thresholds exposed as keyword-only parameters so the caller can adjust them
+# without rewriting the function. The defaults reflect PRD §5.4 rules.
+#
+#   * variance_tolerance_bp : amount tolerance in basis points (5 % = 500 bp).
+#   * min_occurrences       : minimum charge count to qualify as recurring.
+#   * period_monthly_days   : inclusive day range for MONTHLY intervals.
+#   * period_weekly_days    : exact day count for WEEKLY intervals.
+#   * typical_method        : "median" (default) or "floor_mean" for
+#     typical_amount_cents.
+
+_PERIOD_MONTHLY_RANGE = range(28, 32)  # 28 … 31 inclusive
+_PERIOD_WEEKLY_DAYS = 7
+
+
+def detect_subscriptions(
+    state: BankState,
+    *,
+    customer_id: str,
+    lookback_days: int,
+    variance_tolerance_bp: int = 500,
+    min_occurrences: int = 3,
+    typical_method: str = "median",
+) -> dict:
+    """Return a ``DetectedSubscriptionsResult`` dict for R9 ``detect_subscriptions``.
+
+    Steps (PRD §5.4):
+
+    1. Collect POSTED transactions of kind ``MANDATE`` belonging to
+       *customer_id*, within ``[sim_now - lookback_days, sim_now)``.
+       (``CARD_SPEND`` is a *usage* signal, never a charge candidate.)
+    2. Group by ``merchant_id`` and identify recurring merchants:
+       - ≥ *min_occurrences* charges
+       - inter-charge intervals all within 28–31 days → MONTHLY,
+         or all exactly 7 days → WEEKLY
+       - every amount within ± *variance_tolerance_bp* of the typical amount
+    3. Cross-reference with ``state.subscriptions`` (derived from
+       ``MERCHANT_MANDATE`` standing instructions) by merchant_id to attach
+       ``instruction_id`` and ``billing_id``.
+    4. Compute usage evidence for idle detection (PRD §5.4 S-5):
+       - *recent*: non-MANDATE transactions (CARD_SPEND) at the same merchant
+         within the last 60 calendar days (sim_now - 60 d, sim_now].
+       - *previous*: same, but 60–120 days prior to sim_now
+         (sim_now - 120 d, sim_now - 60 d].
+       - ``is_idle`` = true iff the merchant has ``usage_expected=True``,
+         recent == 0, *and* previous > 0.
+    5. Annualize: MONTHLY → ×12, WEEKLY → ×52.
+    """
+    from statistics import median
+
+    sim_now = _business_time(state.sim_now)
+    cutoff = sim_now - _days_as_delta(lookback_days)
+    idle_recent_cutoff = sim_now - _days_as_delta(60)
+    idle_prev_cutoff = sim_now - _days_as_delta(120)
+
+    variance_ratio = variance_tolerance_bp / 10000.0  # bp → fraction
+
+    # ── 1. Collect candidate transactions ─────────────────────────────
+    txs: list = []
+    for tx in state.transactions:
+        if tx.merchant_id is None:
+            continue
+        if tx.kind != "MANDATE":  # charges = merchant mandate deductions only
+            continue
+        if tx.status != "POSTED":
+            continue
+        acct = state.accounts.get(tx.account_id)
+        if acct is None or acct.customer_id != customer_id:
+            continue
+        bt = _business_time(tx.occurred_at)
+        if bt < cutoff or bt >= sim_now:
+            continue
+        txs.append(tx)
+
+    # ── 2. Group by merchant and identify recurring ───────────────────
+    by_merchant: dict[str, list] = {}
+    for tx in txs:
+        by_merchant.setdefault(tx.merchant_id, []).append(tx)
+
+    # Collect all transactions (including those outside the lookback) for
+    # usage-evidence computation.
+    all_txs: list = []
+    for tx in state.transactions:
+        if tx.merchant_id is None:
+            continue
+        acct = state.accounts.get(tx.account_id)
+        if acct is None or acct.customer_id != customer_id:
+            continue
+        if tx.status != "POSTED":
+            continue
+        all_txs.append(tx)
+
+    # Pre-group all transactions by merchant for usage evidence.
+    all_by_merchant: dict[str, list] = {}
+    for tx in all_txs:
+        all_by_merchant.setdefault(tx.merchant_id, []).append(tx)
+
+    items: list[dict] = []
+    merchant_meta: dict = {}
+    if state.obligations is not None:
+        merchant_meta = dict(state.obligations.merchants)
+
+    # Build a merchant→instruction_id/billing_id map from state.subscriptions.
+    sub_by_merchant: dict[str, dict] = {}
+    for sub in state.subscriptions:
+        owner = state.accounts.get(sub.account_id)
+        if owner is None or owner.customer_id != customer_id:
+            continue  # never link another customer's mandate or bill
+        if sub.status != "DELETED":
+            sub_by_merchant[sub.merchant_id] = dict(
+                instruction_id=sub.instruction_id,
+                billing_id=sub.billing_id,
+            )
+
+    for merchant_id, charges in sorted(by_merchant.items()):
+        if len(charges) < min_occurrences:
+            continue
+
+        charges.sort(key=lambda t: t.occurred_at)
+        amounts = [c.amount_cents for c in charges]
+        intervals = [
+            (
+                _business_time(charges[i].occurred_at) - _business_time(charges[i - 1].occurred_at)
+            ).days
+            for i in range(1, len(charges))
+        ]
+
+        # Determine period from intervals.
+        period: str | None = None
+        if set(intervals) == {_PERIOD_WEEKLY_DAYS}:
+            period = "WEEKLY"
+        elif all(d in _PERIOD_MONTHLY_RANGE for d in intervals):
+            period = "MONTHLY"
+
+        if period is None:
+            continue
+
+        # Compute typical amount.
+        if typical_method == "floor_mean":
+            typical = sum(amounts) // len(amounts)
+        else:  # median
+            typical = int(median(amounts))
+
+        # Check variance for every charge.
+        if typical == 0:
+            continue
+        if any(abs(a - typical) / typical > variance_ratio for a in amounts):
+            continue
+
+        # Correlate with standing instructions.
+        sub_info = sub_by_merchant.get(merchant_id, {})
+        instruction_id = sub_info.get("instruction_id")
+        billing_id = sub_info.get("billing_id")
+
+        # ── Usage evidence ──────────────────────────────────────────
+        recent = 0
+        previous = 0
+        for tx in all_by_merchant.get(merchant_id, []):
+            if tx.kind == "MANDATE":
+                continue  # exclude charge transactions
+            bt = _business_time(tx.occurred_at)
+            if bt > sim_now:
+                continue
+            if bt > idle_recent_cutoff:
+                recent += 1
+            elif bt > idle_prev_cutoff:
+                previous += 1
+
+        meta = merchant_meta.get(merchant_id)
+        usage_expected = meta.usage_expected if meta else False
+        is_idle = usage_expected and recent == 0 and previous > 0
+
+        # ── Annual cost ─────────────────────────────────────────────
+        if period == "WEEKLY":
+            annual_cost_cents = typical * 52
+        else:
+            annual_cost_cents = typical * 12
+
+        items.append(
+            dict(
+                merchant_id=merchant_id,
+                merchant_name=meta.name if meta else "",
+                instruction_id=instruction_id,
+                billing_id=billing_id,
+                period=period,
+                typical_amount_cents=typical,
+                occurrences=len(charges),
+                last_charged_at=charges[-1].occurred_at,
+                is_idle=is_idle,
+                usage_evidence=dict(
+                    recent_usage_count=recent,
+                    previous_usage_count=previous,
+                ),
+                annual_cost_cents=annual_cost_cents,
             )
         )
 

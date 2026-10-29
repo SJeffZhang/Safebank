@@ -142,18 +142,19 @@ def test_irreversible_step_is_red_not_failure():
 
 
 def test_unsupported_domain_write_is_tool_not_allowed():
+    from safebank_bankcore.ledger import replace_state
+    from safebank_contracts.views import ProductView
+
+    from services.gateway.app.l3.fake import FakeL3
     from tests.contracts.samples import step as raw_step
 
-    sched = raw_step(
-        "schedule_transfer",
-        from_account_id="acc_a",
-        payee_id="pye_ext",
-        to_account_id=None,
-        amount_cents=100,
-        period="MONTHLY",
-        first_run_at="2026-11-01T09:00:00+08:00",
-        end_at=None,
+    product = ProductView.model_validate(
+        FakeL3._minimal_read_result("get_product") | {"id": "prd_a"}
     )
-    ctx = run_entity(build_ctx([sched]))
+    state = replace_state(w3_state(), products=(product,))
+    subscribe = raw_step(
+        "subscribe_product", account_id="acc_a", product_id="prd_a", amount_cents=100
+    )
+    ctx = run_entity(build_ctx([subscribe], state=state))
     run(ctx)
     assert any(f.code is Code.TOOL_NOT_ALLOWED for f in ctx.findings)

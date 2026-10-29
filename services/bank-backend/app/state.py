@@ -2,10 +2,12 @@
 
 import hashlib
 import hmac
-from datetime import timedelta
+from datetime import datetime, timedelta
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from safebank_bankcore.ledger import account_deltas
+from safebank_bankcore.products import ProductDef, get_product
 from safebank_bankcore.scope import scope_for
 from safebank_contracts.obligations import (
     InstructionRun,
@@ -17,6 +19,8 @@ from safebank_contracts.obligations import (
     ScheduledInstruction,
 )
 from safebank_contracts.state import (
+    EVENT_KIND_RANK,
+    FUTURE_EFFECTS,
     Account,
     AppendTransaction,
     BankState,
@@ -24,21 +28,36 @@ from safebank_contracts.state import (
     Counters,
     Customer,
     DirectoryEntry,
+    InsertAssessment,
+    InsertInstruction,
     InsertPayee,
     LedgerTransfer,
     Operation,
     OperationEvent,
     Payee,
     PostTransfer,
+    RiskAssessmentRecord,
+    ScheduleEventJob,
+    SetInstructionStatus,
     StateScope,
     Transaction,
     UpsertCard,
 )
-from safebank_contracts.views import RunView, ScheduledView, SubscriptionView
+from safebank_contracts.views import (
+    NavPoint,
+    ProductView,
+    RunView,
+    ScheduledView,
+    SplitItem,
+    SplitView,
+    SubscriptionView,
+)
 from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from . import models as m
+
+InsertSplit = FUTURE_EFFECTS["InsertSplit"]
 
 
 def fingerprint(account_no: str, key: str) -> str:
@@ -358,6 +377,26 @@ async def load_bank_state(conn, scope: StateScope, now, *, customer_id: str) -> 
             )
         ).mappings()
     ]
+    assessments = [
+        RiskAssessmentRecord(
+            id=r["id"],
+            customer_id=r["customer_id"],
+            questionnaire_id=r["questionnaire_id"],
+            answers=tuple(tuple(a) for a in r["answers"]),
+            score=r["score"],
+            level=r["level"],
+            assessed_at=r["assessed_at"],
+            valid_until=r["valid_until"].date(),
+            plan_id=r["plan_id"],
+        )
+        for r in (
+            await conn.execute(
+                select(m.risk_assessments)
+                .where(m.risk_assessments.c.customer_id == customer_id)
+                .order_by(m.risk_assessments.c.assessed_at.desc())
+            )
+        ).mappings()
+    ]
     versions = dict(
         (
             await conn.execute(
@@ -370,6 +409,112 @@ async def load_bank_state(conn, scope: StateScope, now, *, customer_id: str) -> 
     if customer_id not in versions or not owner_ids:
         raise LookupError("customer not found")
     obligations, instructions, subscriptions = await _load_obligations(conn, ids, customer_id)
+    # Load split requests and items for the requesting customer only.
+    _splits: list[SplitView] = []
+    split_request_rows = (
+        (
+            await conn.execute(
+                select(m.split_requests).where(m.split_requests.c.customer_id == customer_id)
+            )
+        )
+        .mappings()
+        .all()
+    )
+    for sr in split_request_rows:
+        items = (
+            (
+                await conn.execute(
+                    select(m.split_items).where(m.split_items.c.request_id == sr["id"])
+                )
+            )
+            .mappings()
+            .all()
+        )
+        _splits.append(
+            SplitView(
+                id=sr["id"],
+                account_id=sr["account_id"],
+                total_cents=sr["total_cents"],
+                include_self=sr["include_self"],
+                self_share_cents=sr["self_share_cents"],
+                created_at=sr["created_at"],
+                received_cents=sum(it["amount_cents"] for it in items if it["status"] == "PAID"),
+                outstanding_cents=sr["total_cents"]
+                - sr["self_share_cents"]
+                - sum(it["amount_cents"] for it in items if it["status"] == "PAID"),
+                items=tuple(
+                    SplitItem(
+                        id=it["id"],
+                        payee_id=it["payee_id"],
+                        payee_name=it["payee_id"],  # resolved to real name below
+                        amount_cents=it["amount_cents"],
+                        status=it["status"],
+                        paid_at=it["paid_at"],
+                    )
+                    for it in items
+                ),
+            )
+        )
+    # Resolve payee names from the already-loaded payees.
+    payee_names = {p.id: p.name for p in payees}
+    _splits = [
+        sv.model_copy(
+            update={
+                "items": tuple(
+                    si.model_copy(
+                        update={"payee_name": payee_names.get(si.payee_id, si.payee_name)}
+                    )
+                    for si in sv.items
+                )
+            }
+        )
+        for sv in _splits
+    ]
+    # Global product catalog (customer-agnostic). Project rows through bankcore
+    # at the snapshot time; order by id for stable pagination.
+    product_rows = (
+        (await conn.execute(select(m.products).order_by(m.products.c.id))).mappings().all()
+    )
+    product_defs = [
+        ProductDef(
+            id=r["id"],
+            name=r["name"],
+            product_type=r["product_type"],
+            risk_level=r["risk_level"],
+            risk_label=r["risk_label"],
+            base_nav=r["base_nav"],
+            base_date=r["base_date"].date(),
+            confirm_days=r["confirm_days"],
+            settle_days=r["settle_days"],
+            min_amount_cents=r["min_amount_cents"],
+            risk_disclosure=r["risk_disclosure"],
+            disclosure_version=r["disclosure_version"],
+        )
+        for r in product_rows
+    ]
+    _products: list[ProductView] = []
+    for p in product_defs:
+        view = get_product(tuple(product_defs), p.id, now.date())
+        _products.append(
+            ProductView(
+                id=view["id"],
+                name=view["name"],
+                product_type=view["product_type"],
+                risk_level=view["risk_level"],
+                risk_label=view["risk_label"],
+                nav=view["nav"],
+                nav_date=view["nav_date"],
+                recent_return_bp=view["recent_return_bp"],
+                confirm_days=view["confirm_days"],
+                settle_days=view["settle_days"],
+                min_amount_cents=view["min_amount_cents"],
+                risk_disclosure=view["risk_disclosure"],
+                disclosure_version=view["disclosure_version"],
+                nav_history=tuple(
+                    NavPoint(date=pt["date"], nav=Decimal(pt["nav"])) for pt in view["nav_history"]
+                ),
+            )
+        )
     return BankState(
         sim_now=now,
         clock_version=clock["version"],
@@ -390,7 +535,10 @@ async def load_bank_state(conn, scope: StateScope, now, *, customer_id: str) -> 
         obligations=obligations,
         instructions=instructions,
         subscriptions=subscriptions,
+        splits=tuple(_splits),
+        products=tuple(_products),
         dataset_revision=clock["dataset_revision"],
+        assessments=tuple(assessments),
     )
 
 
@@ -451,5 +599,93 @@ async def persist(conn, effects) -> None:
                     payload=effect.operation.model_dump(mode="json"),
                 )
             )
+        elif isinstance(effect, InsertInstruction):
+            inst_data = effect.instruction.model_dump(mode="python")
+            await conn.execute(m.standing_instructions.insert().values(**inst_data))
+        elif isinstance(effect, SetInstructionStatus):
+            await conn.execute(
+                update(m.standing_instructions)
+                .where(m.standing_instructions.c.id == effect.instruction_id)
+                .values(status=effect.new_status)
+            )
+        elif isinstance(effect, ScheduleEventJob):
+            rank = EVENT_KIND_RANK.get(effect.kind)
+            if rank is None:
+                raise ValueError(f"unknown event job kind: {effect.kind}")
+            await conn.execute(
+                m.event_jobs.insert().values(
+                    id=effect.job_id,
+                    kind=effect.kind,
+                    rank=rank,
+                    due_at=effect.due_at,
+                    immutable_payload={"payload": effect.payload_ciphertext},
+                    payload_hash=effect.payload_hash,
+                    source_id=effect.source_id,
+                    period_key=effect.period_key,
+                    status="PENDING",
+                    attempt_count=0,
+                )
+            )
+        elif isinstance(effect, InsertAssessment):
+            record = effect.record
+            valid_until = datetime.combine(
+                record.valid_until,
+                record.assessed_at.time(),
+                tzinfo=record.assessed_at.tzinfo,
+            )
+            await conn.execute(
+                m.risk_assessments.insert().values(
+                    id=record.id,
+                    customer_id=record.customer_id,
+                    questionnaire_id=record.questionnaire_id,
+                    answers=[[q, o] for q, o in record.answers],
+                    score=record.score,
+                    level=record.level,
+                    assessed_at=record.assessed_at,
+                    valid_until=valid_until,
+                    plan_id=record.plan_id,
+                )
+            )
+            await conn.execute(
+                update(m.customers)
+                .where(m.customers.c.id == record.customer_id)
+                .values(
+                    risk_level=int(record.level[1:]),
+                    risk_assessed_at=record.assessed_at,
+                    risk_valid_until=record.valid_until.isoformat(),
+                )
+            )
+        elif isinstance(effect, InsertSplit):
+            split = effect.split
+            customer_id_row = await conn.scalar(
+                select(m.accounts.c.customer_id).where(m.accounts.c.id == split.account_id)
+            )
+            if customer_id_row is None:
+                raise ValueError(f"account {split.account_id} not found for split insert")
+            await conn.execute(
+                m.split_requests.insert().values(
+                    id=split.id,
+                    customer_id=customer_id_row,
+                    account_id=split.account_id,
+                    total_cents=split.total_cents,
+                    include_self=split.include_self,
+                    self_share_cents=split.self_share_cents,
+                    created_at=split.created_at,
+                )
+            )
+            for item in split.items:
+                await conn.execute(
+                    m.split_items.insert().values(
+                        id=item.id,
+                        request_id=split.id,
+                        customer_id=customer_id_row,
+                        account_id=split.account_id,
+                        payee_id=item.payee_id,
+                        amount_cents=item.amount_cents,
+                        status=item.status,
+                        paid_at=item.paid_at,
+                        payment_event_id=None,
+                    )
+                )
         else:
             raise ValueError("Unsupported effect; P1 never silently ignores future business")

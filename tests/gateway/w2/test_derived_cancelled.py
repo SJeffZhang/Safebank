@@ -5,12 +5,14 @@ from datetime import UTC, datetime
 
 from safebank_bankcore.ledger import replace_state
 from safebank_contracts.codes import Code
+from safebank_contracts.obligations import ObligationSnapshot
 from safebank_contracts.views import SubscriptionView
 
 from services.gateway.app.pipeline.entity import EntityStage
 from services.gateway.app.pipeline.provenance import ProvenanceStage
 from services.gateway.app.schemas.scope import ScopeTransfer
 from tests.bankcore.fixtures import NOW
+from tests.bankcore.obligations_fixtures import raw_billing, raw_mandate, raw_merchant
 from tests.contracts.samples import step
 from tests.gateway.w2.test_contract_entity import context
 from tests.gateway.w2.test_provenance import authorized, source
@@ -32,6 +34,35 @@ def subscription(**updates):
     )
     values.update(updates)
     return SubscriptionView(**values)
+
+
+def obligations_for(sub):
+    return ObligationSnapshot(
+        covered_customer_ids=("cus_a",),
+        merchants={sub.merchant_id: raw_merchant(id=sub.merchant_id, name=sub.merchant_name)},
+        billings={
+            sub.billing_id: raw_billing(
+                id=sub.billing_id,
+                customer_id="cus_a",
+                account_id=sub.account_id,
+                merchant_id=sub.merchant_id,
+                amount_cents=sub.amount_cents,
+            )
+        },
+        standing_instructions={
+            sub.instruction_id: raw_mandate(
+                id=sub.instruction_id,
+                customer_id="cus_a",
+                status="ACTIVE",
+                from_account_id=sub.account_id,
+                merchant_id=sub.merchant_id,
+                billing_id=sub.billing_id,
+                max_amount_cents=sub.max_amount_cents,
+            )
+        },
+        runs=(),
+        instruction_targets={},
+    )
 
 
 def cancelled_ctx(cancels, schedule_updates=None, subscription_updates=None):
@@ -74,8 +105,9 @@ def cancelled_ctx(cancels, schedule_updates=None, subscription_updates=None):
     ctx.authorization = ctx.authorization.model_copy(
         update={"utterances": {"utt_1": u.model_copy(update={"scope": scope})}}
     )
+    sub = subscription(**(subscription_updates or {}))
     ctx._lazy_state = replace_state(
-        ctx._lazy_state, subscriptions=(subscription(**(subscription_updates or {})),)
+        ctx._lazy_state, subscriptions=(sub,), obligations=obligations_for(sub)
     )
     ctx.origin = "app_form"
     return ctx
@@ -132,6 +164,13 @@ def test_cancelled_fees_require_own_savings_target(monkeypatch):
     ctx._lazy_state = replace_state(ctx._lazy_state, accounts=accounts)
     assert run(ctx, monkeypatch) == "unknown"
     assert any(f.code is Code.INTENT_SCOPE_EXCEEDED for f in ctx.findings)
+
+
+def test_cancelled_fees_reject_wrong_amount(monkeypatch):
+    """A schedule amount that does not equal the sum of cancelled fees is REPLAN."""
+    ctx = cancelled_ctx([cancel("c1")], schedule_updates={"amount_cents": 10000})
+    assert run(ctx, monkeypatch) == "unknown"
+    assert any(f.code is Code.UNKNOWN_SENSITIVE_ARG for f in ctx.findings)
 
 
 def test_cancelled_fees_reject_weekly_subscription(monkeypatch):

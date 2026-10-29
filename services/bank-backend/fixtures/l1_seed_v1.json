@@ -196,7 +196,7 @@
       "account_no": "6222020000000201",
       "target_account_id": "acc_ww_chk",
       "target_fingerprint": "fp_ww_placeholder",
-      "created_at": "2026-10-15T09:00:00+08:00"
+      "created_at": "2026-06-01T09:00:00+08:00"
     },
     {
       "id": "pye_zs_wwu",
@@ -208,7 +208,7 @@
       "account_no": "6222020000006666",
       "target_account_id": null,
       "target_fingerprint": "fp_wwu_placeholder",
-      "created_at": "2026-10-15T09:00:00+08:00"
+      "created_at": "2026-06-01T09:00:00+08:00"
     },
     {
       "id": "pye_zs_zl",
@@ -220,7 +220,7 @@
       "account_no": "6222020000007777",
       "target_account_id": null,
       "target_fingerprint": "fp_zl_placeholder",
-      "created_at": "2026-10-15T09:00:00+08:00"
+      "created_at": "2026-06-01T09:00:00+08:00"
     },
     {
       "id": "pye_zs_mom",
@@ -232,7 +232,7 @@
       "account_no": "6222020000005555",
       "target_account_id": null,
       "target_fingerprint": "fp_mom_placeholder",
-      "created_at": "2026-10-15T09:00:00+08:00"
+      "created_at": "2026-06-01T09:00:00+08:00"
     },
     {
       "id": "pye_zs_f1",
@@ -244,7 +244,7 @@
       "account_no": "6222020000003301",
       "target_account_id": null,
       "target_fingerprint": "fp_f1_placeholder",
-      "created_at": "2026-10-15T09:00:00+08:00"
+      "created_at": "2026-06-01T09:00:00+08:00"
     },
     {
       "id": "pye_zs_f2",
@@ -256,7 +256,7 @@
       "account_no": "6222020000003302",
       "target_account_id": null,
       "target_fingerprint": "fp_f2_placeholder",
-      "created_at": "2026-10-15T09:00:00+08:00"
+      "created_at": "2026-06-01T09:00:00+08:00"
     },
     {
       "id": "pye_zs_f3",
@@ -268,7 +268,7 @@
       "account_no": "6222020000003303",
       "target_account_id": null,
       "target_fingerprint": "fp_f3_placeholder",
-      "created_at": "2026-10-15T09:00:00+08:00"
+      "created_at": "2026-06-01T09:00:00+08:00"
     }
   ],
   "merchants": [
@@ -308,6 +308,92 @@
       "category": "零售"
     }
   ],
+  "products": [
+    {
+      "id": "prd_mmf",
+      "name": "安心货币",
+      "product_type": "MMF",
+      "risk_level": 1,
+      "risk_label": "保守",
+      "base_nav": "1.0000",
+      "base_date": "2026-10-15T12:00:00+08:00",
+      "confirm_days": 0,
+      "settle_days": 0,
+      "min_amount_cents": 100,
+      "risk_disclosure": "本产品主要投资于货币市场工具，风险较低，适合追求流动性与本金稳健的保守型投资者。产品净值稳定但非保本，极端市场环境下仍可能出现净值波动。",
+      "disclosure_version": "v1"
+    },
+    {
+      "id": "prd_sbond",
+      "name": "稳盈短债",
+      "product_type": "BOND",
+      "risk_level": 2,
+      "risk_label": "稳健",
+      "base_nav": "1.0520",
+      "base_date": "2026-10-15T12:00:00+08:00",
+      "confirm_days": 1,
+      "settle_days": 1,
+      "min_amount_cents": 100000,
+      "risk_disclosure": "本产品主要投资于剩余期限较短的债券资产，风险适中，适合稳健型投资者。债券价格受利率变化影响，短期可能出现小幅波动。",
+      "disclosure_version": "v1"
+    },
+    {
+      "id": "prd_stable",
+      "name": "稳健增利",
+      "product_type": "BOND",
+      "risk_level": 3,
+      "risk_label": "稳健",
+      "base_nav": "1.2310",
+      "base_date": "2026-10-15T12:00:00+08:00",
+      "confirm_days": 1,
+      "settle_days": 1,
+      "min_amount_cents": 100000,
+      "risk_disclosure": "本产品以稳健的债券投资为主，力争在控制风险的基础上实现稳定增值。净值受市场利率影响可能波动，不承诺保本保收益。",
+      "disclosure_version": "v1"
+    },
+    {
+      "id": "prd_mixed",
+      "name": "均衡混合",
+      "product_type": "MIXED",
+      "risk_level": 3,
+      "risk_label": "平衡",
+      "base_nav": "1.4875",
+      "base_date": "2026-10-15T12:00:00+08:00",
+      "confirm_days": 1,
+      "settle_days": 2,
+      "min_amount_cents": 100000,
+      "risk_disclosure": "本产品同时投资于债券与股票资产，力求收益与风险的平衡。受权益市场波动影响，净值可能出现较明显回撤。",
+      "disclosure_version": "v1"
+    },
+    {
+      "id": "prd_growth",
+      "name": "成长股票",
+      "product_type": "EQUITY",
+      "risk_level": 4,
+      "risk_label": "进取",
+      "base_nav": "2.0310",
+      "base_date": "2026-10-15T12:00:00+08:00",
+      "confirm_days": 1,
+      "settle_days": 2,
+      "min_amount_cents": 100000,
+      "risk_disclosure": "本产品主要投资于具有成长性的权益类资产，预期收益较高但波动较大。净值可能随市场大幅波动，适合进取型投资者。",
+      "disclosure_version": "v1"
+    },
+    {
+      "id": "prd_tech",
+      "name": "科技先锋",
+      "product_type": "EQUITY",
+      "risk_level": 5,
+      "risk_label": "激进",
+      "base_nav": "1.8820",
+      "base_date": "2026-10-15T12:00:00+08:00",
+      "confirm_days": 1,
+      "settle_days": 2,
+      "min_amount_cents": 100000,
+      "risk_disclosure": "本产品集中投资于科技行业股票，收益弹性大但风险高。行业集中度高，净值可能出现剧烈波动，适合能承受较大回撤的激进型投资者。",
+      "disclosure_version": "v1"
+    }
+  ],
   "billings": [
     {
       "id": "blg_video",
@@ -340,6 +426,22 @@
       "account_id": "acc_zs_chk",
       "amount_cents": 19900,
       "day_of_month": 25
+    },
+    {
+      "id": "blg_ls_video",
+      "merchant_id": "mer_video",
+      "customer_id": "cus_ls",
+      "account_id": "acc_ls_chk",
+      "amount_cents": 3000,
+      "day_of_month": 20
+    },
+    {
+      "id": "blg_ls_music",
+      "merchant_id": "mer_music",
+      "customer_id": "cus_ls",
+      "account_id": "acc_ls_chk",
+      "amount_cents": 1500,
+      "day_of_month": 22
     }
   ],
   "standing_instructions": [
@@ -352,6 +454,60 @@
       "period": "MONTHLY",
       "day_of_month": 5,
       "next_run_at": "2026-11-05T06:00:00+08:00"
+    },
+    {
+      "id": "si_zs_video",
+      "kind": "MERCHANT_MANDATE",
+      "customer_id": "cus_zs",
+      "from_account_id": "acc_zs_chk",
+      "merchant_id": "mer_video",
+      "billing_id": "blg_video",
+      "max_amount_cents": 3600
+    },
+    {
+      "id": "si_zs_music",
+      "kind": "MERCHANT_MANDATE",
+      "customer_id": "cus_zs",
+      "from_account_id": "acc_zs_chk",
+      "merchant_id": "mer_music",
+      "billing_id": "blg_music",
+      "max_amount_cents": 1800
+    },
+    {
+      "id": "si_zs_cloud",
+      "kind": "MERCHANT_MANDATE",
+      "customer_id": "cus_zs",
+      "from_account_id": "acc_zs_chk",
+      "merchant_id": "mer_cloud",
+      "billing_id": "blg_cloud",
+      "max_amount_cents": 2520
+    },
+    {
+      "id": "si_zs_gym",
+      "kind": "MERCHANT_MANDATE",
+      "customer_id": "cus_zs",
+      "from_account_id": "acc_zs_chk",
+      "merchant_id": "mer_gym",
+      "billing_id": "blg_gym",
+      "max_amount_cents": 23880
+    },
+    {
+      "id": "si_ls_video",
+      "kind": "MERCHANT_MANDATE",
+      "customer_id": "cus_ls",
+      "from_account_id": "acc_ls_chk",
+      "merchant_id": "mer_video",
+      "billing_id": "blg_ls_video",
+      "max_amount_cents": 3600
+    },
+    {
+      "id": "si_ls_music",
+      "kind": "MERCHANT_MANDATE",
+      "customer_id": "cus_ls",
+      "from_account_id": "acc_ls_chk",
+      "merchant_id": "mer_music",
+      "billing_id": "blg_ls_music",
+      "max_amount_cents": 1800
     }
   ],
   "transactions": [

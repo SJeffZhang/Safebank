@@ -2,13 +2,14 @@
 
 import base64
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
 
-from safebank_bankcore.analytics import detect_anomalies, spending_summary
+from safebank_bankcore.analytics import detect_anomalies, detect_subscriptions, spending_summary
 from safebank_bankcore.banking import card_view
 from safebank_bankcore.ids import digest
-from safebank_bankcore.reserve import upcoming_window
+from safebank_bankcore.reserve import BUSINESS_TIMEZONE, _business_time, upcoming_window
 from safebank_contracts.codes import Code
+from safebank_contracts.risk_questionnaire import QUESTIONNAIRE
 from safebank_contracts.views import READ_RESULTS
 
 from .errors import BankError
@@ -20,15 +21,47 @@ SUPPORTED_READS = {
     "get_spending_summary",
     "get_cards",
     "get_profile",
+    "get_risk_profile",
+    "get_risk_questionnaire",
     "list_scheduled",
     "list_subscriptions",
     "upcoming_charges",
+    "get_split_status",
     "detect_anomalies",
+    "detect_subscriptions",
+    "list_products",
+    "compare_products",
+    "get_product",
 }
+
+# Ordered field list shown by R15; mirrors bankcore compare_products.
+COMPARISON_FIELDS = [
+    "name",
+    "risk_level",
+    "risk_label",
+    "product_type",
+    "nav",
+    "recent_return_bp",
+    "min_amount_cents",
+    "confirm_days",
+    "settle_days",
+]
 
 
 def mask(value):
     return "****" + value[-4:]
+
+
+def _risk_still_valid(valid_until: str, sim_now: datetime) -> bool:
+    """Whether a stored risk_valid_until (date or aware datetime string) covers sim_now.
+
+    Validity is by business date: the assessment is valid through the whole day it
+    expires on, so compare the Asia/Shanghai dates rather than instants.
+    """
+    dt = datetime.fromisoformat(valid_until)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=BUSINESS_TIMEZONE)
+    return _business_time(dt).date() >= _business_time(sim_now).date()
 
 
 def require_account(state, account_id, customer_id):
@@ -75,19 +108,19 @@ def read(state, tool, args, customer_id):
                 key=lambda t: t.sequence,
             )
             for day in range(args.history_days - 1, -1, -1):
-                date = state.sim_now.date() - timedelta(days=day)
+                day_date = state.sim_now.date() - timedelta(days=day)
                 last = next(
                     (
                         t
                         for t in reversed(transactions)
-                        if t.occurred_at.astimezone(state.sim_now.tzinfo).date() <= date
+                        if _business_time(t.occurred_at).date() <= day_date
                     ),
                     None,
                 )
                 history.append(
                     dict(
                         account_id=account.id,
-                        date=date,
+                        date=day_date,
                         balance_cents=last.balance_after_cents if last else 0,
                         available_cents=last.available_after_cents if last else 0,
                     )
@@ -216,7 +249,7 @@ def read(state, tool, args, customer_id):
                 is_valid=(
                     customer.risk_level is not None
                     and customer.risk_valid_until is not None
-                    and date.fromisoformat(customer.risk_valid_until) >= state.sim_now.date()
+                    and _risk_still_valid(customer.risk_valid_until, state.sim_now)
                 ),
                 valid_until=customer.risk_valid_until,
             ),
@@ -253,6 +286,25 @@ def read(state, tool, args, customer_id):
                 annual_to_monthly="floor_div_12",
             ),
         )
+    elif tool == "get_split_status":
+        if args.request_id:
+            target = next((s for s in state.splits if s.id == args.request_id), None)
+            if target is None:
+                raise BankError(Code.NOT_FOUND, 404)
+            data = dict(items=[target.model_dump(mode="json")], next_cursor=None)
+        else:
+            sorted_splits = sorted(state.splits, key=lambda s: (s.created_at, s.id))
+            page, cursor = paginate(
+                sorted_splits,
+                args,
+                customer_id,
+                lambda s: (s.created_at.isoformat(), s.id),
+                "get_split_status",
+            )
+            data = dict(
+                items=[s.model_dump(mode="json") for s in page],
+                next_cursor=cursor,
+            )
     elif tool == "upcoming_charges":
         try:
             window = upcoming_window(state, days=args.days, account_id=args.account_id)
@@ -336,6 +388,34 @@ def read(state, tool, args, customer_id):
                 for aid, a in sorted(window.accounts.items())
             ],
         )
+    elif tool == "get_risk_questionnaire":
+        questions = QUESTIONNAIRE["rq_v1"]
+        data = dict(
+            questionnaire_id="rq_v1",
+            questions=[
+                dict(
+                    id=q.id,
+                    prompt=q.prompt,
+                    options=[dict(id=o.id, label=o.label) for o in q.options],
+                )
+                for q in questions.values()
+            ],
+            validity_months=12,
+        )
+    elif tool == "get_risk_profile":
+        customer = state.customers[customer_id]
+        latest = state.assessments[0] if state.assessments else None
+        data = dict(
+            assessment_id=latest.id if latest else None,
+            level=customer.risk_level,
+            assessed_at=latest.assessed_at if latest else None,
+            valid_until=latest.valid_until if latest else None,
+            is_valid=(
+                customer.risk_level is not None
+                and customer.risk_valid_until is not None
+                and _risk_still_valid(customer.risk_valid_until, state.sim_now)
+            ),
+        )
     elif tool == "detect_anomalies":
         data = detect_anomalies(
             state,
@@ -344,6 +424,36 @@ def read(state, tool, args, customer_id):
             to_at=args.to_at,
             account_id=args.account_id,
         )
+    elif tool == "detect_subscriptions":
+        data = detect_subscriptions(
+            state,
+            customer_id=customer_id,
+            lookback_days=args.lookback_days,
+        )
+    elif tool == "list_products":
+        items = list(state.products)
+        if args.max_risk_level is not None:
+            items = [p for p in items if p.risk_level <= args.max_risk_level]
+        if args.product_type is not None:
+            items = [p for p in items if p.product_type == args.product_type]
+        page, cursor = paginate(items, args, customer_id, lambda p: (p.id,), "list_products")
+        data = dict(
+            items=[p.model_dump(mode="json") for p in page],
+            next_cursor=cursor,
+        )
+    elif tool == "compare_products":
+        by_id = {p.id: p for p in state.products}
+        if any(pid not in by_id for pid in args.product_ids):
+            raise BankError(Code.NOT_FOUND, 404)
+        data = dict(
+            items=[by_id[pid].model_dump(mode="json") for pid in args.product_ids],
+            comparison_fields=COMPARISON_FIELDS,
+        )
+    elif tool == "get_product":
+        target = next((p for p in state.products if p.id == args.product_id), None)
+        if target is None:
+            raise BankError(Code.NOT_FOUND, 404)
+        data = target.model_dump(mode="json")
     else:
         raise BankError(Code.TOOL_NOT_ALLOWED, 403)
     return READ_RESULTS[tool].model_validate(data)
