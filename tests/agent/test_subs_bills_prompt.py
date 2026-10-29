@@ -183,8 +183,9 @@ def test_cancel_subscription_read_sourced_si_passes():
 
 
 def test_derived_schedule_rejects_literal_amount_source():
+    plan = _x2_plan_with_literal_amount()
     scripted = ScriptedLLM(
-        [tool_response("submit_action_plan", _x2_plan_with_literal_amount())]
+        [tool_response("submit_action_plan", plan), tool_response("submit_action_plan", plan)]
     )
     llm = make_llm(api_key=API_KEY, http_client=scripted.client)
     with pytest.raises(ReferenceError) as exc_info:
