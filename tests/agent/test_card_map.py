@@ -19,9 +19,7 @@ from services.agent.app.llm.cards import _READ_TOOL_CARD_TYPE, generate_cards
 def _analysis_state(read: ReadRecord) -> dict:
     return {
         "reads": [read],
-        "understanding": type(
-            "u", (), {"unclear": False, "needs_write": False, "intents": []}
-        )(),
+        "understanding": type("u", (), {"unclear": False, "needs_write": False, "intents": []})(),
     }
 
 
@@ -46,18 +44,14 @@ class TestMappingGuard:
 
 class TestCardTypesFromReads:
     def _cards_for(self, tool: str, data: dict) -> tuple:
-        state = _analysis_state(
-            ReadRecord(source_ref="src_a", tool=tool, args={}, data=data)
-        )
+        state = _analysis_state(ReadRecord(source_ref="src_a", tool=tool, args={}, data=data))
         return generate_cards(state)
 
     def test_account(self):
         cards = self._cards_for(
             "get_accounts",
             {
-                "accounts": [
-                    {"id": "acc_zs_chk", "balance_cents": 600000, "currency": "CNY"}
-                ],
+                "accounts": [{"id": "acc_zs_chk", "balance_cents": 600000, "currency": "CNY"}],
                 "daily_outflow_cents": 0,
                 "daily_outflow_limit_cents": 100000,
                 "remaining_daily_outflow_cents": 100000,
@@ -70,9 +64,7 @@ class TestCardTypesFromReads:
         cards = self._cards_for(
             "get_transactions",
             {
-                "items": [
-                    {"id": "txn_1", "amount_cents": 80000, "direction": "OUT"}
-                ],
+                "items": [{"id": "txn_1", "amount_cents": 80000, "direction": "OUT"}],
                 "next_cursor": None,
                 "income_cents": 0,
                 "expense_cents": 80000,
@@ -198,15 +190,13 @@ class TestCardCapWithRealTools:
             "detect_anomalies",
             "get_spending_summary",
         ]
-        reads = [
-            ReadRecord(
-                source_ref=f"src_{i}",
-                tool=tool,
-                args={},
-                data={"items": [{"id": f"x_{i}"}]} if tool not in ("get_accounts",) else {"accounts": [{"id": f"acc_{i}"}]},
-            )
-            for i, tool in enumerate(tools)
-        ]
+        reads = []
+        for i, tool in enumerate(tools):
+            if tool == "get_accounts":
+                data = {"accounts": [{"id": f"acc_{i}"}]}
+            else:
+                data = {"items": [{"id": f"x_{i}"}]}
+            reads.append(ReadRecord(source_ref=f"src_{i}", tool=tool, args={}, data=data))
         state = {
             "reads": reads,
             "understanding": type(
