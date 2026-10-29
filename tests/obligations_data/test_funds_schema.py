@@ -120,7 +120,7 @@ def test_upgrade_head_twice_succeeds(obligations_db):
         try:
             async with admin.connect() as conn:
                 version = await conn.scalar(text("SELECT version_num FROM alembic_version"))
-                assert version == "0008_funds"
+                assert version == "0009_funds_units_nonneg"
                 for table, expected in (
                     (
                         "holdings",
@@ -403,7 +403,7 @@ def test_0002_to_head_preserves_existing_data(obligations_0002_db):
 
             async with admin.connect() as conn:
                 version = await conn.scalar(text("SELECT version_num FROM alembic_version"))
-                assert version == "0008_funds"
+                assert version == "0009_funds_units_nonneg"
 
                 new_count = await conn.scalar(
                     text("SELECT count(*) FROM merchants WHERE id='mer_funds'")
