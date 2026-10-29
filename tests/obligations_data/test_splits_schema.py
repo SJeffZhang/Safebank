@@ -48,7 +48,7 @@ def test_version_is_0005(obligations_db):
         admin = engine(obligations_db.admin_url, poolclass=NullPool)
         async with admin.connect() as conn:
             v = await conn.scalar(text("SELECT version_num FROM alembic_version"))
-            assert v == "0004_event_jobs"
+            assert v == "0007_products"
         await admin.dispose()
 
     asyncio.run(check())
@@ -376,7 +376,7 @@ def test_upgrade_from_0003_preserves_old_data(obligations_0003_db):
         # All old rows must still be present and identical.
         async with admin.connect() as conn:
             v = await conn.scalar(text("SELECT version_num FROM alembic_version"))
-            assert v == "0004_event_jobs"
+            assert v == "0007_products"
 
             # split tables exist but are empty.
             sr = await conn.scalar(text("SELECT count(*) FROM split_requests"))

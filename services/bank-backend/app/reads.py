@@ -2,12 +2,12 @@
 
 import base64
 import json
-from datetime import date, timedelta
+from datetime import datetime, timedelta
 
 from safebank_bankcore.analytics import detect_anomalies, detect_subscriptions, spending_summary
 from safebank_bankcore.banking import card_view
 from safebank_bankcore.ids import digest
-from safebank_bankcore.reserve import _business_time, upcoming_window
+from safebank_bankcore.reserve import BUSINESS_TIMEZONE, _business_time, upcoming_window
 from safebank_contracts.codes import Code
 from safebank_contracts.risk_questionnaire import QUESTIONNAIRE
 from safebank_contracts.views import READ_RESULTS
@@ -29,11 +29,39 @@ SUPPORTED_READS = {
     "get_split_status",
     "detect_anomalies",
     "detect_subscriptions",
+    "list_products",
+    "compare_products",
+    "get_product",
 }
+
+# Ordered field list shown by R15; mirrors bankcore compare_products.
+COMPARISON_FIELDS = [
+    "name",
+    "risk_level",
+    "risk_label",
+    "product_type",
+    "nav",
+    "recent_return_bp",
+    "min_amount_cents",
+    "confirm_days",
+    "settle_days",
+]
 
 
 def mask(value):
     return "****" + value[-4:]
+
+
+def _risk_still_valid(valid_until: str, sim_now: datetime) -> bool:
+    """Whether a stored risk_valid_until (date or aware datetime string) covers sim_now.
+
+    Validity is by business date: the assessment is valid through the whole day it
+    expires on, so compare the Asia/Shanghai dates rather than instants.
+    """
+    dt = datetime.fromisoformat(valid_until)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=BUSINESS_TIMEZONE)
+    return _business_time(dt).date() >= _business_time(sim_now).date()
 
 
 def require_account(state, account_id, customer_id):
@@ -221,7 +249,7 @@ def read(state, tool, args, customer_id):
                 is_valid=(
                     customer.risk_level is not None
                     and customer.risk_valid_until is not None
-                    and date.fromisoformat(customer.risk_valid_until) >= state.sim_now.date()
+                    and _risk_still_valid(customer.risk_valid_until, state.sim_now)
                 ),
                 valid_until=customer.risk_valid_until,
             ),
@@ -385,7 +413,7 @@ def read(state, tool, args, customer_id):
             is_valid=(
                 customer.risk_level is not None
                 and customer.risk_valid_until is not None
-                and date.fromisoformat(customer.risk_valid_until) >= state.sim_now.date()
+                and _risk_still_valid(customer.risk_valid_until, state.sim_now)
             ),
         )
     elif tool == "detect_anomalies":
@@ -402,6 +430,30 @@ def read(state, tool, args, customer_id):
             customer_id=customer_id,
             lookback_days=args.lookback_days,
         )
+    elif tool == "list_products":
+        items = list(state.products)
+        if args.max_risk_level is not None:
+            items = [p for p in items if p.risk_level <= args.max_risk_level]
+        if args.product_type is not None:
+            items = [p for p in items if p.product_type == args.product_type]
+        page, cursor = paginate(items, args, customer_id, lambda p: (p.id,), "list_products")
+        data = dict(
+            items=[p.model_dump(mode="json") for p in page],
+            next_cursor=cursor,
+        )
+    elif tool == "compare_products":
+        by_id = {p.id: p for p in state.products}
+        if any(pid not in by_id for pid in args.product_ids):
+            raise BankError(Code.NOT_FOUND, 404)
+        data = dict(
+            items=[by_id[pid].model_dump(mode="json") for pid in args.product_ids],
+            comparison_fields=COMPARISON_FIELDS,
+        )
+    elif tool == "get_product":
+        target = next((p for p in state.products if p.id == args.product_id), None)
+        if target is None:
+            raise BankError(Code.NOT_FOUND, 404)
+        data = target.model_dump(mode="json")
     else:
         raise BankError(Code.TOOL_NOT_ALLOWED, 403)
     return READ_RESULTS[tool].model_validate(data)
