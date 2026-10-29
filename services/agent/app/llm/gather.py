@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -75,6 +77,7 @@ class GatherAdapter:
         observer: Callable[[AIMessage], None] | None = None,
         *,
         supplement_transfer_reads: bool = False,
+        fetch_business_date: bool = False,
     ) -> None:
         if not 1 <= max_rounds <= _MAX_ROUNDS:
             raise ValueError(f"max_rounds must be between 1 and {_MAX_ROUNDS}")
@@ -84,6 +87,10 @@ class GatherAdapter:
         self._max_rounds = max_rounds
         self._observer = observer
         self.supplement_transfer_reads = supplement_transfer_reads
+        # Production turns this on: read get_profile once per gather call so relative
+        # dates resolve against the business clock. Tests keep it off by default.
+        self.fetch_business_date = fetch_business_date
+        self.last_business_date = ""
 
     def with_read_executor(self, read_executor: ReadExecutor) -> GatherAdapter:
         """Return a new adapter sharing the same model/observer but with a different
@@ -101,7 +108,16 @@ class GatherAdapter:
     def __call__(self, state: AgentState, context: AgentContext) -> list[ReadRecord]:
         reads: list[ReadRecord] = []
         tools_attempted: set[str] = set()
-        messages = [SystemMessage(content=_SYSTEM), HumanMessage(content=self._prompt(state))]
+
+        # Resolve current business date from get_profile so relative dates
+        # (9月, 上个月, 最近, 下周) are interpreted against the right year.
+        date_line = self._resolve_business_date_line(state)
+        self.last_business_date = date_line
+
+        messages = [
+            SystemMessage(content=_SYSTEM),
+            HumanMessage(content=self._prompt(state, date_line)),
+        ]
         for _ in range(self._max_rounds):
             message = self._model.invoke(messages)
             if self._observer is not None:
@@ -259,8 +275,47 @@ class GatherAdapter:
         )
 
     @staticmethod
-    def _prompt(state: AgentState) -> str:
-        parts = ["用户请求："]
+    def _format_date_line(sim_now: str) -> str:
+        """Format a ``sim_now`` timestamp into a human-readable date line."""
+        try:
+            dt = datetime.fromisoformat(sim_now)
+            local = dt.astimezone(ZoneInfo("Asia/Shanghai"))
+            date_str = local.strftime("%Y-%m-%d %H:%M")
+            return f"当前业务时间：{date_str}（北京时间，Asia/Shanghai）"
+        except Exception:
+            return ""
+
+    def _resolve_business_date_line(self, state: AgentState) -> str:
+        """Best-effort business-date line for the prompts.
+
+        Reuses ``state["business_date"]`` or an existing get_profile read; otherwise,
+        only when ``fetch_business_date`` is on, performs one get_profile read through
+        the read executor. Any failure omits the line. Never mutates ``state``; the
+        graph node publishes ``last_business_date`` as a state update.
+        """
+        existing = state.get("business_date", "")
+        if existing:
+            return existing
+        for r in state.get("reads", []):
+            if getattr(r, "tool", "") == "get_profile":
+                sim_now = (getattr(r, "data", None) or {}).get("sim_now", "")
+                if sim_now:
+                    return self._format_date_line(sim_now)
+        if not self.fetch_business_date:
+            return ""
+        try:
+            result = self._read_executor("get_profile", {})
+            sim_now = (getattr(result, "data", None) or {}).get("sim_now", "")
+        except Exception:
+            return ""
+        return self._format_date_line(sim_now) if sim_now else ""
+
+    @staticmethod
+    def _prompt(state: AgentState, date_line: str = "") -> str:
+        parts = []
+        if date_line:
+            parts.append(date_line)
+        parts.append("用户请求：")
         parts.extend(utterance.text for utterance in state.get("utterances", []))
         understanding = state.get("understanding")
         if understanding is not None:
