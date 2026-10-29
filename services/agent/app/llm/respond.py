@@ -313,11 +313,16 @@ def _collect_card_facts(data: object, facts: dict[str, str]) -> None:
 
 
 def _card_facts_block(state: AgentState) -> str:
-    """Format card facts as a prompt section (empty string if none)."""
+    """Format card facts as a prompt section (empty string if none).
+
+    Emits only the last4 values (sorted, de-duplicated) — never the card ID,
+    which the LLM must not be given a reason to quote as a tail.
+    """
     facts = _card_facts(state)
     if not facts:
         return ""
-    return "\n".join(f"- {cid}: 尾号{last4}" for cid, last4 in sorted(facts.items()))
+    last4s = sorted(set(facts.values()))
+    return "\n".join(f"- 尾号{last4}" for last4 in last4s)
 
 
 def _replan_hint_labels(decision: dict[str, object]) -> list[str]:

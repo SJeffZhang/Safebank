@@ -23,10 +23,11 @@ _AMOUNT_YUAN_RE = re.compile(r"([\d,]+(?:\.\d{1,2})?)\s*(元|块)")
 # Percentage
 _PCT_RE = re.compile(r"([\d]+(?:\.[\d]+)?)\s*%")
 
-# Card tail: 尾号 followed by an ASCII word token.  Valid tails are exactly
-# 4 digits; anything else (card IDs, 5+ digits, mixed alphanumerics) is
-# extracted with last4=None so it can be flagged and scrubbed.
-_CARD_LAST4_RE = re.compile(r"尾号\s*([A-Za-z0-9_]+)")
+# Card tail: 尾号 followed by an optional copula (为/是) and an ASCII word
+# token.  Valid tails are exactly 4 digits; anything else (card IDs, 5+
+# digits, mixed alphanumerics) is extracted with last4=None so it can be
+# flagged and scrubbed.
+_CARD_LAST4_RE = re.compile(r"尾号(?:为|是)?\s*([A-Za-z0-9_]+)")
 
 # Amount string that should be preserved during masking (contains ¥/元/块)
 _AMOUNT_TEXT_RE = re.compile(r"(?:¥|￥)[\d,.]+|[\d,.]+\s*(?:元|块)")
@@ -508,11 +509,16 @@ def _contains_any(text: str, phrases: list[str]) -> bool:
     return any(p in text for p in phrases)
 
 
+_TRAILING_DECKA_RE = re.compile(r"\s*的卡")
+
+
 def _scrub_unverified_card_tails(text: str, fact_set: dict) -> str:
     """Replace every unverified ``尾号…`` phrase in *text* with ``该卡``.
 
-    Only CARD_LAST4 items that fail fact-checking are touched; amounts and
-    percentages are left for the normal masking path.
+    When the phrase is immediately followed by ``的卡``, that ``的卡`` is
+    absorbed into the replacement so ``尾号 zs_1 的卡`` becomes ``该卡``
+    (not ``该卡 的卡``).  Only CARD_LAST4 items that fail fact-checking are
+    touched; amounts and percentages are left for the normal masking path.
     """
     extracted = extract_card_last4(text)
     unverified = check_against_facts(extracted, fact_set)
@@ -521,6 +527,9 @@ def _scrub_unverified_card_tails(text: str, fact_set: dict) -> str:
         return text
     for uv in sorted(card_items, key=lambda u: u["span"][0], reverse=True):
         start, end = uv["span"]
+        m = _TRAILING_DECKA_RE.match(text, end)
+        if m:
+            end = m.end()
         text = text[:start] + "该卡" + text[end:]
     return text
 
