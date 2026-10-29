@@ -74,10 +74,10 @@ def test_http_contract_auth_ownership_execution_and_outbox():
                 ).status_code == 422
                 assert (
                     await client.post(
-                        "/internal/read/list_products",
+                        "/internal/read/get_holdings",
                         json={
                             "customer_id": "cus_a",
-                            "args": {"max_risk_level": None, "product_type": None},
+                            "args": {"account_id": None, "product_id": None},
                         },
                     )
                 ).json()["error"]["code"] == "TOOL_NOT_ALLOWED"
