@@ -444,3 +444,125 @@ def test_execute_fund_confirm(obligations_db):
         await runtime.dispose()
 
     asyncio.run(check())
+
+
+# ── test 2: execute FUND_EXPIRY ────────────────────────────────────────
+
+
+def test_execute_fund_expiry(obligations_db):
+    """Subscribe prd_r3_gain → execute FUND_EXPIRY instead of confirm.
+    Order → EXPIRED, freeze released, no holding created."""
+
+    async def check():
+        await _setup(obligations_db)
+        admin = _admin_conn(obligations_db)
+        runtime = _runtime_conn(obligations_db)
+
+        # Step 1 — subscribe via HTTP
+        app = create_app(db=runtime, service_token=SERVICE_TOKEN, fingerprint_key=KEY)
+        port = free_port()
+        _serve(app, port)
+        steps = _subscribe_step()
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            body = await _prepare_execute(
+                client, "pln_fund_sub_ev2", "hash_fund_sub_ev2", steps, expected_versions=0
+            )
+            assert body["status"] == "EXECUTED", body
+
+            snapshot_req = SnapshotRequest(customer_id="cus_ls", steps=steps, event_id=None)
+            snapshot_resp = await client.post(
+                "/internal/snapshot",
+                json=snapshot_req.model_dump(mode="json"),
+                headers=HEADERS,
+                timeout=10.0,
+            )
+        assert snapshot_resp.status_code == 200
+        state = BankState.model_validate_json(snapshot_resp.text)
+        acc = state.accounts["acc_ls_chk"]
+        before_credit = acc.credits_posted_cents
+        before_debit = acc.debits_posted_cents
+
+        # Find order and FUND_EXPIRY job
+        async with admin.connect() as conn:
+            orders = (
+                await conn.execute(
+                    select(m.fund_orders).where(m.fund_orders.c.plan_id == "pln_fund_sub_ev2")
+                )
+            ).fetchall()
+            assert len(orders) == 1
+            order_id = orders[0].id
+            assert orders[0].status == "PENDING_CONFIRM"
+
+            expiry_jobs = (
+                await conn.execute(
+                    select(m.event_jobs).where(
+                        m.event_jobs.c.source_id == order_id,
+                        m.event_jobs.c.kind == "FUND_EXPIRY",
+                    )
+                )
+            ).fetchall()
+            assert len(expiry_jobs) == 1
+            event_id = expiry_jobs[0].id
+            payload_hash = expiry_jobs[0].payload_hash
+
+        # Step 2 — execute FUND_EXPIRY
+        async with runtime.connect() as conn:
+            clock_ver, cust_ver = await _clock_and_version(conn, "cus_ls")
+
+        async with runtime.begin() as conn:
+            svc = EventService()
+            result = await svc.execute_event(
+                conn,
+                event_id,
+                expected_versions={"cus_ls": cust_ver},
+                clock_version=clock_ver,
+                expected_payload_hash=payload_hash,
+                authorization_evidence={"by": "test"},
+            )
+        assert result["event_id"] == event_id
+        assert result["status"] == "SUCCESS"
+
+        # Verify: order EXPIRED, no holdings, freeze released
+        async with runtime.connect() as conn:
+            updated = (
+                await conn.execute(
+                    select(m.fund_orders).where(m.fund_orders.c.id == order_id)
+                )
+            ).first()
+            assert updated.status == "EXPIRED"
+
+            holdings = (
+                await conn.execute(
+                    select(m.holdings).where(m.holdings.c.customer_id == "cus_ls")
+                )
+            ).fetchall()
+            assert len(holdings) == 0
+
+            # Balance restored (pending freeze released)
+            acc_after = (
+                await conn.execute(
+                    select(m.accounts).where(m.accounts.c.id == "acc_ls_chk")
+                )
+            ).first()
+            # No posted debit (credit and debit unchanged from freeze release)
+            assert acc_after.debits_posted_cents == before_debit
+            assert acc_after.credits_posted_cents == before_credit
+            # Pending is zero — freeze has been voided
+            assert acc_after.debits_pending_cents == 0
+
+            # Event job → DONE
+            job_after = (
+                await conn.execute(
+                    select(m.event_jobs).where(m.event_jobs.c.id == event_id)
+                )
+            ).first()
+            assert job_after.status == "DONE"
+
+            exec_row = await _event_execution(conn, event_id)
+            assert exec_row is not None
+            assert exec_row["status"] == "SUCCESS"
+
+        await admin.dispose()
+        await runtime.dispose()
+
+    asyncio.run(check())
