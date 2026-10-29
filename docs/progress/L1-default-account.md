@@ -68,3 +68,51 @@
 
 未覆盖/备注：L2 判定 INTENT_SCOPE_EXCEEDED 的端到端（跨真实 gateway）不在本
 组件范围；零 CHECKING 场景交由 L2 处理。
+
+## 修复轮 1（独立评审 REQUEST_CHANGES 后）
+
+评审 `docs/reviews/L1-default-account-review.md` 结论 REQUEST_CHANGES，两条：
+
+- **P1** `_user_named_source_account` 用「全部原话子串」判定，误判四类场景：
+  目标账户（「转到他的活期」）、收款人名含关键词（「转给储蓄客户王五」）、
+  否定（「不要用活期」）、跨轮（上一轮提过「活期」）。误判时默认活期规则被
+  静默跳过，模型选出的账户（如 SAVINGS）原样流向 L2。
+- **P2a** `_checking_accounts` 按出现次数计数：同一个 CHECKING 账户在两次
+  `get_accounts` 读取中都出现，会被当成两个账户而误报 `ExhaustedClarify`。
+
+### 修复
+
+- `_user_named_source_account` 改为只看**当前轮 typed 原话**：新增
+  `_current_turn_text`（取最后一个 `kind=typed` 的 `UtteranceRef`，跳过
+  hint/action/context 与更早轮次），并改用**源账户锚定**正则判定：
+  - `从(我的)?(储蓄|活期|支票|定期)(账户|卡)?`
+  - `用(我的)?(储蓄|活期)(账户|卡)?[^，。；！？]*(转|付|汇)`
+  - 命中且前面紧跟否定词（不/别/勿/莫，`_negated_before`）时不算命名。
+- `_checking_accounts` 改为按账户 id 去重（`dict.setdefault`），同一 id 只保留
+  第一次出现的 `(id, source_ref, pointer)`；空 id 的账户跳过（无法引用）。
+
+**关闭词表（P2b，记录不修改）**：仅识别「从<类型>」「用<类型>…转/付/汇」两种
+显式源账户说法；其它显式说法（如「从主账户转」「从理财账户转」）不在词表内，
+不会被识别为「已命名源账户」，override 会替换为用户显式指定的账户。评审明确
+接受此偏差（当前种子无此类账户类型，实际影响为零）。
+
+### 测试（`tests/agent/test_default_account.py` 3 → 9 条）
+
+- 4 条负例：目标账户 / 收款人名含关键词 / 否定 / 跨轮关键词 → 仍走默认 CHECKING；
+- 1 条正例：「从储蓄转500给王五」→ 保留储蓄账户；
+- 1 条 P2a：两次读取含同一 CHECKING → 不触发 `ExhaustedClarify`，覆盖生效。
+
+红测先行：实现前 5 failed / 4 passed；实现后 9 passed。
+
+### 门禁（tail -1）
+
+| 命令 | 结果 |
+|---|---|
+| `make lint` | 427 files already formatted |
+| `.venv/bin/pytest tests/agent -q` | 532 passed, 38 skipped |
+| `make test` | 3342 passed, 901 skipped |
+
+提交：
+- `8bbcd0e` 红测
+- `3113f4c` 修复实现
+- `4fe3ed8` ruff format（plan.py + test_default_account.py）
