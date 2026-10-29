@@ -57,6 +57,11 @@ async def _scheduler_loop(sched: Scheduler) -> None:
         await asyncio.sleep(_SCHEDULER_IDLE_SECONDS)
 
 
+# Gateway S1 (/internal/scheduled/authorize) is registered only on the internal
+# app, which binds the bank-net :8201 listener (PRD §7.1, §9.5a).
+DEFAULT_S1_URL = "http://gateway:8201"
+
+
 def create_app(
     db=None,
     *,
@@ -87,7 +92,7 @@ def create_app(
             )
     if scheduler_enabled is None:
         scheduler_enabled = _env_flag("SCHEDULER_ENABLED")
-    _s1_url = s1_url or os.environ.get("S1_URL", "http://gateway:8200")
+    _s1_url = s1_url or os.environ.get("S1_URL", DEFAULT_S1_URL)
     _s1_token = s1_token or os.environ.get("SCHEDULER_SERVICE_TOKEN", token)
     sched = Scheduler(database, s1_url=_s1_url, s1_token=_s1_token)
     advancer: ClockAdvancer | None = ClockAdvancer(sched) if demo_mode else None
