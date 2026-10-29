@@ -9,10 +9,6 @@ into both the gather and plan prompts.
 
 from __future__ import annotations
 
-import datetime as dt
-
-import pytest
-
 from services.agent.app.graph.state import AgentContext, ReadRecord, Understanding, UtteranceRef
 from services.agent.app.llm.gather import GatherAdapter, ReadResult
 from services.agent.app.llm.plan import PlanAdapter
@@ -83,17 +79,20 @@ class TestGatherBusinessDate:
             return profile_read_result()
 
         scripted = ScriptedLLM([text_response("查不到异常")])
-        from services.agent.app.llm.client import BETA_API_BASE, MODEL, make_llm
+        from services.agent.app.llm.client import make_llm
 
         llm = make_llm(api_key="test-key", http_client=scripted.client)
         st = gather_state()
-        result = GatherAdapter(llm, executor)(st, ctx())
+        adapter = GatherAdapter(llm, executor, fetch_business_date=True)
+        result = adapter(st, ctx())
         # Model returned no tool calls → no new reads
         assert len(result) == 0
-        # get_profile was still called by the date resolver
-        assert ("get_profile", {}) in read_log
-        # The business date was stored in state
-        assert "当前业务时间：2026-10-15 09:00" in st.get("business_date", "")
+        # get_profile was called exactly once by the date resolver
+        assert read_log.count(("get_profile", {})) == 1
+        # The date is published on the adapter (the graph node turns it into a state update);
+        # the adapter never mutates the incoming state.
+        assert "当前业务时间：2026-10-15 09:00" in adapter.last_business_date
+        assert "business_date" not in st
 
     def test_date_line_in_gather_prompt(self):
         """The business date line appears in the gather system+user prompt."""
@@ -104,10 +103,10 @@ class TestGatherBusinessDate:
             return profile_read_result()
 
         scripted = ScriptedLLM([text_response("enough")])
-        from services.agent.app.llm.client import BETA_API_BASE, MODEL, make_llm
+        from services.agent.app.llm.client import make_llm
 
         llm = make_llm(api_key="test-key", http_client=scripted.client)
-        GatherAdapter(llm, executor)(gather_state(), ctx())
+        GatherAdapter(llm, executor, fetch_business_date=True)(gather_state(), ctx())
 
         # Check that the date line appears in the prompt messages
         assert len(scripted.requests) >= 1
@@ -134,10 +133,12 @@ class TestGatherBusinessDate:
             return profile_read_result()
 
         scripted = ScriptedLLM([text_response("enough")])
-        from services.agent.app.llm.client import BETA_API_BASE, MODEL, make_llm
+        from services.agent.app.llm.client import make_llm
 
         llm = make_llm(api_key="test-key", http_client=scripted.client)
-        result = GatherAdapter(llm, executor)(gather_state(reads=existing), ctx())
+        result = GatherAdapter(llm, executor, fetch_business_date=True)(
+            gather_state(reads=existing), ctx()
+        )
         # Should NOT have called get_profile via executor
         assert ("get_profile", {}) not in read_log
         # The existing record stays in state; gather returns only *new* reads
@@ -151,14 +152,15 @@ class TestGatherBusinessDate:
 
     def test_failing_profile_read_does_not_block(self):
         """When get_profile fails, gather continues without the date line."""
+
         def executor(name, args):
             raise RuntimeError("L3 unavailable")
 
         scripted = ScriptedLLM([text_response("enough")])
-        from services.agent.app.llm.client import BETA_API_BASE, MODEL, make_llm
+        from services.agent.app.llm.client import make_llm
 
         llm = make_llm(api_key="test-key", http_client=scripted.client)
-        result = GatherAdapter(llm, executor)(gather_state(), ctx())
+        GatherAdapter(llm, executor, fetch_business_date=True)(gather_state(), ctx())
         # Should still have completed — the model's text response is collected
         assert len(scripted.requests) >= 1
         # No date line in prompt
@@ -202,7 +204,7 @@ class TestPlanBusinessDate:
                 ),
             ]
         )
-        from services.agent.app.llm.client import BETA_API_BASE, MODEL, make_llm
+        from services.agent.app.llm.client import make_llm
 
         llm = make_llm(api_key="test-key", http_client=scripted.client)
 
@@ -244,7 +246,7 @@ class TestPlanBusinessDate:
                 ),
             ]
         )
-        from services.agent.app.llm.client import BETA_API_BASE, MODEL, make_llm
+        from services.agent.app.llm.client import make_llm
 
         llm = make_llm(api_key="test-key", http_client=scripted.client)
 
