@@ -74,3 +74,41 @@ None.
 - **Ledger conservation**: `test_conservation` asserts Σcredits == Σdebits. PASS.
 - **Consistency with banking.py transfer rules (limits, card state, daily outflow) for scheduled
   external transfers**: FAIL — see P1-1.
+
+## Round 2
+
+Re-review of the fix round at the new HEAD (merged with current main):
+`git diff 008ffc2..HEAD` for `events.py` / `banking.py` / `test_events.py`.
+
+- **P1 (external scheduled transfers bypass transfer controls) — ADDRESSED.**
+  `apply_scheduled_transfer` now resolves the payee from `state.payees` and runs
+  `transfer_control_violation` before posting (card state `CARD_STATE_CONFLICT`, single/daily
+  `CARD_SINGLE_LIMIT` / `CARD_DAILY_LIMIT`, customer `DAILY_OUTFLOW_LIMIT`), and on external
+  success calls `bump_outflow_counters` so scheduled outflows feed `daily_outflow_cents` /
+  `rolling_outflow_cents` / `daily_used_cents`. Hard violations at due time return `BLOCKED`
+  with no money moved and the period still consumed; insufficient funds still maps to
+  `FAILED_INSUFFICIENT`. The `external = inst.payee_id is not None` split matches
+  `banking.py::apply_transfer`. New tests `test_frozen_card_blocks_external_scheduled_transfer`,
+  `test_daily_outflow_limit_blocks_external_scheduled_transfer`, and
+  `test_successful_external_transfer_bumps_outflow_counters` cover the three control dimensions.
+- **P2-1 (non-ACTIVE block branch does not advance `next_run_at`) — ADDRESSED.**
+  The `inst.status != "ACTIVE"` path now computes `_next_scheduled_due` and advances
+  `next_run_at` before recording the `BLOCKED`/`SCHEDULED_BYPASS` run, so a re-activated
+  instruction is no longer permanently due. New test
+  `test_disabled_instruction_advances_next_run_at` asserts the advance with no successor effects.
+- **P2-2 (merchant `MERCHANT_MANDATE` vs `MERCHANT_CHARGE` kind mismatch) — NOT ADDRESSED**
+  (still the documented coordinator gap; out of scope for this pure-function change).
+  `apply_merchant_charge` is unchanged and still emits no `ScheduleEventJob` for the next
+  merchant period; the frozen `ScheduleEventJob.kind` literal remains `MERCHANT_MANDATE` while
+  the persist/CHECK layer expects `MERCHANT_CHARGE`. No new pure-function action can fix it here.
+
+New problems: none at P0/P1. The `transfer_control_violation` default
+`daily_outflow_limit_cents = 5_000_000` equals `Context.daily_outflow_limit_cents`, so scheduled
+transfers (which carry no L2 context) apply the same customer daily outflow limit as
+user-initiated transfers — consistent, not a defect. Ledger `category` for
+`code="SCHEDULED_TRANSFER"`/`"MERCHANT_CHARGE"` is `"其他"` (pre-existing, unchanged by this fix).
+
+Test: `.venv/bin/pytest tests/bankcore -q` → **412 passed in 0.36s** (13 events tests, including
+the 4 new regression tests).
+
+Round 2 verdict: **APPROVE**
