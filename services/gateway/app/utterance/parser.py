@@ -743,6 +743,12 @@ def parse(
                 ):
                     return Parsed()
                 amount = 0
+                # Defense-in-depth: "省下来的钱转到储蓄" is inherently a self
+                # schedule, so only a single own SAVINGS account is a valid target
+                # (mirrors provenance._is_own_savings). A payee or any other
+                # target is rejected at parse time rather than left to REPLAN.
+                if len([a for a in _accounts(command.target, owned) if a.type == "SAVINGS"]) != 1:
+                    return Parsed()
             targets = _accounts(command.target, owned)
             if targets:
                 if len(targets) != 1 or targets[0].id == source:

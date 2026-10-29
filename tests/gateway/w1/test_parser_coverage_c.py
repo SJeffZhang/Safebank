@@ -89,6 +89,17 @@ def test_x2_cancel_idle_subscriptions_and_schedule_monthly_savings():
     assert result.scope.fields["first_run_at"] == "2026-11-01T08:00:00+08:00"
 
 
+def test_x2_derived_schedule_payee_target_rejected():
+    """省下来的钱转到储蓄 is inherently self; a payee target must not be SCOPED."""
+    result = parse(
+        "取消闲置订阅，把省的钱每月1号转到王五",
+        _STATE,
+        _CUS,
+        predicates={"idle_subscriptions": ["si_gym"]},
+    )
+    assert result.status != "SCOPED"
+
+
 # ── 2. X-4：冻结可疑卡 + 从储蓄转2000到活期 ────────────────────────────────
 
 
