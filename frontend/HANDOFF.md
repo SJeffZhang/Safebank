@@ -217,8 +217,24 @@ CI：`.github/workflows/frontend.yml` 在前端相关 push/PR 运行 Node 22 / n
 6. 若做真机，验证键盘遮挡、safe-area、iOS View Transitions降级、弹层焦点和屏幕高度；这些不能由桌面375px截图替代。
 7. app.css适合逐步收敛，不建议一次性重写所有页面；任何重构先保持用户逐项确认的行为。
 
-## 11. 发布记录
+## 11. 发布记录与可验证入口
 
-本轮用户授权：整理全部当前前端工作→独立分支→PR→检查通过→merge commit→合并后测试。当前使用 `feat/frontend-mobile-app`，源代码整理前本地基线为d1bb890；远端fetch已看到c1a8ce0，后续同步与精确PR/commit/CI结果以本文补记和Git为准。
+本轮PR：[SJeffZhang/Safebank #71](https://github.com/SJeffZhang/Safebank/pull/71)。源分支 `feat/frontend-mobile-app`，采用merge commit，目标main；不写队友仓库。
 
-**不得将“已授权/计划合并”写成“已经合并”。** 本节在实际创建PR、CI与合并后补记。
+- 初始前端检查点：82d1f54。
+- 本地原基线d1bb890落后远端166提交；已整合远端c1a8ce0，整合提交c3258cf。
+- 文档冲突保留了双方日志；diff检查还清除了diff3基础分隔符残留。三个导入文件CRLF已统一LF，tokens原SHA256未变。
+- 整合后重新验证：全量384 passed（新App61为子集）、BFF10 passed、TypeScript/Vite build通过。
+- 发布说明及最终CI、merge commit、merged_at以PR71实时记录为准；不在合并前伪写合并结果。后续文档提交会改变PR head，必须核最终head的CI。
+
+接手时可运行：
+
+```bash
+git status --short
+git fetch origin main
+git log -1 --oneline origin/main
+gh pr view 71 --repo SJeffZhang/Safebank --json state,headRefOid,mergeCommit,mergedAt,url
+gh pr checks 71 --repo SJeffZhang/Safebank
+```
+
+本轮归档证据：[docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)，后续发布核对补记及PR讨论；不要从分支名或“已授权合并”推断远端已经合并。

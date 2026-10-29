@@ -153,3 +153,11 @@ ThemeProvider切换使用View Transitions，圆心取右上角真实按钮中心
 删除“小安，在这里”整块外部标题/说明及外部新会话按钮，移除侧栏上下文和助手页面页脚。对话模块铺满workspace，保留公共顶栏/合成预览标识/底部导航；新会话置于聊天顶部，输入框与提示固定，消息区独立滚动。用户需要确认的授权行为不变，仍在会话忙碌/待确认时禁用新会话。
 
 最终test:app61 passed（12文件），build、git diff --check通过。独立浏览器量测内容区521px、聊天521px，上下均对齐且外层scrollHeight不超过clientHeight；截图screenshots/assistant-full-workspace.png。发送合成你好消息及新会话按钮重置交互已检查；不调用真实模型。没有新增镜像实现的布局单测。
+
+## 2026-10-29 PR71发布整理与全量回归
+
+用户授权提交/开PR/合并，并要求完整交接和新Agent约束Prompt。新增HANDOFF.md/NEXT_AGENT_PROMPT.md、README链接及frontend.yml前端CI。主分支同步前落后远端166提交；82d1f54先保存检查点，c3258cf整合origin/main c1a8ce0，AGENTS双方日志合并保留；后续diff检查清除残留diff3基础标记。三个原导入文件CRLF统一LF，基础tokens原SHA仍一致。
+
+首次全量382pass/2超时：旧routing helper在异步客户目录加载前输入PIN，尚无选中客户。改为等待并选择张三再输入，未扩大timeout、未改业务鉴权。全量复跑384 passed（包含新App61）/39文件；BFF在沙箱listen EPERM10失败，在允许本地监听的宿主重跑10 passed。整合后再次全量384/BFF10/build通过。凭据模式扫描226新增前端文件0命中，无意外.env；不读取真实.env或密钥。最终PR差异不含后端业务文件。
+
+PR：https://github.com/SJeffZhang/Safebank/pull/71。最终精确head的远端检查和合并后回归由PR记录补充，不能把此处本地测试当远端CI。当前交接发布检查不代表真实银行三层联调完成。
