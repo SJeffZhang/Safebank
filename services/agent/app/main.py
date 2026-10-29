@@ -201,7 +201,12 @@ def _build_production_ports() -> tuple[Ports, object]:
     from services.agent.app.llm.understand import UnderstandAdapter
 
     understand = UnderstandAdapter(llm)
-    gather = GatherAdapter(llm, read_executor=_dummy_read_executor, supplement_transfer_reads=True)
+    gather = GatherAdapter(
+        llm,
+        read_executor=_dummy_read_executor,
+        supplement_transfer_reads=True,
+        fetch_business_date=True,
+    )
     plan = PlanAdapter(llm)
 
     # -- respond / verify_output (C1e: RespondAdapter + OutputVerifier) --
