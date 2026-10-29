@@ -12,7 +12,6 @@ text is captured exactly from the text.
 """
 
 import pytest
-
 from safebank_contracts.views import ScheduledView, SubscriptionView
 
 from services.gateway.app.utterance.parser import parse
