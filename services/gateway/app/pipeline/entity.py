@@ -4,7 +4,7 @@ from safebank_bankcore.banking import apply_plan
 from safebank_bankcore.references import resolved_steps
 from safebank_contracts.codes import Code
 
-from ..policy.registry import action_kind, outflow, policy
+from ..policy.registry import action_kind, outflow, policy, step_base_risk
 from ..schemas.enums import FindingEffect
 from ..taint.entities import READ_HINTS, entity_ids, owned
 from ..taint.records import contains_id, load_records
@@ -67,7 +67,7 @@ class EntityStage(Stage):
                     step.tool,
                     args,
                     kind.value,
-                    rule.base_risk,
+                    step_base_risk(step.tool, args, shadow),
                     outflow(step.tool, args, shadow),
                 )
             )

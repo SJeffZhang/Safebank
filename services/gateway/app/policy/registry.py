@@ -140,3 +140,20 @@ def outflow(tool: str, args: Any, shadow_state: Any) -> bool:
         values = _as_dict(args)
         return values.get("to_account_id") is None and values.get("payee_id") is not None
     return False
+
+
+_LOOSEN_RED_KINDS = frozenset({ActionKind.CARD_LIMIT_LOOSEN, ActionKind.CARD_CONTROL_LOOSEN})
+
+
+def step_base_risk(tool: str, args: Any, shadow_state: Any) -> str:
+    """Effective per-step base risk for the decision stage (PRD §7.6 C-3/C-4).
+
+    The static ``tools.yaml`` base risk cannot express direction: raising a card
+    single/daily limit (C-3) or turning any card channel on (C-4) must be RED and
+    therefore require OTP, while lowering a limit or turning channels off stays
+    YELLOW. ``action_kind`` already resolves direction against the shadow state,
+    so LOOSEN steps are upgraded to RED here.
+    """
+    if action_kind(tool, args, shadow_state) in _LOOSEN_RED_KINDS:
+        return "RED"
+    return policy(tool).base_risk
