@@ -331,4 +331,3 @@ def test_disabled_instruction_advances_next_run_at():
     updated = new_state.obligations.standing_instructions[inst.id]
     assert updated.next_run_at == at("2026-11-18T06:00:00+08:00")
     assert effects == ()
-

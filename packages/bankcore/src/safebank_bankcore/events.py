@@ -162,9 +162,7 @@ def _finish_scheduled(
     state = _refresh(state, inst=updated)
     if ends:
         new_fx = (
-            SetInstructionStatus(
-                instruction_id=inst.id, old_status="ACTIVE", new_status="DELETED"
-            ),
+            SetInstructionStatus(instruction_id=inst.id, old_status="ACTIVE", new_status="DELETED"),
         )
     else:
         new_fx = (_next_job(inst, next_due),)
@@ -298,7 +296,10 @@ def apply_scheduled_transfer(
         )
     if external:
         after = bump_outflow_counters(
-            after, customer_id=inst.customer_id, account_id=source.id, amount_cents=inst.amount_cents
+            after,
+            customer_id=inst.customer_id,
+            account_id=source.id,
+            amount_cents=inst.amount_cents,
         )
     after, new_fx, run = _finish_scheduled(
         after,
