@@ -22,6 +22,7 @@ Run from the repository root::
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -41,14 +42,17 @@ ORIGINAL_TXN_IDS = frozenset(f"txn_zs_{i:03d}" for i in range(1, 14))
 # --- merchants -------------------------------------------------------------
 # New everyday merchants + the three anomaly merchants. ``usage_expected`` is
 # set on mer_gym (existing row) so ``detect_subscriptions`` marks it idle.
+# Everyday categories (日用/零食/茶饮/生鲜) are disjoint from the anomaly
+# categories (娱乐/外卖/数码) and the enriched October rows (餐饮/出行/零售),
+# so the everyday spends can never trip CATEGORY_OUTLIER.
 NEW_MERCHANTS = [
     {"id": "mer_nightbar", "name": "夜色酒吧", "category": "娱乐"},
     {"id": "mer_waimai", "name": "美味外卖", "category": "外卖"},
     {"id": "mer_electronic", "name": "星耀电子", "category": "数码"},
-    {"id": "mer_coffee", "name": "晨光咖啡", "category": "餐饮"},
-    {"id": "mer_taxi", "name": "快捷出行", "category": "出行"},
-    {"id": "mer_grocery", "name": "便民超市", "category": "零售"},
     {"id": "mer_daily", "name": "日用百货", "category": "日用"},
+    {"id": "mer_snack", "name": "便利零食", "category": "零食"},
+    {"id": "mer_tea", "name": "街角茶饮", "category": "茶饮"},
+    {"id": "mer_fresh", "name": "社区生鲜", "category": "生鲜"},
 ]
 NEW_MERCHANT_IDS = frozenset(m["id"] for m in NEW_MERCHANTS)
 
@@ -196,25 +200,33 @@ def _gym_visits():
 
 
 def _daily_txns():
-    """~140 everyday CARD_SPEND rows spread across June (before the anomaly window)."""
+    """140 everyday CARD_SPEND rows spread across 2026-07-17 .. 2026-10-12.
+
+    Constant amount per merchant (σ=0, so ``amount > μ + 3σ`` is impossible)
+    and categories disjoint from the anomaly/enriched rows keep the everyday
+    spends out of ``detect_anomalies``. Daytime hours (09:00-16:59) avoid
+    NIGHT_LARGE, amounts < 100000 avoid NEW_MERCHANT_LARGE, and the
+    ``(i * 7) % 60`` minute spacing keeps same-merchant charges >= 44 minutes
+    apart (no DUPLICATE within the 5-minute window).
+    """
     merchants = [
-        ("mer_coffee", "晨光咖啡", "餐饮", 1_500, 3_001),
-        ("mer_taxi", "快捷出行", "出行", 300, 501),
-        ("mer_grocery", "便民超市", "零售", 2_000, 7_001),
-        ("mer_daily", "日用百货", "日用", 500, 2_501),
+        ("mer_daily", "日用百货", "日用", 1_500),
+        ("mer_snack", "便利零食", "零食", 800),
+        ("mer_tea", "街角茶饮", "茶饮", 1_800),
+        ("mer_fresh", "社区生鲜", "生鲜", 3_200),
     ]
+    start = datetime(2026, 7, 17, tzinfo=timezone(timedelta(hours=8)))
     rows = []
     for i in range(140):
-        mid, name, cat, base, spread = merchants[i % 4]
-        day = 1 + i // 5  # June 1 .. 28
-        slot = i % 5
-        hour = 8 + slot
+        mid, name, cat, amount = merchants[i % 4]
+        day_offset = (i * 88) // 140  # 0 .. 87 -> 2026-07-17 .. 2026-10-12
+        occurred = start + timedelta(days=day_offset)
+        hour = 9 + (i % 8)
         minute = (i * 7) % 60
-        amount = base + (i * 13) % spread
         rows.append(
             _txn(
                 f"txn_zs_{100 + i:03d}",
-                f"2026-06-{day:02d}T{hour:02d}:{minute:02d}:00+08:00",
+                f"{occurred.strftime('%Y-%m-%d')}T{hour:02d}:{minute:02d}:00+08:00",
                 amount,
                 name,
                 "CARD_SPEND",
