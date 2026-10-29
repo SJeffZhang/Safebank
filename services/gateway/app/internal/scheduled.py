@@ -36,7 +36,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 from safebank_contracts.codes import Code
-from safebank_contracts.plan import PlanDraft, ScheduledEvidence
+from safebank_contracts.plan import DemoEvidence, OrderEvidence, PlanDraft, ScheduledEvidence
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -263,6 +263,130 @@ async def _release_claim(db, event_id: str) -> None:
 # ── Phase B helpers (no lock, no held connection) ─────────────────────────────
 
 
+async def _handle_system_event(
+    request: Request,
+    db,
+    app,
+    l3,
+    event: dict[str, Any],
+    event_id: str,
+    customer_id: str,
+    trace_id: str | None,
+) -> dict[str, Any]:
+    """Handle FUND_CONFIRM / FUND_SETTLE / FUND_EXPIRY — no grant.
+
+    Takes a fresh snapshot for version fencing, builds OrderEvidence from the
+    fund order, and calls ``l3.event_execute``.
+    """
+    try:
+        snap = await l3.snapshot({"customer_id": customer_id, "steps": [], "event_id": None})
+    except L3Error:
+        await _release_claim(db, event_id)
+        return _retrying(event_id)
+
+    evidence = OrderEvidence(
+        type="SYSTEM_ORDER",
+        order_id=event["source_id"],
+    )
+    try:
+        result = await l3.event_execute(
+            event_id,
+            {
+                "expected_versions": snap.get("versions", {}),
+                "clock_version": snap.get("clock_version", 0),
+                "expected_payload_hash": event["payload_hash"],
+                "authorization_evidence": evidence.model_dump(mode="json"),
+            },
+        )
+    except L3Error:
+        await _release_claim(db, event_id)
+        return _retrying(event_id)
+
+    exec_status = result.get("status", "SUCCESS")
+    if exec_status == "FAILED":
+        return await _block(
+            request,
+            db,
+            event,
+            "FAILED_INSUFFICIENT",
+            Code.INSUFFICIENT_FUNDS.value,
+            ctx=None,
+        )
+
+    await _finalize_claim(db, event_id, customer_id, "SUCCESS", None, app.wall_now(), trace_id)
+    return {
+        "event_id": event_id,
+        "status": "SUCCESS",
+        "instruction_run_id": result.get("instruction_run_id"),
+    }
+
+
+async def _handle_demo_event(
+    request: Request,
+    db,
+    app,
+    l3,
+    event: dict[str, Any],
+    event_id: str,
+    customer_id: str,
+    trace_id: str | None,
+) -> dict[str, Any]:
+    """Handle DEMO_EVENT — only in demo / eval mode."""
+    if not (app.settings.demo_mode or app.settings.eval_mode):
+        return await _block(
+            request,
+            db,
+            event,
+            "BLOCKED",
+            Code.SCHEDULED_BYPASS.value,
+            ctx=None,
+        )
+
+    try:
+        snap = await l3.snapshot({"customer_id": customer_id, "steps": [], "event_id": None})
+    except L3Error:
+        await _release_claim(db, event_id)
+        return _retrying(event_id)
+
+    evidence = DemoEvidence(
+        type="DEMO_EVENT",
+        event_id=event_id,
+        console_session_id="scheduler",
+        kind="EXTERNAL_CREDIT",
+    )
+    try:
+        result = await l3.event_execute(
+            event_id,
+            {
+                "expected_versions": snap.get("versions", {}),
+                "clock_version": snap.get("clock_version", 0),
+                "expected_payload_hash": event["payload_hash"],
+                "authorization_evidence": evidence.model_dump(mode="json"),
+            },
+        )
+    except L3Error:
+        await _release_claim(db, event_id)
+        return _retrying(event_id)
+
+    exec_status = result.get("status", "SUCCESS")
+    if exec_status == "FAILED":
+        return await _block(
+            request,
+            db,
+            event,
+            "FAILED_INSUFFICIENT",
+            Code.INSUFFICIENT_FUNDS.value,
+            ctx=None,
+        )
+
+    await _finalize_claim(db, event_id, customer_id, "SUCCESS", None, app.wall_now(), trace_id)
+    return {
+        "event_id": event_id,
+        "status": "SUCCESS",
+        "instruction_run_id": result.get("instruction_run_id"),
+    }
+
+
 async def _re_evaluate(request: Request, event: dict[str, Any]) -> EvalContext:
     """Run the grant re-evaluation stages on a fresh L3 snapshot."""
     app = request.app.state
@@ -425,6 +549,20 @@ async def scheduled_authorize(request: Request, body: AuthorizeRequest) -> dict[
 
         customer_id = event["customer_id"]
 
+        # ── System events (no grant) ────────────────────────────────────────
+        event_kind = event.get("kind")
+
+        if event_kind in ("FUND_CONFIRM", "FUND_SETTLE", "FUND_EXPIRY"):
+            return await _handle_system_event(
+                request, db, app, l3, event, event_id, customer_id, trace_id
+            )
+
+        if event_kind == "DEMO_EVENT":
+            return await _handle_demo_event(
+                request, db, app, l3, event, event_id, customer_id, trace_id
+            )
+
+        # ── Grant-backed events (SCHEDULED_TRANSFER, MERCHANT_CHARGE) ────────
         # Step 2: load the grant by instruction id; backfill when missing.
         async with db.connect() as conn:
             grant = await _load_grant(conn, event["source_id"])
