@@ -120,7 +120,7 @@ async def _seed_risk_assessment(conn, customer_id: str, level: int):
         .where(m.customers.c.id == customer_id)
         .values(
             risk_level=level,
-            risk_valid_until=datetime(2027, 1, 1, tzinfo=timezone(timedelta(hours=8))),
+            risk_valid_until="2027-01-01",
         )
     )
     # Internal equity and clearing accounts are already created by install_core
