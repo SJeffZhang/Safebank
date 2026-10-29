@@ -11,8 +11,9 @@ sim_now = `2026-10-15T09:00:00+08:00`. Authoritative data spec (6 points) and re
       the balance/memo/ledger test is already green (balance assertion reads
       `credits_posted_cents - debits_posted_cents == 600000`, memo `txn_zs_013` verbatim,
       ledger conservation sums).
-- [ ] Production seed changes (generator script + regenerated `l1_seed_v1.json`).
-- [ ] Gates green: `make lint`, `make test`, `make test-obligations`, `make test-e0b`,
+- [x] Production seed changes (`scripts/generate_seed_history.py` + regenerated
+      `l1_seed_v1.json`, commit `3655de8`; lint/format fix `aa9099b`).
+- [x] Gates green: `make lint`, `make test`, `make test-obligations`, `make test-e0b`,
       `make contracts-check` (tail -1 each).
 
 ## Design (validated against source, do not re-derive)
@@ -79,3 +80,19 @@ must remain the latest (balance_after 600000).
   `test_detect_anomalies_exactly_three_on_crd_zs_1` FAILED, `test_detect_subscriptions_four_with_gym_idle`
   FAILED (both because the seed has no history yet), `test_zhangsan_checking_balance_refund_memo_and_ledger`
   PASSED.
+- `.venv/bin/python scripts/generate_seed_history.py`: `wrote 175 transactions (new OUT 889924 cents,
+  credits 2097874, debits 1497874)` — 13 original + 162 generated (140 daily CARD_SPEND + 12 MANDATE +
+  6 gym visits + 4 anomaly txns).
+- `make test-obligations` (after regeneration, commit 3655de8): **158 passed, 1 warning** —
+  both analytics tests green, balance/memo/ledger test still green.
+- `make lint` (before format fix): 1 error — E501 line too long in `test_seed_history.py:144`
+  (pre-existing). Fixed by wrapping the credits_pending assertion and running `ruff format` on
+  `scripts/generate_seed_history.py` + `tests/obligations_data/test_seed_history.py` (commit `aa9099b`).
+- `make lint` (final): **pass** (ruff check "All checks passed!", format "428 files already formatted").
+- `make test`: **3332 passed, 906 skipped**.
+- `make test-obligations`: **158 passed, 1 warning**.
+- `make test-e0b`: **119 passed**.
+- `make contracts-check`: **PASS: contracts v1 match frozen schemas**.
+
+Note: the E0 runner suite uses `mini_seed.json`, not `l1_seed_v1.json`, so no old transaction-count
+assertion needed updating.
