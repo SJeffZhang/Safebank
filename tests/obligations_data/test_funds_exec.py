@@ -100,19 +100,18 @@ async def _seed_products(conn):
 async def _seed_risk_assessment(conn, customer_id: str, level: int):
     from app import models as m
 
-    # Assessment record
+    # Assessment record (score must be 6–24 per CHECK constraint)
     await conn.execute(
         m.risk_assessments.insert().values(
             id=f"ra_{customer_id}",
             customer_id=customer_id,
-            level=level,
+            level=f"R{level}",
             assessed_at=NOW,
             valid_until=datetime(2027, 1, 1, tzinfo=timezone(timedelta(hours=8))),
-            score=level * 20,
-            raw_answers={"q1": "a1"},
+            score=min(level * 3 + 3, 24),
+            answers={"q1": "a1"},
             questionnaire_id="rq_v1",
-            plan_id="pln_seed_ra",
-            step_id=None,
+            plan_id=f"pln_seed_ra_{customer_id}",
         )
     )
     # Customer summary
@@ -124,14 +123,7 @@ async def _seed_risk_assessment(conn, customer_id: str, level: int):
             risk_valid_until=datetime(2027, 1, 1, tzinfo=timezone(timedelta(hours=8))),
         )
     )
-    # Seed the internal equity and clearing accounts needed by fund settlement
-    for acc in [
-        dict(id="acc_seed_equity", type="INTERNAL", customer_id=None, display_name="种子权益账户",
-             account_no="internal-seed", flags=0),
-        dict(id="acc_external_clearing", type="INTERNAL", customer_id=None, display_name="外部清算账户",
-             account_no="internal-external", flags=0),
-    ]:
-        await conn.execute(m.accounts.insert().values(**acc))
+    # Internal equity and clearing accounts are already created by install_core
 
 
 def _green_evidence(plan_hash: str) -> InteractiveEvidence:
@@ -370,7 +362,6 @@ def test_redeem_reserves_units_and_creates_fund_settle_job(obligations_db):
             _today = datetime(2026, 10, 15, 9, 0, 0, tzinfo=timezone(timedelta(hours=8)))
             await conn.execute(
                 m.holdings.insert().values(
-                    id="hld_ls_mmf",
                     customer_id="cus_ls",
                     account_id="acc_ls_chk",
                     product_id="prd_mmf_01",
@@ -465,7 +456,6 @@ def test_get_holdings_returns_holdings_and_orders(obligations_db):
             _today = datetime(2026, 10, 15, 9, 0, 0, tzinfo=timezone(timedelta(hours=8)))
             await conn.execute(
                 m.holdings.insert().values(
-                    id="hld_ls_mmf",
                     customer_id="cus_ls",
                     account_id="acc_ls_chk",
                     product_id="prd_mmf_01",
