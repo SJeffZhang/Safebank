@@ -468,7 +468,7 @@ def _first_present(obj: object, *keys: str) -> object:
 
 
 def _args_label(args: object) -> str:
-    """Render the key arguments of a read, e.g. ``(account_id=acc_zs_chk; from_at=2026-09-01 00:00)``."""
+    """Render the key arguments of a read, e.g. ``(account_id=acc_zs_chk; from_at=…)``."""
     if args is None:
         return ""
     parts: list[str] = []
