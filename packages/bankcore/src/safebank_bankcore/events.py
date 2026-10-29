@@ -309,7 +309,9 @@ def apply_merchant_charge(
     updated_billing = billing.model_copy(update={"next_due_at": next_due})
 
     if block_code is not None:
-        run = InstructionRun(**run_kwargs, status="BLOCKED", code=block_code.value, transfer_id=None)
+        run = InstructionRun(
+            **run_kwargs, status="BLOCKED", code=block_code.value, transfer_id=None
+        )
         return _refresh(_refresh(state, billing=updated_billing), run=run), (), run
 
     cmd = LedgerTransfer(
@@ -328,7 +330,9 @@ def apply_merchant_charge(
     after, fx, errors = post_transfer(state, cmd, due)
     if errors:
         code = errors[0].code
-        run = InstructionRun(**run_kwargs, status=_status_for(code), code=code.value, transfer_id=None)
+        run = InstructionRun(
+            **run_kwargs, status=_status_for(code), code=code.value, transfer_id=None
+        )
     else:
         run = InstructionRun(**run_kwargs, status="SUCCESS", code=None, transfer_id=cmd.id)
     after = _refresh(after, billing=updated_billing)
