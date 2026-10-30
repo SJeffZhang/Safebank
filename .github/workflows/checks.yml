@@ -39,7 +39,6 @@ jobs:
       - run: make test-w5-notify
       - run: make test-w4b2c
       - run: make test-w5-sms
-      - run: make test-w5-notify
       - run: make test-s1
       - run: make test-w4c
       - run: make test-e0b
