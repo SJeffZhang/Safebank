@@ -1264,3 +1264,30 @@ def test_exhausted_clarify_routes_to_respond_no_evaluate_via_compiled_graph():
     # Must NOT have called /plans/evaluate
     evaluate_urls = [r["url"] for r in transport.requests if "/plans/evaluate" in r["url"]]
     assert len(evaluate_urls) == 0, f"unexpected /plans/evaluate calls: {evaluate_urls}"
+
+
+def test_replan_user_reply_lists_reasons_via_compiled_graph():
+    """REPLAN with a user resolver must not stop at the bare template header."""
+    from services.agent.app.llm.respond import RespondAdapter
+
+    g4_replan = dict(_g4_allow("pln_a"))
+    g4_replan["decision"] = "REPLAN"
+    g4_replan["risk"] = "RED"
+    g4_replan["findings"] = [
+        {
+            "code": "INSUFFICIENT_FUNDS",
+            "effect": "REPLAN",
+            "resolver": "user",
+            "evidence_refs": [],
+            "message": "",
+        }
+    ]
+    graph, _client, _transport = _gateway_graph(
+        [*_g20_ok(_g20_item("utt_a")), json_response(200, g4_replan)],
+        respond=RespondAdapter(None),
+    )
+
+    result = _invoke(graph)
+    assert result.get("execution") is None
+    assert result["reply_draft"].startswith("需要您确认以下信息")
+    assert "账户余额不足" in result["reply_draft"]
