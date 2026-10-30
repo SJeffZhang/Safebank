@@ -154,6 +154,37 @@ def test_get_event_shape(obligations_db):
         assert result["source_id"] == "si_zs_mom"
         assert result["job_status"] == "PENDING"
         assert result["execution"] is None
+        assert result["instruction_id"] == "si_zs_mom"
+        assert result["source_plan_id"] == "pln_seed"
+        assert result["grant_scope_hash"] == "0" * 64
+        assert result["account_id"] == "acc_zs_chk"
+        assert result["amount_cents"] == 100000
+        assert result["payee_id"] == "pye_zs_mom"
+
+    asyncio.run(check())
+
+
+def test_get_merchant_event_resolves_billing_to_mandate(obligations_db):
+    async def check():
+        await _setup(obligations_db)
+        runtime = _runtime_conn(obligations_db)
+        async with runtime.begin() as conn:
+            await _seed_event(
+                conn,
+                event_id="evt_merchant_definition",
+                kind="MERCHANT_CHARGE",
+                source_id="bill_zs_video",
+                due_at=DUE,
+                payload_hash="m" * 64,
+            )
+            event = await EventService().get_event(conn, "evt_merchant_definition", None)
+            assert event["source_id"] == "bill_zs_video"
+            assert event["instruction_id"] == "si_zs_video"
+            assert event["source_plan_id"] == "pln_seed"
+            assert event["account_id"] == "acc_zs_chk"
+            assert event["amount_cents"] == 3000
+            assert event["merchant_id"] == "mer_video"
+        await runtime.dispose()
 
     asyncio.run(check())
 

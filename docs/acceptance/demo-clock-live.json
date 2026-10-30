@@ -1,0 +1,48 @@
+{
+  "candidate": "2d585188b73ab068b550e5bb8bf4fa16bf1fc4f2",
+  "advances": [
+    {
+      "id": "be6d7c9a2bcacdd50b32617366e774ac83ac6277dc406b427cc05464f3dcf831",
+      "status": "DONE",
+      "sim_now": "2026-10-15T09:40:00+08:00",
+      "processed": 0,
+      "blocked": 0,
+      "remaining": 0
+    },
+    {
+      "id": "328f2f5fde675d2a4b04f1dfe853aa7f853dd182e993b1180fc04d9521b924de",
+      "status": "DONE",
+      "sim_now": "2026-10-23T09:00:00+08:00",
+      "processed": 6,
+      "blocked": 1,
+      "remaining": 0
+    },
+    {
+      "id": "0aaf9c96e3fdb58036231fbd4bbba7f3ae75aaa3a6b071b3da019f96eed711e1",
+      "status": "DONE",
+      "sim_now": "2026-12-06T09:00:00+08:00",
+      "processed": 10,
+      "blocked": 1,
+      "remaining": 0
+    }
+  ],
+  "sql": {
+    "generation": "demo_20261030172702_c99f6ad9",
+    "commit": "2d585188b73ab068b550e5bb8bf4fa16bf1fc4f2",
+    "runs": "si_ls_music|blg_ls_music|SUCCESS|2|3000\nsi_ls_video|blg_ls_video|SUCCESS|2|6000\nsi_zs_cloud|blg_cloud|SUCCESS|2|4200\nsi_zs_gym|blg_gym|SUCCESS|2|39800\nsi_zs_mom|-|SUCCESS|2|200000\nsi_zs_music|blg_music|BLOCKED|2|3000\nsi_zs_video|blg_video|SUCCESS|2|6000",
+    "next_schedule": "2027-01-04 22:00:00+00",
+    "billing_cursors": "0",
+    "orders": "SETTLED|200000|1624.5633",
+    "pending_funds": "0",
+    "balanced": "t|t",
+    "duplicate_instants": "0",
+    "terminal_audits": "16",
+    "decisions": "BLOCKED|2\nSUCCESS|14",
+    "sim_now": "2026-12-06 01:00:00+00"
+  },
+  "limitations": [
+    "Created schedule path covered by real L3 prepare/execute + S1 PostgreSQL contract, pending full L1 schedule provenance repair.",
+    "Fund redemption live scenario pending dedicated fix; subscription confirmation live verified.",
+    "This is D3 component acceptance, not two complete six-scenario rehearsals."
+  ]
+}

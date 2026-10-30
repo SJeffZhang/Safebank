@@ -25,6 +25,7 @@ from safebank_bankcore import events as bank_events
 from safebank_bankcore import external as bank_external
 from safebank_bankcore import funds as bank_funds
 from safebank_bankcore.banking import Context
+from safebank_bankcore.grants import instruction_scope
 from safebank_contracts.codes import Code
 from safebank_contracts.obligations import InstructionRun
 from safebank_contracts.state import StateScope
@@ -85,6 +86,29 @@ class EventService:
 
     def __init__(self, *, wall_clock=utcnow) -> None:
         self._wall_clock = wall_clock
+
+    async def _persist_period_cursor(self, conn, state, run) -> None:
+        """Persist the pure applier's source cursor in the event transaction.
+
+        Ledger effects do not carry obligation snapshot updates. Only the run's
+        own source is updated, with the pure applier's date, never caller input.
+        """
+        if not isinstance(run, InstructionRun):
+            return
+        if run.billing_id is not None:
+            billing = state.obligations.billings[run.billing_id]
+            await conn.execute(
+                m.merchant_billing.update()
+                .where(m.merchant_billing.c.id == run.billing_id)
+                .values(next_due_at=billing.next_due_at)
+            )
+        else:
+            instruction = state.obligations.standing_instructions[run.instruction_id]
+            await conn.execute(
+                m.standing_instructions.update()
+                .where(m.standing_instructions.c.id == run.instruction_id)
+                .values(next_run_at=instruction.next_run_at)
+            )
 
     async def _job_for_update(self, conn, event_id: str):
         return (
@@ -297,7 +321,105 @@ class EventService:
             raise BankError(Code.NOT_FOUND, status=404)
         execution = await self._execution(conn, event_id)
         payload = row["immutable_payload"]
+        # Associated definitions are authoritative DB rows, never callback fields.
+        # Version fencing on execute/block prevents using a definition changed
+        # after this read. Merchant source_id is a BILLING, not a mandate ID.
+        definition = {}
+        instruction = None
+        if row["kind"] == "SCHEDULED_TRANSFER":
+            instruction = (
+                (
+                    await conn.execute(
+                        select(m.standing_instructions).where(
+                            m.standing_instructions.c.id == row["source_id"]
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            definition = {
+                "account_id": instruction["from_account_id"],
+                "payee_id": instruction["payee_id"],
+                "to_account_id": instruction["to_account_id"],
+                "amount_cents": instruction["amount_cents"],
+            }
+        elif row["kind"] == "MERCHANT_CHARGE":
+            billing = (
+                (
+                    await conn.execute(
+                        select(m.merchant_billing).where(
+                            m.merchant_billing.c.id == row["source_id"]
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            instruction = (
+                (
+                    await conn.execute(
+                        select(m.standing_instructions).where(
+                            m.standing_instructions.c.billing_id == row["source_id"],
+                            m.standing_instructions.c.customer_id == owner,
+                            m.standing_instructions.c.kind == "MERCHANT_MANDATE",
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            definition = {
+                "account_id": billing["account_id"],
+                "amount_cents": billing["amount_cents"],
+                "billing_id": billing["id"],
+                "merchant_id": billing["merchant_id"],
+            }
+        if instruction is not None:
+            definition["grant_scope"] = instruction_scope(
+                instruction, billing if row["kind"] == "MERCHANT_CHARGE" else None
+            )
+            source = (
+                (
+                    await conn.execute(
+                        select(m.plan_executions).where(
+                            m.plan_executions.c.customer_id == owner,
+                            m.plan_executions.c.plan_id == instruction["source_plan_id"],
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            # Approval risk comes from actual committed evidence, never a default.
+            if source and source["result_json"].get("status") == "EXECUTED":
+                definition["source_approved_risk"] = source["authorization_evidence"].get("risk")
+                operations = (
+                    await conn.execute(
+                        select(m.operation_events.c.payload).where(
+                            m.operation_events.c.customer_id == owner,
+                            m.operation_events.c.plan_id == instruction["source_plan_id"],
+                            m.operation_events.c.action_kind == "SCHEDULED_TRANSFER_CREATE",
+                        )
+                    )
+                ).scalars()
+                originals = [
+                    p["instruction"]
+                    for p in operations
+                    if (p.get("instruction") or {}).get("id") == instruction["id"]
+                ]
+                if len(originals) == 1:
+                    definition["source_instruction"] = originals[0]
+        if row["kind"] in ("SCHEDULED_TRANSFER", "MERCHANT_CHARGE"):
+            definition.update(
+                {
+                    "instruction_id": instruction["id"] if instruction else None,
+                    "source_plan_id": instruction["source_plan_id"] if instruction else None,
+                    "grant_scope_hash": instruction["grant_scope_hash"] if instruction else None,
+                }
+            )
         return {
+            **definition,
             "event_id": row["id"],
             "kind": row["kind"],
             "customer_id": owner,
@@ -370,6 +492,7 @@ class EventService:
         else:  # DEMO_EVENT
             state, effects, run = self._apply_demo(state, row)
         await persist(conn, effects)
+        await self._persist_period_cursor(conn, state, run)
         await self._bump_version(conn, customer_id, version["version"] + 1)
         if isinstance(run, InstructionRun):
             await conn.execute(m.instruction_runs.insert().values(**run.model_dump(mode="python")))
@@ -460,6 +583,7 @@ class EventService:
                 code=code,
             )
         await persist(conn, effects)
+        await self._persist_period_cursor(conn, state, run)
         await self._bump_version(conn, customer_id, version["version"] + 1)
         if isinstance(run, InstructionRun):
             await conn.execute(m.instruction_runs.insert().values(**run.model_dump(mode="python")))

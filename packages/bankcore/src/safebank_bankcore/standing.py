@@ -310,7 +310,15 @@ def _make_fresh_snapshot(
     return state.model_copy(update={"obligations": new_snap})
 
 
-def _operation(now: datetime, ctx, kind: str, *, target: str | None = None, amount: int = 0):
+def _operation(
+    now: datetime,
+    ctx,
+    kind: str,
+    *,
+    target: str | None = None,
+    amount: int = 0,
+    payload: dict | None = None,
+):
     """Build an ``OperationEvent`` effect for an executed standing-instruction write."""
     return OperationEvent(
         operation=Operation(
@@ -322,6 +330,7 @@ def _operation(now: datetime, ctx, kind: str, *, target: str | None = None, amou
             target_fingerprint=target,
             amount_cents=amount,
             occurred_at=now,
+            payload=payload or {},
         )
     )
 
@@ -381,6 +390,7 @@ def apply_schedule_transfer(state: BankState, args: Schedule, now: datetime, ctx
             "SCHEDULED_TRANSFER_CREATE",
             target=target_fp,
             amount=inst.amount_cents,
+            payload={"instruction": inst.model_dump(mode="json")},
         ),
     )
     return new_state, effects, ()

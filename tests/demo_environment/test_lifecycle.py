@@ -43,6 +43,7 @@ def environment(tmp_path, monkeypatch):
         )
     (secrets / "postgres-bank-password").write_text("admin-sentinel")
     demo = DemoEnvironment(deploy)
+    monkeypatch.setattr(demo, "retain_image", Mock())
     monkeypatch.setattr("scripts.demo_environment.subprocess.check_output", lambda *a, **k: "sha\n")
     monkeypatch.setattr(demo, "sql", Mock(return_value=""))
     monkeypatch.setattr(demo, "verify", Mock(return_value={"digest": "same-initial-state"}))
@@ -53,12 +54,17 @@ def test_reset_keeps_previous_state_on_switch_failure(tmp_path, monkeypatch):
     demo = environment(tmp_path, monkeypatch)
     prior = {"generation": "demo_20261030000000_1234abcd"}
     (demo.state / "current.json").write_text(json.dumps(prior))
+    previous = demo.state / prior["generation"]
+    previous.mkdir()
+    (previous / "compose.yml").write_text("services: {}")
     calls = []
 
     def compose(*args, **kwargs):
         calls.append((args, kwargs))
+        if args[:2] == ("images", "-q"):
+            return "a" * 64
         if args[:4] == ("up", "-d", "--no-build", "--force-recreate"):
-            if kwargs["overlay"].parent.name != prior["generation"]:
+            if kwargs["overlay"].name != "rollback.yml":
                 raise RuntimeError("healthcheck failed")
         return ""
 
@@ -66,13 +72,20 @@ def test_reset_keeps_previous_state_on_switch_failure(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="healthcheck"):
         demo.reset()
     assert demo.current() == prior
-    assert calls[-1][1]["overlay"].parent.name == prior["generation"]
+    assert calls[-1][1]["overlay"].name == "rollback.yml"
+    demo.up()
+    retained = yaml.safe_load(calls[-1][1]["overlay"].read_text())
+    assert retained["services"]["bank-backend"]["image"] == "a" * 64
     assert not any("DROP" in str(c) or "TRUNCATE" in str(c) for c in demo.sql.call_args_list)
 
 
 def test_new_generation_has_fresh_keys_and_admin_only_in_maintenance(tmp_path, monkeypatch):
     demo = environment(tmp_path, monkeypatch)
-    monkeypatch.setattr(demo, "compose", Mock(return_value=""))
+    monkeypatch.setattr(
+        demo,
+        "compose",
+        Mock(side_effect=lambda *args, **kwargs: "a" * 64 if args[:2] == ("images", "-q") else ""),
+    )
     first = demo.reset()
     second = demo.reset()
     assert first["databases"] != second["databases"]
@@ -167,3 +180,66 @@ def test_verify_rejects_wrong_initial_state(tmp_path, monkeypatch, corrupt):
     )
     with pytest.raises(RuntimeError):
         DemoEnvironment.verify(demo, {"bank": "bank_demo", "gateway": "gateway_demo"})
+
+
+def test_rollback_pins_previous_container_images_before_rebuild(tmp_path, monkeypatch):
+    demo = environment(tmp_path, monkeypatch)
+    calls = []
+    failed = False
+    old_image = "sha256:" + "a" * 64
+
+    def compose(*args, **kwargs):
+        nonlocal failed
+        calls.append((args, kwargs))
+        if args[:2] == ("images", "-q"):
+            return old_image + "\n"
+        if args[:4] == ("up", "-d", "--no-build", "--force-recreate") and not failed:
+            failed = True
+            raise RuntimeError("injected switch failure")
+        return ""
+
+    monkeypatch.setattr(demo, "compose", compose)
+    with pytest.raises(RuntimeError, match="switch failure"):
+        demo.reset()
+    rollback = calls[-1][1]["overlay"]
+    assert rollback is not None
+    config = yaml.safe_load(rollback.read_text())
+    for name in ("frontend", "operator", "agent", "gateway", "bank-backend"):
+        assert config["services"][name]["image"] == old_image
+    assert demo.current() is None
+
+
+def test_missing_previous_container_fails_before_build(tmp_path, monkeypatch):
+    demo = environment(tmp_path, monkeypatch)
+    prior = {"generation": "demo_20261030000000_1234abcd"}
+    directory = demo.state / prior["generation"]
+    directory.mkdir()
+    (directory / "compose.yml").write_text("services: {}")
+    (demo.state / "current.json").write_text(json.dumps(prior))
+    compose = Mock(return_value="")
+    monkeypatch.setattr(demo, "compose", compose)
+    with pytest.raises(RuntimeError, match="cannot pin previous"):
+        demo.reset()
+    assert not any(call.args[0] == "build" for call in compose.call_args_list)
+    assert demo.current() == prior
+
+
+def test_previous_image_is_retained_before_mutable_tag_rebuild(tmp_path, monkeypatch):
+    demo = environment(tmp_path, monkeypatch)
+    events = []
+
+    def retain(image, tag):
+        events.append(("retain", image, tag))
+
+    monkeypatch.setattr(demo, "retain_image", retain, raising=False)
+
+    def compose(*args, **kwargs):
+        if args[:2] == ("images", "-q"):
+            return "a" * 64
+        events.append((args[0],))
+        return ""
+
+    monkeypatch.setattr(demo, "compose", compose)
+    demo.reset()
+    build = next(i for i, event in enumerate(events) if event[0] == "build")
+    assert len([e for e in events[:build] if e[0] == "retain"]) == 5

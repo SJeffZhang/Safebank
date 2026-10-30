@@ -14,13 +14,14 @@ from __future__ import annotations
 import os
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 
 import httpx
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
+from safebank_bankcore.grants import instruction_scope
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.pool import NullPool
@@ -189,6 +190,37 @@ async def _seed_event_decision(
     )
 
 
+def make_instruction(
+    instruction_id,
+    customer_id="cus_a",
+    source_plan_id="plan_sched_1",
+    account_id="acc_a",
+    to_account_id="acc_b",
+    payee_id=None,
+    amount_cents=80000,
+    grant_scope_hash="a" * 64,
+):
+    return dict(
+        id=instruction_id,
+        customer_id=customer_id,
+        kind="SCHEDULED_TRANSFER",
+        from_account_id=account_id,
+        source_plan_id=source_plan_id,
+        created_at=WALL.isoformat(),
+        payee_id=payee_id,
+        to_account_id=to_account_id,
+        amount_cents=amount_cents,
+        period="MONTHLY",
+        anchor_day=24,
+        weekday=None,
+        time_of_day=time(12).isoformat(),
+        end_at=None,
+        grant_scope_hash=grant_scope_hash,
+        status="ACTIVE",
+        next_run_at=WALL.isoformat(),
+    )
+
+
 async def _seed_grant(
     conn,
     *,
@@ -196,14 +228,27 @@ async def _seed_grant(
     customer_id: str = "cus_a",
     source_plan_id: str = "plan_sched_1",
     scope_json: dict | None = None,
-    scope_hash: str = "s" * 64,
+    amount_cents: int = 80000,
+    scope_hash: str = "a" * 64,
     approved_risk: str = "YELLOW",
     status: str = "ACTIVE",
     created_at: datetime | None = None,
     revoked_at: datetime | None = None,
 ) -> None:
     _created = created_at if created_at is not None else WALL - timedelta(days=1)
-    _scope = scope_json if scope_json is not None else {"transfers": []}
+    _scope = (
+        scope_json
+        if scope_json is not None
+        else {
+            "instruction_scope": instruction_scope(
+                make_instruction(
+                    instruction_id, customer_id, source_plan_id, amount_cents=amount_cents
+                )
+            )
+        }
+    )
+    if "instruction_scope" in _scope:
+        _scope.setdefault("first_run_at", WALL.isoformat())
     await conn.execute(
         pg_insert(t.scheduled_grants)
         .values(
@@ -231,11 +276,11 @@ def make_event_def(
     amount_cents: int = 80000,
     source_id: str = "ins_sched_1",
     source_plan_id: str = "plan_sched_1",
-    grant_scope_hash: str = "s" * 64,
+    grant_scope_hash: str = "a" * 64,
     payload_hash: str = "p" * 64,
     due_at: str | None = None,
     status: str = "DUE",
-    kind: str = "scheduled_transfer",
+    kind: str = "SCHEDULED_TRANSFER",
 ) -> dict:
     """A fake immutable L3 event definition (progress-file wire shape)."""
     return {
@@ -247,6 +292,30 @@ def make_event_def(
         "payee_id": payee_id,
         "amount_cents": amount_cents,
         "source_id": source_id,
+        "instruction_id": source_id,
+        "grant_scope": instruction_scope(
+            make_instruction(
+                source_id,
+                customer_id,
+                source_plan_id,
+                account_id,
+                to_account_id or "acc_b",
+                payee_id,
+                amount_cents,
+                grant_scope_hash,
+            )
+        ),
+        "source_approved_risk": "YELLOW",
+        "source_instruction": make_instruction(
+            source_id,
+            customer_id,
+            source_plan_id,
+            account_id,
+            to_account_id or "acc_b",
+            payee_id,
+            amount_cents,
+            grant_scope_hash,
+        ),
         "source_plan_id": source_plan_id,
         "grant_scope_hash": grant_scope_hash,
         "payload_hash": payload_hash,

@@ -14,13 +14,15 @@ import logging
 from datetime import datetime, timedelta
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from safebank_bankcore.ids import digest
+from safebank_contracts.codes import Code
 from safebank_contracts.state import EVENT_KIND_RANK
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from . import models as m
+from .errors import BankError
 from .execution import utcnow
 
 logger = logging.getLogger(__name__)
@@ -36,7 +38,14 @@ def _backoff(attempt: int) -> int:
 
 class ClockAdvanceRequest(BaseModel):
     target_at: datetime
-    request_id: str
+    request_id: str = Field(min_length=1, max_length=128)
+
+    @field_validator("target_at")
+    @classmethod
+    def aware_target(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("target_at requires a timezone offset")
+        return value
 
 
 class Scheduler:
@@ -47,6 +56,7 @@ class Scheduler:
         self.s1_url = s1_url.rstrip("/")
         self.s1_token = s1_token
         self.transport = transport
+        self._dispatch_lock = asyncio.Lock()
 
     # ── clock helpers ────────────────────────────────────────────────────
 
@@ -102,6 +112,17 @@ class Scheduler:
         return created
 
     async def _insert_job(self, conn, kind, source_id, due_at, payload) -> int:
+        existing = await conn.scalar(
+            select(m.event_jobs.c.id)
+            .where(
+                m.event_jobs.c.kind == kind,
+                m.event_jobs.c.source_id == source_id,
+                m.event_jobs.c.due_at == due_at,
+            )
+            .limit(1)
+        )
+        if existing is not None:
+            return 0
         job_id = digest([kind, source_id, due_at.isoformat()])
         result = await conn.execute(
             pg_insert(m.event_jobs)
@@ -117,14 +138,18 @@ class Scheduler:
                 status="PENDING",
                 attempt_count=0,
             )
-            .on_conflict_do_nothing(index_elements=["source_id", "period_key"])
+            .on_conflict_do_nothing()
         )
         return result.rowcount
 
     # ── dispatch ─────────────────────────────────────────────────────────
 
     async def run_once(self):
-        """Lease and dispatch at most one due job; returns the S1 payload or None."""
+        """Serialize local dispatch to preserve (due_at, rank, event_id) ordering."""
+        async with self._dispatch_lock:
+            return await self._run_once()
+
+    async def _run_once(self):
         async with self.db.connect() as conn:
             sim_now, _ = await self.read_clock(conn)
         async with self.db.begin() as conn:
@@ -233,11 +258,20 @@ class ClockAdvancer:
         self.scheduler = scheduler
         self._lock = asyncio.Lock()
         self._jobs: dict[str, dict] = {}
+        self._targets: dict[str, datetime] = {}
+        self._tracked: dict[str, set[str]] = {}
 
     def advance(self, target_at: datetime, request_id: str) -> str:
         job_id = digest(["clock", "advance", request_id])
         if job_id in self._jobs:
+            if self._targets[job_id] != target_at:
+                raise BankError(Code.IDEMPOTENCY_CONFLICT)
+            if self._jobs[job_id]["status"] == "RETRYING":
+                self._jobs[job_id]["status"] = "PENDING"
+                asyncio.get_running_loop().create_task(self._run(job_id, target_at))
             return job_id
+        self._targets[job_id] = target_at
+        self._tracked[job_id] = set()
         self._jobs[job_id] = {
             "status": "PENDING",
             "sim_now": None,
@@ -254,56 +288,111 @@ class ClockAdvancer:
             return None
         return {k: state[k] for k in ("status", "sim_now", "processed", "blocked", "remaining")}
 
+    async def submit(self, target_at: datetime, request_id: str) -> str:
+        job_id = digest(["clock", "advance", request_id])
+        if job_id not in self._jobs:
+            async with self.scheduler.db.connect() as conn:
+                sim_now, _ = await self.scheduler.read_clock(conn)
+            if target_at < sim_now:
+                raise BankError(Code.CONTRACT_INVALID, 422)
+        return self.advance(target_at, request_id)
+
     async def _run(self, job_id: str, target_at: datetime) -> None:
         async with self._lock:
             state = self._jobs[job_id]
+            state["status"] = "RUNNING"
+            retries = 0
             try:
-                async with self.scheduler.db.connect() as conn:
-                    sim_now, version = await self.scheduler.read_clock(conn)
-                if target_at <= sim_now:
-                    state.update(status="DONE", sim_now=sim_now)
-                    return
-                processed = 0
-                blocked = 0
                 while True:
-                    next_due = await self._next_due(sim_now, target_at)
-                    if next_due is None:
-                        break
-                    version += 1
+                    # Scan future obligations so an empty event queue does not
+                    # skip bills/instructions that become due during this jump.
                     async with self.scheduler.db.begin() as conn:
-                        await self.scheduler.set_clock(conn, next_due, version)
-                    sim_now = next_due
-                    while True:
-                        result = await self.scheduler.run_once()
-                        if result is None:
-                            break
-                        processed += 1
-                        if result.get("status") == "BLOCKED":
-                            blocked += 1
-                remaining = await self._count_due(target_at)
-                state.update(
-                    status="DONE",
-                    sim_now=sim_now,
-                    processed=processed,
-                    blocked=blocked,
-                    remaining=remaining,
-                )
+                        await self.scheduler.scan_due(conn, target_at)
+                        ids = (
+                            (
+                                await conn.execute(
+                                    select(m.event_jobs.c.id).where(
+                                        m.event_jobs.c.status.in_(PENDING_RETRYING + ("RUNNING",)),
+                                        m.event_jobs.c.due_at <= target_at,
+                                    )
+                                )
+                            )
+                            .scalars()
+                            .all()
+                        )
+                        self._tracked[job_id].update(ids)
+                    await self._refresh_counts(job_id)
+                    async with self.scheduler.db.begin() as conn:
+                        row = (
+                            (
+                                await conn.execute(
+                                    select(m.clock).where(m.clock.c.id == 1).with_for_update()
+                                )
+                            )
+                            .mappings()
+                            .one()
+                        )
+                        sim_now, version = row["sim_now"], row["version"]
+                        if target_at < sim_now:
+                            state.update(status="DONE", sim_now=sim_now)
+                            return  # internal caller cannot rewind a later advance
+                        next_due = await conn.scalar(
+                            select(func.min(m.event_jobs.c.due_at)).where(
+                                m.event_jobs.c.status.in_(PENDING_RETRYING + ("RUNNING",)),
+                                m.event_jobs.c.due_at <= target_at,
+                            )
+                        )
+                        destination = target_at if next_due is None else max(sim_now, next_due)
+                        if destination > sim_now:
+                            await self.scheduler.set_clock(conn, destination, version + 1)
+                        state["sim_now"] = destination
+                    # No clock/row transaction survives the callback to S1/L2.
+                    if next_due is None:
+                        await self._refresh_counts(job_id)
+                        state.update(status="DONE", remaining=0)
+                        return
+                    result = await self.scheduler.run_once()
+                    if result is None or result.get("status") not in TERMINAL:
+                        retries += 1
+                        state["remaining"] = await self._count_due(target_at)
+                        if state["remaining"] == 0:
+                            continue  # a concurrent scheduler completed the event
+                        if retries > 3:
+                            state["status"] = "RETRYING"
+                            return
+                        await asyncio.sleep(_backoff(retries))
+                        continue
+                    retries = 0
+                    await self._refresh_counts(job_id)
             except Exception:
                 logger.exception("clock advance %s failed", job_id)
                 state.update(status="FAILED")
 
-    async def _next_due(self, sim_now: datetime, target_at: datetime):
+    async def _refresh_counts(self, job_id: str) -> None:
+        ids = self._tracked[job_id]
+        if not ids:
+            return
         async with self.scheduler.db.connect() as conn:
-            return await conn.scalar(
-                select(m.event_jobs.c.due_at)
-                .where(
-                    m.event_jobs.c.status.in_(PENDING_RETRYING),
-                    m.event_jobs.c.due_at > sim_now,
-                    m.event_jobs.c.due_at <= target_at,
+            rows = (
+                (
+                    await conn.execute(
+                        select(m.event_jobs.c.status, m.event_executions.c.status.label("outcome"))
+                        .select_from(
+                            m.event_jobs.outerjoin(
+                                m.event_executions,
+                                m.event_jobs.c.id == m.event_executions.c.event_id,
+                            )
+                        )
+                        .where(m.event_jobs.c.id.in_(ids))
+                    )
                 )
-                .order_by(m.event_jobs.c.due_at)
-                .limit(1)
+                .mappings()
+                .all()
             )
+        self._jobs[job_id]["processed"] = sum(r["status"] == "DONE" for r in rows)
+        self._jobs[job_id]["blocked"] = sum(
+            r["status"] == "DONE" and r["outcome"] not in (None, "SUCCESS") for r in rows
+        )
 
     async def _count_due(self, target_at: datetime) -> int:
         async with self.scheduler.db.connect() as conn:

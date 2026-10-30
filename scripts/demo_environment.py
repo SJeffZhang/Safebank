@@ -85,6 +85,13 @@ class DemoEnvironment:
             raise RuntimeError("demo command failed: " + " ".join(args[:3]))
         return result.stdout
 
+    def retain_image(self, image: str, tag: str) -> None:
+        result = subprocess.run(
+            ["docker", "image", "tag", image, tag], text=True, capture_output=True, timeout=30
+        )
+        if result.returncode:
+            raise RuntimeError("cannot retain previous runtime image before build")
+
     def sql(self, service: str, database: str, query: str) -> str:
         return self.compose(
             "exec",
@@ -114,6 +121,33 @@ class DemoEnvironment:
         directory.mkdir(mode=0o700)
         prior = self.current()
         prior_overlay = self.state / prior["generation"] / "compose.yml" if prior else None
+        # Pin the actual old images before rebuilding mutable local tags. A newer
+        # schema/runtime may not be compatible with the previous generation.
+        rollback_cfg = (
+            yaml.safe_load(prior_overlay.read_text()) if prior_overlay else {"services": {}}
+        )
+        for service in SERVICES:
+            image = self.compose("images", "-q", service, overlay=prior_overlay).strip()
+            prior_image = rollback_cfg.get("services", {}).get(service, {}).get("image", "")
+            if not image and re.fullmatch(r"(?:sha256:)?[a-f0-9]{64}", prior_image):
+                image = prior_image
+            if not image and prior is not None:
+                raise RuntimeError("cannot pin previous runtime image before build")
+            if image:
+                if not re.fullmatch(r"(?:sha256:)?[a-f0-9]{64}", image):
+                    raise RuntimeError("ambiguous previous image identity")
+                # Docker/containerd may discard an untagged replaced image.
+                # Retain an explicit unique tag BEFORE overwriting the build tag.
+                self.retain_image(image, f"safebank-demo-retained:{generation}-{service}")
+                rollback_cfg.setdefault("services", {}).setdefault(service, {})["image"] = image
+        rollback_overlay = directory / "rollback.yml"
+        private_write(rollback_overlay, yaml.safe_dump(rollback_cfg))
+        if prior_overlay is not None:
+            # Keep demo-up of a retained generation on its original image IDs.
+            # This preserves its runtime/schema compatibility after a failed upgrade.
+            pinned = prior_overlay.with_suffix(".pin-next.yml")
+            private_write(pinned, yaml.safe_dump(rollback_cfg))
+            pinned.replace(prior_overlay)
         # Build using the deployment's exact checkout before interrupting any service.
         self.compose("build", "bank-backend", "frontend")
         self.compose("up", "-d", "--wait", "postgres-bank", "postgres-agent")
@@ -212,6 +246,23 @@ class DemoEnvironment:
         self.compose(
             "run", "--rm", "bank-maintenance", "python", "-m", "app.seed_demo", overlay=overlay
         )
+        # Explicit fixed synthetic prior consent, never reconstructed by a
+        # runtime demo-mode bypass. Export validates exact original bank rows;
+        # install accepts only an empty unpublished gateway database.
+        consents = self.compose(
+            "run", "--rm", "bank-maintenance", "python", "-m", "app.seed_consents", overlay=overlay
+        )
+        self.compose(
+            "run",
+            "--rm",
+            "-T",
+            "gateway-maintenance",
+            "python",
+            "-m",
+            "services.gateway.app.seed_grants",
+            overlay=overlay,
+            data=consents,
+        )
         # This is a new, unpublished database: set its dataset label once.
         self.sql(
             "postgres-bank",
@@ -251,7 +302,7 @@ class DemoEnvironment:
                 "--force-recreate",
                 "--wait",
                 *SERVICES,
-                overlay=prior_overlay,
+                overlay=rollback_overlay,
             )
             raise
         return manifest

@@ -103,7 +103,7 @@ test-wave1-state:
 
 .PHONY: test-obligations
 test-obligations:
-	OBLIGATIONS_DB_TESTS=1 .venv/bin/pytest tests/obligations_data -q
+	GATEWAY_DB_TESTS=1 OBLIGATIONS_DB_TESTS=1 .venv/bin/pytest tests/obligations_data -q
 
 .PHONY: test-w3a
 test-w3a:
@@ -180,3 +180,7 @@ demo-up:
 .PHONY: demo-reset
 demo-reset:
 	$(PYTHON) -m scripts.demo_environment reset
+
+.PHONY: test-w5-clock
+test-w5-clock:
+	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w5_clock -q

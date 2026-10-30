@@ -441,8 +441,8 @@ class TestEventJobUniqueness:
 
         asyncio.run(check())
 
-    def test_duplicate_payload_hash_rejected(self, obligations_db):
-        """A second job with the same payload_hash violates event_jobs_payload_hash_key."""
+    def test_duplicate_business_instant_rejected(self, obligations_db):
+        """A second job for the same source/instant is rejected despite another period string."""
 
         async def check():
             admin = engine(obligations_db.admin_url, poolclass=NullPool)
@@ -475,12 +475,13 @@ class TestEventJobUniqueness:
                             "(id, kind, rank, due_at, immutable_payload, payload_hash, "
                             " source_id, period_key, status, attempt_count) "
                             "VALUES ('job_dup_hash', :kind, 0, :due_at, '{}'::jsonb, "
-                            "        :payload_hash, 'other_src', 'other_period', 'PENDING', 0)"
+                            "        :payload_hash, :source_id, 'other_period', 'PENDING', 0)"
                         ),
                         dict(
                             kind=job["kind"],
                             due_at=job["due_at"],
                             payload_hash=job["payload_hash"],
+                            source_id=new_id,
                         ),
                     )
             await admin.dispose()

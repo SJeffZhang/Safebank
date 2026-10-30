@@ -715,3 +715,30 @@ def test_seed_demo_backfills_holding_and_syncs_risk_dates_for_existing_customers
         await admin.dispose()
 
     asyncio.run(check())
+
+
+def test_seed_consent_export_is_exact_and_rejects_changed_terms(obligations_db):
+    from app import models as m
+    from app.seed_consents import export
+    from safebank_bankcore.grants import scope_hash
+
+    async def run():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await seed_core(conn, KEY)
+            await install_demo(conn, KEY)
+            consents = await export(conn, KEY)
+            assert len(consents) == 7
+            assert len({g["scope_hash"] for g in consents}) == len(consents)
+            for grant in consents:
+                assert grant["scope_hash"] == scope_hash(grant["scope_json"]["seed_consent"])
+            await conn.execute(
+                m.standing_instructions.update()
+                .where(m.standing_instructions.c.id == "si_zs_mom")
+                .values(amount_cents=100001)
+            )
+            with pytest.raises(ValueError, match="differs"):
+                await export(conn, KEY)
+        await admin.dispose()
+
+    asyncio.run(run())

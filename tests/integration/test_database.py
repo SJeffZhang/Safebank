@@ -17,7 +17,7 @@ def test_migration_exists_and_runtime_does_not_own_tables():
         async with db.connect() as c:
             assert (
                 await c.scalar(text("SELECT version_num FROM alembic_version"))
-                == "0009_funds_units_nonneg"
+                == "0010_event_identity"
             )
             assert (
                 await c.scalar(text("SELECT tableowner FROM pg_tables WHERE tablename='accounts'"))
