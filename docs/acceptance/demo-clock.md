@@ -46,3 +46,15 @@ Because code changed, prior CI is insufficient for merging: new final-head CI/li
   event_decisions row. Corrected S1 suite: 29 passed; refusal audit persists exactly once on replay.
 - Combined bankcore, obligations, lifecycle and S1 suite before final audit fix: 718 passed.
   Final live deployment and final-head full CI remain required.
+
+
+Live candidate ab0d61b: fresh generation installed7 distinct grants; actual L1 cancelled music
+and subscribed2000 yuan for Li Si. Advances to Oct15/Oct23/Dec6 returned DONE; order settled,
+cancelled music charge blocked and ledger balanced. SQL nonetheless exposed stale durable
+source cursors: later monthly charges were never scanned. Three real-PG cursor assertions fail
+on this candidate. Pure applier returns correct obligation state but EventService persisted only
+ledger effects. Acceptance remains blocked pending atomic source-cursor persistence and rerun.
+
+Cursor correction: three regressions fail on ab0d61b,36 event/scheduler tests pass after correction.
+Extended real contracts4 passed, covering two periods and full rollback before commit. Independent
+review APPROVE,14 real-PG tests personally run. New live generation and full CI remain pending.

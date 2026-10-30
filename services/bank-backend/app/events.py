@@ -87,6 +87,29 @@ class EventService:
     def __init__(self, *, wall_clock=utcnow) -> None:
         self._wall_clock = wall_clock
 
+    async def _persist_period_cursor(self, conn, state, run) -> None:
+        """Persist the pure applier's source cursor in the event transaction.
+
+        Ledger effects do not carry obligation snapshot updates. Only the run's
+        own source is updated, with the pure applier's date, never caller input.
+        """
+        if not isinstance(run, InstructionRun):
+            return
+        if run.billing_id is not None:
+            billing = state.obligations.billings[run.billing_id]
+            await conn.execute(
+                m.merchant_billing.update()
+                .where(m.merchant_billing.c.id == run.billing_id)
+                .values(next_due_at=billing.next_due_at)
+            )
+        else:
+            instruction = state.obligations.standing_instructions[run.instruction_id]
+            await conn.execute(
+                m.standing_instructions.update()
+                .where(m.standing_instructions.c.id == run.instruction_id)
+                .values(next_run_at=instruction.next_run_at)
+            )
+
     async def _job_for_update(self, conn, event_id: str):
         return (
             (
@@ -469,6 +492,7 @@ class EventService:
         else:  # DEMO_EVENT
             state, effects, run = self._apply_demo(state, row)
         await persist(conn, effects)
+        await self._persist_period_cursor(conn, state, run)
         await self._bump_version(conn, customer_id, version["version"] + 1)
         if isinstance(run, InstructionRun):
             await conn.execute(m.instruction_runs.insert().values(**run.model_dump(mode="python")))
@@ -559,6 +583,7 @@ class EventService:
                 code=code,
             )
         await persist(conn, effects)
+        await self._persist_period_cursor(conn, state, run)
         await self._bump_version(conn, customer_id, version["version"] + 1)
         if isinstance(run, InstructionRun):
             await conn.execute(m.instruction_runs.insert().values(**run.model_dump(mode="python")))

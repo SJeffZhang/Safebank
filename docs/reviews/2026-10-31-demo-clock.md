@@ -44,5 +44,12 @@ and12 pure tests. Contract uses real L3 prepare/execute, not complete G4/G6/G8.
 
 review_demo_clock found missing-grant refusal released its claim before terminal/audit persistence.
 Coordinator reproduced absent row with a failing regression, removed premature release and verified
-29 S1 tests including one audit on repeated refusal callbacks. Final follow-up review pending.
+29 S1 tests including one audit on repeated refusal callbacks. Follow-up reviewer APPROVE, personally reran the refusal regression.
 Candidate combined suite after this fix:718 passed; existing accounts/cards metadata-cycle warning.
+
+
+Live follow-up: source cursors were not persisted from pure event state. New source-cursor
+persistence runs in the same event transaction on execute/block, only for the run's own source.
+Independent APPROVE; reviewer personally14 real-PG tests. Coordinator36 event/scheduler tests
+passed. Extended four real two-bank contracts pass, including two periods for schedule/normal
+merchant/cancelled merchant and an aborted event transaction preserving cursor/money/terminal state.

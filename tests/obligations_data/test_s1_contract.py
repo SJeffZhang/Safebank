@@ -131,6 +131,16 @@ def test_real_event_roundtrip(obligations_db, app_config, kind, cancelled):  # n
                     ).where(m.accounts.c.id == "acc_zs_chk")
                 )
             ).one()
+            cursor_table = (
+                m.standing_instructions if kind == "SCHEDULED_TRANSFER" else m.merchant_billing
+            )
+            cursor_column = (
+                cursor_table.c.next_run_at
+                if kind == "SCHEDULED_TRANSFER"
+                else cursor_table.c.next_due_at
+            )
+            cursor = await conn.scalar(select(cursor_column).where(cursor_table.c.id == source_id))
+            assert cursor > SI_DUE, "completed or blocked period must durably advance its cursor"
             assert after[0] == before[0]
             expected = 0 if cancelled else (100000 if kind == "SCHEDULED_TRANSFER" else 3000)
             assert after[1] - before[1] == expected
@@ -144,6 +154,84 @@ def test_real_event_roundtrip(obligations_db, app_config, kind, cancelled):  # n
                     text("SELECT sum(debits_posted_cents)=sum(credits_posted_cents) FROM accounts")
                 )
             ).scalar() is True
+        # The next period must be discovered and consumed, rather than repeatedly
+        # scanning the stale completed period. An aborted transaction cannot move
+        # either the source cursor or its money/run/event records.
+        async with admin.begin() as conn:
+            await conn.execute(m.clock.update().values(sim_now=cursor))
+            second_id = await conn.scalar(
+                select(m.event_jobs.c.id).where(
+                    m.event_jobs.c.kind == kind,
+                    m.event_jobs.c.source_id == source_id,
+                    m.event_jobs.c.due_at == cursor,
+                )
+            )
+            if second_id is None:
+                second_id = "evt_real_s1_second"
+                await _seed_event(
+                    conn,
+                    event_id=second_id,
+                    kind=kind,
+                    source_id=source_id,
+                    due_at=cursor,
+                    payload_hash="c" * 64,
+                )
+        from app.events import EventService
+
+        from tests.obligations_data.test_events_api import _clock_and_version
+
+        with pytest.raises(RuntimeError, match="simulated commit failure"):
+            async with bank_db.begin() as conn:
+                clock_version, customer_version = await _clock_and_version(conn, "cus_zs")
+                event_hash = await conn.scalar(
+                    select(m.event_jobs.c.payload_hash).where(m.event_jobs.c.id == second_id)
+                )
+                await EventService().execute_event(
+                    conn,
+                    second_id,
+                    {"cus_zs": customer_version},
+                    clock_version,
+                    event_hash,
+                    {"by": "test"},
+                )
+                raise RuntimeError("simulated commit failure")
+        async with admin.connect() as conn:
+            assert (
+                await conn.scalar(select(cursor_column).where(cursor_table.c.id == source_id))
+                == cursor
+            )
+            assert (
+                await conn.scalar(
+                    select(m.accounts.c.debits_posted_cents).where(m.accounts.c.id == "acc_zs_chk")
+                )
+                == after[1]
+            )
+            assert (
+                await conn.scalar(
+                    select(m.event_executions.c.event_id).where(
+                        m.event_executions.c.event_id == second_id
+                    )
+                )
+                is None
+            )
+        second = await app.client.post(
+            "/internal/scheduled/authorize",
+            json={"event_id": second_id},
+            headers=app.scheduler_headers(),
+        )
+        assert second.json()["status"] == ("BLOCKED" if cancelled else "SUCCESS"), second.text
+        async with admin.connect() as conn:
+            assert (
+                await conn.scalar(select(cursor_column).where(cursor_table.c.id == source_id))
+                > cursor
+            )
+            assert (
+                await conn.scalar(
+                    select(m.accounts.c.debits_posted_cents).where(m.accounts.c.id == "acc_zs_chk")
+                )
+                == before[1] + 2 * expected
+            )
+            assert await conn.scalar(select(text("count(*)")).select_from(m.instruction_runs)) == 2
         await gateway.dispose()
         await bank_db.dispose()
         await admin.dispose()
