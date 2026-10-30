@@ -239,6 +239,26 @@ def _dummy_read_executor(_tool: str, _args: dict):
     raise RuntimeError("gather read executor not wired — graph should replace it")
 
 
+def _final_reply(final_state) -> str:
+    """User-facing reply for a finished run: the verified (masked) message.
+
+    ``reply_draft`` is the respond port's raw draft, before output verification
+    and long-number masking; it is only a fallback when the run stopped early
+    (interrupt) or produced no message.
+    """
+    if not final_state or not final_state.values:
+        return ""
+    values = final_state.values
+    if not getattr(final_state, "next", ()):
+        messages = values.get("messages") or []
+        last = messages[-1] if messages else None
+        if getattr(last, "type", None) == "ai":
+            content = getattr(last, "content", None)
+            if isinstance(content, str) and content:
+                return content
+    return values.get("reply_draft", "") or ""
+
+
 def _make_production_respond():
     """Production respond port — uses reply_draft from state (C1e will add LLM)."""
 
@@ -513,11 +533,7 @@ def app_factory(
                             + "\n\n"
                         )
 
-                reply_text = (
-                    final_state.values.get("reply_draft", "")
-                    if final_state and final_state.values
-                    else ""
-                )
+                reply_text = _final_reply(final_state)
                 yield (
                     "event: messages\ndata: "
                     + json.dumps([{"type": "ai", "content": reply_text}])

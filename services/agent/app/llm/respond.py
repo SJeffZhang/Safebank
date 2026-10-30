@@ -57,6 +57,7 @@ _REPLAN_USER_CODE_LABELS: dict[str, str] = {
     "HOLDING_INSUFFICIENT": "持仓份额不足",
     "SUITABILITY_MISMATCH": "该产品风险等级超出您的测评结果",
     "ASSESSMENT_MISSING": "请先完成风险测评后再操作",
+    "CARD_STATE_CONFLICT": "当前卡片状态或限额不允许该操作",
 }
 
 # Generic per-code fallback used when a code is not in the table above.

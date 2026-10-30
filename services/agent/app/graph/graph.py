@@ -458,13 +458,13 @@ def build_gateway_graph(
                 and state.get("replan_count", 0) < 2
             ):
                 reply = ""  # going to gather — no fixed reply
+            elif any(r == "user" for r in resolvers):
+                # Leave the draft empty: the respond port lists the per-finding
+                # reasons under the REPLAN_USER header. A pre-set header would
+                # short-circuit respond and reach the user as a bare half sentence.
+                reply = ""
             else:
-                key = (
-                    "REPLAN_USER"
-                    if any(r == "user" for r in resolvers)
-                    else "REPLAN_AGENT_EXHAUSTED"
-                )
-                reply = _rt(key)
+                reply = _rt("REPLAN_AGENT_EXHAUSTED")
 
         return {
             "plan_id": decision.plan_id,
