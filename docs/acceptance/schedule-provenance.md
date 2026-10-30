@@ -2,7 +2,7 @@
 
 Scope: only schedule_transfer.period / first_run_at may use deterministic calendar
 values from their credential-bound, live, persisted typed scope. The declared span
-must identify the same calendar anchor. No generic equality-to-any-scope-field rule.
+must identify its period marker or matching first-date anchor. No generic equality-to-any-scope-field rule.
 Dates use Asia/Shanghai regardless of L3 timestamp transport offset. Intent matching
 compares the first execution instant without weakening period, target, amount or end.
 
@@ -22,3 +22,10 @@ Red/green evidence:
 
 Pending: clean-generation live case06 and final exact-head full local CI before merge.
 This does not claim case36, form G4/G8 or complete six-scene freeze.
+
+First live candidate03e1295 refused with REPLAN and no new instruction. Stored plan used
+period span “每月20号” and first_run_at span “20号”; requiring the first span to repeat “每月”
+was too strict. New real-credential minimal-spans regression failed before the narrow correction.
+Period span now proves only its period marker; first-date span proves the matching day/weekday,
+with both exact persisted scope values still required. Independent follow-up APPROVE,12 cases
+personally rerun. W2/parser413 passed /2 skips. Fresh live and final CI remain pending.

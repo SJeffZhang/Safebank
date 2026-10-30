@@ -1829,6 +1829,6 @@ COMMITTED/EXECUTED源结果中对应schedule_transfer步骤、创建ID/指纹、
 ### 定时参数来源增量（2026-10-31）
 
 仅schedule_transfer.period与first_run_at可使用有效typed原话中L2确定性解析并持久化的
-对应值；声明span必须含同一月日/周日锚点，仍核客户、会话、JWT原话、状态、有效期和污点。
+对应值；周期声明span必须含对应周期词，首次时间span必须含同一月日/周日锚点，仍核客户、会话、JWT原话、状态、有效期和污点。
 不得推广为任意参数与scope某值相等即可可信。首次执行日期按Asia/Shanghai计算；
 first_run_at在意图核对中以带时区的同一时刻比较，周期、目标、金额与end_at仍精确匹配。

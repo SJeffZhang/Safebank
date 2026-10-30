@@ -17,6 +17,7 @@ from tests.gateway.w2.test_provenance import source
     "mutation,expected",
     [
         ("valid", "user"),
+        ("minimal_spans", "user"),
         ("utc_snapshot", "user"),
         ("weekly_sunday", "user"),
         ("weekly_tian", "user"),
@@ -97,8 +98,10 @@ def test_calendar_sources_are_narrow_and_credential_bound(
                 end_at=None,
             )
             scheduled["arg_sources"] = [
-                source("period", ref=ref, span=span),
-                source("first_run_at", ref=ref, span=span),
+                source("period", ref=ref, span=[0, 2] if mutation == "minimal_spans" else span),
+                source(
+                    "first_run_at", ref=ref, span=[2, 5] if mutation == "minimal_spans" else span
+                ),
             ]
             ctx = await run_stages(db, fake, clock, auth, caller, sid, [scheduled])
             results = ctx.provenance.arg_sources["s1"]

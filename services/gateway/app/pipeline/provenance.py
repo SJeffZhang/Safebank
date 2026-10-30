@@ -73,7 +73,7 @@ def _read(source, records, state, now, customer_id):
 def _schedule_calendar_value(tool, param, value, row, span_text):
     """Only verified persisted typed scopes may normalize schedule calendar fields.
 
-    The span must name the same calendar anchor; arbitrary equal scope fields
+    The span must name the period or same first-date anchor; arbitrary equal scope fields
     never become provenance. The evidence loader already checks live lineage,
     customer, session, credential roots and the persisted scope against its ref.
     """
@@ -98,11 +98,20 @@ def _schedule_calendar_value(tool, param, value, row, span_text):
             return False
     except (TypeError, ValueError):
         return False
+    if param == "period":
+        marker = (
+            r"每月"
+            if period == "MONTHLY"
+            else r"每(?:周|星期|礼拜)"
+            if period == "WEEKLY"
+            else None
+        )
+        return marker is not None and len(re.findall(marker, span_text)) == 1
     if period == "MONTHLY":
-        anchors = re.findall(r"每月\s*(\d{1,2})\s*[号日]", span_text)
+        anchors = re.findall(r"(?<!\d)(\d{1,2})\s*[号日]", span_text)
         return len(anchors) == 1 and int(anchors[0]) == local.day
     if period == "WEEKLY":
-        anchors = re.findall(r"每(?:周|星期|礼拜)([一二三四五六日天])", span_text)
+        anchors = re.findall(r"(?:每)?(?:周|星期|礼拜)([一二三四五六日天])", span_text)
         return (
             len(anchors) == 1
             and "一二三四五六日".index(anchors[0].replace("天", "日")) == local.weekday()
