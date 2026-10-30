@@ -7,7 +7,9 @@
 - 我的项目为SafeBank银行AI助手，后端是L1 LangGraph Banking Agent → L2 Security Gateway → L3模拟银行的三层结构。L1不能绕过L2，LLM不决定授权。
 - 本机主项目参考路径：`/Users/zhangshijie/Desktop/Project/Fintech2026`。你在其他电脑工作时使用我提供的主仓库checkout，不照抄此电脑绝对路径。
 - 主仓库GitHub：`SJeffZhang/Safebank`。需要GitHub账户名时使用`SJeffZhang`。
-- **所有前端代码在主项目 `frontend/` 下。** 不在队友仓库、另建clone或临时demo里交付；不向`WsTwistzz/safebank-ui`提交。
+- **唯一允许修改的范围是主项目 `frontend/` 文件夹。** 所有代码、样式、测试、配置和交接记录的新增、修改、删除都只能发生在该目录内。不在队友仓库、另建clone或临时demo里交付；不向`WsTwistzz/safebank-ui`提交。
+- **禁止改写后端及其他目录的任何文件。** `services/`、`packages/`、`tests/`、`scripts/`、`infra/`、根目录配置、`.github/`、根`AGENTS.md`、`PRD.md`、`docs/`等均只能读取，不能以修复接口、调通联调、更新进度或通过测试为由修改。`frontend/`内的符号链接也不能用来修改目录外的文件。
+- 后端接口存在缺口或缺陷时，在`frontend/`内记录复现、预期契约和需要后端同事配合的事项，向我报告；不得修改后端、共享契约或绕过安全网关来迁就前端。只有我后续明确授权扩大修改范围，才能改其他部分。
 - 实际App入口：`frontend/src/main.tsx` → `src/App.tsx` → `src/mobile/SafeBankApp.tsx`。
 - 保留的`src/pages`、`src/components`、旧router/providers/services/tests是参考，不是当前新App入口。不要改错地方。
 
@@ -22,7 +24,7 @@
 3. 你亲自实现，不使用DS worker/Claude CLI，不擅自派其他Agent，不运行后台自动任务。不要动现有worker会话、数据库卷、密钥、stash、WIP和别人的worktree。
 4. `finmate-preview`仅参考逻辑/交互，不能抄整体外观；它未发现LICENSE，不能复制其资源或压缩代码。不要假设参考项目实现了某功能，必须读源码确认。
 5. 在已经授权的范围内直接推进，避免反复问“要不要继续”。有影响方案的缺失信息再问；需要权限/受阻时说明具体来源和原因。
-6. 每个工作单元更新根AGENTS当前状态与进度日志。重要行为/接口变化同步PRD/ADR。测试失败、环境阻断和未验证要如实记录，不能为了好听说“全跑通”。
+6. 每个工作单元只在`frontend/`内更新交接与验收记录。根AGENTS、PRD、ADR和进度网站需要同步时，只列出建议交给我或项目协调者，不自行改写。测试失败、环境阻断和未验证要如实记录，不能为了好听说“全跑通”。
 7. 不自动推送/合并/部署未授权的新工作；本轮历史PR发布授权不代表你可以对所有未来修改无条件发布。
 
 ## 已确认的产品行为，不能回退

@@ -1,0 +1,57 @@
+# E2E clean-environment override: separate subnets and frontend port; volumes come from the project name.
+services:
+  frontend:
+    image: safebank-e2e-frontend:local
+    environment:
+      PUBLIC_ORIGIN: http://127.0.0.1:3001
+    ports: !override
+      - 127.0.0.1:3001:3000
+    networks:
+      agent-net:
+        ipv4_address: 172.30.10.10
+  operator:
+    image: safebank-e2e:local
+    networks:
+      agent-net:
+        ipv4_address: 172.30.10.13
+  agent:
+    image: safebank-e2e:local
+    networks:
+      agent-net:
+        ipv4_address: 172.30.10.11
+  gateway:
+    image: safebank-e2e:local
+    environment:
+      GATEWAY_INTERNAL_BIND: 172.30.20.12
+      GATEWAY_PUBLIC_BIND: 172.30.10.12
+    networks:
+      agent-net:
+        ipv4_address: 172.30.10.12
+      bank-net:
+        ipv4_address: 172.30.20.12
+  bank-backend:
+    image: safebank-e2e:local
+    networks:
+      bank-net:
+        ipv4_address: 172.30.20.11
+  postgres-bank:
+    networks:
+      bank-net:
+        ipv4_address: 172.30.20.20
+  postgres-agent:
+    networks:
+      agent-net:
+        ipv4_address: 172.30.10.20
+  bank-maintenance:
+    image: safebank-e2e:local
+  gateway-maintenance:
+    image: safebank-e2e:local
+networks:
+  agent-net:
+    ipam:
+      config: !override
+        - subnet: 172.30.10.0/24
+  bank-net:
+    ipam:
+      config: !override
+        - subnet: 172.30.20.0/24
