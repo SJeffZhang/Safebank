@@ -56,6 +56,10 @@ _SYSTEM = (
     "cancel_subscription 的 instruction_id 必须从已读数据（list_subscriptions 或 "
     "detect_subscriptions 的 items 里的 instruction_id，以 si_ 开头）用 read 来源引用，"
     "不能自己编造或从原话直接取值。"
+    "原话含 每月/每周/每天/每N号/定时/定期 时必须用 schedule_transfer（填 period 与 "
+    "first_run_at），不得用一次性 transfer。"
+    "AA 收款（create_split_request）的 participant_payee_ids 必须把原话中的人名逐个映射为 "
+    "list_payees 读取结果 items 中对应的 id，不得为空。"
     "订阅组合（找出没用的订阅取消掉并定时把省下的钱转走）里，schedule_transfer 的 "
     "amount_cents 必须用 derived 来源且 template 只能是 cancelled_monthly_fees，"
     "inputs 只能引用订阅读取（read）或取消步骤（step），不得引用原话字面金额；"
@@ -607,19 +611,83 @@ def _channel_source_problems(draft: PlanDraft, state: AgentState) -> list[str]:
     return problems
 
 
+_RECURRING_RE = re.compile(r"每\s*(?:个)?\s*(?:月|周|星期|天|日|年)|定时|定期|每\s*\d+\s*号")
+
+
+def _schedule_intent_vs_tool_problems(draft: PlanDraft, state: AgentState) -> list[str]:
+    """Reject a one-time ``transfer`` when the user's own words ask for a recurring one.
+
+    Detection uses the typed utterance text (每月/每周/定时/每20号 …), not the model's
+    free-form intent labels, so a mislabelled understanding cannot hide it.
+    """
+    texts = [u.text for u in state.get("utterances", []) if getattr(u, "text", None)]
+    if not any(_RECURRING_RE.search(t) for t in texts):
+        return []
+    if any(step.tool == "schedule_transfer" for step in draft.steps):
+        return []
+    return [
+        f"steps[{index}]: 用户原话要求周期性转账，必须使用 schedule_transfer（含 period 与 "
+        "first_run_at），不能用一次性 transfer"
+        for index, step in enumerate(draft.steps)
+        if step.tool == "transfer"
+    ]
+
+
+def _split_participant_problems(draft: PlanDraft, state: AgentState) -> list[str]:
+    """Reject create_split_request whose participant_payee_ids don't appear in list_payees reads.
+
+    The model must only reference payee IDs that were actually returned by a list_payees
+    gather read.  Unknown or hallucinated IDs are rejected locally.
+    """
+    reads = state.get("reads", [])
+    known_payee_ids: set[str] = set()
+    for read in reads:
+        if read.tool == "list_payees" and isinstance(read.data, dict):
+            for entry in read.data.get("items", []):
+                if isinstance(entry, dict) and entry.get("id"):
+                    known_payee_ids.add(entry["id"])
+    if not known_payee_ids:
+        return []  # no payee data available; L2 will catch
+    problems: list[str] = []
+    for index, step in enumerate(draft.steps):
+        if step.tool != "create_split_request":
+            continue
+        for pid in step.args.participant_payee_ids:
+            if pid not in known_payee_ids:
+                problems.append(
+                    f"steps[{index}].participant_payee_ids: {pid} 不在 list_payees 的读取结果中，"
+                    "请只使用 gather 阶段 list_payees 返回的 payee_id，"
+                    "或先将收款人姓名映射到对应的 payee_id"
+                )
+                break  # one problem per step is enough
+    return problems
+
+
 def _derived_schedule_problems(draft: PlanDraft, state: AgentState) -> list[str]:
-    """Reject derived-template schedule amounts that smuggle a literal utterance amount.
+    """Reject derived-template schedule amounts that smuggle a literal utterance amount
+    or cancel+schedule combos with non-derived amount_cents.
 
     ``cancelled_monthly_fees`` means the amount comes from the cancelled subscriptions'
     monthly fees, not from a figure the user typed.  A single param can only carry one
     top-level source, so a literal amount would have to be smuggled inside
     ``DerivedSource.inputs`` as an utterance leaf — reject it locally.
+
+    Additionally, when a plan both cancels a subscription AND creates a schedule_transfer,
+    the schedule_transfer's amount_cents MUST use a derived source
+    (template=cancelled_monthly_fees), not a literal utterance amount.
     """
 
     problems: list[str] = []
+
+    # Pre-check: does this draft have cancel_subscription + schedule_transfer?
+    has_cancel = any(s.tool == "cancel_subscription" for s in draft.steps)
+    has_schedule = any(s.tool == "schedule_transfer" for s in draft.steps)
+    combo = has_cancel and has_schedule
+
     for index, step in enumerate(draft.steps):
         if step.tool != "schedule_transfer":
             continue
+        # --- defence layer 1: derived-source leaves that smuggle utterance amounts ---
         for source in step.arg_sources:
             if source.param != "amount_cents" or source.source.kind != "derived":
                 continue
@@ -629,6 +697,15 @@ def _derived_schedule_problems(draft: PlanDraft, state: AgentState) -> list[str]
                         f"steps[{index}].amount_cents: cancelled_monthly_fees 派生金额不能携带"
                         "原话字面金额来源，inputs 只能引用订阅读取（read）或取消步骤（step）"
                     )
+        # --- defence layer 2: cancel+schedule combo must have derived amount source ---
+        if combo:
+            amount_sources = [s for s in step.arg_sources if s.param == "amount_cents"]
+            if not amount_sources or amount_sources[0].source.kind != "derived":
+                problems.append(
+                    f"steps[{index}].amount_cents: 当计划同时包含取消订阅和定时转账时，"
+                    "定时转账金额必须使用 derived 来源（template=cancelled_monthly_fees），"
+                    "不能直接使用原话字面金额"
+                )
     return problems
 
 
@@ -721,6 +798,8 @@ class PlanAdapter:
                 val_problems = _required_value_problems(draft, state)
                 sem_problems = _semantic_problems(draft, state)
                 ch_problems = _channel_source_problems(draft, state)
+                sch_problems = _schedule_intent_vs_tool_problems(draft, state)
+                split_problems = _split_participant_problems(draft, state)
                 der_problems = _derived_schedule_problems(draft, state)
                 wealth_problems = _wealth_source_problems(draft, state)
                 all_problems = (
@@ -728,6 +807,8 @@ class PlanAdapter:
                     + val_problems
                     + sem_problems
                     + ch_problems
+                    + sch_problems
+                    + split_problems
                     + der_problems
                     + wealth_problems
                 )
@@ -742,6 +823,8 @@ class PlanAdapter:
                         not ref_problems
                         and not sem_problems
                         and not ch_problems
+                        and not sch_problems
+                        and not split_problems
                         and not der_problems
                         and not wealth_problems
                     ):
