@@ -121,6 +121,9 @@ test-agent-db:
 test-w4b2b:
 	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w4b2b -q
 
+test-w5-notify:
+	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w5 -q
+
 .PHONY: test-replay
 test-replay:
 	.venv/bin/pytest tests/agent/test_replay.py -q

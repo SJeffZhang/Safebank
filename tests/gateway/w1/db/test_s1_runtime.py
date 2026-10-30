@@ -55,15 +55,14 @@ def test_logout_revokes_before_unrelated_customer_handlers(gateway_db, monkeypat
             registered = (await utter(client, app_token, sid, "给王五800")).json()
             assistant = registered["assistant_token"]
 
-            # These handlers are still W5 stubs. Their 503 message proves
-            # authentication reached that boundary, never business success.
+            # G16 customer audit is a real read: before logout it answers 200.
             probes = [
                 ("GET", "/audit", app_token, "f-test"),
             ]
             for method, path, token, service in probes:
                 response = await client.request(method, path, headers=headers(token, service))
-                assert response.status_code == 503, response.text
-                assert "lands in" in response.json()["error"]["message"]
+                assert response.status_code == 200, response.text
+                assert isinstance(response.json()["items"], list)
 
             # /plans/evaluate is now implemented (W3b). Before logout, prove
             # auth passed (not 401/403) — even 422 from the handler confirms
