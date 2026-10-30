@@ -45,8 +45,8 @@
 | L2 网关 | main `62e83ac`（L1 SSE修复 #33）：W4b2a/b/c（PR #23/#25/#27）、W3b（#29）、W4c（#31）均已合入。W4c 独立复审 APPROVE；精确 head `79229ae` 的 push/PR 四 CI 成功。前任协调者合并后组合回归与真实网络/HTTP集成通过；本次只读复核六服务 healthy、gateway 库 `0003_plan_draft`、两持久卷未重建。启动恢复扫描/孤儿 PAUSED job 归档仍属 W5。 |
 | L1 Agent | C1a–C1e 全部合入（C1c2 #24、C1d #26、C1e #28）；真实 PG checkpoint/服务/输出与回放组件已验收，L1 SSE结构化输出小修 #33 已合，39真实PG通过；完整 live 三层黄级转账尚未闭合。E0a #30 已合（405 条语料）；E0b worktree 保留 `ba76448`，收尾/live 与 try-agent 按用户指令暂停。中文金额角/分与中阿混写的输出解析缺口见 C1e 验收。 |
 | 前端 | **2026-10-29**：主项目 frontend/ 内竖版375×812 App，继承原Graphite & Champagne tokens；六场景、同站BFF、审批/OTP、叠卡/PIN/用途、报表/理财、我的整合订阅及圆形主题过渡、助手满内容区均实现合成预览。PR #71已合入main（7734f1f），最终head共6项CI成功；合并后全量384项（含新App61）、BFF10项与build复跑通过。交接文档及新Agent Prompt已随PR交付；真实三层联调/开户/PAN/主动推送边界见frontend/HANDOFF.md。未派DS worker，未写队友仓库。 |
-| 协调状态 | **2026-10-30 Codex 接手准备**：origin/main=1a83957；主 checkout 已同步交接分支 docs/handoff-20261030（93e18eb，PR #97）。按最新交接不用 DS worker，实现由 Codex 亲做，安全路径用自身只读子代理独审；前端 live 已随 #94 合并。保留 worktree、未提交续作、密钥与数据卷；本次仅同步和只读核对，未运行业务验收。 |
-| 下一步 | 按 docs/handoffs/2026-10-30-codex-handoff.md 从 #96 通知/审计收尾开始，再完成 D3/D7/D6/D8、live 缺口与攻击控制台。合并前精确 head 本机 CI、修复类 PR 干净环境 live 验证；402/403/429 立即停止。 |
+| 协调状态 | **2026-10-30 Codex 接手准备**：origin/main=0caeb03（#97/#98已合）；验收工具已本机CI与live验证，#96独审修复中。按最新交接不用 DS worker，实现由 Codex 亲做，安全路径用自身只读子代理独审；前端 live 已随 #94 合并。保留 worktree、未提交续作、密钥与数据卷；本次仅同步和只读核对，未运行业务验收。 |
+| 下一步 | 按 docs/handoffs/2026-10-30-codex-handoff.md 从 #96 通知/审计收尾开始，再完成 可重复初始化、D3和live缺口，六场景冻结后再做D6/D7与攻击控制台，D8/指标最后。合并前精确 head 本机 CI、修复类 PR 干净环境 live 验证；402/403/429 立即停止。 |
 
 ### 已确认事实
 
@@ -896,6 +896,10 @@
 | 2026-10-30 | Codex | 接手准备：git fetch origin 后核 origin/main=1a83957；准备期间主 checkout 已由原前端分支切为 docs/handoff-20261030=93e18eb，交接文件已提交且 PR #97 打开。git pull --ff-only origin docs/handoff-20261030 首次沙箱拒绝写 FETCH_HEAD，提升后成功（Already up to date）。核 #96 仍为草稿、head 0c56347，notify-audit 的 3 修改+2未跟踪续作完整保留；#82 未处理。docker ps 实测两套栈共14容器全部 healthy（交接快照称12）；未重启服务、未动数据卷、未调用 DeepSeek、未跑业务测试。更新 §3 接手起点与工作方式，后续先收尾 #96。 |
 
 | 2026-10-30 | Codex | 按用户批准计划开始实施，基础六场景冻结优先；D8/指标延后。核 PR #97 已由前任以精确93e18eb本机CI通过并合入95feef2，不重复合并。新建fix/demo-live-driver，保留接手AGENTS改动；驱动新增402/403/429停止、300秒默认超时和批次中止，修复脚本相对路径并拒绝旧批次复用；本机CI脚本拒绝脏工作区/缺失必需目标。驱动5条旧码红测失败、新码通过；批次2条旧码失败（/private/tmp/safebank-driver-batch-red.log），新码通过；try-agent专项70通过。首次红测子进程未退出曾手动中断，随后将夹具改为自行退出，未调用模型。安全子代理只读评审#96，发现通知已读状态与审计分事务，待修后独审。 |
+
+| 2026-10-30 | Codex | 基础冻结组件A以PR #98合入0caeb03：精确4b1859a本机CI全过（单元3504/979 skip；全套真实PG、并发、一致性、网络与重启、S1），干净栈真实余额查询8秒返回8200元，SQL业务快照无变化；CLI仍将该只读回复标CLARIFY，未冒称业务全通过。合并命令首次head校验值输入有误被GitHub拒绝，重新读取完整SHA后合并成功。#96只读独审REQUEST CHANGES，发现循环导入、已读/审计分事务及非法游标；新增红测7失败/11通过，修复后W5+W4c真实PG共58通过。新增通知写入点单独撤除后红测，备份后恢复；最终结果另记。原中断命令已部分执行，恢复时先核进程与工作区，未重复live。 |
+
+| 2026-10-30 | Codex | #96独立定点复审APPROVE（实现head0bd8d54），四种全新进程导入亲验通过；生产通知调用撤除红测3失败/2通过，已恢复。协调者真实PG W5+W4c=58通过。复审指出Makefile/workflow专项重复登记，已删除重复项；报告保存docs/reviews/2026-10-30-notify-audit-r2.md。PR #98合并后长期栈已回main0caeb03；公开进度页摘要已推7671565，首次线上curl仍旧缓存，待再核。后续#96最终head完整本机CI/live未完成，不合并。 |
 
 ## 5. 下一步待办（按顺序）
 
