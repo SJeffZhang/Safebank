@@ -84,6 +84,30 @@ def _s1_state(*, balance_cents: int = 600_000) -> BankState:
     )
 
 
+def _set_event(app, event):
+    """Install the authoritative instruction in this fixture's matching snapshot."""
+    raw = app.fake._snapshot
+    if raw is not None and event.get("grant_scope"):
+        inst = {
+            **event["grant_scope"],
+            "status": "ACTIVE",
+            "grant_scope_hash": event["grant_scope_hash"],
+            "next_run_at": WALL.isoformat(),
+            "amount_type": "FIXED",
+            "recurrence": "PERIODIC",
+            "priority": "HIGH",
+        }
+        raw["obligations"]["standing_instructions"][inst["id"]] = inst
+        raw["obligations"]["instruction_targets"][inst["id"]] = {
+            "instruction_id": inst["id"],
+            "source_customer_id": event["customer_id"],
+            "ownership": "OWN",
+            "target_account_id": inst["to_account_id"],
+            "target_customer_id": event["customer_id"],
+        }
+    app.fake.set_event(event)
+
+
 # ── Existing tests ────────────────────────────────────────────────────────────
 
 
@@ -205,11 +229,12 @@ def test_revoked_grant_returns_blocked(app_config):
             )
 
         app.fake.set_snapshot(_s1_state())
-        app.fake.set_event(
+        _set_event(
+            app,
             make_event_def(
                 event_id="evt_revoked",
                 source_id="ins_revoked",
-            )
+            ),
         )
 
         resp = await app.client.post(
@@ -254,7 +279,15 @@ def test_missing_grant_backfill_and_success(app_config):
             "result": {
                 "plan_id": "plan_sched_1",
                 "status": "EXECUTED",
-                "steps": [],
+                "steps": [
+                    {
+                        "status": "EXECUTED",
+                        "tool": "schedule_transfer",
+                        "created_ids": {"instruction_id": "ins_backfill"},
+                        "result": {"instruction_id": "ins_backfill", "grant_scope_hash": "a" * 64},
+                        "effects": [],
+                    }
+                ],
                 "versions": {},
                 "committed_at": WALL.isoformat(),
                 "error_code": None,
@@ -266,14 +299,15 @@ def test_missing_grant_backfill_and_success(app_config):
         }
 
         app.fake.set_snapshot(_s1_state())
-        app.fake.set_event(
+        _set_event(
+            app,
             make_event_def(
                 event_id="evt_backfill",
                 source_id="ins_backfill",
                 to_account_id="acc_b",
                 payee_id=None,
                 amount_cents=80000,
-            )
+            ),
         )
 
         resp = await app.client.post(
@@ -316,14 +350,15 @@ def test_risk_increase_returns_skipped_reapproval(app_config):
             )
 
         app.fake.set_snapshot(_s1_state())
-        app.fake.set_event(
+        _set_event(
+            app,
             make_event_def(
                 event_id="evt_risk_up",
                 source_id="ins_risk_up",
                 to_account_id="acc_b",
                 payee_id=None,
                 amount_cents=80000,
-            )
+            ),
         )
 
         resp = await app.client.post(
@@ -352,18 +387,21 @@ def test_insufficient_funds_returns_failed_insufficient(app_config):
         app = await build_app(app_config)
         db = _runtime_db(app)
         async with db.begin() as conn:
-            await _seed_grant(conn, instruction_id="ins_no_funds", approved_risk="YELLOW")
+            await _seed_grant(
+                conn, instruction_id="ins_no_funds", approved_risk="YELLOW", amount_cents=900_000
+            )
 
         # Balance is 600000, try to transfer 900000 → insufficient
         app.fake.set_snapshot(_s1_state(balance_cents=600_000))
-        app.fake.set_event(
+        _set_event(
+            app,
             make_event_def(
                 event_id="evt_no_funds",
                 source_id="ins_no_funds",
                 to_account_id="acc_b",
                 payee_id=None,
                 amount_cents=900_000,
-            )
+            ),
         )
 
         resp = await app.client.post(
@@ -394,15 +432,16 @@ def test_scope_hash_mismatch_returns_blocked(app_config):
             )
 
         app.fake.set_snapshot(_s1_state())
-        app.fake.set_event(
+        _set_event(
+            app,
             make_event_def(
                 event_id="evt_scope_mismatch",
                 source_id="ins_scope_mismatch",
-                grant_scope_hash="s" * 64,  # different from the seed
+                grant_scope_hash="a" * 64,  # different from the seed
                 to_account_id="acc_b",
                 payee_id=None,
                 amount_cents=80000,
-            )
+            ),
         )
 
         resp = await app.client.post(
@@ -446,11 +485,12 @@ def test_non_committed_backfill_returns_blocked(app_config):
         }
 
         app.fake.set_snapshot(_s1_state())
-        app.fake.set_event(
+        _set_event(
+            app,
             make_event_def(
                 event_id="evt_non_committed",
                 source_id="ins_non_committed",
-            )
+            ),
         )
 
         resp = await app.client.post(
@@ -470,6 +510,34 @@ def test_non_committed_backfill_returns_blocked(app_config):
         exec_calls = [c for c in app.fake.calls if c["op"] == "event_execute"]
         assert len(exec_calls) == 0
 
+        for attempt in (1, 2):
+            if attempt == 2:
+                replay = await app.client.post(
+                    URL,
+                    json={"event_id": "evt_non_committed", "attempt": attempt},
+                    headers=app.scheduler_headers(),
+                )
+                assert replay.status_code == 200
+                assert all(
+                    replay.json()[key] == body[key] for key in ("event_id", "status", "code")
+                )
+            async with db.connect() as conn:
+                terminal = (
+                    await conn.execute(
+                        text("SELECT status, code FROM event_decisions WHERE event_id = :eid"),
+                        {"eid": "evt_non_committed"},
+                    )
+                ).one_or_none()
+                assert terminal == ("BLOCKED", Code.SCHEDULED_BYPASS.value)
+                count = await conn.scalar(
+                    text(
+                        "SELECT count(*) FROM audit_events WHERE event_type = 'SCHEDULE_RESULT' "
+                        "AND payload->>'event_id' = :eid"
+                    ),
+                    {"eid": "evt_non_committed"},
+                )
+                assert count == 1
+        assert len([c for c in app.fake.calls if c["op"] == "event_block"]) == 1
         await db.dispose()
 
     asyncio.run(run())
@@ -485,14 +553,15 @@ def test_happy_path_success_executes_once(app_config):
             await _seed_grant(conn, instruction_id="ins_happy", approved_risk="YELLOW")
 
         app.fake.set_snapshot(_s1_state())
-        app.fake.set_event(
+        _set_event(
+            app,
             make_event_def(
                 event_id="evt_happy",
                 source_id="ins_happy",
                 to_account_id="acc_b",
                 payee_id=None,
                 amount_cents=80000,
-            )
+            ),
         )
 
         resp = await app.client.post(
@@ -548,14 +617,15 @@ def test_concurrent_callbacks_exactly_one_execute(app_config):
             await _seed_grant(conn, instruction_id="ins_concurrent", approved_risk="YELLOW")
 
         app.fake.set_snapshot(_s1_state())
-        app.fake.set_event(
+        _set_event(
+            app,
             make_event_def(
                 event_id="evt_concurrent",
                 source_id="ins_concurrent",
                 to_account_id="acc_b",
                 payee_id=None,
                 amount_cents=80000,
-            )
+            ),
         )
         # Add a 0.3s delay inside event_execute so the second callback races
         # past the Step-1 terminal-decision check before the first persists.
@@ -598,14 +668,15 @@ def test_persist_failure_retry_records_original_result(app_config):
             await _seed_grant(conn, instruction_id="ins_retry", approved_risk="YELLOW")
 
         app.fake.set_snapshot(_s1_state())
-        app.fake.set_event(
+        _set_event(
+            app,
             make_event_def(
                 event_id="evt_retry",
                 source_id="ins_retry",
                 to_account_id="acc_b",
                 payee_id=None,
                 amount_cents=80000,
-            )
+            ),
         )
 
         # First call: succeeds
@@ -671,14 +742,15 @@ def test_no_connection_held_during_l3_call(app_config):
             await _seed_grant(conn, instruction_id="ins_nolock", approved_risk="YELLOW")
 
         app.fake.set_snapshot(_s1_state())
-        app.fake.set_event(
+        _set_event(
+            app,
             make_event_def(
                 event_id="evt_nolock",
                 source_id="ins_nolock",
                 to_account_id="acc_b",
                 payee_id=None,
                 amount_cents=80000,
-            )
+            ),
         )
         # Hold event_execute for 0.5s so we can probe IN_PROGRESS state.
         app.fake.set_event_execute_delay(0.5)
@@ -740,14 +812,15 @@ def test_stale_claim_takeover(app_config):
             )
 
         app.fake.set_snapshot(_s1_state())
-        app.fake.set_event(
+        _set_event(
+            app,
             make_event_def(
                 event_id="evt_stale",
                 source_id="ins_stale",
                 to_account_id="acc_b",
                 payee_id=None,
                 amount_cents=80000,
-            )
+            ),
         )
 
         resp = await app.client.post(
@@ -779,14 +852,15 @@ def test_retrying_releases_in_progress_row(app_config):
             await _seed_grant(conn, instruction_id="ins_retry_rel", approved_risk="YELLOW")
 
         app.fake.set_snapshot(_s1_state())
-        app.fake.set_event(
+        _set_event(
+            app,
             make_event_def(
                 event_id="evt_retry_rel",
                 source_id="ins_retry_rel",
                 to_account_id="acc_b",
                 payee_id=None,
                 amount_cents=80000,
-            )
+            ),
         )
         # event_execute raises L3Error → handler releases claim → RETRYING.
         app.fake.behaviors["event_execute"] = "unavailable_503"
@@ -822,10 +896,11 @@ def test_execute_terminal_block_is_not_reported_as_success(app_config):
         async with db.begin() as conn:
             await _seed_grant(conn, instruction_id="ins_terminal")
         app.fake.set_snapshot(_s1_state())
-        app.fake.set_event(
+        _set_event(
+            app,
             make_event_def(
                 event_id="evt_terminal_block", source_id="ins_terminal", to_account_id="acc_b"
-            )
+            ),
         )
         app.fake.set_event_execute_result(
             "evt_terminal_block", {"status": "BLOCKED", "result": {"code": "MANDATE_NOT_ACTIVE"}}
@@ -846,6 +921,48 @@ def test_execute_terminal_block_is_not_reported_as_success(app_config):
                 )
             ).one()
         assert tuple(row) == ("BLOCKED", "MANDATE_NOT_ACTIVE")
+        await db.dispose()
+
+    asyncio.run(run())
+
+
+def test_committed_unrelated_plan_cannot_create_grant(app_config):
+    async def run():
+        app = await build_app(app_config)
+        app.fake.set_snapshot(_s1_state())
+        _set_event(app, make_event_def(event_id="evt_unrelated", to_account_id="acc_b"))
+        app.fake.intents[("cus_a", "plan_sched_1")] = {
+            "status": "COMMITTED",
+            "result": {"status": "EXECUTED", "steps": []},
+        }
+        response = await app.client.post(
+            URL, json={"event_id": "evt_unrelated"}, headers=app.scheduler_headers()
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["status"] == "BLOCKED"
+        assert not any(c["op"] == "event_execute" for c in app.fake.calls)
+
+    asyncio.run(run())
+
+
+def test_definition_changed_between_event_and_snapshot_is_blocked(app_config):
+    async def run():
+        app = await build_app(app_config)
+        db = _runtime_db(app)
+        async with db.begin() as conn:
+            await _seed_grant(conn, instruction_id="ins_race")
+        app.fake.set_snapshot(_s1_state())
+        _set_event(
+            app,
+            make_event_def(event_id="evt_scope_race", source_id="ins_race", to_account_id="acc_b"),
+        )
+        app.fake._snapshot["obligations"]["standing_instructions"]["ins_race"]["amount_cents"] += 1
+        response = await app.client.post(
+            URL, json={"event_id": "evt_scope_race"}, headers=app.scheduler_headers()
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["status"] == "BLOCKED"
+        assert not any(c["op"] == "event_execute" for c in app.fake.calls)
         await db.dispose()
 
     asyncio.run(run())

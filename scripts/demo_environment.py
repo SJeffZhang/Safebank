@@ -246,6 +246,23 @@ class DemoEnvironment:
         self.compose(
             "run", "--rm", "bank-maintenance", "python", "-m", "app.seed_demo", overlay=overlay
         )
+        # Explicit fixed synthetic prior consent, never reconstructed by a
+        # runtime demo-mode bypass. Export validates exact original bank rows;
+        # install accepts only an empty unpublished gateway database.
+        consents = self.compose(
+            "run", "--rm", "bank-maintenance", "python", "-m", "app.seed_consents", overlay=overlay
+        )
+        self.compose(
+            "run",
+            "--rm",
+            "-T",
+            "gateway-maintenance",
+            "python",
+            "-m",
+            "services.gateway.app.seed_grants",
+            overlay=overlay,
+            data=consents,
+        )
         # This is a new, unpublished database: set its dataset label once.
         self.sql(
             "postgres-bank",

@@ -27,3 +27,21 @@ UNIQUE(payload_hash)则会阻止同一周期指令/商户账单以同一载荷�
 本次不增加多网关、多Agent或对比功能。推进作业元数据仍为单进程内存状态；
 重启后不凭404推断事件未执行，金融结果以L3持久化事件为准。生产HA恢复属后续范围。
 不放宽任何用户授权、审批、OTP、金额或适当性规则。
+
+## 2026-10-31 S1 contract closure
+
+Real live advance exposed a mismatch hidden by rich event fakes: L3 returned no
+instruction terms, merchant billing IDs were treated as transfer instruction IDs,
+and refusal without a pipeline snapshot used empty version fencing. Associated
+terms now come from L3 rows and are checked against a fresh snapshot. Merchant
+preflight calls the same pure bankcore event applier as execution, with mandate
+evidence. Execute/block outcomes are always reconciled to L3 terminal truth.
+
+Seed consent is installed explicitly by the trusted local reset CLI into new,
+unpublished databases, with exact fixture comparison and per-instruction hashes,
+original first-run dates, dataset/manifest provenance and transactional audits.
+There is no runtime seed bypass and no fabricated plan execution. Normal schedule
+creation stores original instruction terms in its committed operation event;
+backfill requires the corresponding real step result, approved evidence risk,
+original terms, fingerprint and recurring due instant. Older incomplete history
+fails closed. Source API access remains internal L2→L3 only.

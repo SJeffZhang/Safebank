@@ -30,13 +30,22 @@ on pooled connections):
 from __future__ import annotations
 
 import enum
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
+from safebank_bankcore.events import apply_merchant_charge
+from safebank_bankcore.grants import due_in_consent, instruction_scope
 from safebank_contracts.codes import Code
-from safebank_contracts.plan import DemoEvidence, OrderEvidence, PlanDraft, ScheduledEvidence
+from safebank_contracts.plan import (
+    DemoEvidence,
+    MandateEvidence,
+    OrderEvidence,
+    PlanDraft,
+    ScheduledEvidence,
+)
+from safebank_contracts.state import BankState
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -47,8 +56,9 @@ from ..l3.client import L3Error
 from ..pipeline import contract, decision, entity, preflight, snapshot, workflow
 from ..pipeline import evaluate as run_pipeline
 from ..pipeline.context import EvalContext, EvalMode
+from ..pipeline.preflight import _load_thresholds
 from ..schemas.decision import DecisionValue
-from ..schemas.enums import ServiceKind
+from ..schemas.enums import FindingEffect, ServiceKind
 from ..utterance.service import new_id
 
 router = APIRouter()
@@ -399,10 +409,109 @@ async def _re_evaluate(request: Request, event: dict[str, Any]) -> EvalContext:
         l3=app.l3,
         wall_now=app.wall_now,
     )
+    state = await ctx.bank_state()
+    if _scope_in_state(state, event) != event.get("grant_scope"):
+        ctx.add(Code.SCHEDULED_BYPASS, FindingEffect.DENY, message="指令与本期授权定义不一致")
     async with app.db.connect() as conn:
         ctx.conn = conn
         await run_pipeline(ctx, stages=_STAGES)
     return ctx
+
+
+def _scope_in_state(state: BankState, event: dict) -> dict | None:
+    obligations = state.obligations
+    if obligations is None:
+        return None
+    instruction = obligations.standing_instructions.get(event.get("instruction_id"))
+    if instruction is None or instruction.grant_scope_hash != event.get("grant_scope_hash"):
+        return None
+    billing = obligations.billings.get(event["source_id"])
+    return instruction_scope(
+        instruction.model_dump(mode="python"),
+        billing.model_dump(mode="python") if billing else None,
+    )
+
+
+async def _handle_merchant_event(request: Request, grant: dict | None, event: dict) -> dict:
+    """Mandate authorizes a billing, never a fabricated payee transfer.
+
+    The exact same pure applier used by L3 checks mandate state/cap and funds.
+    Grant terms pin the merchant, billing, account and calendar independently
+    of its next-period cursor. Amount may vary only within its approved cap.
+    """
+    app = request.app.state
+    try:
+        raw = await app.l3.snapshot(
+            {"customer_id": event["customer_id"], "steps": [], "event_id": None}
+        )
+        state = BankState.model_validate(raw)
+        if grant is not None and _scope_in_state(state, event) != event.get("grant_scope"):
+            return await _block(
+                request,
+                app.db,
+                event,
+                "BLOCKED",
+                Code.SCHEDULED_BYPASS.value,
+                ctx=EvalContext(snapshot=state),
+            )
+        billing = state.obligations.billings.get(event["source_id"]) if state.obligations else None
+        if (
+            billing is None
+            or billing.amount_cents != event["amount_cents"]
+            or billing.account_id != event["account_id"]
+        ):
+            await _release_claim(app.db, event["event_id"])
+            return _retrying(event["event_id"])
+        _, _, run = apply_merchant_charge(
+            state,
+            billing_id=event["source_id"],
+            due_at=datetime.fromisoformat(event["due_at"]),
+            event_id=event["event_id"],
+            period_key=event["period_key"],
+        )
+        if run is not None and run.status != "SUCCESS":
+            ctx = EvalContext(snapshot=state)
+            return await _block(request, app.db, event, run.status, run.code, ctx=ctx)
+        if grant is None:
+            await _release_claim(app.db, event["event_id"])
+            return _retrying(event["event_id"])
+        cap = _load_thresholds()["amount_above_yellow_cap_cents"]
+        risk = "RED" if event["amount_cents"] > cap else "YELLOW"
+        if _RISK_ORDER[risk] > _RISK_ORDER[grant["approved_risk"]]:
+            return await _block(
+                request,
+                app.db,
+                event,
+                "SKIPPED_REAPPROVAL",
+                Code.SCHEDULED_REAPPROVAL_REQUIRED.value,
+                ctx=EvalContext(snapshot=state),
+            )
+        evidence = MandateEvidence(
+            type="MERCHANT_MANDATE",
+            instruction_id=grant["instruction_id"],
+            billing_id=event["source_id"],
+            grant_id=grant["instruction_id"],
+        )
+        result = await app.l3.event_execute(
+            event["event_id"],
+            {
+                "expected_versions": dict(state.versions),
+                "clock_version": state.clock_version,
+                "expected_payload_hash": event["payload_hash"],
+                "authorization_evidence": evidence.model_dump(mode="json"),
+            },
+        )
+    except L3Error:
+        await _release_claim(app.db, event["event_id"])
+        return _retrying(event["event_id"])
+    return await _finalize_system_result(
+        app.db,
+        app,
+        event["event_id"],
+        event["customer_id"],
+        result,
+        getattr(request.state, "trace_id", None),
+    )
 
 
 async def _load_grant(conn, instruction_id: str) -> dict[str, Any] | None:
@@ -429,15 +538,45 @@ async def _backfill_grant(db, l3, event: dict[str, Any], wall_now) -> dict[str, 
     it is read from the committed execution result. A missing value fails closed
     to the transfer base risk (YELLOW), which re-evaluation still verifies.
     """
-    execution = await l3.execution(event["customer_id"], event["source_plan_id"])
-    if execution.get("status") != "COMMITTED":
+    if not event.get("source_plan_id"):
         return None
-    approved_risk = execution.get("approved_risk") or "YELLOW"
+    execution = await l3.execution(event["customer_id"], event["source_plan_id"])
+    result = execution.get("result") or {}
+    approved_risk = event.get("source_approved_risk")
+    if (
+        execution.get("status") != "COMMITTED"
+        or result.get("status") != "EXECUTED"
+        or approved_risk not in _RISK_ORDER
+    ):
+        return None
+    # A committed unrelated plan is not proof that THIS instruction was approved.
+    original = event.get("source_instruction") or {}
+    original_scope = None
+    for step in result.get("steps", []):
+        created = step.get("created_ids") or {}
+        outcome = step.get("result") or {}
+        if (
+            step.get("status") == "EXECUTED"
+            and step.get("tool") == "schedule_transfer"
+            and created.get("instruction_id") == event.get("instruction_id")
+            and outcome.get("instruction_id") == event.get("instruction_id")
+            and outcome.get("grant_scope_hash") == event["grant_scope_hash"]
+            and original.get("id") == event.get("instruction_id")
+            and original.get("customer_id") == event["customer_id"]
+            and original.get("source_plan_id") == event["source_plan_id"]
+            and original.get("grant_scope_hash") == event["grant_scope_hash"]
+        ):
+            original_scope = instruction_scope(original)
+    if original_scope is None or original_scope != event.get("grant_scope"):
+        return None
     grant = {
-        "instruction_id": event["source_id"],
+        "instruction_id": event.get("instruction_id") or event["source_id"],
         "customer_id": event["customer_id"],
         "source_plan_id": event["source_plan_id"],
-        "scope_json": {"transfers": []},
+        "scope_json": {
+            "instruction_scope": original_scope,
+            "first_run_at": original["next_run_at"],
+        },
         "scope_hash": event["grant_scope_hash"],
         "approved_risk": approved_risk,
         "status": "ACTIVE",
@@ -550,6 +689,10 @@ async def scheduled_authorize(request: Request, body: AuthorizeRequest) -> dict[
             return _retrying(event_id)
 
         customer_id = event["customer_id"]
+        if event.get("execution") is not None:
+            return await _finalize_system_result(
+                db, app, event_id, customer_id, event["execution"], trace_id
+            )
 
         # ── System events (no grant) ────────────────────────────────────────
         event_kind = event.get("kind")
@@ -564,10 +707,16 @@ async def scheduled_authorize(request: Request, body: AuthorizeRequest) -> dict[
                 request, db, app, l3, event, event_id, customer_id, trace_id
             )
 
+        if event_kind not in ("SCHEDULED_TRANSFER", "MERCHANT_CHARGE"):
+            await _release_claim(db, event_id)
+            return _retrying(event_id)
+        if event_kind == "MERCHANT_CHARGE" and not event.get("instruction_id"):
+            return await _handle_merchant_event(request, None, event)
+
         # ── Grant-backed events (SCHEDULED_TRANSFER, MERCHANT_CHARGE) ────────
         # Step 2: load the grant by instruction id; backfill when missing.
         async with db.connect() as conn:
-            grant = await _load_grant(conn, event["source_id"])
+            grant = await _load_grant(conn, event.get("instruction_id") or event["source_id"])
         if grant is None:
             try:
                 grant = await _backfill_grant(db, l3, event, app.wall_now)
@@ -575,7 +724,6 @@ async def scheduled_authorize(request: Request, body: AuthorizeRequest) -> dict[
                 await _release_claim(db, event_id)
                 return _retrying(event_id)
             if grant is None:
-                await _release_claim(db, event_id)
                 return await _block(
                     request,
                     db,
@@ -586,7 +734,22 @@ async def scheduled_authorize(request: Request, body: AuthorizeRequest) -> dict[
                 )
 
         # Revoked grants and fingerprint mismatches refuse without re-evaluation.
-        if grant["status"] == "REVOKED" or grant["scope_hash"] != event["grant_scope_hash"]:
+        seed = grant["scope_json"].get("seed_consent")
+        bound_scope = seed["terms"] if seed else grant["scope_json"].get("instruction_scope")
+        first_run = seed["first_run_at"] if seed else grant["scope_json"].get("first_run_at")
+        due_valid = bound_scope is not None and (
+            bound_scope["kind"] != "SCHEDULED_TRANSFER"
+            or (first_run is not None and due_in_consent(bound_scope, first_run, event["due_at"]))
+        )
+        if (
+            grant["status"] != "ACTIVE"
+            or grant["scope_hash"] != event["grant_scope_hash"]
+            or grant["customer_id"] != customer_id
+            or grant["source_plan_id"] != event["source_plan_id"]
+            or bound_scope is None
+            or not due_valid
+            or bound_scope != event.get("grant_scope")
+        ):
             return await _block(
                 request,
                 db,
@@ -595,6 +758,9 @@ async def scheduled_authorize(request: Request, body: AuthorizeRequest) -> dict[
                 Code.SCHEDULED_BYPASS.value,
                 ctx=None,
             )
+
+        if event_kind == "MERCHANT_CHARGE":
+            return await _handle_merchant_event(request, grant, event)
 
         # Step 3: re-evaluate the transfer on a fresh snapshot.
         try:
@@ -642,7 +808,7 @@ async def scheduled_authorize(request: Request, body: AuthorizeRequest) -> dict[
         # Otherwise the grant still holds: authorize execution on L3.
         evidence = ScheduledEvidence(
             type="SCHEDULED_GRANT",
-            grant_id=event["source_id"],
+            grant_id=grant["instruction_id"],
             scope_hash=grant["scope_hash"],
             source_plan_id=grant["source_plan_id"],
             approved_risk=ctx.decision.risk,

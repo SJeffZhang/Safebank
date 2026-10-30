@@ -25,6 +25,7 @@ from safebank_bankcore import events as bank_events
 from safebank_bankcore import external as bank_external
 from safebank_bankcore import funds as bank_funds
 from safebank_bankcore.banking import Context
+from safebank_bankcore.grants import instruction_scope
 from safebank_contracts.codes import Code
 from safebank_contracts.obligations import InstructionRun
 from safebank_contracts.state import StateScope
@@ -351,6 +352,41 @@ class EventService:
                 "billing_id": billing["id"],
                 "merchant_id": billing["merchant_id"],
             }
+        if instruction is not None:
+            definition["grant_scope"] = instruction_scope(
+                instruction, billing if row["kind"] == "MERCHANT_CHARGE" else None
+            )
+            source = (
+                (
+                    await conn.execute(
+                        select(m.plan_executions).where(
+                            m.plan_executions.c.customer_id == owner,
+                            m.plan_executions.c.plan_id == instruction["source_plan_id"],
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            # Approval risk comes from actual committed evidence, never a default.
+            if source and source["result_json"].get("status") == "EXECUTED":
+                definition["source_approved_risk"] = source["authorization_evidence"].get("risk")
+                operations = (
+                    await conn.execute(
+                        select(m.operation_events.c.payload).where(
+                            m.operation_events.c.customer_id == owner,
+                            m.operation_events.c.plan_id == instruction["source_plan_id"],
+                            m.operation_events.c.action_kind == "SCHEDULED_TRANSFER_CREATE",
+                        )
+                    )
+                ).scalars()
+                originals = [
+                    p["instruction"]
+                    for p in operations
+                    if (p.get("instruction") or {}).get("id") == instruction["id"]
+                ]
+                if len(originals) == 1:
+                    definition["source_instruction"] = originals[0]
         if row["kind"] in ("SCHEDULED_TRANSFER", "MERCHANT_CHARGE"):
             definition.update(
                 {

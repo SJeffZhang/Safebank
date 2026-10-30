@@ -31,3 +31,18 @@ existed. All database generations/volumes remained. Coordinator rebuilt accepted
 restored original generation/runtime and retained explicit image tags. No L3 data/history deleted.
 Fix now explicitly tags each previous image before build; independent review APPROVE/lifecycle16.
 Because code changed, prior CI is insufficient for merging: new final-head CI/live required.
+
+
+## S1 contract closure
+
+- Real bank HTTP/PG + gateway HTTP/PG covers scheduled execution, merchant charge,
+  cancelled mandate refusal, and committed source-plan grant recovery (four cases).
+  Old production d4a6ecd fails the two merchant cases; new candidate passes.
+- Seed consents install through host maintenance CLIs into empty generation databases.
+  Original terms and first due date remain independently bound; runtime recovery requires
+  real COMMITTED/EXECUTED source, matching created instruction and recorded approval risk.
+- Independent seed/source review APPROVE: 14 real-PG cases and 12 pure term cases.
+- Missing grant refusal regression fails before removing premature claim release: no terminal
+  event_decisions row. Corrected S1 suite: 29 passed; refusal audit persists exactly once on replay.
+- Combined bankcore, obligations, lifecycle and S1 suite before final audit fix: 718 passed.
+  Final live deployment and final-head full CI remain required.

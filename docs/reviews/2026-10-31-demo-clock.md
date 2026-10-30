@@ -33,3 +33,16 @@ for all five old service images before build; a tag error/timeout aborts before 
 Old-code regression failed (zero retention calls); new lifecycle suite16 passed.
 review_demo_generation independently re-reviewed this increment: APPROVE, personally16 passed,
 no credential/privilege/data-delete regression. Actual cross-schema proof must be rerun.
+
+
+## S1 source and merchant closure review
+
+review_demo_generation APPROVE: exact seed CLI export/empty-gateway installation; immutable
+instruction terms plus original first date; normal recovery requires genuine committed source
+operation and matching successful public result/created ID/approved risk. Personally ran14 real-PG
+and12 pure tests. Contract uses real L3 prepare/execute, not complete G4/G6/G8.
+
+review_demo_clock found missing-grant refusal released its claim before terminal/audit persistence.
+Coordinator reproduced absent row with a failing regression, removed premature release and verified
+29 S1 tests including one audit on repeated refusal callbacks. Final follow-up review pending.
+Candidate combined suite after this fix:718 passed; existing accounts/cards metadata-cycle warning.

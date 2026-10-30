@@ -23,6 +23,8 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from safebank_bankcore.grants import instruction_scope, scope_hash, seed_consent
+
 from app.state import fingerprint
 
 INTERNAL_CLEARING_ID = "acc_external_clearing"
@@ -706,6 +708,15 @@ def prepare_seed(
                 "source_plan_id": DEMO_PLAN_ID,
                 "created_at": sim_now,
             }
+        )
+
+    billing_definitions = {item["id"]: item for item in prepared_billings}
+    for instruction in prepared_instructions:
+        consent = instruction_scope(
+            instruction, billing_definitions.get(instruction.get("billing_id"))
+        )
+        instruction["grant_scope_hash"] = scope_hash(
+            seed_consent(consent, instruction["next_run_at"])
         )
 
     # --- transactions + synthetic transfers --------------------------------

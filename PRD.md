@@ -1812,3 +1812,16 @@ D3与L3推进响应统一为advance_job_id；仅console操作者可用。过去t
 同request_id不同target返回409；查询不触发新推进，RETRYING可由操作者以原请求恢复。
 无事件窗口仍推进到target，未来账单/指令由扫描生成。唯一性按实际due_at，不按时区文本或载荷哈希。
 控制台30次轮询后保留作业ID显示仍在处理。schema0010迁移不删除历史；旧库冲突须先核实。
+
+### S1真实事件与演示既有授权增量（2026-10-31）
+
+L3事件读接口额外返回关联指令ID、账户/目标/金额、规范化授权条款；商户source_id为账单ID，
+instruction_id为代扣授权ID。S1在新快照复核条款，商户预演复用apply_merchant_charge，
+证据使用MERCHANT_MANDATE；普通定时仍完整复演风险，金额/周期/目标变化不能沿用旧授权。
+
+合成既有授权由demo-reset在未发布的新库显式安装：维护CLI逐字段核固定l1_seed_v1清单，
+生成独立指纹、数据集版本和清单摘要，网关空库安装并追加SEED_CONSENT_INSTALL审计。
+种子授权保存原始首次时间并校验每期到期日期；不伪造COMMITTED计划或审批，运行时不按seed标记放行。
+普通新建定时的原始指令条款写入创建操作日志，与真实执行同事务。缺失grant时必须匹配真实
+COMMITTED/EXECUTED源结果中对应schedule_transfer步骤、创建ID/指纹、原始操作条款及批准风险。
+旧历史若无完整证据保持拒绝，不能默认YELLOW。所有事件终态以L3实际结果归档；未知状态RETRYING。
