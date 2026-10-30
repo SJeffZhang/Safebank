@@ -1,0 +1,9 @@
+node_modules
+dist
+.verify
+verify
+coverage
+.tmp-vitest
+.env
+.env.*
+docs

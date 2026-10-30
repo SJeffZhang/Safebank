@@ -1,6 +1,6 @@
 import { explainCode } from "./copy";
 import { useEffect, useState } from "react";
-import { getView, getPlan, request, isPreview } from "./api";
+import { getView, getPlan, request, isPreview, demoSms, BankError } from "./api";
 import { uid, type PlanView, type PlanStatus, type Decision } from "./types";
 import {
   Modal,
@@ -32,6 +32,7 @@ export function Approval({
   const [busy, setBusy] = useState(false);
   const [otp, setOtp] = useState("");
   const [sent, setSent] = useState(false);
+  const [sms, setSms] = useState("");
   const [retry, setRetry] = useState(0);
   const [ack, setAck] = useState(false);
   const [status, setStatus] = useState<PlanStatus>();
@@ -41,6 +42,7 @@ export function Approval({
     setView(undefined);
     setStatus(undefined);
     setSent(false);
+    setSms("");
     setRetry(0);
     setError("");
     setReady(false);
@@ -298,6 +300,18 @@ export function Approval({
                             });
                             setSent(true);
                             setRetry(r.retry_after_seconds);
+                            if (!isPreview) {
+                              // Demo stack only: the console reads the simulated SMS (D5).
+                              demoSms(id)
+                                .then((m) => setSms(`【SafeBank 演示短信】验证码 ${m.code}，2 分钟内有效，请勿泄露。`))
+                                .catch((e) =>
+                                  setSms(
+                                    e instanceof BankError && e.code === "CONSOLE_LOGIN_REQUIRED"
+                                      ? "演示短信需要先登录演示控制台。"
+                                      : "",
+                                  ),
+                                );
+                            }
                           } catch (e) {
                             setError((e as Error).message);
                           } finally {
@@ -312,6 +326,9 @@ export function Approval({
                             : "获取验证码"}
                       </Button>
                     </div>
+                    {!isPreview && sent && sms && (
+                      <p className="helper demo-sms" role="status">{sms}</p>
+                    )}
                     {isPreview && sent && (
                       <p className="helper">
                         演示验证码：123456，仅用于本地预览。

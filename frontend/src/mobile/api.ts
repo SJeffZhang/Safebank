@@ -170,3 +170,20 @@ export async function getCardNumber(
     session_id: sessionId, pin,
   });
 }
+
+/** F13 demo console: the operator signs in once; the secret stays in the BFF. */
+export async function consoleRequest<T>(
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  if (isPreview) throw new BankError("CONSOLE_UNAVAILABLE", "合成预览无演示控制台");
+  return request<T>(`/console${path}`, body);
+}
+export const consoleStatus = () =>
+  consoleRequest<{ signed_in: boolean }>("/status");
+export const consoleLogin = (secret: string) =>
+  consoleRequest<{ signed_in: boolean }>("/login", { secret });
+export const demoSms = (approvalId: string) =>
+  consoleRequest<{ approval_id: string; code: string; expires_at_wall: string }>(
+    `/sms?approval_id=${encodeURIComponent(approvalId)}`,
+  );

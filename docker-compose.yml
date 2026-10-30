@@ -1,11 +1,16 @@
 name: safebank
 services:
   frontend:
-    build: .
-    image: safebank-p0:local
+    build: ./frontend
+    image: safebank-frontend:local
     environment:
       SERVICE_NAME: frontend
+      HOST: 0.0.0.0
       PORT: '3000'
+      GATEWAY_URL: http://gateway:8200
+      AGENT_URL: http://agent:8100
+      PUBLIC_ORIGIN: http://127.0.0.1:3000
+      COOKIE_SECURE: 'false'
     env_file:
     - .secrets/frontend.env
     networks:
@@ -23,10 +28,38 @@ services:
     healthcheck:
       test:
       - CMD
+      - node
+      - -e
+      - fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      interval: 5s
+      timeout: 4s
+      retries: 10
+  operator:
+    # Python CLI host on agent-net for make try-agent and scripted demo drivers;
+    # the browser-facing App+BFF is the frontend service.
+    build: .
+    image: safebank-p0:local
+    environment:
+      SERVICE_NAME: operator
+      PORT: '3000'
+    env_file:
+    - .secrets/frontend.env
+    networks:
+      agent-net:
+        ipv4_address: 172.29.10.13
+    read_only: true
+    tmpfs:
+    - /tmp
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    healthcheck:
+      test:
+      - CMD
       - python
       - -c
-      - import urllib.request,os; r=urllib.request.Request('http://127.0.0.1:3000/health');
-        urllib.request.urlopen(r,timeout=3)
+      - import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/health',timeout=3)
       interval: 5s
       timeout: 4s
       retries: 10
