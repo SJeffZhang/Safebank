@@ -5184,3 +5184,14 @@ html[data-theme="dark"] .brand-mark {
   .safebank-app :where(button:enabled,a.button,.quick-actions a,.mobile-bottom a,.sidebar nav a):active { scale:1; transform:none; }
   .assistant-workspace .chat-message,.assistant-business-card,.assistant-embedded,.assistant-thinking,.thinking-orb,.assistant-thinking .typing-dots i { animation:none; }
 }
+button.mode-indicator {
+  font: inherit;
+  cursor: pointer;
+}
+.demo-sms {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--sb-copper-soft);
+  color: var(--sb-gold-ink);
+}

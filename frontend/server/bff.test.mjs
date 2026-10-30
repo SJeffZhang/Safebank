@@ -2,9 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { createBff } from "./bff.mjs";
-async function setup(t, upstream) {
+async function setup(t, upstream, extra = {}) {
   const calls = [];
   const server = createBff({
+    ...extra,
     serviceToken: "synthetic-server-service-token",
     publicOrigin: "http://localhost:5173",
     fetcher: async (url, options) => {
@@ -19,9 +20,10 @@ async function setup(t, upstream) {
     server.close();
   });
   const base = `http://127.0.0.1:${server.address().port}`;
-  let cookie = "";
+  const jar = new Map();
   return {
     calls,
+    base,
     async req(path, data, headers = {}) {
       const response = await fetch(`${base}/api${path}`, {
         method: data === undefined ? "GET" : "POST",
@@ -29,13 +31,17 @@ async function setup(t, upstream) {
           Origin: "http://localhost:5173",
           "X-SafeBank-Client": "workbench",
           "Content-Type": "application/json",
-          Cookie: cookie,
+          Cookie: [...jar].map(([k, v]) => `${k}=${v}`).join("; "),
           ...headers,
         },
         ...(data === undefined ? {} : { body: JSON.stringify(data) }),
       });
-      if (response.headers.get("set-cookie"))
-        cookie = response.headers.get("set-cookie").split(";")[0];
+      const set = response.headers.get("set-cookie");
+      if (set) {
+        const [pair] = set.split(";");
+        const eq = pair.indexOf("=");
+        jar.set(pair.slice(0, eq), pair.slice(eq + 1));
+      }
       return response;
     },
   };
@@ -323,4 +329,88 @@ test("one thread cannot register overlapping utterances while its original reque
   assert.equal(s.calls.filter((c) => c.url.endsWith("/utterances")).length, 1);
   release();
   assert.match(await (await first).text(), /done/);
+});
+
+test("health answers without login and without upstream calls", async (t) => {
+  const s = await setup(t, () => json({}));
+  const r = await fetch(`${s.base}/health`);
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { service: "frontend", status: "ok" });
+  assert.equal(s.calls.length, 0);
+});
+
+test("assistant state for a thread with no checkpoint yet is an empty chat, not an error", async (t) => {
+  const s = await setup(t, (url) => {
+    if (url.endsWith("/auth/login")) return login();
+    if (url.endsWith("/sessions")) return json({ session_id: "ses_new" }, 201);
+    if (url.endsWith("/assistant-token")) return json({ assistant_token: "synthetic-a-jwt" });
+    if (url.includes("/threads/ses_new/state"))
+      return json({ error: { code: "NOT_FOUND", message: "thread not found" } }, 404);
+    return json({});
+  });
+  await s.req("/auth/login", { customer_id: "cus_test", pin: "123456" });
+  await s.req("/sessions", { request_id: "req_1" });
+  const r = await s.req("/sessions/ses_new/state");
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { values: { messages: [] }, tasks: [] });
+});
+
+const consoleUpstream = (url) => {
+  if (url.endsWith("/demo/auth/login"))
+    return json({
+      token: "synthetic-console-jwt",
+      expires_at_wall: new Date(Date.now() + 3600000).toISOString(),
+    });
+  if (url.endsWith("/auth/login")) return login();
+  if (url.endsWith("/approvals/apv_mine")) return json({ approval_id: "apv_mine" });
+  if (url.endsWith("/approvals/apv_other"))
+    return json({ error: { code: "NOT_FOUND", message: "x" } }, 404);
+  if (url.includes("/demo/sms"))
+    return json({ approval_id: "apv_mine", code: "123456", expires_at_wall: "x" });
+  return json({ ok: true });
+};
+
+test("console routes require an operator console login", async (t) => {
+  const s = await setup(t, consoleUpstream);
+  assert.deepEqual(await (await s.req("/console/status")).json(), { signed_in: false });
+  assert.equal((await s.req("/console/clock/advance", { target_at: "x" })).status, 401);
+  assert.ok(!s.calls.some((c) => c.url.includes("/demo/clock")));
+});
+
+test("console login keeps the secret server-side and uses it for D calls", async (t) => {
+  const s = await setup(t, consoleUpstream);
+  const r = await s.req("/console/login", { secret: "synthetic-console-secret" });
+  assert.equal(r.status, 200);
+  assert.match(r.headers.get("set-cookie"), /^sb_console=.*HttpOnly; SameSite=Strict/);
+  assert.doesNotMatch(await r.text(), /synthetic-console/);
+  const d0 = s.calls.find((c) => c.url.endsWith("/demo/auth/login"));
+  assert.equal(d0.options.headers["X-Service-Token"], "synthetic-console-secret");
+  await s.req("/console/clock/advance", { request_id: "r1", target_at: "x" });
+  const d3 = s.calls.find((c) => c.url.endsWith("/demo/clock/advance"));
+  assert.equal(d3.options.headers.Authorization, "Bearer synthetic-console-jwt");
+  assert.equal(d3.options.headers["X-Service-Token"], "synthetic-console-secret");
+  assert.equal((await s.req("/console/reset", {})).status, 404);
+});
+
+test("wrong console secret is rejected", async (t) => {
+  const s = await setup(t, (url) =>
+    url.endsWith("/demo/auth/login")
+      ? json({ error: { code: "UNAUTHENTICATED", message: "x" } }, 401)
+      : json({}),
+  );
+  assert.equal((await s.req("/console/login", { secret: "nope" })).status, 401);
+  assert.deepEqual(await (await s.req("/console/status")).json(), { signed_in: false });
+});
+
+test("demo SMS needs both logins and reveals only approvals the customer owns", async (t) => {
+  const s = await setup(t, consoleUpstream);
+  await s.req("/console/login", { secret: "synthetic-console-secret" });
+  assert.equal((await s.req("/console/sms?approval_id=apv_mine")).status, 401);
+  await s.req("/auth/login", { customer_id: "cus_test", pin: "123456" });
+  const ok = await s.req("/console/sms?approval_id=apv_mine");
+  assert.equal(ok.status, 200);
+  assert.match(await ok.text(), /123456/);
+  const before = s.calls.filter((c) => c.url.includes("/demo/sms")).length;
+  assert.equal((await s.req("/console/sms?approval_id=apv_other")).status, 404);
+  assert.equal(s.calls.filter((c) => c.url.includes("/demo/sms")).length, before);
 });

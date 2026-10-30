@@ -147,7 +147,7 @@ export function Cards(p: PageProps) {
           <h1>我的银行卡</h1>
           <p>查看使用情况，随时管理支付权限。</p>
         </div>
-        <Button variant="secondary" onClick={() => setApplicationOpen(true)}><Icon name="plus" size={15}/>申请新卡</Button>
+        {isPreview && <Button variant="secondary" onClick={() => setApplicationOpen(true)}><Icon name="plus" size={15}/>申请新卡</Button>}
       </div>
       {q.loading ? (
         <Loading />
@@ -193,7 +193,7 @@ export function Cards(p: PageProps) {
                 <div className="bank-number">
                   ••••　••••　••••　{card.last4}
                 </div>
-                <button type="button" className="card-number-reveal" onClick={()=>{setNumberCopied(false);setNumberOpen(true)}}><Icon name="eye" size={14}/>查看卡号</button>
+                {isPreview && <button type="button" className="card-number-reveal" onClick={()=>{setNumberCopied(false);setNumberOpen(true)}}><Icon name="eye" size={14}/>查看卡号</button>}
                 <div className="bank-card-bottom">
                   <span>
                     {p.profile.display_name}

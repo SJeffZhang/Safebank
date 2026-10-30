@@ -17,7 +17,7 @@ lint:
 wheels:
 	$(PYTHON) -m scripts.download_wheels
 build: keys wheels
-	docker compose build bank-backend
+	docker compose build bank-backend frontend
 p1-provision:
 	$(PYTHON) -m scripts.p1_database
 gateway-provision:
@@ -33,7 +33,7 @@ seed-demo:
 up: build
 	docker compose up -d --wait postgres-bank postgres-agent
 	$(MAKE) p1-provision migrate seed-p1 gateway-provision migrate-gateway
-	docker compose up -d --no-build --wait frontend agent gateway bank-backend
+	docker compose up -d --no-build --wait frontend operator agent gateway bank-backend
 down:
 	docker compose down
 logs:
@@ -164,8 +164,12 @@ test-s1:
 
 .PHONY: try-agent
 try-agent:
-	docker compose exec frontend python -m scripts.try_agent $(ARGS)
+	docker compose exec operator python -m scripts.try_agent $(ARGS)
 
 .PHONY: test-try-agent
 test-try-agent:
 	.venv/bin/pytest tests/try_agent -q
+
+.PHONY: demo-up
+demo-up: up seed-demo
+	@echo "SafeBank demo: http://127.0.0.1:3000 (open this exact origin; localhost is a different origin)"
