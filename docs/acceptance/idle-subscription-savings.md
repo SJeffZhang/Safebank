@@ -21,3 +21,9 @@ This does not claim the six-scenario freeze.
 
 Independent read-only review APPROVE: no new authorization path; reviewer personally
 reran6 related tests. L1 rejection only, existing L2 predicate/derived source checks retained.
+
+Candidate3f16ba6 live correctly proposed only gym cancellation and19900-cent savings,
+but omitted period/first_run_at source declarations. L2 UNKNOWN_SENSITIVE_ARG correctly
+returned REPLAN without writes (pln_01M66ZE4QC5JP2BSGJQD9V9JY8). Two new missing-calendar
+source tests fail on that candidate; local combo retry now requires individual utterance
+sources, never inventing provenance. Agent suite600 passed /39 conditional skips.

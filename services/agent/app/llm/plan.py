@@ -59,7 +59,8 @@ _SYSTEM = (
     "找出没用/闲置订阅时，只能取消 detect_subscriptions.items 中 is_idle=true 的集合；"
     "is_idle=false 或缺失不能凭 usage_evidence/使用次数为0改判，也不能先取消全部再请用户确认。"
     "原话含 每月/每周/每天/每N号/定时/定期 时必须用 schedule_transfer（填 period 与 "
-    "first_run_at），不得用一次性 transfer。"
+    "first_run_at），不得用一次性 transfer。period 和 first_run_at 必须分别声明 utterance 来源；"
+    "period 的 span 指向周期词（每月/每周），first_run_at 的 span 指向日期锚点（如1号）。"
     "first_run_at 必须是带时区的完整时间：取当前业务日期之后第一个锚定日的 08:00 北京时间，"
     "例如 2026-11-20T08:00:00+08:00，不能只写日期。"
     "AA 收款（create_split_request）的 participant_payee_ids 必须把原话中的人名逐个映射为 "
@@ -854,6 +855,13 @@ def _derived_schedule_problems(draft: PlanDraft, state: AgentState) -> list[str]
                     )
         # --- defence layer 2: cancel+schedule combo must have derived amount source ---
         if combo:
+            for param in ("period", "first_run_at"):
+                sources = [s for s in step.arg_sources if s.param == param]
+                if len(sources) != 1 or sources[0].source.kind != "utterance":
+                    problems.append(
+                        f"steps[{index}].{param}: 定时储蓄必须单独声明原话 utterance 来源，"
+                        "span 分别指向周期词与首次日期锚点，不能省略；仍由L2核验值和作用域"
+                    )
             amount_sources = [s for s in step.arg_sources if s.param == "amount_cents"]
             if not amount_sources or amount_sources[0].source.kind != "derived":
                 problems.append(

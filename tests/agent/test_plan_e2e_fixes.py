@@ -284,6 +284,14 @@ def _good_cancel_sub_derived_amount():
                 "depends_on": ["s1"],
                 "arg_sources": [
                     {
+                        "param": "period",
+                        "source": {"kind": "utterance", "ref": "utt_a", "span": [16, 18]},
+                    },
+                    {
+                        "param": "first_run_at",
+                        "source": {"kind": "utterance", "ref": "utt_a", "span": [18, 20]},
+                    },
+                    {
                         "param": "amount_cents",
                         "source": {
                             "kind": "derived",
@@ -296,7 +304,7 @@ def _good_cancel_sub_derived_amount():
                                 }
                             ],
                         },
-                    }
+                    },
                 ],
             },
         ],

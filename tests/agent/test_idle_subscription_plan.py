@@ -44,7 +44,9 @@ def state():
 
 def proposal(*, overbroad=False):
     plan = deepcopy(_good_cancel_sub_derived_amount())
-    plan["steps"][1]["arg_sources"][0]["source"]["inputs"] = [
+    next(s for s in plan["steps"][1]["arg_sources"] if s["param"] == "amount_cents")["source"][
+        "inputs"
+    ] = [
         {"kind": "step", "ref": "s1"},
         {"kind": "read", "ref": "src_sub", "pointer": "/items/0/amount_cents"},
     ]
@@ -88,4 +90,17 @@ def test_missing_idle_boolean_cannot_be_inferred_from_usage_count():
     with pytest.raises(ReferenceError):
         PlanAdapter(make_llm(api_key="test-key", http_client=scripted.client), max_retries=0)(
             current, ctx()
+        )
+
+
+@pytest.mark.parametrize("missing", ["period", "first_run_at"])
+def test_subscription_savings_missing_calendar_source_never_leaves_adapter(missing):
+    plan = proposal()
+    plan["steps"][-1]["arg_sources"] = [
+        s for s in plan["steps"][-1]["arg_sources"] if s["param"] != missing
+    ]
+    scripted = ScriptedLLM([tool_response("submit_action_plan", plan)])
+    with pytest.raises(ReferenceError):
+        PlanAdapter(make_llm(api_key="test-key", http_client=scripted.client), max_retries=0)(
+            state(), ctx()
         )

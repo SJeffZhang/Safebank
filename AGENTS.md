@@ -932,6 +932,8 @@
 
 | 2026-10-31 | Codex | PR101最终84aeb90完整本机CI通过（unit3536/1035条件skip，真实W1 1794/W2 269/obligations227/S1 29、并发/一致性/网络/恢复/契约）；匹配完整head合并0646844，长期栈恢复，公开摘要f4cf8ab已推。36新代际基线L1将is_idle=false的三条也取消，L2正确REPLAN且无业务写。三条新回归旧planner失败，增加仅显式idle标记的取消集合重试约束后专项10/全Agent598通过39条件skip；正在独审与live，未称36通过或冻结。 |
 
+| 2026-10-31 | Codex | 36候选3f16ba6真实L1已仅取消gym并派生19900分，但漏period/first_run_at来源，L2正确UNKNOWN_SENSITIVE_ARG/REPLAN，无业务写。新增两条缺日历来源回归旧码失败；组合局部重试强制分别声明utterance源，不补造来源、不改L2；全Agent600通过39条件skip，复审及新候选live继续。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：
