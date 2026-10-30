@@ -56,6 +56,8 @@ _SYSTEM = (
     "cancel_subscription 的 instruction_id 必须从已读数据（list_subscriptions 或 "
     "detect_subscriptions 的 items 里的 instruction_id，以 si_ 开头）用 read 来源引用，"
     "不能自己编造或从原话直接取值。"
+    "找出没用/闲置订阅时，只能取消 detect_subscriptions.items 中 is_idle=true 的集合；"
+    "is_idle=false 或缺失不能凭 usage_evidence/使用次数为0改判，也不能先取消全部再请用户确认。"
     "原话含 每月/每周/每天/每N号/定时/定期 时必须用 schedule_transfer（填 period 与 "
     "first_run_at），不得用一次性 transfer。"
     "first_run_at 必须是带时区的完整时间：取当前业务日期之后第一个锚定日的 08:00 北京时间，"
@@ -785,6 +787,37 @@ def _split_participant_problems(draft: PlanDraft, state: AgentState) -> list[str
     return problems
 
 
+def _idle_subscription_problems(draft: PlanDraft, state: AgentState) -> list[str]:
+    """Reject overbroad proposals locally; L2 still derives and authorizes targets.
+
+    Zero displayed usage is not an idle classification. Only explicit boolean
+    flags from current subscription reads can guide the planner's retry.
+    """
+    if not re.search(r"(?:闲置的?|没用的)订阅", _current_turn_text(state)):
+        return []
+    cancellations = [s.args.instruction_id for s in draft.steps if s.tool == "cancel_subscription"]
+    if not cancellations:
+        return []
+    flags: dict[str, list[bool]] = {}
+    for read in state.get("reads", []):
+        if read.tool != "detect_subscriptions":
+            continue
+        for item in read.data.get("items", []):
+            if not isinstance(item, dict):
+                continue
+            id_ = item.get("instruction_id")
+            if isinstance(id_, str) and id_:
+                flags.setdefault(id_, []).append(item.get("is_idle") is True)
+    idle = {id_ for id_, observations in flags.items() if all(observations)}
+    if not flags or len(cancellations) != len(set(cancellations)) or set(cancellations) != idle:
+        return [
+            "闲置订阅取消集合必须恰好对应 detect_subscriptions.items 中 is_idle=true 的 "
+            "instruction_id；is_idle=false 或缺失时不能从 usage_evidence/使用次数为0推断闲置，"
+            "不得扩大取消范围。省下的钱仅按实际取消步骤的月费派生，仍交L2核验。"
+        ]
+    return []
+
+
 def _derived_schedule_problems(draft: PlanDraft, state: AgentState) -> list[str]:
     """Reject derived-template schedule amounts that smuggle a literal utterance amount
     or cancel+schedule combos with non-derived amount_cents.
@@ -925,6 +958,7 @@ class PlanAdapter:
                 sch_problems = _schedule_intent_vs_tool_problems(draft, state)
                 split_problems = _split_participant_problems(draft, state)
                 der_problems = _derived_schedule_problems(draft, state)
+                idle_problems = _idle_subscription_problems(draft, state)
                 wealth_problems = _wealth_source_problems(draft, state)
                 all_problems = (
                     ref_problems
@@ -934,6 +968,7 @@ class PlanAdapter:
                     + sch_problems
                     + split_problems
                     + der_problems
+                    + idle_problems
                     + wealth_problems
                 )
                 if all_problems:
@@ -950,6 +985,7 @@ class PlanAdapter:
                         and not sch_problems
                         and not split_problems
                         and not der_problems
+                        and not idle_problems
                         and not wealth_problems
                     ):
                         fields = _exhausted_clarify_fields(val_problems)
