@@ -13,8 +13,10 @@ mkdir -p "$L" || exit 1
 cd "$W/e2e-deploy" || exit 1
 {
   git rev-parse HEAD
-  docker compose exec -T bank-backend python -c 'import os; print("seed=l1_seed_v1")'
-  docker exec safebank-e2e-1029-postgres-bank-1 psql -U postgres -d bank -tAc 'select dataset_revision,sim_now from clock'
+  DB=$(docker compose exec -T bank-backend python -c 'import os; from urllib.parse import urlsplit; print(urlsplit(os.environ["BANK_DATABASE_URL"]).path.lstrip("/"))') || exit 1
+  [[ "$DB" =~ ^[a-zA-Z0-9_]+$ ]] || exit 1
+  echo "database=$DB"
+  docker exec safebank-e2e-1029-postgres-bank-1 psql -U postgres -d "$DB" -tAc 'select dataset_revision,sim_now from clock'
 } > "$L/manifest.txt" 2> "$L/manifest.err" || { echo "metadata failed"; exit 1; }
 cd "$W" || exit 1
 while IFS=$'\t' read -r n c t; do

@@ -1,7 +1,10 @@
 #!/bin/bash
 # Full state snapshot for one customer ($1) in the clean e2e environment.
 C=$1
-docker exec -i safebank-e2e-1029-postgres-bank-1 psql -U postgres -d bank -tA -F' ' -v c="$C" <<'SQL'
+W=${LIVE_WORKTREE_ROOT:-/Users/zhangshijie/Desktop/Project/Fintech2026-wt}
+DB=$(cd "$W/e2e-deploy" && docker compose exec -T bank-backend python -c 'import os; from urllib.parse import urlsplit; print(urlsplit(os.environ["BANK_DATABASE_URL"]).path.lstrip("/"))' < /dev/null) || exit 1
+[[ "$DB" =~ ^[a-zA-Z0-9_]+$ ]] || exit 1
+docker exec -i safebank-e2e-1029-postgres-bank-1 psql -U postgres -d "$DB" -tA -F' ' -v c="$C" <<'SQL'
 select 'acct '||id||' bal='||(credits_posted_cents-debits_posted_cents)||' pend_dr='||debits_pending_cents from accounts where customer_id=:'c' order by id;
 select 'card '||c.id||' '||c.status||' single='||c.single_limit_cents||' daily='||c.daily_limit_cents||' controls='||c.controls::text from cards c join accounts a on a.id=c.account_id where a.customer_id=:'c' order by c.id;
 select 'payee '||id||' '||name from payees where customer_id=:'c' order by id;

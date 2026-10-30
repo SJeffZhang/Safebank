@@ -10,3 +10,9 @@
 `bash -n .../run_full2.sh .../local_ci.sh`：通过；ruff与diff检查通过。
 其中首次红测试夹具等待stdin曾手动中断；之后改为0.5秒自退出，红绿结果来自后者。
 未调用模型、未部署。精确head全量CI和live另行记录后才合并。
+
+Post-commit acceptance: exact 4b1859a full local CI PASS (unit 3504 passed/979 skipped;
+all configured PG/integration targets). Clean stack actual model balance query took 8s,
+reported 8200.00 yuan; business snapshot unchanged. Existing CLI returned CLARIFY (2),
+so the record is an observed response, not a business-success assertion. PR #98 merged
+0caeb03. Main redeployed afterward. Public progress metadata published and curl verified.
