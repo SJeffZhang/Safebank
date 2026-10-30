@@ -121,3 +121,49 @@ def test_default_deploy_works_from_e2e_and_other_worktree(tmp_path, monkeypatch)
     (target / "e2e.override.yml").write_text("services: {}")
     monkeypatch.chdir(target)
     assert default_deploy() == target
+
+
+@pytest.mark.parametrize("corrupt", ["clock", "balance", "seed", "migration"])
+def test_verify_rejects_wrong_initial_state(tmp_path, monkeypatch, corrupt):
+    demo = environment(tmp_path, monkeypatch)
+    fixture = demo.deploy / "services/bank-backend/fixtures"
+    fixture.mkdir(parents=True)
+    seed = {
+        "dataset_revision": "seed1",
+        "sim_now": "2026-10-15T09:00:00+08:00",
+        "accounts": [
+            {
+                "id": "acc_zs_chk",
+                "customer_id": "cus_zs",
+                "credits_posted_cents": 600000,
+                "debits_posted_cents": 0,
+                "debits_pending_cents": 0,
+                "credits_pending_cents": 0,
+            }
+        ],
+    }
+    (fixture / "l1_seed_v1.json").write_text(json.dumps(seed))
+    data = {
+        "customers": 4,
+        "balanced": True,
+        "orders": 0,
+        "seed": "seed1",
+        "sim_now": seed["sim_now"],
+        "accounts": [["acc_zs_chk", 600000, 0, 0, 0]],
+        "bank_revision": "head",
+    }
+    if corrupt == "clock":
+        data["sim_now"] = "2026-10-16T09:00:00+08:00"
+    elif corrupt == "balance":
+        data["accounts"][0][1] = 600001
+    elif corrupt == "seed":
+        data["seed"] = "old"
+    else:
+        data["bank_revision"] = "old"
+    monkeypatch.setattr(demo, "sql", Mock(side_effect=[json.dumps(data), "head"]))
+    monkeypatch.setattr(
+        "scripts.demo_environment.ScriptDirectory.from_config",
+        lambda cfg: Mock(get_current_head=lambda: "head"),
+    )
+    with pytest.raises(RuntimeError):
+        DemoEnvironment.verify(demo, {"bank": "bank_demo", "gateway": "gateway_demo"})
