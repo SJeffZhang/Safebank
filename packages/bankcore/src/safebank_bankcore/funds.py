@@ -41,6 +41,7 @@ from .ids import derive, digest
 from .ledger import post_transfer, replace_state
 from .nav import nav
 from .reserve import BUSINESS_TIMEZONE, _business_time
+from .risk import risk_valid_until_date
 
 if TYPE_CHECKING:
     from .banking import Context
@@ -117,7 +118,7 @@ def _assessed_level(state: BankState, customer_id: str, now: datetime) -> int | 
     if customer is None or customer.risk_level is None or not customer.risk_valid_until:
         return None
     try:
-        valid_until = date.fromisoformat(customer.risk_valid_until)
+        valid_until = risk_valid_until_date(customer.risk_valid_until)
     except ValueError:
         return None
     if valid_until < _business_time(now).date():
