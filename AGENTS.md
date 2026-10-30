@@ -35,7 +35,7 @@
 
 ## 3. 当前状态（每次工作后更新）
 
-**最后更新**：2026-10-31（Codex 实施基础版冻结；#96/#98完成，代际初始化已完成，PR100 D3已合main，06日历来源修复中；表单G4/G8及36仍阻塞）
+**最后更新**：2026-10-31（Codex 实施基础版冻结；#96/#98完成，代际初始化已完成，PR100 D3已合main，06日历来源新数据集live通过、精确head CI待跑；表单G4/G8及36仍阻塞）
 
 | 模块 | 状态 |
 |---|---|
@@ -927,6 +927,8 @@
 | 2026-10-31 | Codex | 06来源修复及独审APPROVE：仅schedule_transfer.period/first_run_at接受持久化typed scope对应日历值与同锚点span，UTC快照统一北京时间；同一first_run时刻不同offset在IntentStage窄归一，其余字段不变。新增真实G3/JWT/PG专项旧2fail6pass，新11pass；独审亲跑11。W1/W2修复collection-time未来时间夹具后2060pass/2条件skip，最后Intent增量W2+parser412pass/2skip。即将干净栈live06与精确head本机CI；36、表单及冻结仍未完成。 |
 
 | 2026-10-31 | Codex | PR101草稿首轮03e1295真实06返回REPLAN且无新增指令；SQL核模型first_run源只引用“20号”，此前要求重复“每月”过严。新增minimal_spans真实凭据红测失败，按参数对应语义修周期词/首次日锚点，仍要求同一有效scope精确值；独审APPROVE亲跑12，W2+parser413pass/2skip。待新代际live及精确head完整CI，未合101。 |
+
+| 2026-10-31 | Codex | PR101候选5c3d0cf新代际真实06通过：L1黄级审批执行创建赵六20000分MONTHLY指令；D3推进至12-06，10-20/11-20北京时间08:00各成功一次合计40000分，下次12-20 08:00。SQL核真实源COMMITTED/EXECUTED/YELLOW、恢复grant绑定原plan及首时刻、零重复、账本平衡；证据schedule-provenance-live.json。未调用额外模型重试额度错误；上一轮是业务来源拒绝。接着跑最终head完整本机CI，未合101/未冻结。 |
 
 ## 5. 下一步待办（按顺序）
 

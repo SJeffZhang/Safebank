@@ -29,3 +29,11 @@ was too strict. New real-credential minimal-spans regression failed before the n
 Period span now proves only its period marker; first-date span proves the matching day/weekday,
 with both exact persisted scope values still required. Independent follow-up APPROVE,12 cases
 personally rerun. W2/parser413 passed /2 skips. Fresh live and final CI remain pending.
+
+
+Candidate5c3d0cf clean generation demo_20261030174427_66333d44: actual L1 case06 confirmed
+through yellow approval, creating a20000-cent monthly transfer to Zhao Liu. Real D3 advance
+executed Oct20 and Nov20 at08:00 Asia/Shanghai once each (40000 cents total), next Dec20
+08:00. Original plan COMMITTED/EXECUTED/YELLOW, restored grant bound to that plan and original
+first time. Ledger balanced; duplicate instants zero. Machine evidence:
+schedule-provenance-live.json. Final exact-head full local CI pending.

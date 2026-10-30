@@ -1,0 +1,39 @@
+{
+  "generation": "demo_20261030174427_66333d44",
+  "candidate": "5c3d0cf09047bb3b45610366422f68dcd4063956",
+  "plan_id": "pln_01M66YMXMS8ZY85VPMEYQ8V6F4",
+  "instruction_id": "si_c2e65e00-5e6c-5772-ab7a-6b2d365b3d7c",
+  "definition": "20000|pye_zs_zl|MONTHLY|2026-12-20 00:00:00+00|ACTIVE",
+  "runs": "SUCCESS|2|40000",
+  "due_instants": "2026-10-20 00:00:00+00\n2026-11-20 00:00:00+00",
+  "source_execution": "COMMITTED|EXECUTED|YELLOW",
+  "grant": "pln_01M66YMXMS8ZY85VPMEYQ8V6F4|ACTIVE|2026-10-20T08:00:00+08:00",
+  "balanced": "t|t",
+  "duplicates": "0",
+  "advances": [
+    {
+      "id": "be6d7c9a2bcacdd50b32617366e774ac83ac6277dc406b427cc05464f3dcf831",
+      "status": "DONE",
+      "sim_now": "2026-10-15T09:40:00+08:00",
+      "processed": 0,
+      "blocked": 0,
+      "remaining": 0
+    },
+    {
+      "id": "328f2f5fde675d2a4b04f1dfe853aa7f853dd182e993b1180fc04d9521b924de",
+      "status": "DONE",
+      "sim_now": "2026-10-23T09:00:00+08:00",
+      "processed": 5,
+      "blocked": 0,
+      "remaining": 0
+    },
+    {
+      "id": "0aaf9c96e3fdb58036231fbd4bbba7f3ae75aaa3a6b071b3da019f96eed711e1",
+      "status": "DONE",
+      "sim_now": "2026-12-06T09:00:00+08:00",
+      "processed": 11,
+      "blocked": 0,
+      "remaining": 0
+    }
+  ]
+}
