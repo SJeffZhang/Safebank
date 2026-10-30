@@ -8,7 +8,7 @@ def test_compose_has_only_frontend_host_port_and_two_gateway_interfaces():
     services = compose["services"]
     assert set(compose["networks"]) == {"agent-net", "bank-net"}
     assert set(services["gateway"]["networks"]) == {"agent-net", "bank-net"}
-    for name in ("agent", "frontend", "postgres-agent"):
+    for name in ("agent", "frontend", "operator", "postgres-agent"):
         assert set(services[name]["networks"]) == {"agent-net"}
     for name in ("bank-backend", "postgres-bank"):
         assert set(services[name]["networks"]) == {"bank-net"}

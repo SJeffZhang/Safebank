@@ -15,6 +15,7 @@ import { Cards, Wealth } from "./Services";
 import { Assistant } from "./Assistant";
 import { Security } from "./Security";
 import { Approval } from "./Approval";
+import { DemoConsole } from "./DemoConsole";
 import {
   ChoiceSelect,
   Icon,
@@ -62,6 +63,7 @@ function BankApp() {
   const [decision, setDecision] = useState<Decision>();
   const [menu, setMenu] = useState(false);
   const [help, setHelp] = useState(false);
+  const [demoConsole, setDemoConsole] = useState(false);
   const [customerId, setCustomerId] = useState("");
   const [pin, setPin] = useState("");
   const [customers, setCustomers] = useState<
@@ -457,12 +459,22 @@ function BankApp() {
                 </strong>
               </div>
               <div className="topbar-actions">
-                <span
-                  className={`mode-indicator ${isPreview ? "preview" : ""}`}
-                >
-                  <i />
-                  {isPreview ? "合成数据预览" : "已连接银行沙箱"}
-                </span>
+                {isPreview ? (
+                  <span className="mode-indicator preview">
+                    <i />
+                    合成数据预览
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    className="mode-indicator"
+                    title="打开演示控制台"
+                    onClick={() => setDemoConsole(true)}
+                  >
+                    <i />
+                    已连接银行沙箱
+                  </button>
+                )}
                 <a
                   className="icon-button"
                   href="#security?tab=notifications"
@@ -640,7 +652,8 @@ function BankApp() {
           </div>
         </Modal>
       )}
-      {help && (
+      {demoConsole && <DemoConsole onClose={() => setDemoConsole(false)} />}
+          {help && (
         <Modal title="使用 SafeBank" onClose={() => setHelp(false)}>
           <div className="modal-body">
             <h3>从您的日常业务开始</h3>

@@ -10,7 +10,7 @@ Usage:
     python -m scripts.try_agent --customer-id cus_zs_1 --text "查询余额"
 
     # Inside docker compose:
-    docker compose exec frontend python -m scripts.try_agent ...
+    docker compose exec operator python -m scripts.try_agent ...
 
 Can also write sanitised event log to --out path.
 """
