@@ -11,6 +11,7 @@ injection — D9 (2026-10-24).
 from __future__ import annotations
 
 import json
+import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -39,6 +40,8 @@ from services.agent.app.graph import (
     build_graph,
 )
 from services.agent.app.llm.cards import generate_cards
+
+_log = logging.getLogger(__name__)
 
 # ── JSON encoder for state values ──────────────────────────────────────────
 
@@ -523,6 +526,8 @@ def app_factory(
             except HTTPException:
                 raise
             except Exception as exc:
+                # The client only receives the message; keep the traceback server-side.
+                _log.exception("run stream failed")
                 yield (
                     "event: error\ndata: "
                     + json.dumps(

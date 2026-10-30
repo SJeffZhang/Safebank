@@ -14,7 +14,9 @@ that ``values`` events contain proper JSON dicts with real enum values.
 
 from __future__ import annotations
 
+import dataclasses
 import json
+import logging
 import os
 import tempfile
 import time
@@ -355,3 +357,29 @@ class TestValuesEventNotRepr:
         state_decision = state_data.get("values", {}).get("decision", {})
         assert sse_decision["plan_id"] == state_decision.get("plan_id")
         assert sse_decision["decision"] == state_decision.get("decision")
+
+
+class TestStreamErrorLogged:
+    """A run that raises keeps its traceback in the server log, not only the SSE message."""
+
+    def test_stream_exception_is_logged_with_traceback(self, agent_pg, ed25519_keys, caplog):
+        app = _setup_test_app(agent_pg, ed25519_keys, "ALLOW")
+        ports = _make_test_ports("ALLOW")
+
+        def boom(s, c):
+            raise TypeError("string indices must be integers, not 'str'")
+
+        _install_test_ports(app, dataclasses.replace(ports, plan=boom))
+        private = ed25519_keys[0]
+        tid = "ses_ssw_err"
+        token = make_token(private, session=tid)
+
+        with caplog.at_level(logging.ERROR, logger="services.agent.app.main"):
+            with TestClient(app) as tc:
+                result = _stream_graph(tc, token, tid, "给张三转 8 元", "utt_err")
+
+        errors = [e for e in result["events"] if e["event"] == "error"]
+        assert errors and errors[0]["data"]["type"] == "TypeError"
+        logged = [r for r in caplog.records if r.message == "run stream failed"]
+        assert logged, "stream failure must be logged server-side"
+        assert logged[0].exc_info is not None
