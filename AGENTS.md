@@ -934,6 +934,8 @@
 
 | 2026-10-31 | Codex | 36候选3f16ba6真实L1已仅取消gym并派生19900分，但漏period/first_run_at来源，L2正确UNKNOWN_SENSITIVE_ARG/REPLAN，无业务写。新增两条缺日历来源回归旧码失败；组合局部重试强制分别声明utterance源，不补造来源、不改L2；全Agent600通过39条件skip，复审及新候选live继续。 |
 
+| 2026-10-31 | Codex | 36候选d463d4f新代际live通过：真实L1审批计划EXECUTED，仅取消gym，其他三订阅ACTIVE；同计划创建每月1日向本人储蓄转19900分，D3两期各一次合计39800分，gym两期BLOCKED，下次01-01，零重复且账本平衡。证据idle-subscription-savings-live.json；增量独审APPROVE亲跑8，开始最终head完整CI，未合102/未冻结。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：

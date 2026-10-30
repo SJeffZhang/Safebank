@@ -27,3 +27,12 @@ but omitted period/first_run_at source declarations. L2 UNKNOWN_SENSITIVE_ARG co
 returned REPLAN without writes (pln_01M66ZE4QC5JP2BSGJQD9V9JY8). Two new missing-calendar
 source tests fail on that candidate; local combo retry now requires individual utterance
 sources, never inventing provenance. Agent suite600 passed /39 conditional skips.
+
+Candidate d463d4f, generation demo_20261030180030_10e93fb3: real L1 case36 passed
+through bound approval, plan pln_01M66ZJ5HSWS1R45P36NAVHPHF EXECUTED. Only gym
+cancelled; cloud/music/video remain ACTIVE. New savings instruction19900 cents,
+MONTHLY, acc_zs_chk -> acc_zs_sav. D3 advanced to Dec6: Nov1/Dec1 at08:00 Beijing
+each executed once, corresponding real ledger transfers total39800 cents; gym billing
+BLOCKED twice. Next execution Jan1; zero duplicate events; posted/pending ledger balanced.
+Machine evidence: idle-subscription-savings-live.json. Follow-up independent review
+APPROVE, reviewer reran8 tests. Final exact-head full local CI remains pending.

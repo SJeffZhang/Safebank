@@ -1,0 +1,13 @@
+{
+  "generation": "demo_20261030180030_10e93fb3",
+  "candidate": "d463d4f3351565a9b29abaa65ae3a32251824bff",
+  "new_instruction": "si_9e09c907-e4a2-5da8-af02-e3569607ee6a",
+  "definition": "19900|acc_zs_chk|acc_zs_sav|MONTHLY|2027-01-01 00:00:00+00|ACTIVE|pln_01M66ZJ5HSWS1R45P36NAVHPHF",
+  "mandates": "si_zs_cloud|ACTIVE\nsi_zs_gym|DELETED\nsi_zs_music|ACTIVE\nsi_zs_video|ACTIVE",
+  "source_execution": "COMMITTED|EXECUTED|",
+  "runs": "SUCCESS|2|39800",
+  "gym_runs": "BLOCKED|2",
+  "due_instants": "2026-11-01 00:00:00+00\n2026-12-01 00:00:00+00",
+  "balanced": "t|t",
+  "duplicates": "0"
+}
