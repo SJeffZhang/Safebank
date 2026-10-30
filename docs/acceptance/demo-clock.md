@@ -58,3 +58,15 @@ ledger effects. Acceptance remains blocked pending atomic source-cursor persiste
 Cursor correction: three regressions fail on ab0d61b,36 event/scheduler tests pass after correction.
 Extended real contracts4 passed, covering two periods and full rollback before commit. Independent
 review APPROVE,14 real-PG tests personally run. New live generation and full CI remain pending.
+
+
+Final component live candidate2d58518: new generation demo_20261030172702_c99f6ad9.
+Actual L1 music cancellation and Li Si200000-cent subscription succeeded. D3 advanced through
+Oct15/Oct23/Dec6 with16 terminal outcomes (14SUCCESS,2BLOCKED),16 result audits, no duplicate
+instants, no due billing cursors, next schedule Jan5. Mother transfer two runs/200000 cents;
+six billings each two runs, cancelled music both blocked. Fund SETTLED1624.5633 units, pending
+funds zero; posted/pending ledgers balanced. Machine evidence: demo-clock-live.json.
+Previous-schema0009 injected switch failure restored original generation and exact old images;
+demo-up retained them (/private/tmp/sbg-clock-upgrade-fault2.log).
+Boundary: no full six-scene rehearsal claimed; newly user-created schedule and redemption live
+remain dedicated follow-up work. Final-head local CI still required.

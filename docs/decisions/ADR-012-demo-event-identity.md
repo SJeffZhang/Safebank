@@ -45,3 +45,7 @@ creation stores original instruction terms in its committed operation event;
 backfill requires the corresponding real step result, approved evidence risk,
 original terms, fingerprint and recurring due instant. Older incomplete history
 fails closed. Source API access remains internal L2→L3 only.
+
+Pure event appliers return consumed source cursors in obligation state; EventService now persists
+that run's next_run_at/next_due_at in the same transaction as ledger effects/run/event terminal.
+Both execute and block consume a period; rollback preserves all of them, replay consumes none.
