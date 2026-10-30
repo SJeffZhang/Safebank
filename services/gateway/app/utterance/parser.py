@@ -11,6 +11,7 @@ from typing import Any
 
 import yaml
 from pypinyin import lazy_pinyin
+from safebank_bankcore.reserve import BUSINESS_TIMEZONE
 from safebank_contracts.state import BankState
 
 from ..policy.registry import action_kind
@@ -520,6 +521,9 @@ def _first_run_at(
     import calendar
     from datetime import timedelta
 
+    # L3 PostgreSQL timestamps may arrive in UTC. Calendar anchors and the
+    # fixed 08:00 execution time always use the bank's business timezone.
+    sim_now = sim_now.astimezone(BUSINESS_TIMEZONE)
     if period == "MONTHLY":
         day = int(anchor_day)
         year, month = sim_now.year, sim_now.month
