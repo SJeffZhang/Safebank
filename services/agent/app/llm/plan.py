@@ -61,7 +61,8 @@ _SYSTEM = (
     "first_run_at 必须是带时区的完整时间：取当前业务日期之后第一个锚定日的 08:00 北京时间，"
     "例如 2026-11-20T08:00:00+08:00，不能只写日期。"
     "AA 收款（create_split_request）的 participant_payee_ids 必须把原话中的人名逐个映射为 "
-    "list_payees 读取结果 items 中对应的 id，不得为空。"
+    "list_payees 读取结果 items 中对应的 id，不得为空；其来源只声明一条 utterance，"
+    "span 覆盖原话中全部参与人名字（如「小林、小周、小陈」）。"
     "订阅组合（找出没用的订阅取消掉并定时把省下的钱转走）里，schedule_transfer 的 "
     "amount_cents 必须用 derived 来源且 template 只能是 cancelled_monthly_fees，"
     "inputs 只能引用订阅读取（read）或取消步骤（step），不得引用原话字面金额；"
@@ -636,6 +637,49 @@ def _normalize_schedule_dates(value: object) -> object:
     return value
 
 
+def _merge_list_sources(plan: dict) -> dict:
+    """Collapse per-item utterance sources of one list param into one span.
+
+    The contract allows one source per param. For a list (AA participants) the
+    model tends to cite each name separately; when all of them point into the
+    same utterance, the covering span names every item and L2 checks each one.
+    Anything else is left alone for the contract to reject.
+    """
+    for step in plan.get("steps", ()):
+        if not isinstance(step, dict):
+            continue
+        args = step.get("args") or {}
+        sources = step.get("arg_sources") or []
+        merged: list = []
+        grouped: dict[str, list] = {}
+        for item in sources:
+            param = item.get("param") if isinstance(item, dict) else None
+            if isinstance(args.get(param), list):
+                grouped.setdefault(param, []).append(item)
+            else:
+                merged.append(item)
+        for param, items in grouped.items():
+            srcs = [i.get("source") or {} for i in items]
+            refs = {s.get("ref") for s in srcs}
+            if (
+                len(items) > 1
+                and all(s.get("kind") == "utterance" for s in srcs)
+                and len(refs) == 1
+            ):
+                start = min(s["span"][0] for s in srcs)
+                end = max(s["span"][1] for s in srcs)
+                merged.append(
+                    {
+                        "param": param,
+                        "source": {"kind": "utterance", "ref": refs.pop(), "span": [start, end]},
+                    }
+                )
+            else:
+                merged.extend(items)
+        step["arg_sources"] = merged
+    return plan
+
+
 _RECURRING_RE = re.compile(r"每\s*(?:个)?\s*(?:月|周|星期|天|日|年)|定时|定期|每\s*\d+\s*号")
 
 
@@ -815,7 +859,7 @@ class PlanAdapter:
                 self._observer(message)
             try:
                 args = _normalize_schedule_dates(single_tool_call(message, _PLAN_TOOL))
-                body = PlanBody.model_validate(from_strict_plan(args))
+                body = PlanBody.model_validate(_merge_list_sources(from_strict_plan(args)))
                 body = _default_source_account_overrides(body, state)
                 body = _wealth_product_clarify(body, state)
                 draft = self._to_draft(body, state)

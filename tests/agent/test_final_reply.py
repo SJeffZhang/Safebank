@@ -12,7 +12,10 @@ def _state(values, next_=()):
 
 
 def test_finished_run_returns_verified_message():
-    values = {"reply_draft": "卡号6222021234567890", "messages": [AIMessage(content="卡号****7890")]}
+    values = {
+        "reply_draft": "卡号6222021234567890",
+        "messages": [AIMessage(content="卡号****7890")],
+    }
     assert _final_reply(_state(values)) == "卡号****7890"
 
 

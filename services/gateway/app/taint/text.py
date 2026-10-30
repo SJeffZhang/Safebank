@@ -73,6 +73,21 @@ def matches(value, text: str, param: str, state, customer_id: str | None = None)
             return Decimal(raw) * 100 == value
         except InvalidOperation:
             return False
+    if isinstance(value, (list, tuple)):
+        # A list of entity ids (AA participants) is authorized only when the span
+        # names each one exactly once; every name must resolve to one owned entity.
+        names = [part for part in re.split(r"[、,，;；/\s]+|和|与|及|跟", raw) if part]
+        if not value or len(names) != len(value) or len(set(value)) != len(value):
+            return False
+        remaining = list(value)
+        for name in names:
+            hit = next(
+                (eid for eid in remaining if matches(eid, name, param, state, customer_id)), None
+            )
+            if hit is None:
+                return False
+            remaining.remove(hit)
+        return not remaining
     if isinstance(value, bool):
         # Card-control verbs are classified at module-load time from the single
         # source of truth (intent_lexicon.yaml).  Non-channel booleans (补卡/
