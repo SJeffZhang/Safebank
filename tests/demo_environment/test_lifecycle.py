@@ -43,6 +43,7 @@ def environment(tmp_path, monkeypatch):
         )
     (secrets / "postgres-bank-password").write_text("admin-sentinel")
     demo = DemoEnvironment(deploy)
+    monkeypatch.setattr(demo, "retain_image", Mock())
     monkeypatch.setattr("scripts.demo_environment.subprocess.check_output", lambda *a, **k: "sha\n")
     monkeypatch.setattr(demo, "sql", Mock(return_value=""))
     monkeypatch.setattr(demo, "verify", Mock(return_value={"digest": "same-initial-state"}))
@@ -221,3 +222,24 @@ def test_missing_previous_container_fails_before_build(tmp_path, monkeypatch):
         demo.reset()
     assert not any(call.args[0] == "build" for call in compose.call_args_list)
     assert demo.current() == prior
+
+
+def test_previous_image_is_retained_before_mutable_tag_rebuild(tmp_path, monkeypatch):
+    demo = environment(tmp_path, monkeypatch)
+    events = []
+
+    def retain(image, tag):
+        events.append(("retain", image, tag))
+
+    monkeypatch.setattr(demo, "retain_image", retain, raising=False)
+
+    def compose(*args, **kwargs):
+        if args[:2] == ("images", "-q"):
+            return "a" * 64
+        events.append((args[0],))
+        return ""
+
+    monkeypatch.setattr(demo, "compose", compose)
+    demo.reset()
+    build = next(i for i, event in enumerate(events) if event[0] == "build")
+    assert len([e for e in events[:build] if e[0] == "retain"]) == 5

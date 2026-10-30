@@ -910,6 +910,8 @@
 
 | 2026-10-31 | Codex | 用户go on后恢复D3最终独审（前次Codex使用额度中断不计通过）：review_demo_clock最终APPROVE，亲跑30专项与15生命周期；image回滚另经review_demo_generation APPROVE。D3/事件身份完整真实PG组合225通过（既有metadata循环排序warning1），前端3红绿/typecheck/Playwright手机375×812和桌面1280×900交互验证通过，无console/page错误；64位job可换行，GET查询原job，RETRYING恢复沿用原请求身份。Browser插件不可用用内置Playwright，首次临时harness内联代理500已改外部JS；非应用异常。补已有modal-body间距，不改tokens。报告docs/reviews/2026-10-31-demo-clock.md；最终head本机CI与live仍待，不标冻结。 |
 
+| 2026-10-31 | Codex | #100精确e3ead3d完整本机CI通过（单元3523/1012skip，前端400+BFF/build，全PG/并发/一致性/网络恢复）。随后真实跨schema故障注入发现旧未命名image在build覆tag后不可用，原仅记录ID回滚失败；全部库/卷保留。已用验收过的2390001源码重建旧runtime，恢复原代际，七容器healthy。新增build前给五旧image打唯一保留tag，失败/超时则停止；旧码新增测试失败，新生命周期16通过，独立定点复审APPROVE。此修复使旧CI不再足够，#100不合并，接下来重跑实际升级故障及最终headCI。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：

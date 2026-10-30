@@ -24,3 +24,12 @@ reset, and the final review above completed. No DeepSeek quota error was retried
 
 Boundary: no live deployment by reviewers. Clock-advance job metadata is in process memory; after
 restart a404 does not prove no event executed. This existing availability limit is explicit in ADR-012.
+
+## Real fault follow-up
+
+Actual cross-schema switch exposed Docker/containerd losing the replaced untagged old image,
+so storing the image ID alone did not guarantee rollback. Added explicit unique retention tags
+for all five old service images before build; a tag error/timeout aborts before build.
+Old-code regression failed (zero retention calls); new lifecycle suite16 passed.
+review_demo_generation independently re-reviewed this increment: APPROVE, personally16 passed,
+no credential/privilege/data-delete regression. Actual cross-schema proof must be rerun.

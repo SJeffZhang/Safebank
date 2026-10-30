@@ -23,3 +23,11 @@ S1 remains the execution authority; no gateway/direct-L3 bypass or weaker approv
 
 Final-head full local CI, real console-to-L3 clock advance, scheduled-transfer/merchant/fund state
 assertions, and cross-schema image rollback smoke must pass before merging. No demo-v1 tag yet.
+
+First exact head e3ead3d full local CI passed: unit3523/1012 skips, frontend400/BFF/build,
+all configured PG, ledger concurrency/consistency and network/restart checks. Subsequent real
+cross-schema fault injection caught a rollback failure: the replaced untagged image ID no longer
+existed. All database generations/volumes remained. Coordinator rebuilt accepted source2390001,
+restored original generation/runtime and retained explicit image tags. No L3 data/history deleted.
+Fix now explicitly tags each previous image before build; independent review APPROVE/lifecycle16.
+Because code changed, prior CI is insufficient for merging: new final-head CI/live required.

@@ -85,6 +85,13 @@ class DemoEnvironment:
             raise RuntimeError("demo command failed: " + " ".join(args[:3]))
         return result.stdout
 
+    def retain_image(self, image: str, tag: str) -> None:
+        result = subprocess.run(
+            ["docker", "image", "tag", image, tag], text=True, capture_output=True, timeout=30
+        )
+        if result.returncode:
+            raise RuntimeError("cannot retain previous runtime image before build")
+
     def sql(self, service: str, database: str, query: str) -> str:
         return self.compose(
             "exec",
@@ -129,6 +136,9 @@ class DemoEnvironment:
             if image:
                 if not re.fullmatch(r"(?:sha256:)?[a-f0-9]{64}", image):
                     raise RuntimeError("ambiguous previous image identity")
+                # Docker/containerd may discard an untagged replaced image.
+                # Retain an explicit unique tag BEFORE overwriting the build tag.
+                self.retain_image(image, f"safebank-demo-retained:{generation}-{service}")
                 rollback_cfg.setdefault("services", {}).setdefault(service, {})["image"] = image
         rollback_overlay = directory / "rollback.yml"
         private_write(rollback_overlay, yaml.safe_dump(rollback_cfg))
