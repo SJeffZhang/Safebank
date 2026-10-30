@@ -108,9 +108,10 @@ def _subscription_schedule_state():
                 source_ref="src_sub",
                 tool="detect_subscriptions",
                 data={
-                    "subscriptions": [
+                    "items": [
                         {
-                            "subscription_id": "si_zs_gym",
+                            "instruction_id": "si_zs_gym",
+                            "is_idle": True,
                             "merchant_name": "阳光健身",
                             "amount_cents": 19900,
                             "period": "MONTHLY",
@@ -283,6 +284,14 @@ def _good_cancel_sub_derived_amount():
                 "depends_on": ["s1"],
                 "arg_sources": [
                     {
+                        "param": "period",
+                        "source": {"kind": "utterance", "ref": "utt_a", "span": [16, 18]},
+                    },
+                    {
+                        "param": "first_run_at",
+                        "source": {"kind": "utterance", "ref": "utt_a", "span": [18, 20]},
+                    },
+                    {
                         "param": "amount_cents",
                         "source": {
                             "kind": "derived",
@@ -291,11 +300,11 @@ def _good_cancel_sub_derived_amount():
                                 {
                                     "kind": "read",
                                     "ref": "src_sub",
-                                    "pointer": "/subscriptions/0/amount_cents",
+                                    "pointer": "/items/0/amount_cents",
                                 }
                             ],
                         },
-                    }
+                    },
                 ],
             },
         ],
