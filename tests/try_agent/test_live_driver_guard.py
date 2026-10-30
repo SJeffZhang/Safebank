@@ -97,7 +97,7 @@ def test_batch_stops_before_second_case(code, tmp_path):
     bins.mkdir()
     for name in ("docker", "git"):
         command = bins / name
-        command.write_text("#!/bin/sh\necho '{}'\n")
+        command.write_text("#!/bin/sh\necho bank\n")
         command.chmod(0o755)
     calls = tmp_path / "calls"
     result = subprocess.run(

@@ -171,5 +171,9 @@ test-try-agent:
 	.venv/bin/pytest tests/try_agent -q
 
 .PHONY: demo-up
-demo-up: up seed-demo
-	@echo "SafeBank demo: http://127.0.0.1:3000 (open this exact origin; localhost is a different origin)"
+demo-up:
+	$(PYTHON) -m scripts.demo_environment up
+
+.PHONY: demo-reset
+demo-reset:
+	$(PYTHON) -m scripts.demo_environment reset

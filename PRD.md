@@ -1793,3 +1793,14 @@ gateway 双端口的实现：一个 asyncio 进程中运行两个 `uvicorn.Serve
 定稿后 `PRD.md` 为唯一现行规格，v1.2 与本次重写前输入保留 docs/archive，根目录 draft/wip 清理；审核报告保留 docs/reviews。任何实现偏离，先改本 PRD、写 ADR、更新 AGENTS 当前状态与追加日志。尚未开始编码、测试与官方核实的事项继续列在 AGENTS 待办，不能由设计审核代替完成状态。
 
 <!-- P0 evidence: docs/acceptance/P0.md; implementation acceptance remains per component. -->
+
+
+### demo-v1 本机初始化增量约定（2026-10-30）
+
+演示基础版优先于攻击与对比。现有 `/internal/demo/reset` 仅幂等补种，不表示恢复业务初态。
+`make demo-reset` 为本机可信操作者命令，仅操作独立演示项目：在原 PostgreSQL 实例创建
+新一代 bank/gateway/agent 数据库、迁移并安装 l1_seed_v1，验证后切换；不删除旧库或数据卷。
+每一代使用独立JWT签名密钥，重建BFF和Agent服务，使旧登录、原话、审批和checkpoint无效。
+管理凭据仅位于忽略的本机0600覆盖文件，不授予运行角色。切换失败恢复原连接与服务。
+模拟时钟只能在全新数据集回到种子初始值，不修改旧库时钟或追加式账本。
+`make demo-up` 启动已初始化代际，不隐式补种或修改旧库；尚未初始化时明确失败。
