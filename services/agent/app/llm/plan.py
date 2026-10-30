@@ -58,6 +58,8 @@ _SYSTEM = (
     "不能自己编造或从原话直接取值。"
     "原话含 每月/每周/每天/每N号/定时/定期 时必须用 schedule_transfer（填 period 与 "
     "first_run_at），不得用一次性 transfer。"
+    "first_run_at 必须是带时区的完整时间：取当前业务日期之后第一个锚定日的 08:00 北京时间，"
+    "例如 2026-11-20T08:00:00+08:00，不能只写日期。"
     "AA 收款（create_split_request）的 participant_payee_ids 必须把原话中的人名逐个映射为 "
     "list_payees 读取结果 items 中对应的 id，不得为空。"
     "订阅组合（找出没用的订阅取消掉并定时把省下的钱转走）里，schedule_transfer 的 "
@@ -611,6 +613,29 @@ def _channel_source_problems(draft: PlanDraft, state: AgentState) -> list[str]:
     return problems
 
 
+_BARE_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _normalize_schedule_dates(value: object) -> object:
+    """Turn a bare-date ``first_run_at`` into the gateway's 08:00 Beijing anchor.
+
+    The gateway derives a schedule's first run as the anchor day at 08:00 +08:00
+    and compares it exactly, so this only fills in the convention; a wrong day
+    is still rejected by L2.
+    """
+    if isinstance(value, dict):
+        out = {}
+        for key, item in value.items():
+            if key == "first_run_at" and isinstance(item, str) and _BARE_DATE_RE.fullmatch(item):
+                out[key] = f"{item}T08:00:00+08:00"
+            else:
+                out[key] = _normalize_schedule_dates(item)
+        return out
+    if isinstance(value, list):
+        return [_normalize_schedule_dates(item) for item in value]
+    return value
+
+
 _RECURRING_RE = re.compile(r"每\s*(?:个)?\s*(?:月|周|星期|天|日|年)|定时|定期|每\s*\d+\s*号")
 
 
@@ -789,7 +814,7 @@ class PlanAdapter:
             if self._observer is not None:
                 self._observer(message)
             try:
-                args = single_tool_call(message, _PLAN_TOOL)
+                args = _normalize_schedule_dates(single_tool_call(message, _PLAN_TOOL))
                 body = PlanBody.model_validate(from_strict_plan(args))
                 body = _default_source_account_overrides(body, state)
                 body = _wealth_product_clarify(body, state)
