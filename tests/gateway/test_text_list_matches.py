@@ -34,3 +34,8 @@ def test_extra_missing_or_foreign_names_do_not_match():
     assert not matches(["pye_lin", "pye_other"], "小林、小王", P, STATE, "cus_zs")
     assert not matches(["pye_lin", "pye_lin"], "小林、小林", P, STATE, "cus_zs")
     assert not matches([], "", P, STATE, "cus_zs")
+
+
+def test_non_string_elements_fail_closed():
+    assert not matches([True], "是", P, STATE, "cus_zs")
+    assert not matches([["pye_lin"]], "小林", P, STATE, "cus_zs")

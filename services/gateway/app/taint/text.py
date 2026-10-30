@@ -77,7 +77,12 @@ def matches(value, text: str, param: str, state, customer_id: str | None = None)
         # A list of entity ids (AA participants) is authorized only when the span
         # names each one exactly once; every name must resolve to one owned entity.
         names = [part for part in re.split(r"[、,，;；/\s]+|和|与|及|跟", raw) if part]
-        if not value or len(names) != len(value) or len(set(value)) != len(value):
+        if (
+            not value
+            or not all(isinstance(v, str) for v in value)
+            or len(names) != len(value)
+            or len(set(value)) != len(value)
+        ):
             return False
         remaining = list(value)
         for name in names:
