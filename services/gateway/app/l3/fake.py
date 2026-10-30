@@ -98,6 +98,7 @@ class FakeL3:
         self.event_executions: dict[str, dict[str, Any]] = {}
         self.event_blocks: dict[str, dict[str, Any]] = {}
         self._event_execute_delay: float = 0.0
+        self._event_execute_results: dict[str, dict[str, Any]] = {}
 
     # ---- programmable state -------------------------------------------------
     def set_snapshot(self, state: Any) -> None:
@@ -108,6 +109,10 @@ class FakeL3:
 
     def set_event(self, definition: dict[str, Any]) -> None:
         self.events[definition["event_id"]] = dict(definition)
+
+    def set_event_execute_result(self, event_id: str, result: dict[str, Any]) -> None:
+        """Make event_execute return this terminal body (e.g. FAILED_INSUFFICIENT)."""
+        self._event_execute_results[event_id] = dict(result)
 
     def set_event_execute_delay(self, seconds: float) -> None:
         """Add an async sleep inside event_execute so concurrent callbacks race."""
@@ -371,6 +376,7 @@ class FakeL3:
                 "status": "EXECUTED",
                 "instruction_run_id": f"ir_{event_id}",
                 "replayed": False,
+                **self._event_execute_results.get(event_id, {}),
             }
             self.event_executions[event_id] = result
             return result
