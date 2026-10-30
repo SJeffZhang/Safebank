@@ -936,6 +936,8 @@
 
 | 2026-10-31 | Codex | 36候选d463d4f新代际live通过：真实L1审批计划EXECUTED，仅取消gym，其他三订阅ACTIVE；同计划创建每月1日向本人储蓄转19900分，D3两期各一次合计39800分，gym两期BLOCKED，下次01-01，零重复且账本平衡。证据idle-subscription-savings-live.json；增量独审APPROVE亲跑8，开始最终head完整CI，未合102/未冻结。 |
 
+| 2026-10-31 | Codex | 独立fix/card-loss-source处理23：四条新测试在b644569旧码失败，L1补get_cards只读、挂失card_id强制合法get_cards源、多当前卡无唯一明确尾号则追问。再测跨工具伪源拒绝/明确尾号继续，共6专项通过；不补造授权，不改L2审批/OTP。全Agent复跑，独审进行中，尚待新代际live与最终head CI。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：

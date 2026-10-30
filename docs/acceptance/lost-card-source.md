@@ -1,0 +1,20 @@
+# Lost card source acceptance (2026-10-31)
+
+Historical live case23 (Li Si) returned REPLAN / UNKNOWN_SENSITIVE_ARG. The planner
+could omit card_id provenance and gather had no lost-card read guarantee.
+
+Four new tests fail on b644569: missing card source retry, exhausted missing source,
+missing get_cards read and ambiguous multiple-card selection. The new L1-only guard
+requires a get_cards read source and asks for a card tail when multiple current cards
+lack a unique explicit four-digit tail. It never fabricates a source or approves a
+plan. Existing L2 source pointer/value/customer/session validation remains authoritative.
+A read-only get_cards supplement runs if the model omits that read for lost-card text;
+attempted reads are not repeated. Other reads and write permissions stay unchanged.
+
+Two further tests cover cross-tool source laundering rejection and explicit unique-tail
+selection. Six targeted tests pass. Clean live, independent review and full final-head
+local CI remain pending; no six-scenario freeze claimed.
+
+All agent tests606 passed /39 conditional skips. Independent read-only security review
+APPROVE; reviewer personally reran6 focused tests and diff checks. No runtime API used
+by reviewer. Final live and full CI remain pending.
