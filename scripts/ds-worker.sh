@@ -28,7 +28,7 @@ cd "$wt"
 # The CC Switch / Bailian route only serves deepseek-v4-pro; requests that name a Claude
 # model (e.g. claude-opus-5) are rejected with 429, so pin every model alias explicitly.
 ds_model=${DS_MODEL:-deepseek-v4-pro}
-max_turns=${DS_MAX_TURNS:-120}
+max_turns=${DS_MAX_TURNS:-60}
 # Per-worker PostToolUse hook: counts tool calls and, DS_TURN_WARN calls before the limit,
 # injects a "commit a checkpoint now" reminder. Passed with --settings, so it applies only
 # to this worker session and never touches the user's global settings.
@@ -48,7 +48,7 @@ env -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_API_KEY -u ANTHRO
   ANTHROPIC_MODEL="$ds_model" ANTHROPIC_DEFAULT_OPUS_MODEL="$ds_model" \
   ANTHROPIC_DEFAULT_SONNET_MODEL="$ds_model" ANTHROPIC_DEFAULT_HAIKU_MODEL="$ds_model" \
   ANTHROPIC_SMALL_FAST_MODEL="$ds_model" \
-  MAX_THINKING_TOKENS="${DS_MAX_THINKING:-8000}" \
+  MAX_THINKING_TOKENS="${DS_MAX_THINKING:-4000}" \
   "${worker[@]}" --permission-mode acceptEdits \
   --allowedTools "${allow[@]}" --disallowedTools "${deny[@]}" \
   --max-turns "$max_turns" --output-format json < /dev/null > "$logdir/$name.json" 2> "$logdir/$name.err" || status=$?
