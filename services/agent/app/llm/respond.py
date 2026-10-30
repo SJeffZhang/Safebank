@@ -256,8 +256,28 @@ def _execution_steps_summary(execution: object) -> str:
         if result is not None:
             truncated = _safe_truncate(json.dumps(result, ensure_ascii=False, default=str), 120)
             parts.append(f"  结果: {truncated}")
+            # Explicit Chinese no-op fact so the LLM won't hallucinate success
+            if _is_no_op(result):
+                parts.append("  [no_op：该账号已存在于您的收款人列表中，未重复添加]")
         steps.append("\n".join(parts))
     return "\n".join(steps) or "（无步骤信息）"
+
+
+_NO_OP = "该账号已存在于您的收款人列表中，未重复添加"
+
+
+def _is_no_op(result: object) -> bool:
+    """Return True if *result* (dict or object) carries ``no_op`` as a truthy value."""
+    if result is None:
+        return False
+    val = _attr_or_get(result, "no_op", None)
+    if val is None:
+        return False
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, str):
+        return val.lower() in ("true", "1")
+    return bool(val)
 
 
 def _build_executed_user_prompt(state: AgentState, execution: object) -> str:
@@ -756,9 +776,17 @@ def _build_fallback(
 ) -> str:
     """Build a deterministic fallback when the LLM fails."""
     if template_key == "EXECUTED":
-        parts: list[str] = [executed_fallback()]
         steps = sections.get("steps", [])
+        # If every meaningful step was a no-op, don't claim success
+        if steps and any(_is_no_op_step_text(s) for s in steps):
+            return _NO_OP
+        parts: list[str] = [executed_fallback()]
         if steps and len(steps[0]) > 5:
             parts.append(f"（{steps[0]}）")
         return "".join(parts)
     return respond_template(template_key)
+
+
+def _is_no_op_step_text(text: str) -> bool:
+    """Return True if *text* (from steps summary) contains a no_op marker."""
+    return "[no_op" in text

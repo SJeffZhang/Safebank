@@ -13,8 +13,8 @@ from services.agent.app.llm.respond import (
     _replan_user_items,
 )
 
-
 # ── A. REPLAN missing-code labels ────────────────────────────────────────
+
 
 class TestReplanMissingCodeLabels:
     """REPLAN findings with codes not in _REPLAN_USER_CODE_LABELS produced
@@ -89,6 +89,7 @@ class TestReplanMissingCodeLabels:
 
     def test_replan_reply_never_empty_tail(self):
         """Full adapter: REPLAN reply must have non-empty body after the header."""
+
         class FakeLLM:
             def invoke(self, messages):
                 raise RuntimeError("should not be called for REPLAN")
@@ -112,18 +113,19 @@ class TestReplanMissingCodeLabels:
             assert "需要您确认" in result
             tail = result.split("需要您确认以下信息：", 1)[1]
             assert tail.strip(), f"empty tail for code {code}"
-            assert any(
-                ch >= "一" and ch <= "鿿" for ch in tail
-            ), f"no CJK chars in tail for code {code}"
+            assert any(ch >= "一" and ch <= "鿿" for ch in tail), (
+                f"no CJK chars in tail for code {code}"
+            )
 
 
 # ── B. no_op in executed response ────────────────────────────────────────
+
 
 class TestExecutedNoOp:
     """When a step result contains no_op=True, the reply must not claim success."""
 
     def test_steps_summary_shows_no_op(self):
-        """_execution_steps_summary includes a no_op marker when present."""
+        """_execution_steps_summary includes explicit CN no_op explanation."""
         execution = {
             "plan_id": "pln_test",
             "status": "EXECUTED",
@@ -139,7 +141,8 @@ class TestExecutedNoOp:
             "committed_at": "2026-10-30T10:00:00+08:00",
         }
         summary = _execution_steps_summary(execution)
-        assert "no_op" in summary.lower() or "未重复" in summary or "已存在" in summary
+        # Must contain explicit CN text, not just the raw JSON key "no_op"
+        assert "未重复" in summary or "已存在" in summary
 
     def test_steps_summary_no_false_no_op(self):
         """Regular success (no no_op) should NOT mention no_op."""
@@ -163,7 +166,7 @@ class TestExecutedNoOp:
         assert "已存在" not in summary
 
     def test_executed_prompt_includes_no_op_fact(self):
-        """The user prompt sent to the LLM must mention no_op steps."""
+        """The user prompt sent to the LLM must mention no_op as CN fact."""
         state = {
             "utterances": [type("u", (), {"text": "添加收款人孙九"})],
         }
@@ -183,10 +186,12 @@ class TestExecutedNoOp:
             "committed_at": "2026-10-30T10:00:00+08:00",
         }
         prompt = _build_executed_user_prompt(state, execution)
-        assert "no_op" in prompt.lower() or "已存在" in prompt or "未重复" in prompt
+        # Prompt must contain the CN no_op fact so the LLM won't hallucinate success
+        assert "已存在" in prompt or "未重复" in prompt
 
-    def test_no_op_fallback_never_claims_success(self):
-        """When LLM fails, the fallback for a no_op step must not say '已完成'."""
+    def test_no_op_fallback_explicitly_says_unchanged(self):
+        """When LLM fails and all steps are no_op, fallback must say unchanged."""
+
         class FailingLLM:
             def invoke(self, messages):
                 raise RuntimeError("API down")
@@ -211,5 +216,5 @@ class TestExecutedNoOp:
         }
         state["execution"] = execution
         result = adapter(state, None)
-        # Fallback for a pure no-op execution must not claim success
-        assert "新增" not in result or "已存在" in result or "未重复" in result
+        # Must NOT say "操作已完成" when nothing actually happened
+        assert "未重复" in result or "已存在" in result
