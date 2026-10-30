@@ -76,7 +76,9 @@ class AppConfig:
     public_pem: bytes
 
 
-async def build_app(config: AppConfig, *, truncate: bool = True) -> TestApp:
+async def build_app(
+    config: AppConfig, *, truncate: bool = True, demo_mode: bool = False
+) -> TestApp:
     """Build the internal app wired to the tmpfs PG. MUST be called in asyncio.run()."""
     gw_db = config.gateway_db
     private_pem = config.private_pem
@@ -91,7 +93,7 @@ async def build_app(config: AppConfig, *, truncate: bool = True) -> TestApp:
     os.chmod(public_path, 0o644)
 
     settings = Settings(
-        demo_mode=False,
+        demo_mode=demo_mode,
         eval_mode=False,
         profile="B2",
         demo_console_token=None,
@@ -233,11 +235,12 @@ def make_event_def(
     payload_hash: str = "p" * 64,
     due_at: str | None = None,
     status: str = "DUE",
+    kind: str = "scheduled_transfer",
 ) -> dict:
     """A fake immutable L3 event definition (progress-file wire shape)."""
     return {
         "event_id": event_id,
-        "kind": "scheduled_transfer",
+        "kind": kind,
         "customer_id": customer_id,
         "account_id": account_id,
         "to_account_id": to_account_id,
