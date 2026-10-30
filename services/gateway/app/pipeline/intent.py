@@ -18,6 +18,18 @@ from ..taint.authorization import authorization_evidence
 from .context import EvalContext, IntentResult, Resolver, Stage
 
 
+def _schedule_start(value):
+    """Compare only the schedule's first instant, preserving all other scope fields."""
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value)
+            if parsed.tzinfo is not None:
+                return parsed
+        except ValueError:
+            pass
+    return value
+
+
 class IntentStage(Stage):
     name = "intent"
 
@@ -114,7 +126,7 @@ class IntentStage(Stage):
                         transfer.target_fingerprint,
                         amount,
                         scope.period,
-                        scope.fields.get("first_run_at"),
+                        _schedule_start(scope.fields.get("first_run_at")),
                         scope.fields.get("end_at"),
                     )
                 ] += 1
@@ -145,13 +157,15 @@ class IntentStage(Stage):
                             target,
                             args["amount_cents"],
                             args["period"],
-                            args["first_run_at"],
+                            _schedule_start(args["first_run_at"]),
                             args["end_at"],
                         )
                     ] += 1
                     if not any(
                         scope.period == args["period"]
-                        and all(scope.fields.get(p) == args[p] for p in ("first_run_at", "end_at"))
+                        and _schedule_start(scope.fields.get("first_run_at"))
+                        == _schedule_start(args["first_run_at"])
+                        and scope.fields.get("end_at") == args["end_at"]
                         for scope in scopes
                     ):
                         self._reject(ctx, Code.INTENT_SCOPE_EXCEEDED, step.step_id)

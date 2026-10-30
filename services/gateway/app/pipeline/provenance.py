@@ -9,6 +9,7 @@ from pathlib import Path
 
 import yaml
 from safebank_bankcore import projected_shortfall
+from safebank_bankcore.reserve import BUSINESS_TIMEZONE
 from safebank_contracts.codes import Code
 from safebank_contracts.tools import READ_ARGS
 
@@ -67,6 +68,55 @@ def _read(source, records, state, now, customer_id):
         for p in untrusted
     )
     return value, "untrusted" if tainted else "trusted"
+
+
+def _schedule_calendar_value(tool, param, value, row, span_text):
+    """Only verified persisted typed scopes may normalize schedule calendar fields.
+
+    The span must name the period or same first-date anchor; arbitrary equal scope fields
+    never become provenance. The evidence loader already checks live lineage,
+    customer, session, credential roots and the persisted scope against its ref.
+    """
+    if tool != "schedule_transfer" or param not in ("period", "first_run_at"):
+        return False
+    scope = row.get("normalized_scope", {})
+    if "SCHEDULE_CREATE" not in scope.get("action_kinds", []):
+        return False
+    period = scope.get("period")
+    first = scope.get("fields", {}).get("first_run_at")
+    if not isinstance(first, str):
+        return False
+    try:
+        instant = datetime.fromisoformat(first)
+        if instant.tzinfo is None:
+            return False
+        local = instant.astimezone(BUSINESS_TIMEZONE)
+        if param == "period":
+            if not isinstance(value, str) or value != period:
+                return False
+        elif not isinstance(value, str) or datetime.fromisoformat(value) != instant:
+            return False
+    except (TypeError, ValueError):
+        return False
+    if param == "period":
+        marker = (
+            r"每月"
+            if period == "MONTHLY"
+            else r"每(?:周|星期|礼拜)"
+            if period == "WEEKLY"
+            else None
+        )
+        return marker is not None and len(re.findall(marker, span_text)) == 1
+    if period == "MONTHLY":
+        anchors = re.findall(r"(?<!\d)(\d{1,2})\s*[号日]", span_text)
+        return len(anchors) == 1 and int(anchors[0]) == local.day
+    if period == "WEEKLY":
+        anchors = re.findall(r"(?:每)?(?:周|星期|礼拜)([一二三四五六日天])", span_text)
+        return (
+            len(anchors) == 1
+            and "一二三四五六日".index(anchors[0].replace("天", "日")) == local.weekday()
+        )
+    return False
 
 
 def _copied_untrusted(value, records):
@@ -134,7 +184,12 @@ class ProvenanceStage(Stage):
                             valid
                             and text is not None
                             and end <= len(text)
-                            and matches(value, text[start:end], param, state, ctx.customer_id)
+                            and (
+                                matches(value, text[start:end], param, state, ctx.customer_id)
+                                or _schedule_calendar_value(
+                                    step.tool, param, value, row, text[start:end]
+                                )
+                            )
                         ):
                             trust = "user"
                     elif source.kind == "read":

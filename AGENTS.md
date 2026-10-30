@@ -35,7 +35,7 @@
 
 ## 3. 当前状态（每次工作后更新）
 
-**最后更新**：2026-10-31（Codex 实施基础版冻结；#96/#98完成，代际初始化已完成，D3两期真实事件/SQL验收通过，最终head CI待跑；表单G4/G8及06/36仍阻塞）
+**最后更新**：2026-10-31（Codex 实施基础版冻结；#96/#98完成，代际初始化已完成，PR100 D3已合main，06日历来源新数据集live通过、精确head CI待跑；表单G4/G8及36仍阻塞）
 
 | 模块 | 状态 |
 |---|---|
@@ -45,8 +45,8 @@
 | L2 网关 | main `62e83ac`（L1 SSE修复 #33）：W4b2a/b/c（PR #23/#25/#27）、W3b（#29）、W4c（#31）均已合入。W4c 独立复审 APPROVE；精确 head `79229ae` 的 push/PR 四 CI 成功。前任协调者合并后组合回归与真实网络/HTTP集成通过；本次只读复核六服务 healthy、gateway 库 `0003_plan_draft`、两持久卷未重建。启动恢复扫描/孤儿 PAUSED job 归档仍属 W5。 |
 | L1 Agent | C1a–C1e 全部合入（C1c2 #24、C1d #26、C1e #28）；真实 PG checkpoint/服务/输出与回放组件已验收，L1 SSE结构化输出小修 #33 已合，39真实PG通过；完整 live 三层黄级转账尚未闭合。E0a #30 已合（405 条语料）；E0b worktree 保留 `ba76448`，收尾/live 与 try-agent 按用户指令暂停。中文金额角/分与中阿混写的输出解析缺口见 C1e 验收。 |
 | 前端 | **2026-10-29**：主项目 frontend/ 内竖版375×812 App，继承原Graphite & Champagne tokens；六场景、同站BFF、审批/OTP、叠卡/PIN/用途、报表/理财、我的整合订阅及圆形主题过渡、助手满内容区均实现合成预览。PR #71已合入main（7734f1f），最终head共6项CI成功；合并后全量384项（含新App61）、BFF10项与build复跑通过。交接文档及新Agent Prompt已随PR交付；真实三层联调/开户/PAN/主动推送边界见frontend/HANDOFF.md。未派DS worker，未写队友仓库。 |
-| 协调状态 | **2026-10-31 Codex 实施中**：main=7c3c045（#96/#97/#98/#99已合）；通知审计、验收工具及代际初始化完成。PR100 D3/S1候选2d58518已通过独审、红绿专项、新代际live跨两期与SQL核对，待最终head完整本机CI。旧worktree、库与数据卷保留；无DS worker、无对比。 |
-| 下一步 | 完成PR100精确head本机CI后收尾；再补表单G4/G8真实授权链及06/36、23/34/09阻塞，六场景两轮新数据集live、43条实测清单和断网回放通过后才冻结demo-v1。D6/D7攻击与控制台排在冻结之后，D8/指标最后；402/403/429立即停止。 |
+| 协调状态 | **2026-10-31 Codex 实施中**：main=7b6d5ab（#96/#97/#98/#99/#100已合）；通知审计、验收工具及代际初始化完成。PR100 D3/S1已通过独审、红绿专项、新代际live跨两期与SQL核对、精确a26c764完整本机CI，长期栈已部署回main。旧worktree、库与数据卷保留；无DS worker、无对比。 |
+| 下一步 | 在独立fix/schedule-provenance修06日历来源，再补表单G4/G8真实授权链及36、23/34/09阻塞，六场景两轮新数据集live、43条实测清单和断网回放通过后才冻结demo-v1。D6/D7攻击与控制台排在冻结之后，D8/指标最后；402/403/429立即停止。 |
 
 ### 已确认事实
 
@@ -921,6 +921,14 @@
 | 2026-10-31 | Codex | ab0d61b新代际初始化成功（7个独立种子grant），真实L1取消音乐与李四2000元申购通过；D3三次推进至12-06返回DONE，申购结算、取消扣费BLOCKED、账本平衡。但SQL发现纯函数已更新的周期游标未被L3持久化，导致跨月代扣缺失且定时next_run落后；三条真实两库游标断言在旧代码失败。正在将pure结果的源游标与event终态同事务持久化、专项回归及独审，需新代际重跑，不将此轮记为时钟验收通过。 |
 
 | 2026-10-31 | Codex | D3候选2d58518新代际live通过：真实L1取消乐听/李四申购2000元；时钟至12-06处理16终态（14SUCCESS/2BLOCKED），母亲定时两期合计200000分、六账单各两期、取消音乐两期均拒；基金SETTLED且冻结归零、下次游标未来、零重复、账本平衡、16条终态审计。证据docs/acceptance/demo-clock-live.json。跨schema故障恢复亦实测保留0009旧库及原镜像。普通新定时仅真实L3创建+S1契约，赎回live仍待专项，不能称六场景冻结；下一步最终head完整本机CI。 |
+
+| 2026-10-31 | Codex | PR100最终a26c764完整本机CI通过：unit3536/1023条件skip、frontend400/BFF/build、全部真实PG（W1 1794、obligations227、S1 29等）、并发5、一致性17、实际网络隔离/重启恢复与冻结契约。以完整head匹配合并7b6d5ab，长期栈恢复main；公开摘要002e407已推。初次短SHA合并被GitHub拒绝，读取完整SHA后成功。新隔离worktree fix/schedule-provenance亲做06：W2基线199/58条件skip；新增真实G3/JWT/PG证明中文周期来源与UTC快照首时刻两条旧码失败，六条篡改/跨原话/过期拒绝通过；定点修复8通过，另周天归一化红测发现并修正，正跑W1/W2组合。未做攻击或对比，未冻结。 |
+
+| 2026-10-31 | Codex | 06来源修复及独审APPROVE：仅schedule_transfer.period/first_run_at接受持久化typed scope对应日历值与同锚点span，UTC快照统一北京时间；同一first_run时刻不同offset在IntentStage窄归一，其余字段不变。新增真实G3/JWT/PG专项旧2fail6pass，新11pass；独审亲跑11。W1/W2修复collection-time未来时间夹具后2060pass/2条件skip，最后Intent增量W2+parser412pass/2skip。即将干净栈live06与精确head本机CI；36、表单及冻结仍未完成。 |
+
+| 2026-10-31 | Codex | PR101草稿首轮03e1295真实06返回REPLAN且无新增指令；SQL核模型first_run源只引用“20号”，此前要求重复“每月”过严。新增minimal_spans真实凭据红测失败，按参数对应语义修周期词/首次日锚点，仍要求同一有效scope精确值；独审APPROVE亲跑12，W2+parser413pass/2skip。待新代际live及精确head完整CI，未合101。 |
+
+| 2026-10-31 | Codex | PR101候选5c3d0cf新代际真实06通过：L1黄级审批执行创建赵六20000分MONTHLY指令；D3推进至12-06，10-20/11-20北京时间08:00各成功一次合计40000分，下次12-20 08:00。SQL核真实源COMMITTED/EXECUTED/YELLOW、恢复grant绑定原plan及首时刻、零重复、账本平衡；证据schedule-provenance-live.json。未调用额外模型重试额度错误；上一轮是业务来源拒绝。接着跑最终head完整本机CI，未合101/未冻结。 |
 
 ## 5. 下一步待办（按顺序）
 

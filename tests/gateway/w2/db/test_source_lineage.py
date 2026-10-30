@@ -264,7 +264,7 @@ def test_parent_text_is_reachable_without_becoming_a_claim_or_new_scope(gateway_
         {"authorization_epoch": 1},
         {"sid": "ses_unrelated"},
         {"expires_at_wall": datetime.now(UTC) - timedelta(seconds=1)},
-        {"created_at_wall": datetime.now(UTC) + timedelta(minutes=1)},
+        {"created_at_wall": lambda: datetime.now(UTC) + timedelta(minutes=1)},
     ],
 )
 def test_invalid_parent_invalidates_the_whole_source_proof(gateway_db, change):
@@ -281,7 +281,14 @@ def test_invalid_parent_invalidates_the_whole_source_proof(gateway_db, change):
                         )
                     )
                 await conn.execute(
-                    update(utterances).where(utterances.c.id == parent).values(**change)
+                    update(utterances)
+                    .where(utterances.c.id == parent)
+                    .values(
+                        **{
+                            key: value() if callable(value) else value
+                            for key, value in change.items()
+                        }
+                    )
                 )
             assert await trust_for(db, ctx) == "unknown"
         finally:

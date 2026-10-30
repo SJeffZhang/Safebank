@@ -1825,3 +1825,10 @@ instruction_id为代扣授权ID。S1在新快照复核条款，商户预演复�
 普通新建定时的原始指令条款写入创建操作日志，与真实执行同事务。缺失grant时必须匹配真实
 COMMITTED/EXECUTED源结果中对应schedule_transfer步骤、创建ID/指纹、原始操作条款及批准风险。
 旧历史若无完整证据保持拒绝，不能默认YELLOW。所有事件终态以L3实际结果归档；未知状态RETRYING。
+
+### 定时参数来源增量（2026-10-31）
+
+仅schedule_transfer.period与first_run_at可使用有效typed原话中L2确定性解析并持久化的
+对应值；周期声明span必须含对应周期词，首次时间span必须含同一月日/周日锚点，仍核客户、会话、JWT原话、状态、有效期和污点。
+不得推广为任意参数与scope某值相等即可可信。首次执行日期按Asia/Shanghai计算；
+first_run_at在意图核对中以带时区的同一时刻比较，周期、目标、金额与end_at仍精确匹配。
