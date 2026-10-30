@@ -520,3 +520,290 @@ class TestClockAdvance:
             await admin.dispose()
 
         asyncio.run(check())
+
+
+async def _wait_advance(advancer, job):
+    for _ in range(100):
+        result = advancer.status(job)
+        if result["status"] in {"DONE", "FAILED", "RETRYING"}:
+            return result
+        await asyncio.sleep(0.02)
+    raise AssertionError("advance never reached a bounded outcome")
+
+
+def test_clock_reaches_target_with_no_events(obligations_db):
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+        sched = await _make_scheduler(obligations_db.runtime_url)
+        adv = ClockAdvancer(sched)
+        target = NOW + timedelta(minutes=40)
+        result = await _wait_advance(adv, adv.advance(target, "empty-window"))
+        assert result["status"] == "DONE"
+        assert result["sim_now"] == target
+        async with admin.connect() as conn:
+            assert (await sched.read_clock(conn))[0] == target
+        await admin.dispose()
+
+    asyncio.run(check())
+
+
+def test_clock_scans_future_obligations_without_manual_prescan(obligations_db):
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        await _install(admin)
+        sched = await _make_scheduler(obligations_db.runtime_url)
+        adv = ClockAdvancer(sched)
+        target = _tomorrow_6am() + timedelta(days=1)
+        result = await _wait_advance(adv, adv.advance(target, "future-scan"))
+        assert result["status"] == "DONE"
+        assert result["processed"] > 0
+        assert result["sim_now"] == target
+        await admin.dispose()
+
+    asyncio.run(check())
+
+
+def test_clock_request_id_cannot_change_target(obligations_db):
+    from app.errors import BankError
+
+    async def check():
+        sched = await _make_scheduler(obligations_db.runtime_url)
+        adv = ClockAdvancer(sched)
+        adv.advance(NOW + timedelta(days=1), "same-id")
+        with pytest.raises(BankError):
+            adv.advance(NOW + timedelta(days=2), "same-id")
+        await sched.db.dispose()
+
+    asyncio.run(check())
+
+
+def test_clock_request_requires_timezone():
+    from app.scheduler import ClockAdvanceRequest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        ClockAdvanceRequest(target_at="2026-10-15T09:00:00", request_id="naive")
+
+
+def test_clock_api_shape_backward_rejection_and_replay(obligations_db):
+    import httpx
+    from app.main import create_app
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+        runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
+        app = create_app(
+            runtime,
+            service_token="clock-token",
+            fingerprint_key="test-key",
+            demo_mode=True,
+            admin_db=admin,
+            scheduler_enabled=False,
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://bank",
+            headers={"X-Service-Token": "clock-token"},
+        ) as c:
+            body = {
+                "request_id": "http-shape",
+                "target_at": (NOW + timedelta(minutes=40)).isoformat(),
+            }
+            response = await c.post("/internal/clock/advance", json=body)
+            assert response.status_code == 200
+            job = response.json()["advance_job_id"]
+            for _ in range(100):
+                status = (await c.get("/internal/clock/advances/" + job)).json()
+                if status["status"] == "DONE":
+                    break
+                await asyncio.sleep(0.02)
+            assert status["status"] == "DONE" and status["remaining"] == 0
+            assert (await c.post("/internal/clock/advance", json=body)).json() == response.json()
+            conflict = await c.post(
+                "/internal/clock/advance",
+                json={**body, "target_at": (NOW + timedelta(days=1)).isoformat()},
+            )
+            assert conflict.status_code == 409
+            past = await c.post(
+                "/internal/clock/advance", json={"request_id": "past", "target_at": NOW.isoformat()}
+            )
+            assert past.status_code == 422
+        await runtime.dispose()
+        await admin.dispose()
+
+    asyncio.run(check())
+
+
+def test_clock_retrying_is_not_done_and_same_request_can_resume(obligations_db, monkeypatch):
+    monkeypatch.setattr("app.scheduler._backoff", lambda attempt: 0.01)
+
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        await _install(admin)
+        sched = await _make_scheduler(obligations_db.runtime_url, fake_cls=FailingS1Scheduler)
+        adv = ClockAdvancer(sched)
+        target = _tomorrow_6am() + timedelta(days=1)
+        job = adv.advance(target, "retry-original")
+        result = await _wait_advance(adv, job)
+        assert result["status"] == "RETRYING" and result["remaining"] > 0
+
+        async def recovered(event_id, attempt):
+            return {"status": "SUCCESS", "event_id": event_id}
+
+        sched._post_s1 = recovered
+        assert adv.advance(target, "retry-original") == job
+        result = await _wait_advance(adv, job)
+        assert result["status"] == "DONE" and result["sim_now"] == target
+        await sched.db.dispose()
+        await admin.dispose()
+
+    asyncio.run(check())
+
+
+def test_scan_does_not_duplicate_business_timezone_job(obligations_db):
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        await _install(admin)
+        due = _tomorrow_6am()
+        async with admin.begin() as conn:
+            await conn.execute(
+                m.event_jobs.insert().values(
+                    id="precreated_business_zone_job",
+                    kind="SCHEDULED_TRANSFER",
+                    rank=3,
+                    due_at=due,
+                    immutable_payload={},
+                    payload_hash="existing-hash",
+                    source_id="si_zs_mom",
+                    period_key=due.isoformat(),
+                    status="PENDING",
+                    attempt_count=0,
+                )
+            )
+        sched = await _make_scheduler(obligations_db.runtime_url)
+        for _ in range(2):
+            async with admin.begin() as conn:
+                await sched.scan_due(conn, due)
+        async with admin.connect() as conn:
+            rows = (
+                await conn.execute(
+                    text("select id from event_jobs where source_id='si_zs_mom' and due_at=:due"),
+                    {"due": due},
+                )
+            ).all()
+        assert len(rows) == 1
+        await admin.dispose()
+
+    asyncio.run(check())
+
+
+def test_background_dispatch_cannot_overtake_same_time_lower_rank(obligations_db):
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            for i in (0, 1):
+                await conn.execute(
+                    m.event_jobs.insert().values(
+                        id=f"rank_job_{i}",
+                        kind="DEMO_EVENT",
+                        rank=i,
+                        due_at=NOW,
+                        immutable_payload={},
+                        payload_hash=f"rank_hash_{i}",
+                        source_id=f"rank_src_{i}",
+                        period_key="same-time",
+                        status="PENDING",
+                        attempt_count=0,
+                    )
+                )
+        sched = await _make_scheduler(obligations_db.runtime_url)
+        first_started, release_first = asyncio.Event(), asyncio.Event()
+        started = []
+
+        async def slow(event_id, attempt):
+            started.append(event_id)
+            if event_id == "rank_job_0":
+                first_started.set()
+                await release_first.wait()
+            return {"status": "SUCCESS", "event_id": event_id}
+
+        sched._post_s1 = slow
+        background = asyncio.create_task(sched.run_once())
+        await first_started.wait()
+        advance = asyncio.create_task(sched.run_once())
+        await asyncio.sleep(0.05)
+        try:
+            assert started == ["rank_job_0"]
+        finally:
+            release_first.set()
+            await asyncio.gather(background, advance)
+        assert started == ["rank_job_0", "rank_job_1"]
+        await sched.db.dispose()
+        await admin.dispose()
+
+    asyncio.run(check())
+
+
+def test_clock_counts_job_completed_by_background_dispatch(obligations_db):
+    async def check():
+        admin = engine(obligations_db.admin_url, poolclass=NullPool)
+        due = NOW + timedelta(hours=1)
+        async with admin.begin() as conn:
+            await install_core(conn)
+            await conn.execute(
+                m.event_jobs.insert().values(
+                    id="background_blocked",
+                    kind="DEMO_EVENT",
+                    rank=6,
+                    due_at=due,
+                    immutable_payload={},
+                    payload_hash="background-hash",
+                    source_id="background-src",
+                    period_key="background-period",
+                    status="PENDING",
+                    attempt_count=0,
+                )
+            )
+        sched = await _make_scheduler(obligations_db.runtime_url)
+
+        async def blocked(event_id, attempt):
+            async with admin.begin() as conn:
+                await conn.execute(
+                    m.event_executions.insert().values(
+                        event_id=event_id,
+                        status="BLOCKED",
+                        authorization_evidence={},
+                        result_json={"status": "BLOCKED"},
+                        committed_at=datetime.now(UTC),
+                    )
+                )
+            return {"event_id": event_id, "status": "BLOCKED"}
+
+        sched._post_s1 = blocked
+        original = sched.run_once
+        first = True
+
+        async def background_won_claim():
+            nonlocal first
+            if first:
+                first = False
+                await asyncio.create_task(original())
+                return None  # the advance worker itself did not claim a job
+            return await original()
+
+        sched.run_once = background_won_claim
+        adv = ClockAdvancer(sched)
+        result = await _wait_advance(
+            adv, adv.advance(due + timedelta(minutes=1), "background-count")
+        )
+        assert result["status"] == "DONE"
+        assert result["processed"] == 1 and result["blocked"] == 1
+        await sched.db.dispose()
+        await admin.dispose()
+
+    asyncio.run(check())

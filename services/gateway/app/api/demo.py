@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import secrets
+from collections.abc import Awaitable
 from datetime import datetime, timedelta
+from typing import Any, Literal
 
 from fastapi import APIRouter, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from safebank_contracts.codes import Code
 from sqlalchemy import select
 
@@ -18,6 +20,7 @@ from ..audit.chain import append_tx
 from ..auth.matrix import CONSOLE_AUD
 from ..auth.tokens import sign_jwt
 from ..errors import GatewayError
+from ..l3.client import L3BusinessError, L3Error
 from ..utterance.service import new_id
 from . import stub
 
@@ -80,8 +83,6 @@ async def console_login(body: ConsoleLoginRequest, request: Request):
 
 router.post("/demo/reset")(stub("D1 reset lands in W5"))
 router.post("/demo/scene/prepare")(stub("D2 scene prepare lands in W5"))
-router.post("/demo/clock/advance")(stub("D3 clock advance lands in W5"))
-router.get("/demo/clock/advances/{job_id}")(stub("D3 clock advance status lands in W5"))
 router.post("/demo/events")(stub("D4 inject event lands in W5"))
 
 
@@ -182,3 +183,76 @@ router.get("/demo/reports/latest")(stub("D9 reports lands in W5"))
 router.post("/demo/auth/logout")(stub("D10 console logout lands in W5"))
 router.get("/demo/plans")(stub("D11 plans list lands in W5"))
 router.get("/demo/audit")(stub("D12 demo audit lands in W5"))
+
+
+class ClockAdvanceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: str = Field(min_length=1, max_length=128)
+    target_at: datetime
+
+    @field_validator("target_at")
+    @classmethod
+    def aware_target(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("target_at requires a timezone offset")
+        return value
+
+
+class ClockAdvanceResponse(BaseModel):
+    advance_job_id: str = Field(min_length=1, max_length=256)
+
+
+class ClockAdvanceStatus(BaseModel):
+    status: Literal["PENDING", "RUNNING", "RETRYING", "DONE", "FAILED"]
+    sim_now: str | None = None
+    processed: int = Field(ge=0)
+    blocked: int = Field(ge=0)
+    remaining: int = Field(ge=0)
+
+
+async def _clock_result(
+    operation: Awaitable[dict[str, Any]], model: type[BaseModel]
+) -> dict[str, Any]:
+    try:
+        return model.model_validate(await operation).model_dump(mode="json")
+    except L3BusinessError as exc:
+        try:
+            code = Code(exc.code)
+        except ValueError:
+            code = Code.DEPENDENCY_UNAVAILABLE
+        raise GatewayError(code, exc.status if exc.status < 500 else 503) from None
+    except (L3Error, ValidationError, ValueError):
+        raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503) from None
+
+
+@router.post("/demo/clock/advance")
+async def clock_advance(body: ClockAdvanceRequest, request: Request):
+    data = await _clock_result(
+        request.app.state.l3.clock_advance(body.model_dump(mode="json")),
+        ClockAdvanceResponse,
+    )
+    await append_tx(
+        request.app.state.db,
+        customer_id="demo-console",
+        event_type="DEMO_CLOCK_ADVANCE",
+        payload={**body.model_dump(mode="json"), **data},
+        event_id=new_id("evt"),
+        now_wall=_now(request),
+    )
+    return data
+
+
+@router.get("/demo/clock/advances/{job_id}")
+async def clock_status(job_id: str, request: Request):
+    data = await _clock_result(
+        request.app.state.l3.clock_advance_status(job_id), ClockAdvanceStatus
+    )
+    await append_tx(
+        request.app.state.db,
+        customer_id="demo-console",
+        event_type="DEMO_CLOCK_STATUS",
+        payload={"advance_job_id": job_id, **data},
+        event_id=new_id("evt"),
+        now_wall=_now(request),
+    )
+    return data

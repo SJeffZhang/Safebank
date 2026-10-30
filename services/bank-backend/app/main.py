@@ -318,8 +318,8 @@ def create_app(
 
             @app.post("/internal/clock/advance")
             async def clock_advance(body: ClockAdvanceRequest):
-                job_id = advancer.advance(body.target_at, body.request_id)
-                return {"job_id": job_id}
+                job_id = await advancer.submit(body.target_at, body.request_id)
+                return {"advance_job_id": job_id}
 
             @app.get("/internal/clock/advances/{job_id}")
             async def clock_advance_status(job_id: str):

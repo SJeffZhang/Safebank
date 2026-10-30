@@ -18,4 +18,4 @@ async def ready(db: AsyncEngine) -> bool:
     async with db.connect() as conn:
         clock_present = await conn.scalar(text("SELECT 1 FROM clock WHERE id=1"))
         version = await conn.scalar(text("SELECT version_num FROM alembic_version"))
-        return clock_present == 1 and version == "0009_funds_units_nonneg"
+        return clock_present == 1 and version == "0010_event_identity"

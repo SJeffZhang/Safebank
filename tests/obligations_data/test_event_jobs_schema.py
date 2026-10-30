@@ -27,7 +27,7 @@ def _valid_row(**overrides) -> dict:
 
     The default ``id`` and ``payload_hash`` are derived from a counter so that
     parallel *parametrize* cases and consecutive tests never collide on the
-    ``UNIQUE(payload_hash)`` constraint.
+    business source identity constraints.
     """
     _valid_row._counter += 1
     n = _valid_row._counter
@@ -62,15 +62,16 @@ def test_upgrade_head_twice_succeeds(obligations_db):
         db = engine(obligations_db.admin_url, poolclass=NullPool)
         async with db.connect() as c:
             version = await c.scalar(text("SELECT version_num FROM alembic_version"))
-            assert version == "0009_funds_units_nonneg"
+            assert version == "0010_event_identity"
         await db.dispose()
 
     asyncio.run(check())
 
 
-def test_event_jobs_table_exists_and_is_empty(obligations_db):
+def test_event_jobs_table_exists_and_is_empty(obligations_0003_db):
     async def check():
-        db = engine(obligations_db.runtime_url, poolclass=NullPool)
+        _migrate(obligations_0003_db, "head")
+        db = engine(obligations_0003_db.runtime_url, poolclass=NullPool)
         async with db.connect() as c:
             count = await c.scalar(text("SELECT count(*) FROM event_jobs"))
             assert count == 0
@@ -112,18 +113,23 @@ def test_check_constraint_rejects_invalid(obligations_db, override, expected_vio
 # ──  unique constraint rejection  ──────────────────────────────────────
 
 
-def test_duplicate_payload_hash_rejected(obligations_db):
+def test_duplicate_source_instant_rejected(obligations_db):
     async def check():
         db = engine(obligations_db.admin_url, poolclass=NullPool)
         first = _valid_row(id="evt_dup_1")
-        # Same payload_hash as first row, different id.
-        second = _valid_row(id="evt_dup_2", payload_hash=first["payload_hash"])
+        # Same source and instant, distinct textual period and id.
+        second = _valid_row(
+            id="evt_dup_2",
+            source_id=first["source_id"],
+            due_at=first["due_at"],
+            period_key="other-zone",
+        )
         async with db.connect() as c:
             cols = ", ".join(first.keys())
             placeholders = ", ".join(f":{k}" for k in first)
             await c.execute(text(f"INSERT INTO event_jobs ({cols}) VALUES ({placeholders})"), first)
             await c.commit()
-            with pytest.raises(DBAPIError, match="event_jobs_payload_hash_key"):
+            with pytest.raises(DBAPIError, match="event_jobs_source_instant_key"):
                 await c.execute(
                     text(f"INSERT INTO event_jobs ({cols}) VALUES ({placeholders})"), second
                 )
@@ -190,17 +196,20 @@ def test_runtime_can_insert_and_update(obligations_db):
 # ──  upgrade from 0003 preserves existing data  ────────────────────────
 
 
-def test_0003_data_survives_0004_upgrade(obligations_0002_db):
-    """Start from 0002, upgrade to 0003 (seed obligation data), then to 0004."""
+def test_0003_data_survives_0004_upgrade(obligations_0003_db):
+    """Start with a fresh 0003 database, seed obligation data, then upgrade to 0004."""
 
     async def check():
-        admin = engine(obligations_0002_db.admin_url, poolclass=NullPool)
-        runtime = engine(obligations_0002_db.runtime_url, poolclass=NullPool)
+        admin = engine(obligations_0003_db.admin_url, poolclass=NullPool)
+        runtime = engine(obligations_0003_db.runtime_url, poolclass=NullPool)
 
         # Upgrade to 0003 and seed test data.
-        _migrate(obligations_0002_db, "0003_obligations")
+        _migrate(obligations_0003_db, "0003_obligations")
+
+        from tests.obligations_data.fixtures import install_core
 
         async with admin.begin() as conn:
+            await install_core(conn)
             await conn.execute(
                 text(
                     "INSERT INTO merchants (id,name,mcc,category,usage_expected) "
@@ -224,20 +233,12 @@ def test_0003_data_survives_0004_upgrade(obligations_0002_db):
             merchant_count = await conn.scalar(text("SELECT count(*) FROM merchants"))
 
         # Upgrade to 0004.
-        _migrate(obligations_0002_db, "0004_event_jobs")
-        _migrate(obligations_0002_db, "0004_event_jobs")
+        _migrate(obligations_0003_db, "0004_event_jobs")
+        _migrate(obligations_0003_db, "0004_event_jobs")
 
         async with admin.connect() as conn:
             version = await conn.scalar(text("SELECT version_num FROM alembic_version"))
-            # The session-shared fixture may already be past 0004 (later heads); upgrading
-            # to an older target is then a no-op, so require 0004 or a later revision.
-            heads = (
-                "0004_event_jobs",
-                "0007_products",
-                "0008_funds",
-                "0009_funds_units_nonneg",
-            )
-            assert version in heads
+            assert version == "0004_event_jobs"
             # Old data intact.
             assert await conn.scalar(text("SELECT count(*) FROM merchant_billing")) == bill_count
             assert await conn.scalar(text("SELECT count(*) FROM merchants")) == merchant_count

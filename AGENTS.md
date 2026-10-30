@@ -35,7 +35,7 @@
 
 ## 3. 当前状态（每次工作后更新）
 
-**最后更新**：2026-10-30（Codex 实施基础版冻结；#96/#98完成，代际初始化已实测、待最终CI）
+**最后更新**：2026-10-31（Codex 实施基础版冻结；#96/#98完成，代际初始化已完成，D3推进与周期事件修复中）
 
 | 模块 | 状态 |
 |---|---|
@@ -905,6 +905,10 @@
 | 2026-10-30 | Codex | #96以精确head3353a77完整本机CI（单元3508/995skip、W5通知18、W4c40、S1及全部PG/并发/一致性/网络恢复）通过；干净栈首笔转账因原卡FROZEN而REPLAN无变化，改用真实L1储蓄转活期1元，黄级确认后实际活期+100分/储蓄-100分、两条流水；API核待确认/执行结果各1、计划审计3、已读重复同响应。PR评论有证据，已合main b5ef51c。无权限放宽、未重试任何额度错误。当前组件C合入最新main继续验收。 |
 
 | 2026-10-30 | Codex | 组件C真实验收：两次新建三库成功且初始digest相同（968424…ea9dd）；第一代真实L1黄级外转1元，旧库599900分保留，第二代600000分；旧checkpoint11/新0，旧通知2/新0，旧cookie与JWT均401。首次BFF探针缺client header被403 CSRF正确拒绝，修正探针后登录成功，未改安全规则。验证bank/gateway CONNECT隔离、bank_ro只读、runtime不可建表。另在实际切换后/发布指针前注入故障，服务与指针回到前代且摘要一致，失败准备库保留。生命周期13、与try-agent组合83通过；部署默认路径问题已修并测主checkout/worktree。#96公开进度已推f0aaf74并curl核线上，长期栈已回b5ef51c。C最终head全量CI待跑，不标冻结。 |
+
+| 2026-10-30 | Codex | 组件C已以PR #99合main7c3c045，最终2390001完整本机CI通过（单元3521/995skip及全部PG/并发/一致性/集成）；e2e精确head执行make demo-up成功。长期栈部署回main，公开进度b2c0f7e已推。组件D开工：网关D3旧码3失败/1通过、L3推进旧码4失败；首版21再23专项通过。独审发现时区等价重复job与dispatch竞争，新增2红测失败；进一步确认payload_hash唯一阻止周期后继，新增2事件身份红测失败。正以ADR-012/前向0010修复，原始历史保留；新迁移/调度组合50通过（曾发现2处旧测试依赖共享库残留，改独立夹具后通过）。前端控制台3红测失败，新实现3通过；一次npm误在根目录运行无package.json，已改--prefix frontend。尚未D最终独审/全量CI/live。 |
+
+| 2026-10-31 | Codex | 用户go on后恢复D3最终独审（前次Codex使用额度中断不计通过）：review_demo_clock最终APPROVE，亲跑30专项与15生命周期；image回滚另经review_demo_generation APPROVE。D3/事件身份完整真实PG组合225通过（既有metadata循环排序warning1），前端3红绿/typecheck/Playwright手机375×812和桌面1280×900交互验证通过，无console/page错误；64位job可换行，GET查询原job，RETRYING恢复沿用原请求身份。Browser插件不可用用内置Playwright，首次临时harness内联代理500已改外部JS；非应用异常。补已有modal-body间距，不改tokens。报告docs/reviews/2026-10-31-demo-clock.md；最终head本机CI与live仍待，不标冻结。 |
 
 ## 5. 下一步待办（按顺序）
 

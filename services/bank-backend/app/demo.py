@@ -121,6 +121,6 @@ def register_demo_routes(app, database, admin_database, fingerprint_key: str) ->
                     period_key=period_key,
                     status="PENDING",
                 )
-                .on_conflict_do_nothing(constraint="event_jobs_payload_hash_key")
+                .on_conflict_do_nothing(index_elements=["id"])
             )
         return {"event_id": event_id}
