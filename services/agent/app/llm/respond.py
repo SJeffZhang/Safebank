@@ -47,7 +47,21 @@ _REPLAN_USER_CODE_LABELS: dict[str, str] = {
     "TAINTED_SENSITIVE_ARG": "计划中的敏感信息来源不可信",
     "INTENT_UNCLEAR": "未能明确您的操作意图",
     "PAYEE_NOT_FOUND": "未找到您指定的收款人",
+    "AMOUNT_ABOVE_YELLOW_CAP": "金额超过安全上限，请降低金额或确认风险后重试",
+    "CARD_SINGLE_LIMIT": "超出单笔限额",
+    "CARD_DAILY_LIMIT": "超出每日限额",
+    "CUMULATIVE_OUTFLOW": "超出累计转出上限",
+    "INSUFFICIENT_FUNDS": "账户余额不足",
+    "DAILY_OUTFLOW_LIMIT": "超出当日转出上限",
+    "SCHEDULED_SHORTFALL": "该定时操作可能因余额不足无法完成",
+    "HOLDING_INSUFFICIENT": "持仓份额不足",
+    "SUITABILITY_MISMATCH": "该产品风险等级超出您的测评结果",
+    "ASSESSMENT_MISSING": "请先完成风险测评后再操作",
 }
+
+# Generic per-code fallback used when a code is not in the table above.
+# Must remain deterministic and never echo internal ids.
+_UNKNOWN_CODE_LABEL = "该操作超出了您本次指令授权的范围，请换个说法或分步操作"
 
 
 _ANALYSIS_SYSTEM = (
@@ -363,6 +377,8 @@ def _replan_user_items(decision: dict[str, object]) -> list[str]:
         label = _REPLAN_USER_CODE_LABELS.get(code)
         if label:
             items.append(label)
+        else:
+            items.append(_UNKNOWN_CODE_LABEL)
     items.extend(_replan_hint_labels(decision))
     if not items:
         items.append("请补充必要信息后重新发起")
