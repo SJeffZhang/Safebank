@@ -6,6 +6,8 @@ from collections import Counter
 from datetime import datetime, timedelta
 
 from safebank_bankcore.ids import derive
+from safebank_bankcore.reserve import BUSINESS_TIMEZONE
+from safebank_bankcore.risk import risk_valid_until_date
 from safebank_contracts.codes import Code
 
 from ..api.tools import fetch_read
@@ -216,7 +218,8 @@ class IntentStage(Stage):
                 customer is None
                 or customer.risk_level is None
                 or not customer.risk_valid_until
-                or datetime.fromisoformat(customer.risk_valid_until).date() < state.sim_now.date()
+                or risk_valid_until_date(customer.risk_valid_until)
+                < state.sim_now.astimezone(BUSINESS_TIMEZONE).date()
             ):
                 ctx.add(Code.ASSESSMENT_MISSING, FindingEffect.DENY)
                 ctx.intent.matched = False
