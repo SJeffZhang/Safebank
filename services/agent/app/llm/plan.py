@@ -615,6 +615,7 @@ def _channel_source_problems(draft: PlanDraft, state: AgentState) -> list[str]:
 
 
 _BARE_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_MIDNIGHT_RE = re.compile(r"(\d{4}-\d{2}-\d{2})T00:00(?::00)?(?:\+08:00)?")
 
 
 def _normalize_schedule_dates(value: object) -> object:
@@ -627,14 +628,66 @@ def _normalize_schedule_dates(value: object) -> object:
     if isinstance(value, dict):
         out = {}
         for key, item in value.items():
+            midnight = (
+                _MIDNIGHT_RE.fullmatch(item)
+                if key == "first_run_at" and isinstance(item, str)
+                else None
+            )
             if key == "first_run_at" and isinstance(item, str) and _BARE_DATE_RE.fullmatch(item):
                 out[key] = f"{item}T08:00:00+08:00"
+            elif midnight:
+                # A Beijing-midnight first run means "that day"; the anchor is 08:00.
+                out[key] = f"{midnight[1]}T08:00:00+08:00"
             else:
                 out[key] = _normalize_schedule_dates(item)
         return out
     if isinstance(value, list):
         return [_normalize_schedule_dates(item) for item in value]
     return value
+
+
+_ITEM_RE = re.compile(r"/items/\d+")
+
+
+def _fix_cancelled_fee_inputs(plan: dict) -> dict:
+    """Point ``cancelled_monthly_fees`` inputs at the cancel steps and fee amounts.
+
+    L2 requires the derived amount to cite every cancel step plus a trusted read;
+    a whole subscription item also carries the untrusted merchant name, so a leaf
+    pointing at ``/items/N`` is narrowed to ``/items/N/amount_cents``. L2 still
+    recomputes the amount from the cancelled subscriptions and rejects mismatches.
+    """
+    steps = [s for s in plan.get("steps", ()) if isinstance(s, dict)]
+    cancels = [s.get("step_id") for s in steps if s.get("tool") == "cancel_subscription"]
+    for step in steps:
+        if step.get("tool") != "schedule_transfer":
+            continue
+        for item in step.get("arg_sources") or []:
+            source = item.get("source") if isinstance(item, dict) else None
+            if (
+                item.get("param") != "amount_cents"
+                or not isinstance(source, dict)
+                or source.get("kind") != "derived"
+                or source.get("template") != "cancelled_monthly_fees"
+            ):
+                continue
+            reads, cited = [], []
+            for leaf in source.get("inputs") or []:
+                if not isinstance(leaf, dict):
+                    reads.append(leaf)
+                elif leaf.get("kind") == "step":
+                    cited.append(leaf.get("ref"))
+                elif leaf.get("kind") == "read" and _ITEM_RE.fullmatch(leaf.get("pointer") or ""):
+                    reads.append({**leaf, "pointer": leaf["pointer"] + "/amount_cents"})
+                else:
+                    reads.append(leaf)
+            refs = list(dict.fromkeys([*cancels, *cited]))
+            source["inputs"] = [{"kind": "step", "ref": r} for r in refs] + list(
+                {repr(r): r for r in reads}.values()
+            )
+            depends = list(step.get("depends_on") or [])
+            step["depends_on"] = depends + [c for c in cancels if c not in depends]
+    return plan
 
 
 def _merge_list_sources(plan: dict) -> dict:
@@ -859,7 +912,9 @@ class PlanAdapter:
                 self._observer(message)
             try:
                 args = _normalize_schedule_dates(single_tool_call(message, _PLAN_TOOL))
-                body = PlanBody.model_validate(_merge_list_sources(from_strict_plan(args)))
+                body = PlanBody.model_validate(
+                    _fix_cancelled_fee_inputs(_merge_list_sources(from_strict_plan(args)))
+                )
                 body = _default_source_account_overrides(body, state)
                 body = _wealth_product_clarify(body, state)
                 draft = self._to_draft(body, state)
