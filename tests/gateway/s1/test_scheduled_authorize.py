@@ -204,6 +204,7 @@ def test_revoked_grant_returns_blocked(app_config):
                 revoked_at=WALL - timedelta(hours=1),
             )
 
+        app.fake.set_snapshot(_s1_state())
         app.fake.set_event(
             make_event_def(
                 event_id="evt_revoked",
@@ -223,6 +224,8 @@ def test_revoked_grant_returns_blocked(app_config):
         # event_block was called on L3
         block_calls = [c for c in app.fake.calls if c["op"] == "event_block"]
         assert len(block_calls) == 1
+        assert app.fake.event_blocks["evt_revoked"]["expected_versions"] == {"cus_a": 0}
+        assert app.fake.event_blocks["evt_revoked"]["clock_version"] == 1
 
         # event_decisions row persisted
         async with db.connect() as conn:
@@ -807,6 +810,42 @@ def test_retrying_releases_in_progress_row(app_config):
             ).all()
         assert rows == [], "IN_PROGRESS row must be deleted on RETRYING"
 
+        await db.dispose()
+
+    asyncio.run(run())
+
+
+def test_execute_terminal_block_is_not_reported_as_success(app_config):
+    async def run():
+        app = await build_app(app_config)
+        db = _runtime_db(app)
+        async with db.begin() as conn:
+            await _seed_grant(conn, instruction_id="ins_terminal")
+        app.fake.set_snapshot(_s1_state())
+        app.fake.set_event(
+            make_event_def(
+                event_id="evt_terminal_block", source_id="ins_terminal", to_account_id="acc_b"
+            )
+        )
+        app.fake.set_event_execute_result(
+            "evt_terminal_block", {"status": "BLOCKED", "result": {"code": "MANDATE_NOT_ACTIVE"}}
+        )
+        response = await app.client.post(
+            URL, json={"event_id": "evt_terminal_block"}, headers=app.scheduler_headers()
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["status"] == "BLOCKED"
+        assert response.json()["code"] == "MANDATE_NOT_ACTIVE"
+        async with db.connect() as conn:
+            row = (
+                await conn.execute(
+                    text(
+                        "SELECT status, code FROM event_decisions "
+                        "WHERE event_id='evt_terminal_block'"
+                    )
+                )
+            ).one()
+        assert tuple(row) == ("BLOCKED", "MANDATE_NOT_ACTIVE")
         await db.dispose()
 
     asyncio.run(run())

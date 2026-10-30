@@ -272,16 +272,21 @@ async def _finalize_system_result(
     failure is only recorded here (no ``event_block`` on an executed job).
     L3 reports failure as ``FAILED_INSUFFICIENT`` with the code in ``result``.
     """
-    if result.get("status") in ("FAILED", "FAILED_INSUFFICIENT"):
-        code = (result.get("result") or {}).get("code") or Code.INSUFFICIENT_FUNDS.value
-        await _finalize_claim(
-            db, event_id, customer_id, "FAILED_INSUFFICIENT", code, app.wall_now(), trace_id
-        )
-        return {"event_id": event_id, "status": "FAILED_INSUFFICIENT", "code": code}
-    await _finalize_claim(db, event_id, customer_id, "SUCCESS", None, app.wall_now(), trace_id)
+    status = result.get("status")
+    # EXECUTED is the legacy transport test-double spelling of SUCCESS.
+    if status == "EXECUTED":
+        status = "SUCCESS"
+    if status == "FAILED":
+        status = "FAILED_INSUFFICIENT"
+    if status not in _TERMINAL_STATUSES:
+        await _release_claim(db, event_id)
+        return _retrying(event_id)
+    code = (result.get("result") or {}).get("code") or result.get("code")
+    await _finalize_claim(db, event_id, customer_id, status, code, app.wall_now(), trace_id)
     return {
         "event_id": event_id,
-        "status": "SUCCESS",
+        "status": status,
+        "code": code,
         "instruction_run_id": result.get("instruction_run_id"),
     }
 
@@ -473,9 +478,15 @@ async def _block(
     callback can try immediately — no stale-claim wait.
     """
     app = request.app.state
-    versions, clock_version = _pinned(ctx)
     try:
-        await app.l3.event_block(
+        if ctx is None or ctx.snapshot is None:
+            snap = await app.l3.snapshot(
+                {"customer_id": event["customer_id"], "steps": [], "event_id": None}
+            )
+            versions, clock_version = snap["versions"], snap["clock_version"]
+        else:
+            versions, clock_version = _pinned(ctx)
+        result = await app.l3.event_block(
             event["event_id"],
             {
                 "status": status,
@@ -488,16 +499,16 @@ async def _block(
     except L3Error:
         await _release_claim(db, event["event_id"])
         return _retrying(event["event_id"])
-    await _finalize_claim(
-        app.db,
+    # L3 may already have a terminal result after a lost response.
+    result.setdefault("result", {"code": code})
+    return await _finalize_system_result(
+        db,
+        app,
         event["event_id"],
         event["customer_id"],
-        status,
-        code,
-        app.wall_now(),
+        result,
         getattr(request.state, "trace_id", None),
     )
-    return {"event_id": event["event_id"], "status": status, "code": code}
 
 
 def _pinned(ctx: EvalContext | None) -> tuple[dict[str, Any], int]:
@@ -651,21 +662,7 @@ async def scheduled_authorize(request: Request, body: AuthorizeRequest) -> dict[
             await _release_claim(db, event_id)
             return _retrying(event_id)
 
-        # ── Phase C: finalize ─────────────────────────────────────────────
-        await _finalize_claim(
-            db,
-            event_id,
-            customer_id,
-            "SUCCESS",
-            None,
-            app.wall_now(),
-            trace_id,
-        )
-        return {
-            "event_id": event_id,
-            "status": "SUCCESS",
-            "instruction_run_id": result.get("instruction_run_id"),
-        }
+        return await _finalize_system_result(db, app, event_id, customer_id, result, trace_id)
 
     except Exception:
         # On any unhandled error, release the claim so the event isn't

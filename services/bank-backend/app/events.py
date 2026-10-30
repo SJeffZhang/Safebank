@@ -297,7 +297,70 @@ class EventService:
             raise BankError(Code.NOT_FOUND, status=404)
         execution = await self._execution(conn, event_id)
         payload = row["immutable_payload"]
+        # Associated definitions are authoritative DB rows, never callback fields.
+        # Version fencing on execute/block prevents using a definition changed
+        # after this read. Merchant source_id is a BILLING, not a mandate ID.
+        definition = {}
+        instruction = None
+        if row["kind"] == "SCHEDULED_TRANSFER":
+            instruction = (
+                (
+                    await conn.execute(
+                        select(m.standing_instructions).where(
+                            m.standing_instructions.c.id == row["source_id"]
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            definition = {
+                "account_id": instruction["from_account_id"],
+                "payee_id": instruction["payee_id"],
+                "to_account_id": instruction["to_account_id"],
+                "amount_cents": instruction["amount_cents"],
+            }
+        elif row["kind"] == "MERCHANT_CHARGE":
+            billing = (
+                (
+                    await conn.execute(
+                        select(m.merchant_billing).where(
+                            m.merchant_billing.c.id == row["source_id"]
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            instruction = (
+                (
+                    await conn.execute(
+                        select(m.standing_instructions).where(
+                            m.standing_instructions.c.billing_id == row["source_id"],
+                            m.standing_instructions.c.customer_id == owner,
+                            m.standing_instructions.c.kind == "MERCHANT_MANDATE",
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            definition = {
+                "account_id": billing["account_id"],
+                "amount_cents": billing["amount_cents"],
+                "billing_id": billing["id"],
+                "merchant_id": billing["merchant_id"],
+            }
+        if row["kind"] in ("SCHEDULED_TRANSFER", "MERCHANT_CHARGE"):
+            definition.update(
+                {
+                    "instruction_id": instruction["id"] if instruction else None,
+                    "source_plan_id": instruction["source_plan_id"] if instruction else None,
+                    "grant_scope_hash": instruction["grant_scope_hash"] if instruction else None,
+                }
+            )
         return {
+            **definition,
             "event_id": row["id"],
             "kind": row["kind"],
             "customer_id": owner,
