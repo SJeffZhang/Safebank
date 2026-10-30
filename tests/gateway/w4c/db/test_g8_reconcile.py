@@ -247,6 +247,24 @@ def test_reconcile_cancels_uncommitted(app_config, obligations_db):
             assert intent == "CANCELLED", f"L3 intent after reconcile: {intent}"
             assert executed == 0
 
+            # One EXECUTION_RESULT notification, outcome FAILED.
+            db3 = engine(ctx.db_url, poolclass=NullPool)
+            async with db3.connect() as conn:
+                notes = (
+                    (
+                        await conn.execute(
+                            select(t.notifications.c.payload).where(
+                                t.notifications.c.event_id == ctx.plan_id,
+                                t.notifications.c.type == "EXECUTION_RESULT",
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+            await db3.dispose()
+            assert [n["outcome"] for n in notes] == ["FAILED"]
+
     asyncio.run(run())
 
 

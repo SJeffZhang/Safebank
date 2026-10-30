@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from . import tables as t
 from .errors import GatewayError
+from .notify import notify
 from .schemas.enums import (
     ApprovalStatus,
     ClarificationStatus,
@@ -733,6 +734,14 @@ async def archive_execution_terminal(
         result=result.model_dump(mode="json") if result else None,
     )
     await _finish_terminal(conn, plan, terminal)
+    await notify(
+        conn,
+        customer_id=expected.customer_id,
+        event_id=expected.plan_id,
+        type="EXECUTION_RESULT",
+        outcome="EXECUTED" if terminal == ExecutionJobStatus.EXECUTED else "FAILED",
+        plan_id=expected.plan_id,
+    )
 
 
 @dataclass(frozen=True)

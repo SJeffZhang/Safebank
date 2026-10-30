@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from .. import state
 from .. import tables as t
 from ..errors import GatewayError
+from ..notify import notify
 from ..schemas.enums import ApprovalStatus, PlanStatus
 from ..utterance.service import new_id
 from .planview import content_hash
@@ -509,6 +510,14 @@ async def create_for_evaluation(
             status=ApprovalStatus.PENDING.value,
             risk_ack=False,
         )
+    )
+    await notify(
+        conn,
+        customer_id=customer_id,
+        event_id=approval_id,
+        type="APPROVAL_PENDING",
+        outcome="PENDING",
+        plan_id=plan_id,
     )
 
     # Persist the final view_json with the real approval ID / status / expiry,

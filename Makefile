@@ -176,3 +176,7 @@ test-try-agent:
 .PHONY: demo-up
 demo-up: up seed-demo
 	@echo "SafeBank demo: http://127.0.0.1:3000 (open this exact origin; localhost is a different origin)"
+
+.PHONY: test-w5-notify
+test-w5-notify:
+	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w5 -q

@@ -15,7 +15,7 @@ from safebank_contracts.codes import Code
 from sqlalchemy import func, select
 
 from .. import tables as t
-from ..audit.chain import append_tx
+from ..audit import chain
 from ..errors import GatewayError
 from ..idempotency import request_idempotent
 from ..utterance.service import new_id
@@ -112,9 +112,12 @@ def _caller_customer(request: Request) -> str:
 def _seq_cursor(cursor: str | None) -> int | None:
     if cursor is None:
         return None
-    if not cursor.isdigit():
+    if not cursor.isascii() or not cursor.isdecimal() or len(cursor) > 19:
         raise GatewayError(Code.CONTRACT_INVALID, 422, "invalid cursor")
-    return int(cursor)
+    value = int(cursor)
+    if value > 2**63 - 1:
+        raise GatewayError(Code.CONTRACT_INVALID, 422, "invalid cursor")
+    return value
 
 
 def _wall(value: str | None, name: str) -> datetime | None:
@@ -270,8 +273,6 @@ async def mark_notification_read(
     now = datetime.now(UTC)
     route = f"/notifications/{notification_id}/read"
 
-    _result: dict[str, Any] = {}
-
     async def produce():
         # Verify ownership: notification must belong to this customer.
         row = (
@@ -281,7 +282,9 @@ async def mark_notification_read(
                         t.notifications.c.id,
                         t.notifications.c.customer_id,
                         t.notifications.c.read_at_wall,
-                    ).where(t.notifications.c.id == notification_id)
+                    )
+                    .where(t.notifications.c.id == notification_id)
+                    .with_for_update()
                 )
             )
             .mappings()
@@ -293,7 +296,6 @@ async def mark_notification_read(
         # If already read, return existing read_at_wall (idempotent).
         if row["read_at_wall"] is not None:
             read_ts = row["read_at_wall"].isoformat()
-            _result["read_at"] = read_ts
             return 200, {"id": notification_id, "read_at_wall": read_ts}
 
         # Mark as read.
@@ -303,29 +305,24 @@ async def mark_notification_read(
             .values(read_at_wall=now)
         )
         read_ts = now.isoformat()
-        _result["read_at"] = read_ts
-        _result["audit_payload"] = {"notification_id": notification_id}
+        await chain.append(
+            conn,
+            customer_id=customer_id,
+            event_type="NOTIFICATION_READ",
+            payload={"notification_id": notification_id},
+            event_id=new_id("evt"),
+            now_wall=now,
+        )
         return 200, {"id": notification_id, "read_at_wall": read_ts}
 
     async with db.begin() as conn:
-        status, response, replayed = await request_idempotent(
+        _status, response, _replayed = await request_idempotent(
             conn,
             customer_id=customer_id,
             route=route,
             request_id=body.request_id,
             body=body.model_dump(mode="json"),
             produce=produce,
-        )
-
-    # Audit outside the main transaction, only for new (non-replayed) operations.
-    if not replayed and "audit_payload" in _result:
-        await append_tx(
-            db,
-            customer_id=customer_id,
-            event_type="NOTIFICATION_READ",
-            payload=_result["audit_payload"],
-            event_id=new_id("evt"),
-            now_wall=now,
         )
 
     return response

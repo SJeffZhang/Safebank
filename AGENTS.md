@@ -45,7 +45,7 @@
 | L2 网关 | main `62e83ac`（L1 SSE修复 #33）：W4b2a/b/c（PR #23/#25/#27）、W3b（#29）、W4c（#31）均已合入。W4c 独立复审 APPROVE；精确 head `79229ae` 的 push/PR 四 CI 成功。前任协调者合并后组合回归与真实网络/HTTP集成通过；本次只读复核六服务 healthy、gateway 库 `0003_plan_draft`、两持久卷未重建。启动恢复扫描/孤儿 PAUSED job 归档仍属 W5。 |
 | L1 Agent | C1a–C1e 全部合入（C1c2 #24、C1d #26、C1e #28）；真实 PG checkpoint/服务/输出与回放组件已验收，L1 SSE结构化输出小修 #33 已合，39真实PG通过；完整 live 三层黄级转账尚未闭合。E0a #30 已合（405 条语料）；E0b worktree 保留 `ba76448`，收尾/live 与 try-agent 按用户指令暂停。中文金额角/分与中阿混写的输出解析缺口见 C1e 验收。 |
 | 前端 | **2026-10-29**：主项目 frontend/ 内竖版375×812 App，继承原Graphite & Champagne tokens；六场景、同站BFF、审批/OTP、叠卡/PIN/用途、报表/理财、我的整合订阅及圆形主题过渡、助手满内容区均实现合成预览。全量384项（含新App61）与BFF10项、本地build通过，交付PR #71，合并与最终检查以该PR实时记录为准；真实三层联调/开户/PAN/主动推送边界见frontend/HANDOFF.md。未派DS worker，未写队友仓库。 |
-| 协调状态 | **2026-10-26 同机交给 Codex**，当前授权范围为完成 P2，同时推进 E0 与 try-agent，先据评测修复 L1。实现/独审继续使用本机 Claude Code CLI 的 DeepSeek V4 Pro worker，一次一个任务、全新会话；本次未派业务 worker。worktree、stash、WIP refs、匹配 W0 密钥与长期卷保留。所有定时任务及前端/BFF继续暂停，不擅启或终止现有 Claude 会话。 |
+| 协调状态 | **2026-10-30 Codex 正在实施基础冻结计划**（不用DS worker；历史约定以最新交接覆盖）。原记录：**2026-10-26 同机交给 Codex**，当前授权范围为完成 P2，同时推进 E0 与 try-agent，先据评测修复 L1。实现/独审继续使用本机 Claude Code CLI 的 DeepSeek V4 Pro worker，一次一个任务、全新会话；本次未派业务 worker。worktree、stash、WIP refs、匹配 W0 密钥与长期卷保留。所有定时任务及前端/BFF继续暂停，不擅启或终止现有 Claude 会话。 |
 | 下一步 | W4c 已合并部署，进度页已同步并核对线上。之后按用户下一步指示进行 P2 真实三层验收或 W5/W6；E0 与 try-agent 已由用户恢复并行；先完成驱动与评测，修复 L1，再闭合 P2。P2 尚未真实闭合，不进入 P3；402/403/429 立即停止，不反复请求或换模型。 |
 
 ### 已确认事实
@@ -860,6 +860,8 @@
 | 2026-10-29 | Codex | 检查点82d1f54后合并origin/main c1a8ce0，AGENTS追加日志冲突同时保留双方。集成后重跑前端全量384pass、BFF10pass、build通过；diff检查发现diff3基础分隔符残留，已清理，无业务代码冲突。源分支已推送主项目，未触及队友仓库。新增前端CI与交接文档等待PR最终CI/合并。 |
 
 | 2026-10-29 | Codex | 已用GitHub插件创建并附加草稿PR #71（feat/frontend-mobile-app→main）；交接文档发布区写入PR/基线/本地检查和核实命令，不预写未来合并结果。前端最终差异仅frontend/、前端workflow、PRD/AGENTS/ADR，无后端业务改动。PR最终head的CI与merge结果在PR71回链记录，合并门禁仍为全部实际检查成功；用户原页面保留。 |
+
+| 2026-10-30 | Codex | 基础冻结组件A以PR #98合入0caeb03：精确4b1859a本机CI全过（单元3504/979 skip；全套真实PG、并发、一致性、网络与重启、S1），干净栈真实余额查询8秒返回8200元，SQL业务快照无变化；CLI仍将该只读回复标CLARIFY，未冒称业务全通过。合并命令首次head校验值输入有误被GitHub拒绝，重新读取完整SHA后合并成功。#96只读独审REQUEST CHANGES，发现循环导入、已读/审计分事务及非法游标；新增红测7失败/11通过，修复后W5+W4c真实PG共58通过。新增通知写入点单独撤除后红测，备份后恢复；最终结果另记。原中断命令已部分执行，恢复时先核进程与工作区，未重复live。 |
 
 ## 5. 下一步待办（按顺序）
 

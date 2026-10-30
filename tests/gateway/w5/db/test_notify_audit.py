@@ -9,12 +9,15 @@ from __future__ import annotations
 import asyncio
 from datetime import timedelta
 
+import pytest
+from safebank_contracts.codes import Code
 from sqlalchemy import func, select
 from sqlalchemy.pool import NullPool
 
 from services.gateway.app import tables as t
 from services.gateway.app.audit import chain
 from services.gateway.app.db import engine
+from services.gateway.app.errors import GatewayError
 from tests.gateway.w4b2b.db.conftest import WALL, _runtime_db, _seed_auth, build_app
 
 
@@ -199,5 +202,84 @@ def test_endpoints_require_app_caller(app_config):
         for path in ("/audit", "/notifications", "/plans/pln_1/audit"):
             resp = await app.client.get(path)
             assert resp.status_code == 401
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("cursor", ["²", "１２", "9" * 100, "-1", "1.0"])
+def test_invalid_audit_cursor_returns_422(app_config, cursor):
+    async def run():
+        app = await _app(app_config)
+        resp = await app.client.get("/audit", params={"cursor": cursor}, headers=app.auth_headers())
+        assert resp.status_code == 422
+
+    asyncio.run(run())
+
+
+def test_read_audit_failure_rolls_back_and_can_retry(app_config, monkeypatch):
+    async def run():
+        app = await _app(app_config)
+        await _seed_notification(app, "ntf_atomic", "cus_zs")
+        original = chain.append
+
+        async def unavailable(*args, **kwargs):
+            raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503)
+
+        monkeypatch.setattr(chain, "append", unavailable)
+        body = {"request_id": "req_atomic"}
+        resp = await app.client.post(
+            "/notifications/ntf_atomic/read", json=body, headers=app.auth_headers()
+        )
+        assert resp.status_code == 503
+        db = _runtime_db(app)
+        try:
+            async with db.connect() as conn:
+                assert (
+                    await conn.scalar(
+                        select(t.notifications.c.read_at_wall).where(
+                            t.notifications.c.id == "ntf_atomic"
+                        )
+                    )
+                    is None
+                )
+                assert (
+                    await conn.scalar(
+                        select(func.count())
+                        .select_from(t.request_dedup)
+                        .where(t.request_dedup.c.request_id == "req_atomic")
+                    )
+                    == 0
+                )
+        finally:
+            await db.dispose()
+        monkeypatch.setattr(chain, "append", original)
+        retry = await app.client.post(
+            "/notifications/ntf_atomic/read", json=body, headers=app.auth_headers()
+        )
+        assert retry.status_code == 200
+        audit = (await app.client.get("/audit", headers=app.auth_headers())).json()
+        assert len([r for r in audit["items"] if r["event_type"] == "NOTIFICATION_READ"]) == 1
+
+    asyncio.run(run())
+
+
+def test_concurrent_read_requests_share_timestamp_and_one_audit(app_config):
+    async def run():
+        app = await _app(app_config)
+        await _seed_notification(app, "ntf_concurrent", "cus_zs")
+        responses = await asyncio.gather(
+            *[
+                app.client.post(
+                    "/notifications/ntf_concurrent/read",
+                    json={"request_id": f"req_concurrent_{i}"},
+                    headers=app.auth_headers(),
+                )
+                for i in range(4)
+            ]
+        )
+        assert all(r.status_code == 200 for r in responses)
+        assert len({r.json()["read_at_wall"] for r in responses}) == 1
+        audit = (await app.client.get("/audit", headers=app.auth_headers())).json()
+        assert len([r for r in audit["items"] if r["event_type"] == "NOTIFICATION_READ"]) == 1
 
     asyncio.run(run())
