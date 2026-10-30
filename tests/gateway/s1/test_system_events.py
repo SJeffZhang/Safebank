@@ -11,7 +11,10 @@ from __future__ import annotations
 import asyncio
 
 from safebank_contracts.codes import Code
+from sqlalchemy import text
+from sqlalchemy.pool import NullPool
 
+from services.gateway.app.db import engine
 from tests.gateway.s1.conftest import build_app, make_event_def
 
 URL = "/internal/scheduled/authorize"
@@ -258,5 +261,56 @@ def test_system_event_retrying_on_l3_unavailable(app_config):
         assert body["event_id"] == "evt_sys_retry"
         assert body["status"] == "RETRYING"
         assert body["code"] == Code.DEPENDENCY_UNAVAILABLE.value
+
+    asyncio.run(run())
+
+
+def test_fund_confirm_failed_on_l3_records_failure_not_success(app_config):
+    """L3 rejects the confirm (FAILED_INSUFFICIENT + code) → recorded as that failure.
+
+    L3 has already committed its terminal row, so the gateway must not call
+    event_block and must never report SUCCESS.
+    """
+
+    async def run():
+        app = await build_app(app_config)
+
+        app.fake.set_event(
+            make_event_def(
+                event_id="evt_fund_fail",
+                source_id="ord_sub_009",
+                kind="FUND_CONFIRM",
+            )
+        )
+        app.fake.set_event_execute_result(
+            "evt_fund_fail",
+            {
+                "status": "FAILED_INSUFFICIENT",
+                "result": {"status": "FAILED", "code": Code.SUITABILITY_MISMATCH.value},
+            },
+        )
+
+        resp = await app.client.post(
+            URL,
+            json={"event_id": "evt_fund_fail", "attempt": 1},
+            headers=app.scheduler_headers(),
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["status"] == "FAILED_INSUFFICIENT"
+        assert body["code"] == Code.SUITABILITY_MISMATCH.value
+        assert not any(c["op"] == "event_block" for c in app.fake.calls)
+
+        db = engine(app.db_url, poolclass=NullPool)
+        async with db.connect() as conn:
+            row = (
+                await conn.execute(
+                    text("SELECT status, code FROM event_decisions WHERE event_id = :e"),
+                    {"e": "evt_fund_fail"},
+                )
+            ).one()
+        await db.dispose()
+        assert row.status == "FAILED_INSUFFICIENT"
+        assert row.code == Code.SUITABILITY_MISMATCH.value
 
     asyncio.run(run())

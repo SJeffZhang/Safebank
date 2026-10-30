@@ -263,6 +263,29 @@ async def _release_claim(db, event_id: str) -> None:
 # ── Phase B helpers (no lock, no held connection) ─────────────────────────────
 
 
+async def _finalize_system_result(
+    db, app, event_id: str, customer_id: str, result: dict[str, Any], trace_id: str | None
+) -> dict[str, Any]:
+    """Record L3's terminal outcome for a system event.
+
+    L3 has already committed its own terminal ``event_executions`` row, so a
+    failure is only recorded here (no ``event_block`` on an executed job).
+    L3 reports failure as ``FAILED_INSUFFICIENT`` with the code in ``result``.
+    """
+    if result.get("status") in ("FAILED", "FAILED_INSUFFICIENT"):
+        code = (result.get("result") or {}).get("code") or Code.INSUFFICIENT_FUNDS.value
+        await _finalize_claim(
+            db, event_id, customer_id, "FAILED_INSUFFICIENT", code, app.wall_now(), trace_id
+        )
+        return {"event_id": event_id, "status": "FAILED_INSUFFICIENT", "code": code}
+    await _finalize_claim(db, event_id, customer_id, "SUCCESS", None, app.wall_now(), trace_id)
+    return {
+        "event_id": event_id,
+        "status": "SUCCESS",
+        "instruction_run_id": result.get("instruction_run_id"),
+    }
+
+
 async def _handle_system_event(
     request: Request,
     db,
@@ -302,23 +325,7 @@ async def _handle_system_event(
         await _release_claim(db, event_id)
         return _retrying(event_id)
 
-    exec_status = result.get("status", "SUCCESS")
-    if exec_status == "FAILED":
-        return await _block(
-            request,
-            db,
-            event,
-            "FAILED_INSUFFICIENT",
-            Code.INSUFFICIENT_FUNDS.value,
-            ctx=None,
-        )
-
-    await _finalize_claim(db, event_id, customer_id, "SUCCESS", None, app.wall_now(), trace_id)
-    return {
-        "event_id": event_id,
-        "status": "SUCCESS",
-        "instruction_run_id": result.get("instruction_run_id"),
-    }
+    return await _finalize_system_result(db, app, event_id, customer_id, result, trace_id)
 
 
 async def _handle_demo_event(
@@ -368,23 +375,7 @@ async def _handle_demo_event(
         await _release_claim(db, event_id)
         return _retrying(event_id)
 
-    exec_status = result.get("status", "SUCCESS")
-    if exec_status == "FAILED":
-        return await _block(
-            request,
-            db,
-            event,
-            "FAILED_INSUFFICIENT",
-            Code.INSUFFICIENT_FUNDS.value,
-            ctx=None,
-        )
-
-    await _finalize_claim(db, event_id, customer_id, "SUCCESS", None, app.wall_now(), trace_id)
-    return {
-        "event_id": event_id,
-        "status": "SUCCESS",
-        "instruction_run_id": result.get("instruction_run_id"),
-    }
+    return await _finalize_system_result(db, app, event_id, customer_id, result, trace_id)
 
 
 async def _re_evaluate(request: Request, event: dict[str, Any]) -> EvalContext:
