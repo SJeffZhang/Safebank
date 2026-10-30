@@ -35,7 +35,7 @@
 
 ## 3. 当前状态（每次工作后更新）
 
-**最后更新**：2026-10-29（本次更新前端状态；后端以 §4 最新协调日志为准，未由此前端任务重新验收）
+**最后更新**：2026-10-30（Codex 接手准备核对；业务验收仍以 §4 实测日志为准）
 
 | 模块 | 状态 |
 |---|---|
@@ -45,8 +45,8 @@
 | L2 网关 | main `62e83ac`（L1 SSE修复 #33）：W4b2a/b/c（PR #23/#25/#27）、W3b（#29）、W4c（#31）均已合入。W4c 独立复审 APPROVE；精确 head `79229ae` 的 push/PR 四 CI 成功。前任协调者合并后组合回归与真实网络/HTTP集成通过；本次只读复核六服务 healthy、gateway 库 `0003_plan_draft`、两持久卷未重建。启动恢复扫描/孤儿 PAUSED job 归档仍属 W5。 |
 | L1 Agent | C1a–C1e 全部合入（C1c2 #24、C1d #26、C1e #28）；真实 PG checkpoint/服务/输出与回放组件已验收，L1 SSE结构化输出小修 #33 已合，39真实PG通过；完整 live 三层黄级转账尚未闭合。E0a #30 已合（405 条语料）；E0b worktree 保留 `ba76448`，收尾/live 与 try-agent 按用户指令暂停。中文金额角/分与中阿混写的输出解析缺口见 C1e 验收。 |
 | 前端 | **2026-10-29**：主项目 frontend/ 内竖版375×812 App，继承原Graphite & Champagne tokens；六场景、同站BFF、审批/OTP、叠卡/PIN/用途、报表/理财、我的整合订阅及圆形主题过渡、助手满内容区均实现合成预览。PR #71已合入main（7734f1f），最终head共6项CI成功；合并后全量384项（含新App61）、BFF10项与build复跑通过。交接文档及新Agent Prompt已随PR交付；真实三层联调/开户/PAN/主动推送边界见frontend/HANDOFF.md。未派DS worker，未写队友仓库。 |
-| 协调状态 | **2026-10-26 同机交给 Codex**，当前授权范围为完成 P2，同时推进 E0 与 try-agent，先据评测修复 L1。实现/独审继续使用本机 Claude Code CLI 的 DeepSeek V4 Pro worker，一次一个任务、全新会话；本次未派业务 worker。worktree、stash、WIP refs、匹配 W0 密钥与长期卷保留。所有定时任务及前端/BFF继续暂停，不擅启或终止现有 Claude 会话。 |
-| 下一步 | W4c 已合并部署，进度页已同步并核对线上。之后按用户下一步指示进行 P2 真实三层验收或 W5/W6；E0 与 try-agent 已由用户恢复并行；先完成驱动与评测，修复 L1，再闭合 P2。P2 尚未真实闭合，不进入 P3；402/403/429 立即停止，不反复请求或换模型。 |
+| 协调状态 | **2026-10-30 Codex 接手准备**：origin/main=1a83957；主 checkout 已同步交接分支 docs/handoff-20261030（93e18eb，PR #97）。按最新交接不用 DS worker，实现由 Codex 亲做，安全路径用自身只读子代理独审；前端 live 已随 #94 合并。保留 worktree、未提交续作、密钥与数据卷；本次仅同步和只读核对，未运行业务验收。 |
+| 下一步 | 按 docs/handoffs/2026-10-30-codex-handoff.md 从 #96 通知/审计收尾开始，再完成 D3/D7/D6/D8、live 缺口与攻击控制台。合并前精确 head 本机 CI、修复类 PR 干净环境 live 验证；402/403/429 立即停止。 |
 
 ### 已确认事实
 
@@ -892,6 +892,10 @@
 | 2026-10-30 | Claude（新会话 7aba419e） | 干净环境 safebank-e2e-1029 重部署到 1a83957：e2e.override.yml 补 operator（safebank-e2e:local、172.30.10.13）与前端独立镜像标签 safebank-e2e-frontend:local（原 override 早于 #94，会覆盖长期栈 safebank-p0:local 标签），驱动改用 operator 容器；长期栈镜像未变。6 条 live 重跑（日志 .ds-logs/full-e2e-20261030-rerun-1a83957）全部无库状态变化：40/23 REPLAN 回复已逐条列原因（修复生效）；06 REPLAN 来源不明（period 网关缺口，如预期）；36 由 DENY 变 REPLAN（未知来源 + 新出现的意图不一致，待查）；09 模型从「聚餐」推断 memo 被 L1 本地校验拒绝；34 模型返回畸形工具参数。并收到会话「btw」转达：补 G11/G12/G13/G16 真实版本替换 503 占位、不再接受 live 隐藏标签页；已从 refs/wip/GW-notify-audit-r1 取回实现，建 worktree notify-audit（feat/l2-notify-audit）。 |
 | 2026-10-30 | Claude（新主会话） | 用户要求把全部工作交给 Codex。核对会话 7aba419e 末态：其在 PR #96 通知写入点红测时因 OAuth 令牌吊销中断，notify-audit 工作区文件与其备份逐字节一致、未损坏（3 修改 + 2 未跟踪，未提交）。编写交接方案 docs/handoffs/2026-10-30-codex-handoff.md（目标与截止、工作方式、现场快照、未完成工作按优先级：#96 收尾、D3/D6/D7/D8、live 失败用例与根因、攻击控制台、B0/B2 成功率表、彩排冻结，建议时间表与削减顺序、开工前核对）与 Codex 启动提示 docs/handoffs/2026-10-30-codex-prompt.md；把本机 CI 与 live 驱动脚本、用例表、干净环境 e2e.override.yml 从临时 scratchpad 复制到 docs/handoffs/2026-10-30-tools/（已核无硬编码密钥）。均未提交。 |
 | 2026-10-30 | Claude（新主会话） | 用户令「提交并推送」：主 checkout 未提交的协调文档先备份并 stash 保留（handoff-20261030-preserve，未删除），从 origin/main 1a83957 新建分支 docs/handoff-20261030 恢复后提交 3e6489c（交接方案、Codex 启动提示、tools 目录、演示计划、AGENTS 日志、frontend 交接范围限定、ds-worker 默认值），diff --check 与密钥扫描通过，已推送；未开 PR、未合并入 main。主 checkout 现位于该分支。 |
+
+| 2026-10-30 | Codex | 接手准备：git fetch origin 后核 origin/main=1a83957；准备期间主 checkout 已由原前端分支切为 docs/handoff-20261030=93e18eb，交接文件已提交且 PR #97 打开。git pull --ff-only origin docs/handoff-20261030 首次沙箱拒绝写 FETCH_HEAD，提升后成功（Already up to date）。核 #96 仍为草稿、head 0c56347，notify-audit 的 3 修改+2未跟踪续作完整保留；#82 未处理。docker ps 实测两套栈共14容器全部 healthy（交接快照称12）；未重启服务、未动数据卷、未调用 DeepSeek、未跑业务测试。更新 §3 接手起点与工作方式，后续先收尾 #96。 |
+
+| 2026-10-30 | Codex | 按用户批准计划开始实施，基础六场景冻结优先；D8/指标延后。核 PR #97 已由前任以精确93e18eb本机CI通过并合入95feef2，不重复合并。新建fix/demo-live-driver，保留接手AGENTS改动；驱动新增402/403/429停止、300秒默认超时和批次中止，修复脚本相对路径并拒绝旧批次复用；本机CI脚本拒绝脏工作区/缺失必需目标。驱动5条旧码红测失败、新码通过；批次2条旧码失败（/private/tmp/safebank-driver-batch-red.log），新码通过；try-agent专项70通过。首次红测子进程未退出曾手动中断，随后将夹具改为自行退出，未调用模型。安全子代理只读评审#96，发现通知已读状态与审计分事务，待修后独审。 |
 
 ## 5. 下一步待办（按顺序）
 
