@@ -126,12 +126,26 @@ def plan_tool() -> dict:
 
 
 def from_strict_plan(data: dict) -> dict:
+    """Convert a strict-mode plan back to contract shape.
+
+    Raises ValueError (never TypeError/KeyError) on a malformed shape, so the
+    planner's bounded retry can feed the problem back to the model.
+    """
+    try:
+        return _from_strict_plan(data)
+    except (TypeError, KeyError, AttributeError) as exc:
+        raise ValueError(f"malformed strict plan: {exc!r}") from exc
+
+
+def _from_strict_plan(data: dict) -> dict:
     result = deepcopy(data)
     for step in result["steps"]:
         args = step["args"]
         for key in ("payee_id", "to_account_id"):
             if key in args:
                 entity = args[key]
+                if not isinstance(entity, dict) or "kind" not in entity:
+                    raise ValueError(f"{key} must be a tagged entity object")
                 if entity["kind"] == "none":
                     args[key] = None
                 elif entity["kind"] == "id":

@@ -1951,3 +1951,20 @@ def test_channel_verbs_match_intent_lexicon_yaml():
     all_verbs = set(_CHANNEL_VERBS)
     assert _CHANNEL_TRUE_VERBS | _CHANNEL_FALSE_VERBS == all_verbs, "verbs not fully partitioned"
     assert not (_CHANNEL_TRUE_VERBS & _CHANNEL_FALSE_VERBS), "verbs overlap between directions"
+
+
+def test_plan_bare_string_entity_is_retried_not_crashed():
+    # Live e2e case 37: the model returned to_account_id as a bare string. The
+    # converter used to raise TypeError, which escaped the retry and ended the run.
+    bad = strict_plan()
+    bad["steps"][0]["args"]["to_account_id"] = "acc_b"
+    scripted = ScriptedLLM(
+        [
+            tool_response("submit_action_plan", bad),
+            tool_response("submit_action_plan", strict_plan()),
+        ]
+    )
+    llm = build(scripted)
+    draft = PlanAdapter(llm)(plan_state(), ctx())
+    assert len(scripted.requests) == 2
+    assert draft.steps[0].args.to_account_id is None
