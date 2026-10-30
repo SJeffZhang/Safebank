@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import codecs
 import json
+import os
 import re
 import subprocess
-import os
 import sys
 import time
 
@@ -32,8 +32,23 @@ sys.stdout.write(r.json()["code"])
 
 def fetch_otp(deploy: str, approval_id: str) -> str:
     out = subprocess.run(
-        ["docker", "compose", "exec", "-T", "-e", "GW_PUBLIC=" + os.environ.get("GW_PUBLIC", "172.29.10.12"), "gateway", "python", "-c", OTP_FETCH, approval_id],
-        cwd=deploy, capture_output=True, text=True, check=True,
+        [
+            "docker",
+            "compose",
+            "exec",
+            "-T",
+            "-e",
+            "GW_PUBLIC=" + os.environ.get("GW_PUBLIC", "172.29.10.12"),
+            "gateway",
+            "python",
+            "-c",
+            OTP_FETCH,
+            approval_id,
+        ],
+        cwd=deploy,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     code = out.stdout.strip()
     if not re.fullmatch(r"\d{6}", code):
@@ -48,11 +63,28 @@ def main() -> int:
     with open(pins_file) as f:
         pin = json.load(f)[customer]
     proc = subprocess.Popen(
-        ["docker", "compose", "exec", "-T", "-e", "PYTHONUNBUFFERED=1", "operator",
-         "python", "-m", "scripts.try_agent",
-         "--customer-id", customer, "--text", text, "--confirm"]
+        [
+            "docker",
+            "compose",
+            "exec",
+            "-T",
+            "-e",
+            "PYTHONUNBUFFERED=1",
+            "operator",
+            "python",
+            "-m",
+            "scripts.try_agent",
+            "--customer-id",
+            customer,
+            "--text",
+            text,
+            "--confirm",
+        ]
         + (["--out", os.environ["TRY_AGENT_OUT"]] if os.environ.get("TRY_AGENT_OUT") else []),
-        cwd=deploy, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        cwd=deploy,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         bufsize=0,
     )
     buf = ""
@@ -84,12 +116,19 @@ def main() -> int:
             answered.add("confirm")
             if mode == "restart_agent":
                 print("\n[driver] restarting agent container before confirm", flush=True)
-                subprocess.run(["docker", "compose", "restart", "agent"], cwd=deploy,
-                               check=True, capture_output=True)
+                subprocess.run(
+                    ["docker", "compose", "restart", "agent"],
+                    cwd=deploy,
+                    check=True,
+                    capture_output=True,
+                )
                 for _ in range(60):
-                    h = subprocess.run(["docker", "compose", "ps", "agent", "--format",
-                                        "{{.Health}}"], cwd=deploy, capture_output=True,
-                                       text=True).stdout.strip()
+                    h = subprocess.run(
+                        ["docker", "compose", "ps", "agent", "--format", "{{.Health}}"],
+                        cwd=deploy,
+                        capture_output=True,
+                        text=True,
+                    ).stdout.strip()
                     if h == "healthy":
                         break
                     time.sleep(2)
