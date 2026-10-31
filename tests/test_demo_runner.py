@@ -1073,3 +1073,107 @@ def test_corrupt_session_metadata_is_a_controlled_refusal(runner, mutation):
         events[0]["detail"]["url"] = 17
     with pytest.raises(runner.DemoFailure):
         runner.session_from_trace({"events": events})
+
+
+def test_automatic_seed_label_must_match_actual_before_driver(auto_sql):
+    from scripts.demo_runner import DemoFailure
+
+    auto = auto_sql
+    current = auto.env.demo.current
+    auto.env.demo.current = lambda: {**current(), "initial": {"seed": "unexpected_seed_label"}}
+    with pytest.raises(DemoFailure, match="seed"):
+        run_core(auto)
+    assert not any("drive_try_agent.py" in " ".join(a) for a, k in auto.env.calls)
+    assert not (auto.env.output / "sql-receipts/16.json").exists()
+    value = json.loads((auto.env.output / "manifest.json").read_text())
+    assert value["status"] == "FAILED" and value["business_verified"] is False
+    assert (auto.env.output / "16.before-bank.json").exists()
+
+
+def test_actual_after_seed_is_bound_before_gateway_query_or_receipt(auto_sql):
+    from scripts.demo_runner import DemoFailure
+
+    auto = auto_sql
+    auto.state["payload_mutation"] = lambda values: values[1]["clock"].update(
+        dataset_revision="different_after_seed"
+    )
+    with pytest.raises(DemoFailure, match="seed"):
+        run_core(auto)
+    assert len(auto.calls) == 2
+    assert (auto.env.output / "16.after-bank.json").exists()
+    assert not (auto.env.output / "16.after-gateway.json").exists()
+    assert not (auto.env.output / "sql-receipts/16.json").exists()
+
+
+def final_checkpoint_writer(monkeypatch, auto, *, external, partial, fail):
+    from scripts import demo_runner
+
+    original = demo_runner.private_write
+    proof_dir = auto.env.output.parent / "external-proofs"
+    proof_dir.mkdir()
+    state = {"failed": False, "fault_path": None}
+
+    def write(path, data):
+        if path.name.startswith("manifest.next"):
+            value = json.loads(data)
+            if external and value["status"] == "OBSERVED":
+                for case in value["cases"]:
+                    receipt = {
+                        **{key: value[key] for key in ("run_id", "checkout_sha", "generation")},
+                        "case_id": case["case_id"],
+                        "trace_sha256": case["trace_sha256"],
+                        "verifier": "SQL",
+                        "verified": True,
+                        "checks": {"synthetic_external_proof": True},
+                    }
+                    target = proof_dir / f"{case['case_id']}.json"
+                    if not target.exists():
+                        original(target, json.dumps(receipt))
+            if fail and value["status"] == "VERIFIED" and not state["failed"]:
+                state["failed"] = True
+                state["fault_path"] = path
+                if partial:
+                    original(path, "partial-verification-checkpoint")
+                raise OSError("synthetic final checkpoint failure")
+        return original(path, data)
+
+    monkeypatch.setattr(demo_runner, "private_write", write)
+    return proof_dir, state
+
+
+@pytest.mark.parametrize("external", [False, True])
+@pytest.mark.parametrize("partial", [False, True])
+def test_final_persistence_failure_clears_all_verification_flags_and_preserves_evidence(
+    auto_sql, monkeypatch, external, partial
+):
+    auto = auto_sql
+    proofs, state = final_checkpoint_writer(
+        monkeypatch, auto, external=external, partial=partial, fail=True
+    )
+    kwargs = {"proofs": proofs} if external else {}
+    with pytest.raises(OSError, match="synthetic final checkpoint failure"):
+        run_core(auto, **kwargs)
+    value = json.loads((auto.env.output / "manifest.json").read_text())
+    assert value["status"] == "FAILED"
+    assert value["business_verified"] is False
+    assert value["cases"] and all(case["business_verified"] is False for case in value["cases"])
+    assert (auto.env.output / "16.trace.json").exists()
+    receipt = (proofs if external else auto.env.output / "sql-receipts") / "16.json"
+    assert receipt.exists()
+    if partial:
+        assert state["fault_path"].read_text() == "partial-verification-checkpoint"
+    assert len(auto.calls) == (0 if external else 3)
+
+
+@pytest.mark.parametrize("external", [False, True])
+def test_successful_persistence_retains_verified_flags_in_both_proof_modes(
+    auto_sql, monkeypatch, external
+):
+    auto = auto_sql
+    proofs, _ = final_checkpoint_writer(
+        monkeypatch, auto, external=external, partial=False, fail=False
+    )
+    value = run_core(auto, **({"proofs": proofs} if external else {}))
+    disk = json.loads((auto.env.output / "manifest.json").read_text())
+    assert disk == value and disk["status"] == "VERIFIED" and disk["business_verified"] is True
+    assert all(case["business_verified"] is True for case in disk["cases"])

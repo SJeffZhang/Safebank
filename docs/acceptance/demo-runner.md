@@ -224,3 +224,25 @@ The user's latest scope is development only: no actual demonstration, recording,
 API or DB action was performed by this worker. Actual runtime/schema/six-case positives,
 blocked-network proof and full exact-head automated CI remain pending coordinator gates;
 no freeze/tag is claimed. Shared AGENTS/PRD were not edited.
+
+## Task6 independent review corrections
+
+R1 reproduced a wrong initialization seed label receiving a VERIFIED run despite correct
+fixed-seed SQL facts. Automatic before/after clock.dataset_revision must now exactly
+match manifest.seed. The before check occurs after preserving the safe raw snapshot and
+before invoking the driver; the after check occurs after preserving after-bank and before
+the gateway query/receipt. No new SQL or oracle change was needed. Old2 failed; matching
+seed six-case controls continue to pass. Observe/external-proof modes keep their explicit
+contracts and do not imply automatic seed proof.
+
+R2 reproduced final manifest write failure leaving FAILED with true global/per-case flags.
+Every run failure now clears those flags before saving recovery state. If a partial
+manifest.next file remains, recovery uses a fresh exclusive temporary filename and retains
+the original failed file, trace, snapshots and actual SQL receipts unchanged. Receipt
+facts and failed temporary candidates are diagnostic evidence, not a successful run; the
+authoritative manifest is FAILED/business_verified=false with all case flags false. The
+original I/O exception is preserved when the recovery checkpoint succeeds. Auto/external
+proof modes and no-partial/partial-write variants produced4 old failures/2 successful
+controls; corrected affected suite317 passed. Final default suite:3807 passed/1071 conditional
+skips in33.00s, exit0. Full ruff/format/diff checks passed. The reviewed oracle remains byte-identical6fcf6bd...; no demonstration,
+provider, database or Docker operation was performed. Independent re-review remains pending.

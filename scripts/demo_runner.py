@@ -343,6 +343,12 @@ def require_safe_sql_snapshot(value: Any, depth: int = 0) -> None:
             raise DemoFailure("sensitive SQL snapshot text; evidence refused")
 
 
+def require_declared_seed(bank: dict, declared_seed: str) -> None:
+    clock = bank.get("clock")
+    if not isinstance(clock, dict) or clock.get("dataset_revision") != declared_seed:
+        raise DemoFailure("actual SQL seed differs from declared manifest seed")
+
+
 def session_from_trace(trace: dict) -> str:
     """Use only the trusted CLI's paired session HTTP events, never model text."""
     events = trace.get("events", [])
@@ -598,6 +604,7 @@ class DemoRunner:
             directory / f"{case.id}.after-bank.json",
             json.dumps({"meta": binding, "bank": bank_after}, ensure_ascii=False, indent=2) + "\n",
         )
+        require_declared_seed(bank_after, manifest["seed"])
         gateway_after = self.sql_snapshot("gateway", manifest["generation"], queries["gateway"])
         private_write(
             directory / f"{case.id}.after-gateway.json",
@@ -693,6 +700,9 @@ class DemoRunner:
 
         def checkpoint() -> None:
             temporary = run_directory / "manifest.next.json"
+            if temporary.exists():
+                # Preserve a prior failed/partial write for diagnosis.
+                temporary = run_directory / f"manifest.next-{secrets.token_hex(16)}.json"
             private_write(temporary, json.dumps(manifest, indent=2) + "\n")
             temporary.replace(run_directory / "manifest.json")
 
@@ -753,6 +763,7 @@ class DemoRunner:
                         )
                         + "\n",
                     )
+                    require_declared_seed(bank_before, manifest["seed"])
                 result = self.command(
                     [
                         sys.executable,
@@ -829,6 +840,9 @@ class DemoRunner:
             return manifest
         except (DemoFailure, OSError, ValueError, KeyError, subprocess.SubprocessError):
             manifest["status"] = "FAILED"
+            manifest["business_verified"] = False
+            for case in manifest["cases"]:
+                case["business_verified"] = False
             checkpoint()
             raise
 
