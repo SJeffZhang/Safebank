@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
@@ -49,6 +50,54 @@ _SYSTEM = (
 )
 
 _MAX_ROUNDS = 3
+
+_MONTHLY_REPORT = re.compile(
+    r"(?:给我)?(?:出|生成)(?:一份)?"
+    r"(?:(?:(?P<year>20\d{2})年)?(?P<month>0?[1-9]|1[0-2])月|(?P<relative>上个月|上月))"
+    r"(?:的)?账单报告"
+)
+
+
+def _monthly_report_match(state: AgentState) -> re.Match | None:
+    """Recognize only one complete L2-classified read-only monthly request."""
+    understanding = state.get("understanding")
+    utterances = state.get("utterances") or []
+    if (
+        state.get("parse_status") != "NO_WRITE"
+        or state.get("clarification_id")
+        or state.get("clarification")
+        or understanding is None
+        or understanding.needs_write is not False
+        or len(utterances) != 1
+        or utterances[0].kind != UtteranceKind.TYPED
+    ):
+        return None
+    text = unicodedata.normalize("NFKC", utterances[0].text).strip(" 。.!！")
+    text = re.sub(r"^(?:请帮我|帮我|替我|请)\s*", "", text, count=1)
+    return _MONTHLY_REPORT.fullmatch(text)
+
+
+def monthly_report_requested(state: AgentState) -> bool:
+    return _monthly_report_match(state) is not None
+
+
+def monthly_report_period(state: AgentState, sim_now: str) -> tuple[str, str, str]:
+    """Resolve the requested month against fresh business time, never wall time."""
+    match = _monthly_report_match(state)
+    if match is None:
+        raise ValueError("not a complete read-only monthly report request")
+    now = datetime.fromisoformat(sim_now)
+    if now.tzinfo is None:
+        raise ValueError("business time must include timezone")
+    now = now.astimezone(ZoneInfo("Asia/Shanghai"))
+    if match["relative"]:
+        year, month = (now.year - 1, 12) if now.month == 1 else (now.year, now.month - 1)
+    else:
+        year, month = int(match["year"] or now.year), int(match["month"])
+    start = datetime(year, month, 1, tzinfo=ZoneInfo("Asia/Shanghai"))
+    end = start.replace(year=year + 1, month=1) if month == 12 else start.replace(month=month + 1)
+    return start.strftime("%Y-%m"), start.isoformat(), end.isoformat()
+
 
 # Intents that require account + payee reads for the plan step to construct valid
 # from_account_id / payee_id with read-kind sources.
@@ -114,6 +163,27 @@ class GatherAdapter:
         return new
 
     def __call__(self, state: AgentState, context: AgentContext) -> list[ReadRecord]:
+        if self.fetch_business_date and monthly_report_requested(state):
+            # B4 always needs both aggregates and anomaly evidence. These reads
+            # remain behind the user's gateway executor, with its real lineage.
+            # Refresh sim_now even if a prior turn left a business_date string.
+            profile = self._execute_supplemental("get_profile", {}, "src_gather_profile")
+            sim_now = profile.data["sim_now"]
+            self.last_business_date = self._format_date_line(sim_now)
+            month, start, end = monthly_report_period(state, sim_now)
+            return [
+                profile,
+                self._execute_supplemental(
+                    "get_spending_summary",
+                    {"month": month, "account_id": None},
+                    "src_gather_spending",
+                ),
+                self._execute_supplemental(
+                    "detect_anomalies",
+                    {"from_at": start, "to_at": end, "account_id": None},
+                    "src_gather_anomalies",
+                ),
+            ]
         reads: list[ReadRecord] = []
         tools_attempted: set[str] = set()
 

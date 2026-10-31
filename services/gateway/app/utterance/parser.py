@@ -279,6 +279,14 @@ def _clause(clause: str) -> Command | None:
     """Each alternative consumes its entire clause, including direction and units."""
     clause = re.sub(r"^(?:然后|并|再)\s*", "", clause, count=1)
     clause = re.sub(r"^(?:请帮我|帮我|替我|请)\s*", "", clause, count=1)
+    # Consume the whole report clause. A following write clause is still parsed
+    # independently; report keywords cannot hide an unknown action suffix.
+    if re.fullmatch(
+        r"(?:给我)?(?:出|生成)(?:一份)?(?:(?:20\d{2}年)?(?:0?[1-9]|1[0-2])月|上个月|上月)"
+        r"(?:的)?账单报告",
+        clause,
+    ):
+        return Command("read")
     if re.fullmatch(
         r"(?:(?:看|查看|分析)(?:我|我的)?上月(?:消费|账单)(?:和异常)?|找出异常交易|只查退款|查退款|读备注|(?:改成|改为|换成)(?:是什么意思|什么意思|怎么理解))",
         clause,

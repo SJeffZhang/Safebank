@@ -22,6 +22,7 @@ import getpass
 import json
 import os
 import sys
+import unicodedata
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -64,6 +65,11 @@ EXIT_LABELS: dict[int, str] = {
 
 # DecisionValue enum values (PRD §6.1, state.py:81-85).
 _VALID_DECISIONS = frozenset({"ALLOW", "REQUIRE_APPROVAL", "REPLAN", "DENY"})
+
+# Reserved GENERIC_ERROR / REINITIATE reply from llm/fixed_templates.py. Keep
+# this CLI independent of the L1 package's model imports. Tests use the actual
+# template and verifier, so a template change cannot silently become success.
+_FIXED_ANALYSIS_ERROR = unicodedata.normalize("NFKC", "请求无法处理，请重新发起。未执行任何操作。")
 
 
 # ── Models ────────────────────────────────────────────────────────────────
@@ -482,6 +488,7 @@ def run(
     final_values: dict[str, Any] = {}
     l1_reply: str = ""
     l1_cards: list = []
+    final_message_received = False
 
     for evt in sse_events:
         evt_type = evt["type"]
@@ -526,6 +533,7 @@ def run(
             for m in msgs:
                 if isinstance(m, dict) and m.get("type") == "ai":
                     l1_reply = m.get("content", l1_reply)
+                    final_message_received = isinstance(l1_reply, str) and bool(l1_reply.strip())
 
     # ── Resolve decision ──────────────────────────────────────────────
     decision_str, plan_id, exec_dict = _resolve_decision(final_values)
@@ -1044,6 +1052,28 @@ def run(
 
     if decision_str == "DENY":
         return EXIT_DENY
+
+    # A completed analysis deliberately has no ActionPlan or write Decision.
+    # The L2 NO_WRITE result is authoritative; model uncertainty is not a new
+    # clarification. Never infer success from reply prose or an unfinished draft.
+    understanding = final_values.get("understanding")
+    reads = final_values.get("reads")
+    if (
+        final_values.get("parse_status") == "NO_WRITE"
+        and isinstance(understanding, dict)
+        and understanding.get("needs_write") is False
+        and isinstance(reads, list)
+        and bool(reads)
+        and final_values.get("decision") is None
+        and final_values.get("execution") is None
+        and final_values.get("plan_id") is None
+        and not final_values.get("route_error")
+        and final_message_received
+        # Verification normalizes punctuation. Only the entire reserved error
+        # downgrades completion; quoted fragments in valid reports remain data.
+        and unicodedata.normalize("NFKC", l1_reply).strip() != _FIXED_ANALYSIS_ERROR
+    ):
+        return EXIT_COMPLETED
 
     return EXIT_UNKNOWN
 

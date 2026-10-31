@@ -1,0 +1,120 @@
+{
+  "receipt": {
+    "run_id": "bill-9e611cc-20261031-jet-01",
+    "checkout_sha": "9e611ccd407e790b4dbd9e434e3ec8b61043cdb2",
+    "generation": "demo_20261031124122_5a2da072",
+    "case_id": "16",
+    "trace_sha256": "a77076c19002b9daf03cacb25f30b9293889f4a704c65f0a77748c73dbef3e16",
+    "verifier": "SQL",
+    "verified": true,
+    "checks": {
+      "exact_manifest_binding": true,
+      "same_current_generation_and_seed": true,
+      "balanced_ledger": true,
+      "no_unexpected_captured_bank_changes": true,
+      "case_specific_SQL_facts": true
+    }
+  },
+  "oracle_sha256": "6fcf6bd2f31dd8f22d1f713d55a8aaa9b4ef93e7fa18cce61aaaad9e3a8762f3",
+  "route": {
+    "parse_status": "NO_WRITE",
+    "plans": 0,
+    "evaluations": 0,
+    "approvals": 0,
+    "read_tools": [
+      "_utterance_snapshot",
+      "get_profile",
+      "get_spending_summary",
+      "detect_anomalies"
+    ]
+  },
+  "summary": {
+    "month": "2026-09",
+    "total_cents": 644800,
+    "previous_total_cents": 133190,
+    "mom_change_cents": 511610,
+    "mom_change_bp": 38412,
+    "categories": [
+      {
+        "category": "娱乐",
+        "share_bp": 1985,
+        "amount_cents": 128000,
+        "previous_amount_cents": 0
+      },
+      {
+        "category": "数码",
+        "share_bp": 5426,
+        "amount_cents": 349900,
+        "previous_amount_cents": 0
+      },
+      {
+        "category": "健身",
+        "share_bp": 309,
+        "amount_cents": 19900,
+        "previous_amount_cents": 36690
+      },
+      {
+        "category": "其他",
+        "share_bp": 2280,
+        "amount_cents": 147000,
+        "previous_amount_cents": 96500
+      }
+    ]
+  },
+  "anomaly_range": {
+    "to_at": "2026-10-01T00:00:00+08:00",
+    "from_at": "2026-09-01T00:00:00+08:00",
+    "account_id": null
+  },
+  "anomalies": [
+    {
+      "transaction_id": "txn_zs_014",
+      "occurred_at": "2026-09-06T18:13:00Z",
+      "amount_cents": 128000,
+      "codes": [
+        "ANOMALY_NIGHT_LARGE",
+        "ANOMALY_NEW_MERCHANT_LARGE"
+      ]
+    },
+    {
+      "transaction_id": "txn_zs_016",
+      "occurred_at": "2026-09-15T04:04:00Z",
+      "amount_cents": 26800,
+      "codes": [
+        "ANOMALY_DUPLICATE"
+      ]
+    },
+    {
+      "transaction_id": "txn_zs_017",
+      "occurred_at": "2026-09-22T07:30:00Z",
+      "amount_cents": 349900,
+      "codes": [
+        "ANOMALY_NEW_MERCHANT_LARGE"
+      ]
+    }
+  ],
+  "bank_snapshot_before_sha256": "f217f02281b0bddaa8f7b57a933e268d04a88f18a615c052d16fd2cfab25d358",
+  "bank_snapshot_after_sha256": "f217f02281b0bddaa8f7b57a933e268d04a88f18a615c052d16fd2cfab25d358",
+  "captured_tables": [
+    "accounts",
+    "billings",
+    "cards",
+    "event_executions",
+    "event_jobs",
+    "executions",
+    "holdings",
+    "instruction_runs",
+    "instructions",
+    "merchants",
+    "operations",
+    "orders",
+    "payees",
+    "risk_assessments",
+    "split_items",
+    "split_requests",
+    "state_versions",
+    "transactions",
+    "transfers"
+  ],
+  "note": "Existing actual development acceptance evidence collected before user narrowed this chat to development only. No further rehearsal/recording/offline demonstration is authorized here."
+}
