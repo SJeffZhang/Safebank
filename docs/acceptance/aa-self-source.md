@@ -45,3 +45,12 @@ APPROVE; reviewer reproduced old14 failures/18 negative passes, current32 pure
 passes. Root separately ran35 passed/11 actual-PG skips, not counted as actual
 PG acceptance. Rebased onto merged105 a113787 as01ffa3a; actual PG/live/SQL and
 final whole-workflow exact-SHA CI are still required.
+
+Root actual-PG run initially produced35 passes/1 fixture failure: the wrong-action
+case changed SPLIT_CREATE to CARD_LOST but omitted card_id, so the unchanged real
+loader correctly rejected the incomplete scope with INTENT_UNCLEAR before the
+intended provenance check. Added a real card_id to make that alternate action
+complete; its equal AA bool must still be unknown. No production check changed.
+Rerun all AA cases plus adjacent lost-card/redemption actual-PG tests:36 passed,
+no skips, including all11 new real G3/JWT/lineage tests. Standard live09 and final
+complete exact-head CI remain pending.

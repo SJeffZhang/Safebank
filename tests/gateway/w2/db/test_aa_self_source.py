@@ -183,6 +183,9 @@ def test_aa_self_source_through_real_g3_and_lineage(gateway_db, monkeypatch, mut
                 saved_scope = deepcopy(registered["scope"])
                 if mutation == "wrong_action":
                     saved_scope["action_kinds"] = ["CARD_LOST"]
+                    # Keep this other action complete so the real loader passes;
+                    # provenance must reject the equal AA bool for the wrong kind.
+                    saved_scope["fields"]["card_id"] = "crd_zs"
                 else:
                     saved_scope["fields"]["include_self"] = (
                         1 if mutation == "scope_number" else False

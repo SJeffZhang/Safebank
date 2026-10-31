@@ -982,6 +982,8 @@
 
 | 2026-10-31 | Codex（AA验收接线） | 新本机实际09基线plan pln_01M68W8X2T8ZJEE4V6962ERSS7为DENY/3 NOT_FOUND，原因有缺list_payees导致伪参与者ID及include_self缺源，memo已null。独立AA候选cb52eb6红14fail/负控18pass→新纯32pass，窄证明只create_split_request/include_self严格True+有效typed唯一SPLIT_CREATE+精确“我和”，未泛化scope。真实账户/收款人必读，空列表/伪ID及缺来源拒绝并有界重生成；独审APPROVE。rebase已合105后01ffa3a，协调者纯组合35pass/11真实PG skip，跳过不计通过；真实PG/live/SQL及最终完整CI待。 |
 
+| 2026-10-31 | Codex（AA真实PG） | #105合并后main已部署a113787；补齐正式GATEWAY_DB_TESTS/OBLIGATIONS_DB_TESTS后赎回/G4/G8组合112pass（前轮65pass/47条件skip未计完整）。AA真实PG首轮35pass/1负例夹具fail：CARD_LOST缺card_id被既有loader提前INTENT_UNCLEAR拒绝；仅补完整其他动作夹具，仍要求AA bool unknown，不改生产。AA加挂失/赎回真实PG重跑36pass/0skip，含新11真实G3/JWT/父链用例。新代际09及最终完整CI待。 |
+
 ## 5. 下一步待办（按顺序）
 
 ### demo-v1 接续门禁（2026-10-31，优先于下方历史任务表）
