@@ -62,13 +62,8 @@ def _runtime_db(app):
 # ── App Form (F‑path) tests ──────────────────────────────────────────────────
 
 
-def test_f_path_returns_503(app_config):
-    """F caller with valid app JWT receives 503 DEPENDENCY_UNAVAILABLE.
-
-    The F‑path skeleton returns 503 because app‑form evaluation lands in a
-    later component.  The test must use an app JWT (aud="gateway-app",
-    scope=["app"]) with F service token, NOT an assistant JWT.
-    """
+def test_f_path_rejects_agent_body(app_config):
+    """F accepts only action IDs; an agent PlanDraft cannot select form origin."""
 
     async def run():
         app = await build_app(app_config)
@@ -86,9 +81,9 @@ def test_f_path_returns_503(app_config):
                 "Authorization": f"Bearer {app.app_jwt(customer_id='cus_a', jti='jti-f-path')}",
             },
         )
-        assert resp.status_code == 503, resp.text
+        assert resp.status_code == 422, resp.text
         error = resp.json()
-        assert error["error"]["code"] == Code.DEPENDENCY_UNAVAILABLE.value
+        assert error["error"]["code"] == Code.CONTRACT_INVALID.value
         await db.dispose()
 
     asyncio.run(run())

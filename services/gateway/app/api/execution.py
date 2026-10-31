@@ -281,19 +281,20 @@ async def _load_session(conn: AsyncConnection, sid: str) -> dict[str, Any]:
     return row
 
 
-async def _compute_deadline_cap(conn: AsyncConnection, utterance_ids: list[str]) -> datetime:
+async def _compute_deadline_cap(
+    conn: AsyncConnection, utterance_ids: list[str], *, origin="agent"
+) -> datetime:
     """Return the earliest expires_at_wall across all utterance_ids.
 
     The seed data may use historical timestamps; L3 owns the actual
     expiration enforcement, so this function only computes the minimum
     without rejecting based on the current wall clock.
     """
+    if not utterance_ids or len(utterance_ids) != len(set(utterance_ids)):
+        raise GatewayError(Code.STATE_CHANGED, 409)
+    table = t.form_actions if origin == "app_form" else t.utterances
     rows = (
-        (
-            await conn.execute(
-                select(t.utterances.c.expires_at_wall).where(t.utterances.c.id.in_(utterance_ids))
-            )
-        )
+        (await conn.execute(select(table.c.expires_at_wall).where(table.c.id.in_(utterance_ids))))
         .mappings()
         .all()
     )
@@ -524,7 +525,20 @@ async def _handle_state_changed(
     from .plans import _load_authorization
 
     now_wall = _exec_now()
-    authorization = await _load_authorization(conn, sid, caller_customer_id, now_wall)
+    authorization = (
+        None
+        if plan["origin"] == "app_form"
+        else await _load_authorization(
+            conn,
+            sid,
+            caller_customer_id,
+            now_wall,
+            origin=plan["origin"],
+            source_ids=plan["utterance_ids"],
+            plan_id=plan_id,
+            l3=l3,
+        )
+    )
     ctx = EvalContext(
         request=None,
         identity=caller,
@@ -670,14 +684,29 @@ async def _handle_resume(
     plan_draft = PlanDraft.model_validate(plan["plan_draft"])
 
     # ── deadline ────────────────────────────────────────────────────────
-    deadline_cap_wall = await _compute_deadline_cap(conn, plan["utterance_ids"])
+    deadline_cap_wall = await _compute_deadline_cap(
+        conn, plan["utterance_ids"], origin=plan["origin"]
+    )
     if is_confirmed and approval is not None and approval["expires_at_wall"] < deadline_cap_wall:
         deadline_cap_wall = approval["expires_at_wall"]
 
     # ── replay ──────────────────────────────────────────────────────────
     from .plans import _load_authorization
 
-    authorization = await _load_authorization(conn, sid, caller_customer_id, now)
+    authorization = (
+        None
+        if plan["origin"] == "app_form"
+        else await _load_authorization(
+            conn,
+            sid,
+            caller_customer_id,
+            now,
+            origin=plan["origin"],
+            source_ids=plan["utterance_ids"],
+            plan_id=plan_id,
+            l3=l3,
+        )
+    )
 
     ctx = EvalContext(
         request=None,
@@ -1420,7 +1449,9 @@ async def execute_plan(plan_id: str, request: Request):
 
         # ── deadline ─────────────────────────────────────────────────────
 
-        deadline_cap_wall = await _compute_deadline_cap(conn, plan["utterance_ids"])
+        deadline_cap_wall = await _compute_deadline_cap(
+            conn, plan["utterance_ids"], origin=plan["origin"]
+        )
         if is_confirmed and approval["expires_at_wall"] < deadline_cap_wall:
             deadline_cap_wall = approval["expires_at_wall"]
 
@@ -1428,7 +1459,20 @@ async def execute_plan(plan_id: str, request: Request):
 
         from .plans import _load_authorization
 
-        authorization = await _load_authorization(conn, sid, caller.customer_id, now)
+        authorization = (
+            None
+            if plan["origin"] == "app_form"
+            else await _load_authorization(
+                conn,
+                sid,
+                caller.customer_id,
+                now,
+                origin=plan["origin"],
+                source_ids=plan["utterance_ids"],
+                plan_id=plan_id,
+                l3=l3,
+            )
+        )
 
         ctx = EvalContext(
             request=None,
