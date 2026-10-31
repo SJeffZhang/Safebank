@@ -213,7 +213,28 @@ def _good_split():
                     "memo": "__NULL__",
                 },
                 "depends_on": [],
-                "arg_sources": [],
+                "arg_sources": [
+                    {
+                        "param": "account_id",
+                        "source": {
+                            "kind": "read",
+                            "ref": "src_acct",
+                            "pointer": "/accounts/0/account_id",
+                        },
+                    },
+                    {
+                        "param": "total_cents",
+                        "source": {"kind": "utterance", "ref": "utt_a", "span": [4, 8]},
+                    },
+                    {
+                        "param": "participant_payee_ids",
+                        "source": {"kind": "utterance", "ref": "utt_a", "span": [11, 19]},
+                    },
+                    {
+                        "param": "include_self",
+                        "source": {"kind": "utterance", "ref": "utt_a", "span": [9, 11]},
+                    },
+                ],
             }
         ],
         "rationale": "AA聚餐",
