@@ -35,7 +35,7 @@
 
 ## 3. 当前状态（每次工作后更新）
 
-**最后更新**：2026-10-31（Codex 实施基础版冻结；#96/#98完成，代际初始化已完成，PR100 D3已合main，06日历来源新数据集live通过、精确head CI待跑；表单G4/G8及36仍阻塞）
+**最后更新**：2026-10-31（用户要求转交同事；main74baf71，基础组件至#103已合；#104表单完整CI未完成、#105赎回未live；详见docs/handoffs/2026-10-31-freeze-handoff.md）
 
 | 模块 | 状态 |
 |---|---|
@@ -45,8 +45,8 @@
 | L2 网关 | main `62e83ac`（L1 SSE修复 #33）：W4b2a/b/c（PR #23/#25/#27）、W3b（#29）、W4c（#31）均已合入。W4c 独立复审 APPROVE；精确 head `79229ae` 的 push/PR 四 CI 成功。前任协调者合并后组合回归与真实网络/HTTP集成通过；本次只读复核六服务 healthy、gateway 库 `0003_plan_draft`、两持久卷未重建。启动恢复扫描/孤儿 PAUSED job 归档仍属 W5。 |
 | L1 Agent | C1a–C1e 全部合入（C1c2 #24、C1d #26、C1e #28）；真实 PG checkpoint/服务/输出与回放组件已验收，L1 SSE结构化输出小修 #33 已合，39真实PG通过；完整 live 三层黄级转账尚未闭合。E0a #30 已合（405 条语料）；E0b worktree 保留 `ba76448`，收尾/live 与 try-agent 按用户指令暂停。中文金额角/分与中阿混写的输出解析缺口见 C1e 验收。 |
 | 前端 | **2026-10-29**：主项目 frontend/ 内竖版375×812 App，继承原Graphite & Champagne tokens；六场景、同站BFF、审批/OTP、叠卡/PIN/用途、报表/理财、我的整合订阅及圆形主题过渡、助手满内容区均实现合成预览。PR #71已合入main（7734f1f），最终head共6项CI成功；合并后全量384项（含新App61）、BFF10项与build复跑通过。交接文档及新Agent Prompt已随PR交付；真实三层联调/开户/PAN/主动推送边界见frontend/HANDOFF.md。未派DS worker，未写队友仓库。 |
-| 协调状态 | **2026-10-31 Codex 实施中**：main=7b6d5ab（#96/#97/#98/#99/#100已合）；通知审计、验收工具及代际初始化完成。PR100 D3/S1已通过独审、红绿专项、新代际live跨两期与SQL核对、精确a26c764完整本机CI，长期栈已部署回main。旧worktree、库与数据卷保留；无DS worker、无对比。 |
-| 下一步 | 在独立fix/schedule-provenance修06日历来源，再补表单G4/G8真实授权链及36、23/34/09阻塞，六场景两轮新数据集live、43条实测清单和断网回放通过后才冻结demo-v1。D6/D7攻击与控制台排在冻结之后，D8/指标最后；402/403/429立即停止。 |
+| 协调状态 | **2026-10-31交接**：main74baf71；通知审计、代际初始化、D3/S1、06/36、23均已验收合并。#104最新7ceda71已推，完整CI日志停W3b且无进程，不能称通过；#105为4880516、未live/最终CI。用户要求交同事，停止新功能推进，保留全部worktree/库/卷。 |
+| 下一步 | 先读docs/handoffs/2026-10-31-freeze-handoff.md；重跑并收尾#104，再rebase/验收#105、修09，完成两轮六场景、43条清单及断网回放后才冻结。攻击在冻结后，对比最后；402/403/429立即停。 |
 
 ### 已确认事实
 
@@ -945,6 +945,8 @@
 | 2026-10-31 | Codex | 23 a86e015新代际在gather遇gateway404，未生成计划且无业务写。补仅404/NOT_FOUND的固定脱敏反馈、既有轮数内重收集；失败不产生来源，其余403/429/503仍一次停。另修get_cards补读为冻结契约要求的account_id=null，两个回归旧码失败；Agent611通过39skip，独审APPROVE亲跑11。未持久化失败read参数，不猜其具体值；继续live。 |
 
 | 2026-10-31 | Codex | 23候选a01611d新代际真实L1红级审批/OTP/确认通过，SQL plan EXECUTED、approval USED/RED、L3 COMMITTED/EXECUTED；李四唯一卡LOST且无补卡，一条挂失operation、零转账、账本平衡。OTP挑战成功后已消耗，凭审计计数及确认HTTP200取证，不保存验证码。证据lost-card-source-live.json；开始最终head完整本机CI，尚未合103/冻结。 |
+
+| 2026-10-31 | Codex | 按用户要求制作详细交接及启动提示词，独立docs/freeze-handoff-2026-10-31从main74baf71创建，未夹带104/105代码；已将104最新7ceda71推远端。实查CI第二轮停W3b无进程，记未完成；105尚未live。09当前memo=null仍REPLAN，include_self漏源待定位。完整计划、已合证据、两个草稿状态、环境/命令/未完成门禁、两份无密钥辅助脚本写docs/handoffs/2026-10-31-*；停止新功能，未合104/105/未tag。 |
 
 ## 5. 下一步待办（按顺序）
 

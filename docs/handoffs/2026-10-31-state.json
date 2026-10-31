@@ -1,0 +1,32 @@
+{
+  "captured_at_beijing": "2026-10-31 15:03–15:10",
+  "main": "74baf71e938fdbda7bf9432019ef21cd2a796c5e",
+  "form": {
+    "branch": "feat/form-authorization",
+    "head": "7ceda71db5aae1c8293aa60ee6f526f54c1641e8",
+    "pr": 104,
+    "status": "draft/open",
+    "ci": "incomplete; log ends during W3b; no process found"
+  },
+  "redemption": {
+    "branch": "fix/redemption-sources",
+    "head": "48805167370b9779f7a828b7f8a077432fb6d7a9",
+    "pr": 105,
+    "status": "draft/open",
+    "live": "not run"
+  },
+  "clean_generation": {
+    "generation": "demo_20261031014249_e694d3ac",
+    "code": "f6479e1f3afe05efc4bd98b7c76fa2f5fae612ee",
+    "sim_now": "2026-10-15T09:00:00+08:00",
+    "gateway_migration": "0005_form_epoch",
+    "already_mutated": [
+      "form transfer20000 cents to Zhao Liu",
+      "Zhang San crd_zs_1 FROZEN"
+    ],
+    "AA_case09": "REPLAN/no execution"
+  },
+  "long_checkout": "7ceda71db5aae1c8293aa60ee6f526f54c1641e8",
+  "freeze": "not done; no demo-v1 tag created by this session",
+  "quotas": "review_demo_clock last invocation failed due Codex usage limit; not a DeepSeek402/403/429 event"
+}
