@@ -936,6 +936,16 @@
 
 | 2026-10-31 | Codex | 36候选d463d4f新代际live通过：真实L1审批计划EXECUTED，仅取消gym，其他三订阅ACTIVE；同计划创建每月1日向本人储蓄转19900分，D3两期各一次合计39800分，gym两期BLOCKED，下次01-01，零重复且账本平衡。证据idle-subscription-savings-live.json；增量独审APPROVE亲跑8，开始最终head完整CI，未合102/未冻结。 |
 
+| 2026-10-31 | Codex | 独立fix/card-loss-source处理23：四条新测试在b644569旧码失败，L1补get_cards只读、挂失card_id强制合法get_cards源、多当前卡无唯一明确尾号则追问。再测跨工具伪源拒绝/明确尾号继续，共6专项通过；不补造授权，不改L2审批/OTP。全Agent复跑，独审进行中，尚待新代际live与最终head CI。 |
+
+| 2026-10-31 | Codex | PR102精确b644569完整本机CI通过（unit3541/1035条件skip、全部真实PG含S1 29、并发5/一致性17/实际网络与重启恢复/契约），匹配完整head合并a387c8e，长期栈main healthy，公开摘要f741372已推。合并后首次git fetch网络空回复，GitHub API核实已合并再fetch成功。23独审APPROVE/606 Agent通过，准备新代际live；尚未冻结。 |
+
+| 2026-10-31 | Codex | 23候选2684788真实卡读取正确，但replace=false缺源且原来源层不支持固定不补卡默认，L2正确REPLAN无写。新增真实G3/JWT/PG回归旧1fail4pass，新窄规则仅同有效typed CARD_LOST范围+精确挂失动作证明False，拒True/过期/跨会话/无关span，5通过；L1漏replace源红测后补重试。组合回归/独审中，未称挂失live通过。 |
+
+| 2026-10-31 | Codex | 23 a86e015新代际在gather遇gateway404，未生成计划且无业务写。补仅404/NOT_FOUND的固定脱敏反馈、既有轮数内重收集；失败不产生来源，其余403/429/503仍一次停。另修get_cards补读为冻结契约要求的account_id=null，两个回归旧码失败；Agent611通过39skip，独审APPROVE亲跑11。未持久化失败read参数，不猜其具体值；继续live。 |
+
+| 2026-10-31 | Codex | 23候选a01611d新代际真实L1红级审批/OTP/确认通过，SQL plan EXECUTED、approval USED/RED、L3 COMMITTED/EXECUTED；李四唯一卡LOST且无补卡，一条挂失operation、零转账、账本平衡。OTP挑战成功后已消耗，凭审计计数及确认HTTP200取证，不保存验证码。证据lost-card-source-live.json；开始最终head完整本机CI，尚未合103/冻结。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：

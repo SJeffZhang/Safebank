@@ -56,6 +56,9 @@ _SYSTEM = (
     "cancel_subscription 的 instruction_id 必须从已读数据（list_subscriptions 或 "
     "detect_subscriptions 的 items 里的 instruction_id，以 si_ 开头）用 read 来源引用，"
     "不能自己编造或从原话直接取值。"
+    "report_card_lost 的 card_id 必须声明 get_cards.items 对应 id 的 read 来源；"
+    "多张当前卡未指明时必须追问，不得自行选择。replace也必须声明utterance来源；"
+    "未要求补卡时replace=false，span只指向挂失/丢了等挂失动作词，不要省略来源。"
     "找出没用/闲置订阅时，只能取消 detect_subscriptions.items 中 is_idle=true 的集合；"
     "is_idle=false 或缺失不能凭 usage_evidence/使用次数为0改判，也不能先取消全部再请用户确认。"
     "原话含 每月/每周/每天/每N号/定时/定期 时必须用 schedule_transfer（填 period 与 "
@@ -788,6 +791,52 @@ def _split_participant_problems(draft: PlanDraft, state: AgentState) -> list[str
     return problems
 
 
+def _lost_card_clarify(body: PlanBody, state: AgentState) -> PlanBody:
+    if not any(s.tool == "report_card_lost" for s in body.steps):
+        return body
+    cards = {
+        item["id"]: item
+        for read in state.get("reads", [])
+        if read.tool == "get_cards"
+        for item in read.data.get("items", [])
+        if isinstance(item, dict)
+        and isinstance(item.get("id"), str)
+        and item.get("current") is True
+    }
+    text = _current_turn_text(state)
+    named = [
+        item
+        for item in cards.values()
+        if isinstance(item.get("last4"), str)
+        and re.fullmatch(r"\d{4}", item["last4"])
+        and re.search(r"(?<!\d)" + item["last4"] + r"(?!\d)", text)
+    ]
+    if len(cards) > 1 and len(named) != 1:
+        raise ExhaustedClarify(["card_id"], ["需要挂失的卡片尾号"])
+    return body
+
+
+def _lost_card_source_problems(draft: PlanDraft, state: AgentState) -> list[str]:
+    card_reads = {r.source_ref for r in state.get("reads", []) if r.tool == "get_cards"}
+    problems = []
+    for index, step in enumerate(draft.steps):
+        if step.tool != "report_card_lost":
+            continue
+        sources = [s.source for s in step.arg_sources if s.param == "card_id"]
+        if len(sources) != 1 or sources[0].kind != "read" or sources[0].ref not in card_reads:
+            problems.append(
+                f"steps[{index}].card_id: 挂失必须引用 get_cards 读取结果中该卡 id 的 read 来源，"
+                "不能省略或猜测"
+            )
+        replacement = [s.source for s in step.arg_sources if s.param == "replace"]
+        if len(replacement) != 1 or replacement[0].kind != "utterance":
+            problems.append(
+                f"steps[{index}].replace: 必须声明原话utterance来源；未要求补卡用false，"
+                "span指向挂失动作词，不能省略来源"
+            )
+    return problems
+
+
 def _idle_subscription_problems(draft: PlanDraft, state: AgentState) -> list[str]:
     """Reject overbroad proposals locally; L2 still derives and authorizes targets.
 
@@ -958,6 +1007,7 @@ class PlanAdapter:
                 )
                 body = _default_source_account_overrides(body, state)
                 body = _wealth_product_clarify(body, state)
+                body = _lost_card_clarify(body, state)
                 draft = self._to_draft(body, state)
                 ref_problems = _reference_problems(draft, state)
                 val_problems = _required_value_problems(draft, state)
@@ -967,6 +1017,7 @@ class PlanAdapter:
                 split_problems = _split_participant_problems(draft, state)
                 der_problems = _derived_schedule_problems(draft, state)
                 idle_problems = _idle_subscription_problems(draft, state)
+                card_problems = _lost_card_source_problems(draft, state)
                 wealth_problems = _wealth_source_problems(draft, state)
                 all_problems = (
                     ref_problems
@@ -977,6 +1028,7 @@ class PlanAdapter:
                     + split_problems
                     + der_problems
                     + idle_problems
+                    + card_problems
                     + wealth_problems
                 )
                 if all_problems:
@@ -994,6 +1046,7 @@ class PlanAdapter:
                         and not split_problems
                         and not der_problems
                         and not idle_problems
+                        and not card_problems
                         and not wealth_problems
                     ):
                         fields = _exhausted_clarify_fields(val_problems)

@@ -70,6 +70,19 @@ def _read(source, records, state, now, customer_id):
     return value, "untrusted" if tainted else "trusted"
 
 
+def _lost_card_no_replacement(tool, param, value, row, span_text):
+    """A fixed conservative default only from the same persisted typed loss scope."""
+    if tool != "report_card_lost" or param != "replace" or value is not False:
+        return False
+    scope = row.get("normalized_scope", {})
+    return (
+        scope.get("action_kinds") == ["CARD_LOST"]
+        and scope.get("fields", {}).get("replace") is False
+        and bool(scope.get("fields", {}).get("card_id"))
+        and normalize(span_text) in {"挂失", "丢了", "丢失了", "丢失", "丢"}
+    )
+
+
 def _schedule_calendar_value(tool, param, value, row, span_text):
     """Only verified persisted typed scopes may normalize schedule calendar fields.
 
@@ -187,6 +200,9 @@ class ProvenanceStage(Stage):
                             and (
                                 matches(value, text[start:end], param, state, ctx.customer_id)
                                 or _schedule_calendar_value(
+                                    step.tool, param, value, row, text[start:end]
+                                )
+                                or _lost_card_no_replacement(
                                     step.tool, param, value, row, text[start:end]
                                 )
                             )

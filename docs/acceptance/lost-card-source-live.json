@@ -1,0 +1,13 @@
+{
+  "generation": "demo_20261031012557_9dcbf820",
+  "candidate": "a01611d0cbb46b7d80c12c9dab4fc613db071f7e",
+  "plan_id": "pln_01M67S1F1MQEE82E7MDQ97320Q",
+  "cards": "crd_ls_1|LOST|-",
+  "plan": "EXECUTED|agent",
+  "approval": "USED|RED|t",
+  "otp_audit": "APPROVAL_CONFIRMED|1\nAPPROVAL_OTP_SENT|1\nDEMO_OTP_READ|1",
+  "execution": "COMMITTED|EXECUTED",
+  "operation_count": "1",
+  "transfers": "0",
+  "balanced": "t|t"
+}
