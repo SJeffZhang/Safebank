@@ -1,0 +1,372 @@
+{
+  "generation": "demo_20261031121900_17ea362a",
+  "commit": "e884e0c94c1b5558b372f3caed3f20e0072b9b69",
+  "plan_id": "pln_01M68YDQ5P89X3MR9VH44FMGEX",
+  "initial": {
+    "accounts": {
+      "acc_a": [
+        0,
+        600000,
+        0,
+        0
+      ],
+      "acc_b": [
+        0,
+        200000,
+        0,
+        0
+      ],
+      "acc_s": [
+        0,
+        2000000,
+        0,
+        0
+      ],
+      "acc_ls_chk": [
+        0,
+        1200000,
+        0,
+        0
+      ],
+      "acc_ls_sav": [
+        0,
+        5000000,
+        0,
+        0
+      ],
+      "acc_sb_chk": [
+        0,
+        300000,
+        0,
+        0
+      ],
+      "acc_ww_chk": [
+        0,
+        200000,
+        0,
+        0
+      ],
+      "acc_zs_chk": [
+        1499430,
+        2099430,
+        0,
+        0
+      ],
+      "acc_zs_sav": [
+        0,
+        2000000,
+        0,
+        0
+      ],
+      "acc_seed_equity": [
+        13479430,
+        0,
+        0,
+        0
+      ],
+      "acc_fund_prd_mmf": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "acc_fund_prd_tech": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "acc_fund_prd_mixed": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "acc_fund_prd_sbond": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "acc_fund_prd_growth": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "acc_fund_prd_stable": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "acc_external_clearing": [
+        120000,
+        1499430,
+        0,
+        0
+      ]
+    },
+    "splits": 0,
+    "split_items": 0,
+    "executions": 0,
+    "operations": 0,
+    "orders": 0,
+    "transfers": 184,
+    "transactions": 178
+  },
+  "after": {
+    "accounts": {
+      "acc_a": [
+        0,
+        600000,
+        0,
+        0
+      ],
+      "acc_b": [
+        0,
+        200000,
+        0,
+        0
+      ],
+      "acc_s": [
+        0,
+        2000000,
+        0,
+        0
+      ],
+      "acc_ls_chk": [
+        0,
+        1200000,
+        0,
+        0
+      ],
+      "acc_ls_sav": [
+        0,
+        5000000,
+        0,
+        0
+      ],
+      "acc_sb_chk": [
+        0,
+        300000,
+        0,
+        0
+      ],
+      "acc_ww_chk": [
+        0,
+        200000,
+        0,
+        0
+      ],
+      "acc_zs_chk": [
+        1499430,
+        2099430,
+        0,
+        0
+      ],
+      "acc_zs_sav": [
+        0,
+        2000000,
+        0,
+        0
+      ],
+      "acc_seed_equity": [
+        13479430,
+        0,
+        0,
+        0
+      ],
+      "acc_fund_prd_mmf": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "acc_fund_prd_tech": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "acc_fund_prd_mixed": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "acc_fund_prd_sbond": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "acc_fund_prd_growth": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "acc_fund_prd_stable": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "acc_external_clearing": [
+        120000,
+        1499430,
+        0,
+        0
+      ]
+    },
+    "splits": 1,
+    "split_items": 3,
+    "executions": 1,
+    "operations": 1,
+    "orders": 0,
+    "redemptions": 0,
+    "transfers": 184,
+    "transactions": 178
+  },
+  "split": {
+    "id": "spl_de5fb622-8765-5784-99b9-d88727e41979",
+    "customer_id": "cus_zs",
+    "account_id": "acc_zs_chk",
+    "total_cents": 40000,
+    "include_self": true,
+    "self_share_cents": 10000
+  },
+  "items": [
+    {
+      "payee_id": "pye_zs_f1",
+      "amount_cents": 10000,
+      "status": "UNPAID"
+    },
+    {
+      "payee_id": "pye_zs_f2",
+      "amount_cents": 10000,
+      "status": "UNPAID"
+    },
+    {
+      "payee_id": "pye_zs_f3",
+      "amount_cents": 10000,
+      "status": "UNPAID"
+    }
+  ],
+  "plan": {
+    "status": "EXECUTED",
+    "origin": "agent",
+    "step_count": 1,
+    "args": {
+      "memo": null,
+      "account_id": "acc_zs_chk",
+      "total_cents": 40000,
+      "include_self": true,
+      "participant_payee_ids": [
+        "pye_zs_f1",
+        "pye_zs_f2",
+        "pye_zs_f3"
+      ]
+    },
+    "sources": [
+      {
+        "param": "account_id",
+        "source": {
+          "ref": "src_01M68YDG0M72GXFRJPNP451M9V",
+          "kind": "read",
+          "pointer": "/accounts/0/id"
+        }
+      },
+      {
+        "param": "total_cents",
+        "source": {
+          "ref": "utt_01M68YDBB8DA64DYQGKJ5F0YK0",
+          "kind": "utterance",
+          "span": [
+            4,
+            8
+          ]
+        }
+      },
+      {
+        "param": "include_self",
+        "source": {
+          "ref": "utt_01M68YDBB8DA64DYQGKJ5F0YK0",
+          "kind": "utterance",
+          "span": [
+            9,
+            11
+          ]
+        }
+      },
+      {
+        "param": "participant_payee_ids",
+        "source": {
+          "ref": "utt_01M68YDBB8DA64DYQGKJ5F0YK0",
+          "kind": "utterance",
+          "span": [
+            11,
+            19
+          ]
+        }
+      }
+    ]
+  },
+  "execution": {
+    "status": "EXECUTED",
+    "evidence": {
+      "risk": "GREEN",
+      "type": "INTERACTIVE",
+      "origin": "agent",
+      "plan_hash": "9eca95a246554dae943193238b777c6d853c85675bcde4765ce4af22ee7b076b",
+      "scope_ids": [
+        "utt_01M68YDBB8DA64DYQGKJ5F0YK0"
+      ],
+      "approval_id": null,
+      "evaluation_id": "evl_01M68YDQ8VWDQA9MBDFZAE3721",
+      "utterance_ids": [
+        "utt_01M68YDBB8DA64DYQGKJ5F0YK0"
+      ],
+      "final_view_hash": "",
+      "confirmed_at_wall": null,
+      "authorization_epoch": 0,
+      "confirmed_view_hash": null,
+      "approved_evaluation_id": null
+    }
+  },
+  "counts": {
+    "executions": 1,
+    "operations": 1,
+    "ledger_balanced": true
+  },
+  "self_source_binding": {
+    "same_session": true,
+    "same_customer": true,
+    "kind": "typed",
+    "parse_status": "SCOPED",
+    "source_text": "我和",
+    "actions": [
+      "SPLIT_CREATE"
+    ],
+    "fields": {
+      "account_id": "acc_zs_chk",
+      "total_cents": 40000,
+      "include_self": true,
+      "participant_payee_ids": [
+        "pye_zs_f1",
+        "pye_zs_f2",
+        "pye_zs_f3"
+      ]
+    },
+    "session_epoch": 0,
+    "utterance_epoch": 0,
+    "plan_epoch": null,
+    "scope_ids": [
+      "utt_01M68YDBB8DA64DYQGKJ5F0YK0"
+    ],
+    "utterance_ids": [
+      "utt_01M68YDBB8DA64DYQGKJ5F0YK0"
+    ]
+  }
+}

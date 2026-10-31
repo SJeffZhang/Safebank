@@ -76,3 +76,27 @@ All tests use scripted HTTP only, with `NO_PROXY=127.0.0.1,localhost`:
 | Full default suite, external DB/Linux secret flags explicitly zero | 3643 passed / 1082 skipped, exit 0 (30.90s); `/private/tmp/sbg-aa-understanding-full.log` |
 
 This implementer made no new real LLM/API, PG, Docker, deployment or publication request. The increment requires independent safety review and the coordinator's fresh live09 before any freeze acceptance claim; all skipped/deselected cases remain unaccepted by these pure runs.
+
+Standard production992b5dd fresh live09 first failed UNKNOWN: actual checkpoint
+showed G3 SCOPED/SPLIT_CREATE and no clarification, but LLM needs_write=false
+(intents split_bill), so no plan/split/execution was created. This was not a
+source-layer acceptance pass. A narrow whole-sentence semantic check now uses
+the existing single regeneration budget for that mistaken read-only proposal;
+it never sets needs_write itself or changes amounts/participants/slots/sources.
+Read-only questions, context, other sentence shapes and actual clarifications
+remain excluded. New35 tests: old9 failed/26 negative passed, corrected35 passed;
+independent safety increment APPROVE and116 focused tests, root56 focused pass.
+Full default3643 passed/1082 conditional skips; real PG36 previously passed and
+no gateway code changed in this increment.
+
+Final actual L1 e884e0c94c1b5558b372f3caed3f20e0072b9b69 on a second fresh
+generation demo_20261031121900_17ea362a: original09 completed14sec/exit1,
+ALLOW/EXECUTED plan pln_01M68YDQ5P89X3MR9VH44FMGEX. Independent fixed SQL
+confirmed one40000-cent split, self10000, pye_zs_f1/f2/f3 each10000 UNPAID,
+one SPLIT_CREATE operation/execution, unchanged account counters/transfers/
+transactions/orders and balanced ledger. Exact self source is persisted typed
+SCOPED text 我和, same session/customer, sole SPLIT_CREATE; session/utterance/
+execution epoch and scope/utterance IDs match. Agent plans.authorization_epoch
+is nullable by existing design; it is not a substitute for actual evidence.
+SQL receipt: aa-self-source-live.json. Final documentation-and-code full-SHA
+whole local CI remains the merge gate. No demo-v1 freeze/tag claimed.
