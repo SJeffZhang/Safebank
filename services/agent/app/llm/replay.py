@@ -138,7 +138,10 @@ class _Bindings:
                 self.ids[token] = f"<{kind}{len(self.ids) + 1}>"
             return self.ids[token]
 
-        return _ID_PATTERN.sub(replace, text)
+        # Escape the literal alphabet before inserting recorder-owned references.
+        # Escaping '~' first makes this bijective even for user-supplied escape text.
+        escaped = text.replace("~", "~tilde;").replace("<", "~lt;")
+        return _ID_PATTERN.sub(replace, escaped)
 
     def walk(self, obj: object, *, response: bool = False, in_calls: bool = False) -> object:
         if isinstance(obj, dict):
@@ -151,13 +154,24 @@ class _Bindings:
                     if value not in self.calls:
                         kind = "NEWCALL" if response else "CALL"
                         self.calls[value] = f"<{kind}{len(self.calls) + 1}>"
-                    result[key] = self.calls[value]
+                    result[self.bank_text(key, response=response)] = self.calls[value]
                 else:
-                    result[key] = self.walk(value, response=response, in_calls=key == "tool_calls")
+                    result[self.bank_text(key, response=response)] = self.walk(
+                        value, response=response, in_calls=key == "tool_calls"
+                    )
             return result
         if isinstance(obj, list):
             return [self.walk(v, response=response, in_calls=in_calls) for v in obj]
         if isinstance(obj, str):
+            # Decode embedded JSON before escaping; later scrubbing must never
+            # turn a unicode-escaped literal into a recorder-owned reference.
+            try:
+                parsed = json.loads(obj)
+            except ValueError:
+                pass
+            else:
+                if isinstance(parsed, (dict, list)):
+                    return _json(self.walk(parsed, response=response))
             return self.bank_text(obj, response=response)
         return obj
 
@@ -173,8 +187,27 @@ class _Bindings:
                 raise ReplayStaleError("Unbound replay ID; refusing recorded authority")
             return reverse[token]
 
-        # JSON substitution handles IDs embedded in function.arguments strings as well.
-        return json.loads(_PLACEHOLDER.sub(replace, _json(obj)))
+        def literal(text: str) -> str:
+            return text.replace("~lt;", "<").replace("~tilde;", "~")
+
+        def restore_value(value: object) -> object:
+            if isinstance(value, dict):
+                return {restore_value(k): restore_value(v) for k, v in value.items()}
+            if isinstance(value, list):
+                return [restore_value(v) for v in value]
+            if not isinstance(value, str):
+                return value
+            # Decode literal spans only. Current IDs inserted by replace() are
+            # opaque and must not themselves be decoded or treated as templates.
+            pieces = []
+            offset = 0
+            for match in _PLACEHOLDER.finditer(value):
+                pieces.extend((literal(value[offset : match.start()]), replace(match)))
+                offset = match.end()
+            pieces.append(literal(value[offset:]))
+            return "".join(pieces)
+
+        return restore_value(obj)
 
 
 def canonical_text(text: str) -> str:
@@ -248,6 +281,8 @@ def _validated_lines(path: Path, schema_version: str, profile: str) -> tuple[dic
         header = json.loads(lines[0])
         if not isinstance(header, dict) or header.get("schema_version") != schema_version:
             raise ReplayStaleError("Replay schema version mismatch")
+        if type(header.get("format")) is not int or header["format"] != 2:
+            raise ReplayStaleError("Unsupported or missing replay format")
         if header.get("profile") != profile:
             raise ReplayStaleError("Replay profile mismatch")
         entries = []
@@ -261,11 +296,10 @@ def _validated_lines(path: Path, schema_version: str, profile: str) -> tuple[dic
                 or not isinstance(entry.get("model"), str)
             ):
                 raise ReplayStaleError("Corrupt replay entry")
-            if header.get("format") == 2:
-                digest = entry.pop("digest", None)
-                if digest != hashlib.sha256(_json(entry).encode()).hexdigest():
-                    raise ReplayStaleError("Corrupt replay checksum")
-                entry["digest"] = digest
+            digest = entry.pop("digest", None)
+            if digest != hashlib.sha256(_json(entry).encode()).hexdigest():
+                raise ReplayStaleError("Corrupt replay checksum")
+            entry["digest"] = digest
             entries.append(entry)
         return header, entries
     except (ValueError, UnicodeError, TypeError) as exc:
@@ -428,6 +462,15 @@ _QUOTED_SECRET = re.compile(
     r"[\"']\s*:\s*[\"'])([^\"']*)"
 )
 
+# A malformed JSON object's value may be an unquoted number, exponent, partial
+# token or incomplete credential. Stop at structural delimiters, not digits;
+# unrelated business fields (e.g. amount_cents) keep their original values.
+_UNQUOTED_SECRET = re.compile(
+    r"(?i)([\"'](?:[A-Za-z0-9_-]*_)?"
+    r"(?:pin|otp|token|password|secret|jwt|api_key|authorization|cookie)"
+    r"[\"']\s*:\s*)([^\s\"',}\]][^,}\]]*)"
+)
+
 
 def _is_sensitive_key(key: str) -> bool:
     lower = key.lower()
@@ -436,6 +479,25 @@ def _is_sensitive_key(key: str) -> bool:
         or lower.endswith("_token")
         or any(sensitive in lower for sensitive in _SENSITIVE_KEYS)
     )
+
+
+_MALFORMED_KEY = re.compile(r'("(?:\\.|[^"\\])*")(\s*:)')
+
+
+def _decode_sensitive_keys(text: str) -> str:
+    """Decode escaped ASCII secret labels even when their enclosing JSON is broken."""
+
+    def decode(match: re.Match) -> str:
+        try:
+            key = json.loads(match.group(1))
+        except ValueError:
+            return match.group(0)
+        # Leave every other literal untouched, especially replay's escaped alphabet.
+        if re.fullmatch(r"[A-Za-z0-9_-]+", key) and _is_sensitive_key(key):
+            return json.dumps(key) + match.group(2)
+        return match.group(0)
+
+    return _MALFORMED_KEY.sub(decode, text)
 
 
 def _secret_values(obj: object) -> set[str]:
@@ -453,7 +515,9 @@ def _secret_values(obj: object) -> set[str]:
         try:
             parsed = json.loads(obj)
         except ValueError:
+            obj = _decode_sensitive_keys(obj)
             values.update(match.group(2) for match in _QUOTED_SECRET.finditer(obj))
+            values.update(match.group(2).strip() for match in _UNQUOTED_SECRET.finditer(obj))
         else:
             if isinstance(parsed, (dict, list)):
                 values.update(_secret_values(parsed))
@@ -489,8 +553,10 @@ def _scrub_sensitive(obj: object, depth: int = 0) -> object:
         try:
             parsed = json.loads(obj)
         except ValueError:
+            obj = _decode_sensitive_keys(obj)
             quoted = _QUOTED_SECRET.sub(r"\1<REDACTED>", obj)
-            return _SECRET_TEXT.sub("<REDACTED>", quoted)
+            unquoted = _UNQUOTED_SECRET.sub(r'\1"<REDACTED>"', quoted)
+            return _SECRET_TEXT.sub("<REDACTED>", unquoted)
         if isinstance(parsed, (dict, list)):
             return _json(_scrub_sensitive(parsed, depth + 1))
         return _SECRET_TEXT.sub("<REDACTED>", obj)

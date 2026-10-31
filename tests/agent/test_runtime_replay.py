@@ -298,12 +298,11 @@ def test_malformed_tool_retry_sequence_is_preserved(recording, monkeypatch):
     assert offline.invoke("identical retry").tool_calls[0]["args"] == {"ok": True}
 
 
-def test_checksum_damage_and_unbound_literal_placeholder_fail_closed(recording, monkeypatch):
+def test_checksum_damage_fails_closed_and_literal_placeholder_stays_literal(recording, monkeypatch):
     make_llm(
         "synthetic", httpx.Client(transport=httpx.MockTransport(lambda _: text_response("<ID999>")))
     ).invoke("hi")
-    with pytest.raises(ReplayStaleError, match="Unbound"):
-        replay(monkeypatch).invoke("hi")
+    assert replay(monkeypatch).invoke("hi").content == "<ID999>"
     lines = recording.read_text().splitlines()
     entry = json.loads(lines[1])
     entry["response"]["choices"][0]["message"]["content"] = "silently changed"
@@ -344,3 +343,111 @@ def test_numeric_secret_echo_stays_valid_json(recording):
     entry = json.loads(recording.read_text().splitlines()[1])
     assert entry["response"]["numeric_echo"] == "<REDACTED>"
     assert "984321" not in recording.read_text()
+
+
+@pytest.mark.parametrize(
+    "literal", ["<ID1>", "<CALL1>", "<NEWCALL1>", "<UNBOUND1>", "~lt;ID1> ~tilde; <ID1>"]
+)
+def test_literal_reserved_tokens_never_acquire_request_authority(recording, monkeypatch, literal):
+    def provider(request):
+        return tool_response(
+            "propose", {"source_ref": literal, "genuine": OLD_SRC}, content=literal
+        )
+
+    llm = make_llm("synthetic", httpx.Client(transport=httpx.MockTransport(provider)))
+    assert llm.invoke(OLD_SRC).tool_calls[0]["args"]["source_ref"] == literal
+    response = replay(monkeypatch).invoke(NEW_SRC)
+    assert response.tool_calls[0]["args"] == {"source_ref": literal, "genuine": NEW_SRC}
+    assert response.content == literal
+
+
+def test_literal_request_token_does_not_collide_with_actual_source(recording, monkeypatch):
+    make_llm(
+        "synthetic",
+        httpx.Client(
+            transport=httpx.MockTransport(lambda _: text_response("recorded for a real source"))
+        ),
+    ).invoke(OLD_SRC)
+    with pytest.raises(ReplayMissError):
+        replay(monkeypatch).invoke("<ID1>")
+
+
+@pytest.mark.parametrize(
+    "arguments,secret",
+    [
+        ('{"pin": 984321, "ok":', "984321"),
+        ('{"otp": 276543, "amount_cents": 120000, "ok":', "276543"),
+        ('{"pin": 984', "984"),
+        ('{"otp": 2.76543e5, "ok":', "2.76543e5"),
+    ],
+)
+def test_malformed_unquoted_secrets_are_not_recorded(recording, arguments, secret):
+    def provider(request):
+        body = tool_response("propose", {}).json()
+        body["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = arguments
+        return httpx.Response(200, json=body)
+
+    make_llm("synthetic", httpx.Client(transport=httpx.MockTransport(provider))).invoke("hi")
+    raw = recording.read_text()
+    assert secret not in raw
+    entry = json.loads(raw.splitlines()[1])
+    stored = entry["response"]["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"]
+    if "120000" in arguments:
+        assert "120000" in stored
+
+
+@pytest.mark.parametrize("bad_format", [None, 1, 3, "2", True])
+@pytest.mark.parametrize("mode", ["record", "replay"])
+def test_unsupported_recording_format_fails_before_provider(
+    recording, monkeypatch, bad_format, mode
+):
+    make_llm(
+        "synthetic",
+        httpx.Client(transport=httpx.MockTransport(lambda _: text_response("original"))),
+    ).invoke("hi")
+    lines = recording.read_text().splitlines()
+    header = json.loads(lines[0])
+    if bad_format is None:
+        header.pop("format")
+    else:
+        header["format"] = bad_format
+    lines[0] = json.dumps(header)
+    entry = json.loads(lines[1])
+    entry["response"]["choices"][0]["message"]["content"] = "corrupted without checksum update"
+    lines[1] = json.dumps(entry)
+    recording.write_text("\n".join(lines) + "\n")
+    monkeypatch.setenv("LLM_MODE", mode)
+    with pytest.raises(ReplayStaleError, match="format"):
+        make_llm("synthetic", httpx.Client(transport=httpx.MockTransport(no_network)))
+
+
+def test_json_escaped_literal_cannot_become_a_reference_during_scrubbing(recording, monkeypatch):
+    def provider(request):
+        result = tool_response("propose", {}).json()
+        result["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = (
+            r'{"source_ref":"\u003cID1\u003e","genuine":"\u0073rc_'
+            + OLD_SRC.removeprefix("src_")
+            + '"}'
+        )
+        return httpx.Response(200, json=result)
+
+    llm = make_llm("synthetic", httpx.Client(transport=httpx.MockTransport(provider)))
+    assert llm.invoke(OLD_SRC).tool_calls[0]["args"] == {"source_ref": "<ID1>", "genuine": OLD_SRC}
+    assert replay(monkeypatch).invoke(NEW_SRC).tool_calls[0]["args"] == {
+        "source_ref": "<ID1>",
+        "genuine": NEW_SRC,
+    }
+
+
+def test_malformed_json_escaped_secret_key_is_scrubbed(recording):
+    def provider(request):
+        body = tool_response("propose", {}).json()
+        body["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = (
+            r'{"p\u0069n": 984321, "o\u0074p": "276543", "amount_cents":120000, "ok":'
+        )
+        return httpx.Response(200, json=body)
+
+    make_llm("synthetic", httpx.Client(transport=httpx.MockTransport(provider))).invoke("hi")
+    raw = recording.read_text()
+    assert "984321" not in raw and "276543" not in raw
+    assert "120000" in raw
