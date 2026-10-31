@@ -133,7 +133,9 @@ class RespondAdapter:
             if len(text) > _MAX_RESPONSE_CHARS:
                 text = text[:_MAX_RESPONSE_CHARS] + "…"
             return text
-        except Exception:
+        except Exception as exc:
+            if getattr(exc, "status_code", None) in (402, 403, 429):
+                raise
             return ""
 
     def _respond_executed(self, state: AgentState, execution: object) -> str:

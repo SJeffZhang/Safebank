@@ -124,12 +124,26 @@ class GatherAdapter:
             SystemMessage(content=_SYSTEM),
             HumanMessage(content=self._prompt(state, date_line)),
         ]
-        for _ in range(self._max_rounds):
+        for round_index in range(self._max_rounds):
             message = self._model.invoke(messages)
             if self._observer is not None:
                 self._observer(message)
-            if getattr(message, "invalid_tool_calls", None):
-                raise LlmToolError("model returned malformed tool call arguments")
+            invalid = getattr(message, "invalid_tool_calls", None)
+            if invalid:
+                calls = [*invalid, *(message.tool_calls or [])]
+                if any(call.get("name") not in READ_ARGS for call in calls):
+                    raise LlmToolError("unknown or non-read tool in malformed batch")
+                if round_index + 1 == self._max_rounds:
+                    raise LlmToolError("model returned malformed tool call arguments")
+                # Nothing from a malformed batch is executed or echoed into
+                # the next prompt. Provider errors propagate before this branch.
+                messages.append(
+                    HumanMessage(
+                        content="上一轮只读工具参数不是合法JSON对象，整批未执行。"
+                        "请重新生成合法只读调用，不要猜实体ID。"
+                    )
+                )
+                continue
             calls = message.tool_calls or []
             for call in calls:
                 name = call.get("name")

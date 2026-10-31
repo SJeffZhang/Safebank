@@ -44,3 +44,21 @@ Supplemental-read candidate: combined72 tests passed; independent read-only
 review APPROVE. Malformed model tool-call JSON remains an observed unresolved
 LLM failure; this change does not claim to fix it. No quantity/source/approval
 checks were relaxed. Full unit, candidate live and final exact-head CI pending.
+
+Candidate99df716: standard-entrypoint new generation confirmed Li Si has
+10000.0000 MMF units and1200000-cent cash before real L1 case34. That run failed
+again in gather malformed tool-call arguments; no plan/order was created.
+Seven format-boundary regressions: old6 failed/1 forbidden-tool control passed.
+New bounded feedback stays within3 rounds, executes none of a malformed mixed
+batch, omits malformed data from prompts, and rejects write/unknown names
+immediately. Existing malformed negative fixtures now exhaust and assert all3
+rounds, retaining zero-read assertions.
+
+Six additional SDK-transport regressions demonstrated402/403/429 were hidden
+by response/number-repair fallback. They now propagate without retries or model
+change. Combined206 passed with lint. This closes local failure handling only;
+independent incremental review, full unit and fresh candidate live remain pending.
+
+Error-boundary candidate validation: independent read-only security APPROVE,
+full unit3575 passed/1071 conditional skips, lint/format passed. Fresh real live
+remains the next gate; no merge/freeze claimed.
