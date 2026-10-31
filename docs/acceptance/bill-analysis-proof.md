@@ -106,3 +106,17 @@ merged AA c6a1d2e as2e20a46. Root integrated bill+AA focused107 tests passed.
 Original checkout's unrelated AGENTS/output WIP is retained and untouched;
 actual deployment/SQL/final whole CI use isolated worktrees, one stack at a time.
 Fresh standard-entrypoint case16, exact SQL and final full-SHA CI remain gates.
+
+Existing actual acceptance at9e611ccd407e790b4dbd9e434e3ec8b61043cdb2:
+generation demo_20261031124122_5a2da072, case16 COMPLETED in2s, typed NO_WRITE,
+no plan/evaluation/approval. Independently reviewed oracle6fcf6bd actually ran
+both SELECTs with default_transaction_read_only=on against PostgreSQL. Raw
+transaction-derived September644800/August133190 cents, category shares and
+three anomalies match the fixed report over Shanghai [Sep1,Oct1). Full captured
+bank state hashes before/after are equal and ledger balances. Compact sanitized
+receipt: bill-analysis-live.json; full private snapshots retained locally.
+
+This request completed before the user narrowed this chat to development only.
+No further demonstration/recording/rehearsal is run here. Code review and whole
+automated local CI remain in scope; this component still needs the final exact
+documentation-and-code SHA CI pass before merge. No freeze/tag claim.
