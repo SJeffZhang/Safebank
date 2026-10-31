@@ -16,6 +16,30 @@ from tests.agent.llm_mock import (
 from tests.agent.test_llm_adapters import build, ctx, plan_state
 
 
+def test_actual_unquoted_product_id_response_recovers_without_executing_it():
+    body = tool_response("get_holdings", {}).json()
+    raw = '{"account_id": null, "product_id": prd_mmf}'
+    body["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = raw
+    scripted = ScriptedLLM(
+        [
+            httpx.Response(200, json=body),
+            tool_response("get_holdings", {"account_id": None, "product_id": "prd_mmf"}),
+            text_response("done"),
+        ]
+    )
+    executed = []
+
+    def execute(tool, args):
+        executed.append((tool, args))
+        return ReadResult(data={"holdings": []}, source_ref="src_verified_holdings")
+
+    reads = GatherAdapter(build(scripted), execute)(plan_state(), ctx())
+    assert executed == [("get_holdings", {"account_id": None, "product_id": "prd_mmf"})]
+    assert [r.source_ref for r in reads] == ["src_verified_holdings"]
+    assert len(scripted.requests) == 3
+    assert raw not in str(scripted.requests[1]["body"]["messages"])
+
+
 @pytest.mark.parametrize("mixed", [False, True])
 def test_bad_read_call_json_recovers_without_executing_bad_batch(mixed):
     calls = []

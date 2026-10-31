@@ -140,6 +140,7 @@ class GatherAdapter:
                 messages.append(
                     HumanMessage(
                         content="上一轮只读工具参数不是合法JSON对象，整批未执行。"
+                        "字符串（包括实体ID）必须用双引号，空值用null。"
                         "请重新生成合法只读调用，不要猜实体ID。"
                     )
                 )

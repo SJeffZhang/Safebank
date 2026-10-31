@@ -62,3 +62,18 @@ independent incremental review, full unit and fresh candidate live remain pendin
 Error-boundary candidate validation: independent read-only security APPROVE,
 full unit3575 passed/1071 conditional skips, lint/format passed. Fresh real live
 remains the next gate; no merge/freeze claimed.
+
+Actual diagnostic capture showed unquoted JSON entity ID in get_holdings:
+{"account_id": null, "product_id": prd_mmf}. Added this exact sanitized payload
+regression: old99df716 fails, current repair passes; feedback now explicitly
+requires double-quoted strings and null for missing values. Combined207 passed.
+On bbeb765 with a read-only diagnostic observer, format repair recovered and
+actual L1 yellow approval executed plan pln_01M68VD284HW85MEGV0ZQCSZ75. Fixed SQL
+verified10000→9000 MMF units, cash1200000→1300000 cents, zero reserve, one
+SETTLED1000-unit/100000-cent order, USED/YELLOW approval, one transfer and
+operation, balanced ledger. This diagnostic evidence is separate from final
+standard-entrypoint fresh-generation acceptance, which remains pending.
+
+Exact malformed-response fixture and quote feedback: full unit3576 passed/1071
+conditional skips; lint/format passed. Final standard-entrypoint live and full
+workflow-equivalent exact-SHA CI remain pending.
