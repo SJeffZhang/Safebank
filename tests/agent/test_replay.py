@@ -5,6 +5,7 @@ No PG, no real API calls, no replay file I/O except via temp directories.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 from pathlib import Path
@@ -410,6 +411,7 @@ class TestReplayLoader:
             fh.write(
                 json.dumps(
                     {
+                        "format": 2,
                         "schema_version": schema_version,
                         "profile": "b1",
                         "tools": [],
@@ -419,7 +421,8 @@ class TestReplayLoader:
                 + "\n"
             )
             for entry in entries:
-                fh.write(json.dumps(entry) + "\n")
+                digest = hashlib.sha256(json.dumps(entry, sort_keys=True).encode()).hexdigest()
+                fh.write(json.dumps({**entry, "digest": digest}) + "\n")
         return path
 
     def test_load_and_lookup(self):

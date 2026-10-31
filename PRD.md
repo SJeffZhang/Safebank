@@ -916,11 +916,12 @@ SSE 事件（字段形状与 `@langchain/langgraph-sdk` 的事件类型一致，
 
 **回放（`services/agent/app/llm/replay.py`）**
 
-- `LLM_MODE=live|record|replay`。
+- 生产 `make_llm()` 读取进程配置 `LLM_MODE=live|record|replay`，默认live；`LLM_PROFILE`默认B2、`LLM_CASE_ID`默认default、`LLM_REPLAY_ROOT`默认evaluation/replay。用户原话和L1参数不得切换运行模式。
 - 请求键 = `sha256(model ‖ canonical(messages) ‖ canonical(tools) ‖ canonical(params))`。`canonical` 把易变 ID 按首次出现顺序替换为 `<ID1>`、`<ID2>`…，命中后对响应做反向映射。易变 ID 的识别：`\b[a-z]{2,4}_([0-9A-HJKMNP-TV-Z]{26}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b`（覆盖 §9.1 全部运行期前缀，以及「前缀 + UUIDv5」的步骤派生 ID）；种子 ID 是可读的固定字符串（白名单），不替换。用 `secrets` 生成的 ID（hnt、act、clr 等）也统一为「前缀_ + 26 位 Crockford base32」格式，同样被识别。
 - 所有 `*_wall` 字段**不进入任何 LLM 提示**：L1 给 LLM 的摘要函数统一剔除。
 - 确定性 ID：`DEMO_MODE` 与 `EVAL_MODE` 下，业务 ID（§9.1 前缀表中的运行期 ID）由 `random.Random(seed)` + 模拟时钟生成。**jti、CSRF 令牌、OTP、HMAC 盐、hint_id、action_id、form_action_id、clarification_id 永远用 `secrets` 生成**。
-- 录制按 `(profile, case_id)` 分开：`evaluation/replay/<profile>/<case_id>.jsonl`。端到端 replay 只跑 B1 与 B2（两组都录）；B0 与消融组只跑网关层（D6，无 LLM），见 §10.3。
+- 录制按 `(profile, case_id)` 分开：`evaluation/replay/<profile>/<case_id>/replay.jsonl`。端到端 replay 只跑 B1 与 B2（两组都录）；B0 与消融组只跑网关层（D6，无 LLM），见 §10.3。
+- 实现约束（2026-10-31）：工厂支持同步/异步真实调用和进程内回放，replay不加载API key、不构造真实网络传输；record仅记录成功响应，402/403/429立即传播，不录假成功或重试。校验实际模型设置、工具Schema、动态提示构造源码及profile指纹，format固定2并逐条checksum校验；重复请求按已录顺序消费，缺失/耗尽/陈旧/损坏明确失败。运行期ID只重绑当前请求已有引用，字面占位符可逆保留，禁止把字面`<ID1>`洗成有效来源；provider call ID使用独立结构映射。记录不存HTTP头/请求消息；统一敏感键、Unicode与已知秘密回声清理，损坏且含敏感字段的JSON在任何写盘前整条拒绝。回放只替代LLM输出，L2原话/来源/意图/审批/OTP/L3执行照常，代码与自动测试通过不等于真实生产断网验收已通过。
 - 冻结规则：contracts、工具 Schema 与系统提示在录制前冻结，打 `replay_schema_version` 标签；版本不一致时 replay 直接报 `REPLAY_STALE`。replay 未命中时报错并打印 key，不回退到真实 API。录制安排在功能冻结后的闲时（§13）。
 - 录制费用：（35 正常 + 24 攻击）× 2 组 × 约 6 次调用 ≈ 700 次，闲时约 10 美元以内。
 - 演示与评测默认 replay；`make demo LLM_MODE=live` 现场用真实模型。
