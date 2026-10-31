@@ -79,3 +79,23 @@ Final targeted ruff check and format check both passed; `git diff --check` passe
 - Coordinator live rerun on the integrated final head: G3 must be NO_WRITE with no FORM_REQUIRED clarification; report must include the exact three anomalies and source numbers; read range must end at Oct 1 midnight +08; no new L3 writes.
 - Coordinator full CI, shared AGENTS updates and integration. Suggested PRD §6.1/6.7 delta: the anchored L2-classified NO_WRITE B4 path may use deterministic mandatory reads and formatting of actual aggregate/anomaly fields, retaining output verification. This is within the task's explicit permission to deterministically format trusted aggregates.
 - This component covers a bounded whole-sentence report grammar, not every report paraphrase. Other non-core cases and global freeze remain unverified. No push/merge/tag here.
+
+## Independent-review R1 follow-up
+
+Reviewer found a driver-only acceptance defect: the fixed GENERIC_ERROR from an incomplete monthly report becomes `请求无法处理,请重新发起。未执行任何操作。` after the actual OutputVerifier's NFKC normalization. Its state has NO_WRITE, reads and a final message but no route_error; the new driver branch incorrectly called that COMPLETED. This affects reporting of failure, not L2 write authorization.
+
+The regression now runs the real RespondAdapter failure path, real OutputVerifier, then the complete driver's MockTransport flow. Additional cases cover the canonical fixed text, NFKC punctuation and surrounding whitespace. Before the fix: **4 failed / 22 passed**, with the four failures observing COMPLETED (1) instead of UNKNOWN (5).
+
+The production change only prevents a NO_WRITE completion when the **entire** final reply, after NFKC normalization and outer-whitespace stripping, equals the reserved GENERIC_ERROR/REINITIATE fixed text. It does not use substring or natural-language error inference, import L1's model package into the standalone CLI, modify graph interfaces, or change higher-priority Decision/clarification routing. Tests read the actual canonical template, so a future template change cannot silently evade this guard.
+
+After the fix: **26 passed** in the driver bill file. A valid report containing an error fragment or quoting the entire fixed error text still completes. The same fixed text alongside DENY, REPLAN, ALLOW or a real clarification retains the structured outcome's priority. Existing route_error/missing-message/mixed-write guards remain covered. Affected try-agent + bill suite: **113 passed**, exit0, 2.94s. Final full default pure-unit run, with the same explicit DB/container opt-outs as above: **3630 passed / 1071 skipped**, exit0, 33.91s. Ruff check/format and whitespace diffcheck passed.
+
+R1 exact commands use the same existing locked venv:
+
+```bash
+/Users/jet/Downloads/WeBank/.venv/bin/python -m pytest tests/try_agent/test_bill_readonly.py -q --tb=short -o cache_dir=/private/tmp/sbg-bill-r1-cache
+/Users/jet/Downloads/WeBank/.venv/bin/python -m pytest tests/try_agent tests/agent/test_bill_accuracy.py -q --tb=short -o cache_dir=/private/tmp/sbg-bill-r1-focused-cache
+env -u P1_TEST_DATABASE_URL NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost GATEWAY_DB_TESTS=0 AGENT_DB_TESTS=0 OBLIGATIONS_DB_TESTS=0 GATEWAY_SECRET_TESTS=0 /Users/jet/Downloads/WeBank/.venv/bin/python -m pytest -q --tb=short -o cache_dir=/private/tmp/sbg-bill-r1-full-cache
+```
+
+No provider, DB, Docker, deployment, push/merge/tag or shared AGENTS/PRD change occurred in this follow-up. Root's integrated live and full CI gates remain open.

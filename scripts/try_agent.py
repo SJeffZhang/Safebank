@@ -22,6 +22,7 @@ import getpass
 import json
 import os
 import sys
+import unicodedata
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -64,6 +65,11 @@ EXIT_LABELS: dict[int, str] = {
 
 # DecisionValue enum values (PRD §6.1, state.py:81-85).
 _VALID_DECISIONS = frozenset({"ALLOW", "REQUIRE_APPROVAL", "REPLAN", "DENY"})
+
+# Reserved GENERIC_ERROR / REINITIATE reply from llm/fixed_templates.py. Keep
+# this CLI independent of the L1 package's model imports. Tests use the actual
+# template and verifier, so a template change cannot silently become success.
+_FIXED_ANALYSIS_ERROR = unicodedata.normalize("NFKC", "请求无法处理，请重新发起。未执行任何操作。")
 
 
 # ── Models ────────────────────────────────────────────────────────────────
@@ -1063,6 +1069,9 @@ def run(
         and final_values.get("plan_id") is None
         and not final_values.get("route_error")
         and final_message_received
+        # Verification normalizes punctuation. Only the entire reserved error
+        # downgrades completion; quoted fragments in valid reports remain data.
+        and unicodedata.normalize("NFKC", l1_reply).strip() != _FIXED_ANALYSIS_ERROR
     ):
         return EXIT_COMPLETED
 

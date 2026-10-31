@@ -153,3 +153,79 @@ def test_open_clarification_stays_clarify(monkeypatch):
     )
     result, _ = _run(values, monkeypatch)
     assert result == driver.EXIT_CLARIFY
+
+
+def test_actual_fixed_report_failure_after_verification_is_not_completed(monkeypatch):
+    """R1: the fail-closed monthly formatter must not become driver success."""
+    from services.agent.app.llm.respond import RespondAdapter
+    from services.agent.app.llm.verify import OutputVerifier
+    from tests.agent.test_bill_accuracy import NoInference, _context, _report_reads, _state
+
+    state = _state()
+    state["reads"] = _report_reads()[:-1]
+    state["reply_draft"] = RespondAdapter(NoInference())(state, _context())
+    final = OutputVerifier(NoInference())(state, _context())
+    values = _analysis_values()
+    values["reply_draft"] = final
+    result, _ = _run(values, monkeypatch)
+    assert result == driver.EXIT_UNKNOWN
+
+
+@pytest.mark.parametrize("variant", ["canonical", "nfkc", "surrounding_space"])
+def test_exact_reserved_analysis_error_is_not_completed(variant, monkeypatch):
+    import unicodedata
+
+    from services.agent.app.llm.fixed_templates import respond_template
+
+    reply = respond_template("GENERIC_ERROR")
+    if variant != "canonical":
+        reply = unicodedata.normalize("NFKC", reply)
+    if variant == "surrounding_space":
+        reply = " \n" + reply + "\t "
+    values = _analysis_values()
+    values["reply_draft"] = reply
+    result, _ = _run(values, monkeypatch)
+    assert result == driver.EXIT_UNKNOWN
+
+
+@pytest.mark.parametrize("quote", ["请求无法处理", "请求无法处理，请重新发起。未执行任何操作。"])
+def test_legitimate_report_with_error_text_as_data_still_completes(quote, monkeypatch):
+    values = _analysis_values()
+    values["reply_draft"] = f"2026年9月消费6448.00元。流水备注中出现「{quote}」，仅作为数据展示。"
+    result, _ = _run(values, monkeypatch)
+    assert result == driver.EXIT_COMPLETED
+
+
+@pytest.mark.parametrize(
+    "decision,execution,expected",
+    [
+        ({"decision": "DENY", "plan_id": "pln_status"}, None, driver.EXIT_DENY),
+        ({"decision": "REPLAN", "plan_id": "pln_status"}, None, driver.EXIT_REPLAN),
+        ({"decision": "ALLOW", "plan_id": "pln_status"}, None, driver.EXIT_ALLOW_READY),
+        (
+            {"decision": "ALLOW", "plan_id": "pln_status"},
+            {"status": "EXECUTED"},
+            driver.EXIT_COMPLETED,
+        ),
+    ],
+)
+def test_fixed_error_reply_cannot_override_structured_decision(
+    decision, execution, expected, monkeypatch
+):
+    from services.agent.app.llm.fixed_templates import respond_template
+
+    values = _analysis_values()
+    values.update(
+        decision=decision, execution=execution, reply_draft=respond_template("GENERIC_ERROR")
+    )
+    result, _ = _run(values, monkeypatch)
+    assert result == expected
+
+
+def test_fixed_error_reply_cannot_override_actual_clarification(monkeypatch):
+    from services.agent.app.llm.fixed_templates import respond_template
+
+    values = _analysis_values()
+    values.update(clarification_id="clr_actual", reply_draft=respond_template("GENERIC_ERROR"))
+    result, _ = _run(values, monkeypatch)
+    assert result == driver.EXIT_CLARIFY
