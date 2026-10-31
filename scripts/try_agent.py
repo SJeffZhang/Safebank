@@ -327,6 +327,11 @@ def run(
                 "from": "G15",
                 "status": sid_resp.status_code,
                 "headers": _sanitise_headers(dict(sid_resp.headers)),
+                **(
+                    {"body": {"session_id": sid_resp.json().get("session_id")}}
+                    if sid_resp.status_code in (200, 201)
+                    else {}
+                ),
             },
         )
     )
@@ -1090,6 +1095,12 @@ def _parse_args(argv: list[str] | None = None) -> Config:
     )
     parser.add_argument("--agent-url", default=os.environ.get("AGENT_URL", "http://agent:8100"))
     parser.add_argument("--customer-id", required=True)
+    parser.add_argument(
+        "--request-id",
+        type=uuid.UUID,
+        default=None,
+        help="Optional UUID for trusted driver trace correlation; grants no authorization",
+    )
     parser.add_argument("--text", required=True)
     parser.add_argument(
         "--pin", default=None, help="PIN for login (if omitted, prompts via getpass)"
@@ -1120,6 +1131,7 @@ def _parse_args(argv: list[str] | None = None) -> Config:
         out_path=args.out,
         pin=pin,
         confirm=args.confirm,
+        **({"request_id": str(args.request_id)} if args.request_id is not None else {}),
     )
 
 

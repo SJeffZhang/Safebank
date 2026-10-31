@@ -119,21 +119,18 @@ def test_up_requires_existing_generation_and_never_seeds(tmp_path, monkeypatch):
     assert compose.call_count == 1
 
 
-def test_default_deploy_works_from_e2e_and_other_worktree(tmp_path, monkeypatch):
+def test_default_deploy_works_from_explicit_env_and_e2e(tmp_path, monkeypatch):
     from scripts.demo_environment import default_deploy
 
-    common = tmp_path / "Fintech2026/.git"
-    common.mkdir(parents=True)
-    monkeypatch.setattr(
-        "scripts.demo_environment.subprocess.check_output", lambda *a, **k: str(common)
-    )
+    deploy = tmp_path / "portable-deploy"
+    deploy.mkdir()
+    (deploy / "e2e.override.yml").write_text("services: {}")
     monkeypatch.chdir(tmp_path)
-    assert default_deploy() == tmp_path / "Fintech2026-wt/e2e-deploy"
-    target = tmp_path / "Fintech2026-wt/e2e-deploy"
-    target.mkdir(parents=True)
-    (target / "e2e.override.yml").write_text("services: {}")
-    monkeypatch.chdir(target)
-    assert default_deploy() == target
+    monkeypatch.setenv("SAFEBANK_DEMO_DEPLOY", str(deploy))
+    assert default_deploy() == deploy
+    monkeypatch.delenv("SAFEBANK_DEMO_DEPLOY")
+    monkeypatch.chdir(deploy)
+    assert default_deploy() == deploy
 
 
 @pytest.mark.parametrize("corrupt", ["clock", "balance", "seed", "migration"])

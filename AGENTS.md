@@ -35,19 +35,19 @@
 
 ## 3. 当前状态（每次工作后更新）
 
-**最后更新**：2026-10-31（回放工厂最终9cfd6d2完整CI通过，#109已合ace6be1；确认按钮状态修复独审/自动化通过，最终CI待）
+**最后更新**：2026-10-31（本轮开发实现与独审已收口；最终精确head完整CI及发布状态以各PR回执为准；演示实际验收未包含）
 
 | 模块 | 状态 |
 |---|---|
 | 调研 | 开源项目元数据和 DeepSeek 官方信息已核实；评分/提交已从官网公开 JS 核实（docs/acceptance/official-v1.md）；竞品「明鉴」未核实 |
 | PRD | **`PRD.md` = v2.1 定稿**（§0–§16；三轮多 agent 审核 + 两次修订复核，决议 D1–D47 见 §0.5；执行屏障增量约定见ADR-008）。v1.2 与作废的 v2.0 草稿在 `docs/archive/`；审核报告在 `docs/reviews/` |
 | 代码 | **P1 完成并逐组件验收且已由PR #1合入main**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116项单元+33项真实PG通过，契约v1已冻结。历史功能提交7fd7a26、CI权限修复70dcabe，远端unit与p1-postgres均通过（run 39929405919）；完整六场景业务仍未完成。 |
-| L2 网关 | main `ace6be1`（#109）：FORM G4/G8、永久绑定、fresh快照污点、epoch、OTP与恢复已验收；最终7ceda71完整本机CI通过，W3b58/W4c48。通知审计、D3/S1与定时授权等已由后续PR合入；六场景及最终断网回放仍待，不以历史组件完成代替冻结。 |
-| L1 Agent | C1a–e、E0b及try-agent已合入，已有真实黄级转账/红级OTP挂失与06/36闭环证据。标准生产入口李四赎回1000份及MMF SQL已通过，非货币F/app真实OTP申购、预留和时钟结算SQL通过，最终66f6837完整CI已通过并合a113787。AA有效“我和”来源、必读收款人及窄理解重生成已红绿/独审、真实PG36和fresh live09/SQL、最终160d004完整CI通过并合#107。账单/月报最终fd382ea完整CI通过并合#108。生产make_llm已接live/record/replay，101专项及三轮独审问题均已闭合，最终9cfd6d2全部本机CI通过并#109已合；runner/只读SQL开发自动化验收继续；按用户最新指令不在本对话开展演示运行。 |
-| 前端 | **2026-10-29**：主项目 frontend/ 内竖版375×812 App，继承原Graphite & Champagne tokens；六场景、同站BFF、审批/OTP、叠卡/PIN/用途、报表/理财、我的整合订阅及圆形主题过渡、助手满内容区均实现合成预览。PR #71已合入main（7734f1f），最终head共6项CI成功；合并后全量384项（含新App61）、BFF10项与build复跑通过。交接文档及新Agent Prompt已随PR交付；真实三层联调/开户/PAN/主动推送边界见frontend/HANDOFF.md。未派DS worker，未写队友仓库。 确认按钮状态对齐候选已独审，最终完整CI待，尚未发布。 |
-| 本机 Demo | **2026-10-31最近live检查**：唯一 `safebank-e2e-1029` 七容器 healthy；`http://127.0.0.1:3001/health` 返回 ok，浏览器真实登录张三并显示总余额2600000分（活期600000/储蓄2000000）。页面已打开保留；本次未重置数据、未执行业务写操作、未调用模型，不代表六场景或离线回放完成验收。 |
-| 协调状态 | **2026-10-31 jet接续**：#104已合9484424；#105最终66f6837完整CI合a113787并112组合通过；#107最终160d004完整CI合c6a1d2e。原checkout另有答辩素材AGENT/output未提交工作，原样保留，主栈部署/后续集成使用独立worktree。多Codex子agent独立worktree并行，部署/API/真实DB/最终CI与合并由协调者串行；无DS worker/攻击/对比。AA已合且合并后66项组合复验通过；账单、回放、runner独审修复后候选已备，SQL收据工具仍审修。旧worktree/数据库/卷/WIP保留；公开进度按用户最新指令暂停。 |
-| 下一步 | 账单已合；生产回放/runner/自动SQL及前端确认状态修复继续代码实现、独审和最终精确head自动化CI/发布；回放工厂已发布，前端确认状态和核验runner继续。2026-10-31用户最新范围：本对话不进行演示、截图、录制或彩排，相关实际验收保留待办并移交其他会话；不以已有截图替代冻结门禁，未全过不tag demo-v1。攻击/对比/D8仍按既定依赖最后处理。 |
+| L2 网关 | main `6aa8004`（#110）：FORM G4/G8、永久绑定、fresh快照污点、epoch、OTP与恢复已验收；最终7ceda71完整本机CI通过，W3b58/W4c48。通知审计、D3/S1与定时授权等已由后续PR合入；六场景及最终断网回放仍待，不以历史组件完成代替冻结。 |
+| L1 Agent | C1a–e、E0b及try-agent已合入，已有真实黄级转账/红级OTP挂失与06/36闭环证据。标准生产入口李四赎回1000份及MMF SQL已通过，非货币F/app真实OTP申购、预留和时钟结算SQL通过，最终66f6837完整CI已通过并合a113787。AA有效“我和”来源、必读收款人及窄理解重生成已红绿/独审、真实PG36和fresh live09/SQL、最终160d004完整CI通过并合#107。账单/月报最终fd382ea完整CI通过并合#108。生产make_llm已接live/record/replay，101专项及三轮独审问题均已闭合，最终9cfd6d2全部本机CI通过并#109已合；runner/只读SQL开发实现和独审通过，已接最新回放/账单/前端main并343专项通过，完整CI和发布按本PR回执核定；按用户最新指令不在本对话开展演示运行。 |
+| 前端 | **2026-10-29**：主项目 frontend/ 内竖版375×812 App，继承原Graphite & Champagne tokens；六场景、同站BFF、审批/OTP、叠卡/PIN/用途、报表/理财、我的整合订阅及圆形主题过渡、助手满内容区均实现合成预览。PR #71已合入main（7734f1f），最终head共6项CI成功；合并后全量384项（含新App61）、BFF10项与build复跑通过。交接文档及新Agent Prompt已随PR交付；真实三层联调/开户/PAN/主动推送边界见frontend/HANDOFF.md。未派DS worker，未写队友仓库。 确认按钮状态对齐已独审并完成全量前端413/BFF16和完整本机CI，#110已合6aa8004；合并后13项专项通过。 |
+| 本机 Demo | 历史浏览器/业务live证据保留在各组件acceptance；当前唯一运行栈是自动化CI项目safebank，旧safebank-e2e-1029已停止并保留代际和卷。本对话按用户最新指令不再运行演示、截图、生产录制或断网彩排，不以旧健康检查或截图替代发布验收。 |
+| 协调状态 | #104/#105/#107/#108/#109/#110均已按精确head完整本机CI合入，当前main6aa8004。原checkout中另一会话的AGENTS/output未提交素材原样保留，集成使用独立worktree。多Codex子agent按独立worktree并行实现/只读审查，最终CI及合并由协调者串行；runner/自动SQL审修已闭合并接最新main，最终完整CI/发布结果以本PR回执为准。无DS worker/攻击/D8/对比；旧工作树/数据库/卷/WIP保留，公开进度按用户指令暂停。 |
+| 下一步 | 本轮开发发布按精确head完整本机CI/PR回执闭合，汇总见docs/acceptance/development-2026-10-31.md；当前不开展演示。两个独立reset六场景、完整43条、生产录制/实际断网回放仍是待办，按用户指令留其他会话核验；未全过不tag demo-v1。攻击版与D8/对比继续遵守基础冻结后的依赖。 |
 
 ### 已确认事实
 
@@ -998,6 +998,10 @@
 
 | 2026-10-31 | Codex（确认按钮开发修复） | 复用已干净AA worktree创建独立fix/approval-pending-status，不删旧AA分支/WIP。G9真实ApprovalStatus.PENDING与UI PlanStatus.PENDING_APPROVAL混用使合法黄/红按钮禁用；仅getView边界精确别名clone，其他状态及ID/hash/expiry/risk/OTP/凭据/确认handler原样。13新自动测试旧2断言fail/11负控pass→13pass；前端413/BFF16/typecheck/build通过，独审APPROVE并亲跑18及旧码红测。源码62c9ea3 rebase新main为0cd594e且字节差分相同；最终完整CI待，无浏览器/演示/真实API。锁定npm依赖一次补缓存180包，不改依赖锁。 |
 
+| 2026-10-31 | Codex（确认状态发布） | 最终f6649b94fb466edfe3718961395078232cbfdf34完整本机CI PASSED/exit0，unit3751/1082条件skip；原始前端npm ci、413单测/44文件、BFF16、tsc/build及全部真实PG/并发5/一致性17/网络恢复/契约步骤通过。#110精确head合6aa80043d4e9d53a70b4db9f55fd7478a445f5a8，主栈恢复新main、合并后13项自动回归通过；无真实浏览器/演示。 |
+
+| 2026-10-31 | Codex（自动核验开发收口） | runner候选296b444独审APPROVE/317纯测，修复seed标签与实际SQL不符仍绿、最终写盘失败FAILED/true两个P2；旧6fail/2正控pass已闭合。已审SQL模块6fcf6bd字节不变，119原测保留；G15仅白名单session_id trace及UUID关联，不改权限。rebase当前main6aa8004为b349c26，CLI账单终态与新correlation代码同时保留，协调者343集成专项通过；当前默认命令、record/replay工厂、严格SELECT核验代码已接线。完整CI/发布以此开发PR精确head回执为准；未运行实际演示或生产录制，不计冻结通过。七份独立只读开发评审及SHA256归档docs/reviews/development-2026-10-31，开发汇总/未覆盖见docs/acceptance/development-2026-10-31.md。原root素材WIP、旧库卷和工作树保留。 |
+
 ## 5. 下一步待办（按顺序）
 
 ### demo-v1 接续门禁（2026-10-31，优先于下方历史任务表）
@@ -1007,7 +1011,8 @@
 - [x] #105新代际真实赎回、非货币份额/现金/账本/时钟SQL、最终66f6837完整CI后合并a113787。
 - [x] 09 AA红绿/独审/新代际实际SQL/最终CI并#107已合；准确月报实际SQL及最终CI并#108已合。
 - [ ] 两个独立reset数据集六场景live、完整43条真实清单。
-- [ ] 生产LLM录制/断网回放接线、make demo、冻结清单；门禁全过才tag。
+- [x] 生产LLM工厂live/record/replay已随#109发布；make demo命令与自动SQL接线实现、独审通过，最终精确head完整CI/发布按本开发PR回执核定。
+- [ ] 实际生产录制、阻断外网回放及冻结清单核验，按用户范围留其他会话；门禁全过才tag。
 - [ ] 冻结后demo-v1.1攻击演示；D8/指标最后。
 
 P0 准备阶段（决定后续一切）：
