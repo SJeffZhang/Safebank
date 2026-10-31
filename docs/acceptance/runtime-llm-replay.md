@@ -61,3 +61,12 @@ Tests that previously expected malformed-secret redaction now require explicit r
 Final scoped checks: **101 runtime+replay passed; 689 Agent passed, 39 skipped**; ruff check/format passed. No real API, Docker, DB, shared docs, deployment or remote Git action. R2 still requires independent re-review; production recording and actual offline banking gates remain coordinator-owned.
 
 Correction round 2 project default: `NO_PROXY=localhost,127.0.0.1,::1 /Users/jet/Downloads/WeBank/.venv/bin/python -m pytest -q` → **3630 passed, 1071 skipped in 31.06s**, exit 0. Log `/tmp/sbg-replay-r2-strategy-final.log`.
+
+Coordinator integration: final independent review APPROVE at a2f9d86; root
+separately ran runtime+existing replay101 tests passed. Rebased unchanged code
+onto merged bill main88c088a as0c84997; final whole-workflow exact-SHA CI is next.
+Current user scope is development/review/automated CI only: no production
+recording, demonstration, rehearsal or network-disabled banking demonstration
+is executed in this chat. Those remaining freeze gates remain explicitly unrun.
+The default live provider/model/retry settings remain unchanged; no authority
+is conferred by a replay response and no bank authorization rule changed.
