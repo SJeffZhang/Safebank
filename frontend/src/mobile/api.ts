@@ -76,8 +76,14 @@ export async function propose(
     form_action_ids: [action.action_id],
   });
 }
-export const getView = (id: string) =>
-  request<PlanView>(`/approvals/${encodeURIComponent(id)}`);
+export const getView = async (id: string): Promise<PlanView> => {
+  const view = await request<PlanView>(`/approvals/${encodeURIComponent(id)}`);
+  // G9 exposes the current ApprovalStatus; the UI shares its pending state
+  // with preview plans.
+  return view.status === "PENDING"
+    ? { ...view, status: "PENDING_APPROVAL" }
+    : view;
+};
 export const getPlan = (id: string) =>
   request<PlanStatus>(`/plans/${encodeURIComponent(id)}`);
 export async function* parseSSE(
