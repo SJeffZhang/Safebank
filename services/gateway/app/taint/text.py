@@ -58,6 +58,17 @@ _BOOL_TRUE_EXTRA, _BOOL_FALSE_EXTRA = _classify_bool_verbs()
 
 def matches(value, text: str, param: str, state, customer_id: str | None = None) -> bool:
     raw = normalize(text)
+    if param == "units":
+        if not isinstance(value, (str, Decimal)) or not re.fullmatch(
+            r"[0-9]{1,14}(?:\.[0-9]{1,4})?(?:份)?", raw
+        ):
+            return False
+        try:
+            requested = Decimal(raw.removesuffix("份"))
+            actual = Decimal(value)
+            return requested > 0 and actual.is_finite() and requested == actual
+        except InvalidOperation:
+            return False
     if param.endswith("_cents"):
         # User amounts are yuan. No float conversion or rounding is permitted.
         raw = re.sub(r"^(人民币|CNY|RMB|¥|￥)", "", raw, flags=re.I)

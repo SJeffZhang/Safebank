@@ -40,7 +40,8 @@ _SYSTEM = (
     "申购理财（subscribe_product）必须读取 list_products（或 get_product）拿到带 prd_ 开头的 "
     "product_id，并读取 get_accounts 找到自己名下唯一活期账户（type=CHECKING）；"
     "涉及风险测评读取 get_risk_questionnaire / get_risk_profile。"
-    "赎回理财（redeem_product）必须先读取 get_holdings 拿到真实持仓份额，不能自己编造份额。"
+    "赎回理财（redeem_product）必须读取get_accounts、list_products及get_holdings，"
+    "只引用真实返回的source_ref与实体ID。持仓是可用上限，赎回数量只能取用户原话，不能默认全部持仓。"
     "X-3「把下周要扣的会员费留够，剩下的钱买稳健型理财」必须读取 upcoming_charges、"
     "list_products 与 get_risk_profile。"
 )
@@ -123,12 +124,27 @@ class GatherAdapter:
             SystemMessage(content=_SYSTEM),
             HumanMessage(content=self._prompt(state, date_line)),
         ]
-        for _ in range(self._max_rounds):
+        for round_index in range(self._max_rounds):
             message = self._model.invoke(messages)
             if self._observer is not None:
                 self._observer(message)
-            if getattr(message, "invalid_tool_calls", None):
-                raise LlmToolError("model returned malformed tool call arguments")
+            invalid = getattr(message, "invalid_tool_calls", None)
+            if invalid:
+                calls = [*invalid, *(message.tool_calls or [])]
+                if any(call.get("name") not in READ_ARGS for call in calls):
+                    raise LlmToolError("unknown or non-read tool in malformed batch")
+                if round_index + 1 == self._max_rounds:
+                    raise LlmToolError("model returned malformed tool call arguments")
+                # Nothing from a malformed batch is executed or echoed into
+                # the next prompt. Provider errors propagate before this branch.
+                messages.append(
+                    HumanMessage(
+                        content="上一轮只读工具参数不是合法JSON对象，整批未执行。"
+                        "字符串（包括实体ID）必须用双引号，空值用null。"
+                        "请重新生成合法只读调用，不要猜实体ID。"
+                    )
+                )
+                continue
             calls = message.tool_calls or []
             for call in calls:
                 name = call.get("name")
@@ -245,7 +261,7 @@ class GatherAdapter:
         state: AgentState,
         tools_attempted: set[str],
     ) -> list[ReadRecord]:
-        """Deterministic supplemental reads for transfers and lost-card requests.
+        """Deterministic prerequisite reads for transfer, loss and redemption plans.
 
         Only called when ``supplement_transfer_reads`` is True.
         Adds get_cards for lost-card text and account/payee reads for transfers
@@ -266,6 +282,25 @@ class GatherAdapter:
                 self._execute_supplemental("get_cards", {"account_id": None}, "src_gather_cards")
             )
         understanding = state.get("understanding")
+        if (
+            understanding is not None
+            and understanding.needs_write
+            and ("redeem_product" in understanding.intents or "赎回" in typed)
+        ):
+            # These are read prerequisites, never quantity authorization. Keep
+            # the actual returned source_ref; holdings cannot select units.
+            required = (
+                ("get_accounts", {"history_days": 0}),
+                (
+                    "list_products",
+                    {"max_risk_level": None, "product_type": None, "cursor": None, "limit": 50},
+                ),
+                ("get_holdings", {"account_id": None, "product_id": None}),
+            )
+            for tool, args in required:
+                if tool not in read_tools | tools_attempted:
+                    result.append(self._execute_supplemental(tool, args, "src_gather_" + tool))
+                    read_tools.add(tool)
         if understanding is None or not any(
             i in _TRANSFER_LIKE_INTENTS for i in understanding.intents
         ):

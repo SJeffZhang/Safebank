@@ -7,7 +7,7 @@ parallel; the contracts already define them and L1 builds its tools from
 - ``subscribe_product.product_id`` must be read-sourced from list_products /
   get_product; amount is from the user's words or the ``available_less_7d_charges``
   derived template; suitability is never decided by L1 (the gateway does).
-- ``redeem_product.units`` must be read-sourced from get_holdings — never invented.
+- ``redeem_product.units`` comes from explicit user quantity; holdings are availability data.
 - Product questions are read-only.
 - X-3 "把下周要扣的会员费留够，剩下的钱买稳健型理财": when more than one
   稳健/平衡 product exists, L1 must surface a clarification for ``product_id``
@@ -182,7 +182,7 @@ def test_subscribe_read_sourced_product_id_passes():
     assert product_sources[0].source.ref == "src_products"
 
 
-# ── redeem units must come from get_holdings ──
+# ── redeem quantity spans must be exact ──
 
 
 def test_redeem_invented_units_rejected():

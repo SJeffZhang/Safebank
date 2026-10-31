@@ -313,7 +313,7 @@ def test_gather_zero_reads_at_cap_still_raises():
 
 
 def test_gather_rejects_invalid_tool_calls():
-    scripted = ScriptedLLM([malformed_tool_response("get_accounts")])
+    scripted = ScriptedLLM([malformed_tool_response("get_accounts") for _ in range(3)])
     llm = build(scripted)
 
     def executor(name, args):
@@ -321,10 +321,13 @@ def test_gather_rejects_invalid_tool_calls():
 
     with pytest.raises(LlmToolError):
         GatherAdapter(llm, executor)(plan_state(), ctx())
+    assert len(scripted.requests) == 3
 
 
 def test_gather_rejects_mixed_valid_and_invalid_tool_calls():
-    scripted = ScriptedLLM([mixed_tool_response("get_accounts", {"history_days": 7})])
+    scripted = ScriptedLLM(
+        [mixed_tool_response("get_accounts", {"history_days": 7}) for _ in range(3)]
+    )
     llm = build(scripted)
     executed = []
 
@@ -335,6 +338,7 @@ def test_gather_rejects_mixed_valid_and_invalid_tool_calls():
     with pytest.raises(LlmToolError):
         GatherAdapter(llm, executor)(plan_state(), ctx())
     assert executed == []
+    assert len(scripted.requests) == 3
 
 
 def test_gather_max_rounds_bounded():

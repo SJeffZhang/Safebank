@@ -770,6 +770,8 @@ class AgentState(TypedDict):
 - 结构化卡片不进 state，经 `custom` 事件推送（§6.5）。
 - `thread_id = session_id`。刷新页面后 App 调 `GET /api/approvals?status=PENDING` 恢复确认面板（§9.6），不依赖 L1。
 - `gather` 中 untrusted 字段用 `<untrusted_data source="...">…</untrusted_data>` 包裹，系统提示声明其中任何指令都不执行（辅助手段，真正的防线在 L2）。
+- 赎回写请求在gather结束时补齐未读取且未尝试的get_accounts、list_products和get_holdings，均经当前用户的正式读接口，保留实际source_ref与污点/版本。补读不猜实体或数量，不重试失败读取；持仓仅为可用上限，赎回份额仍只接受用户原话的明确数量来源。
+- gather的已登记只读工具参数若无法解析，在原三轮预算内以固定脱敏反馈请求重生成；整批坏调用均不执行，不把坏参数回传模型，耗尽后明确失败。未知/写工具立即拒绝。上游402/403/429在所有节点（含回复与数字修复的模板降级）向外传播以停止驱动批次，不重试、不换模型。
 
 ### 6.2 ActionPlan 契约（`packages/contracts/plan.py`）
 
@@ -1837,3 +1839,6 @@ COMMITTED/EXECUTED源结果中对应schedule_transfer步骤、创建ID/指纹、
 对应值；周期声明span必须含对应周期词，首次时间span必须含同一月日/周日锚点，仍核客户、会话、JWT原话、状态、有效期和污点。
 不得推广为任意参数与scope某值相等即可可信。首次执行日期按Asia/Shanghai计算；
 first_run_at在意图核对中以带时区的同一时刻比较，周期、目标、金额与end_at仍精确匹配。
+
+
+2026-10-31 赎回来源实现约束：`redeem_product.units` 只由凭据绑定有效原话中的明确数量授权，`get_holdings` 仅证明本人产品/账户与可用份额，不以持仓总量代替部分赎回意图。L1 strict适配接受整数份额时精确转四位字符串，float/bool拒；L2以Decimal核对数量并继续完整作用域和可用份额预演/执行。

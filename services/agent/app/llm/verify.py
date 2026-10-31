@@ -624,7 +624,9 @@ class OutputVerifier:
             repaired: str = getattr(result, "content", "") or ""
             repaired = repaired.strip()
             return repaired if repaired else None
-        except Exception:
+        except Exception as exc:
+            if getattr(exc, "status_code", None) in (402, 403, 429):
+                raise
             return None
 
 

@@ -141,6 +141,8 @@ def _from_strict_plan(data: dict) -> dict:
     result = deepcopy(data)
     for step in result["steps"]:
         args = step["args"]
+        if step["tool"] == "redeem_product" and type(args.get("units")) is int:
+            args["units"] = str(args["units"]) + ".0000"
         for key in ("payee_id", "to_account_id"):
             if key in args:
                 entity = args[key]
