@@ -1,0 +1,265 @@
+{
+  "measured_date": "2026-10-31",
+  "note": "MMF: actual L1 typed request on fresh standard production entrypoint ccf5d33. Deferred fund: fixed F/app actual approval/OTP/S1/clock path on bbeb765; bankcore/contracts/gateway/backend tree identical through ccf5d33, independently checked by git diff. This component evidence does not freeze demo-v1.",
+  "production_mmf": {
+    "generation": "demo_20261031113502_21268cec",
+    "commit": "ccf5d3330b44f4d5049fbbdb5bf5d78ac352ba1b",
+    "plan_id": "pln_01M68VWQDNPS51MBP23SZRMKZR",
+    "initial": {
+      "balance_cents": 1200000,
+      "pending_cents": 0,
+      "units": "10000.0000",
+      "reserved_units": "0.0000"
+    },
+    "account": {
+      "balance_cents": 1300000,
+      "pending_cents": 0
+    },
+    "holding": {
+      "units": "9000.0000",
+      "reserved_units": "0.0000",
+      "cost_cents": 900000,
+      "reserved_cost_cents": 0
+    },
+    "order": {
+      "id": "ord_663111d4-e1ae-5dbe-9f05-3f6beb04f225",
+      "status": "SETTLED",
+      "units": "1000.0000",
+      "amount_cents": 100000,
+      "nav": "1.0000"
+    },
+    "plan": {
+      "status": "EXECUTED",
+      "origin": "agent",
+      "units": "1000.0000",
+      "sources": [
+        {
+          "param": "account_id",
+          "source": {
+            "ref": "src_01M68VWHGMKCJ5MQ20TK6V507S",
+            "kind": "read",
+            "pointer": "/holdings/0/account_id"
+          }
+        },
+        {
+          "param": "product_id",
+          "source": {
+            "ref": "src_01M68VWHGMKCJ5MQ20TK6V507S",
+            "kind": "read",
+            "pointer": "/holdings/0/product_id"
+          }
+        },
+        {
+          "param": "units",
+          "source": {
+            "ref": "utt_01M68VWCBSJS2JAZBS61NG3T4D",
+            "kind": "utterance",
+            "span": [
+              6,
+              10
+            ]
+          }
+        }
+      ]
+    },
+    "approval": {
+      "status": "USED",
+      "risk": "YELLOW"
+    },
+    "execution": {
+      "status": "EXECUTED",
+      "evidence": {
+        "risk": "YELLOW",
+        "type": "INTERACTIVE",
+        "origin": "agent",
+        "plan_hash": "c354ee12fe1625b49140610173d802841c6f92edfc7ae1260758882323f75814",
+        "scope_ids": [
+          "utt_01M68VWCBSJS2JAZBS61NG3T4D"
+        ],
+        "approval_id": "apv_01M68VWQF1XW9KBHGMSHX4V3Q1",
+        "evaluation_id": "evl_01M68VWQHCXX82S67T8DNTR3DD",
+        "utterance_ids": [
+          "utt_01M68VWCBSJS2JAZBS61NG3T4D"
+        ],
+        "final_view_hash": "5e254879e7dba0945f49a5edeed6e7b5a46f7119ef0212dc23c736ebd4838336",
+        "confirmed_at_wall": "2026-10-31T11:35:34.653620Z",
+        "authorization_epoch": 0,
+        "confirmed_view_hash": "5e254879e7dba0945f49a5edeed6e7b5a46f7119ef0212dc23c736ebd4838336",
+        "approved_evaluation_id": "evl_01M68VWQEVS5ZF7GHSRYZHKEQX"
+      }
+    },
+    "counts": {
+      "orders": 1,
+      "transfers": 1,
+      "operations": 1
+    },
+    "ledger": {
+      "balanced": true,
+      "pending_zero": true
+    },
+    "route": "actual L1 typed request, real yellow approval, MMF same-transaction settlement"
+  },
+  "non_mmf_subscription_request": {
+    "kind": "FUND_SUBSCRIBE",
+    "plan_id": "pln_01M68VHKF61MGG3TZHWA76REK3",
+    "approval_id": "apv_01M68VHKGYJ5MJ8F0DZX0Y4B8J",
+    "action_id": "act_01M68VHKEXD962Q0JPMNJ52CDQ",
+    "risk": "RED",
+    "status": "EXECUTED"
+  },
+  "non_mmf_confirmation": {
+    "before": {
+      "account": {
+        "balance_cents": 1300000,
+        "pending_cents": 200000
+      },
+      "order": {
+        "id": "ord_d18adeaf-5d0e-55c4-bcc8-cdcaed66cf1a",
+        "status": "PENDING_CONFIRM",
+        "amount_cents": 200000,
+        "units": "0.0000",
+        "confirm_at": "2026-10-16T01:00:00+00:00"
+      }
+    },
+    "advance": {
+      "advance_job_id": "b059fb9d903a361572c9f01dd3647c17570dc99a854d139c570208dab232cc09",
+      "status": "DONE",
+      "sim_now": "2026-10-16T09:00:00+08:00",
+      "processed": 1,
+      "blocked": 0,
+      "remaining": 0
+    },
+    "after": {
+      "account": {
+        "balance_cents": 1100000,
+        "pending_cents": 0
+      },
+      "order": {
+        "id": "ord_d18adeaf-5d0e-55c4-bcc8-cdcaed66cf1a",
+        "status": "SETTLED",
+        "amount_cents": 200000,
+        "units": "1624.5633",
+        "nav": "1.2311"
+      },
+      "holding": {
+        "units": "1624.5633",
+        "reserved_units": "0.0000",
+        "cost_cents": 200000,
+        "reserved_cost_cents": 0
+      }
+    }
+  },
+  "non_mmf_reservation": {
+    "request": {
+      "kind": "FUND_REDEEM",
+      "plan_id": "pln_01M68VPP9NXGS5BRFSQNZNEYNK",
+      "approval_id": "apv_01M68VPPB5A0CKJA809FNW0CGC",
+      "action_id": "act_01M68VPP9GFDJ6P5C05YW4QG02",
+      "risk": "YELLOW",
+      "status": "EXECUTED"
+    },
+    "order": {
+      "id": "ord_9d246613-042a-5ac3-a8a9-00d1ae10a9c9",
+      "status": "PENDING_SETTLEMENT",
+      "units": "100.0000",
+      "amount_cents": 12311,
+      "reserved_cost_cents": 12311,
+      "settle_at": "2026-10-19T01:00:00+00:00"
+    },
+    "holding": {
+      "units": "1624.5633",
+      "reserved_units": "100.0000",
+      "cost_cents": 200000,
+      "reserved_cost_cents": 12311
+    },
+    "account": {
+      "balance_cents": 1100000,
+      "pending_cents": 0
+    },
+    "initial_holding": {
+      "units": "1624.5633",
+      "reserved_units": "0.0000",
+      "cost_cents": 200000,
+      "reserved_cost_cents": 0
+    }
+  },
+  "non_mmf_settlement": {
+    "generation": "demo_20261031112505_b658884c",
+    "commit": "bbeb765cb44ae8fa4c7117828cf459cb85a40b1d",
+    "reservation": {
+      "request": {
+        "kind": "FUND_REDEEM",
+        "plan_id": "pln_01M68VPP9NXGS5BRFSQNZNEYNK",
+        "approval_id": "apv_01M68VPPB5A0CKJA809FNW0CGC",
+        "action_id": "act_01M68VPP9GFDJ6P5C05YW4QG02",
+        "risk": "YELLOW",
+        "status": "EXECUTED"
+      },
+      "order": {
+        "id": "ord_9d246613-042a-5ac3-a8a9-00d1ae10a9c9",
+        "status": "PENDING_SETTLEMENT",
+        "units": "100.0000",
+        "amount_cents": 12311,
+        "reserved_cost_cents": 12311,
+        "settle_at": "2026-10-19T01:00:00+00:00"
+      },
+      "holding": {
+        "units": "1624.5633",
+        "reserved_units": "100.0000",
+        "cost_cents": 200000,
+        "reserved_cost_cents": 12311
+      },
+      "account": {
+        "balance_cents": 1100000,
+        "pending_cents": 0
+      },
+      "initial_holding": {
+        "units": "1624.5633",
+        "reserved_units": "0.0000",
+        "cost_cents": 200000,
+        "reserved_cost_cents": 0
+      }
+    },
+    "advance": {
+      "advance_job_id": "b4a5e9bf2601286c8112f1a8e810d774a4062ff98c55c4c008ce1bea494ebbc8",
+      "status": "DONE",
+      "sim_now": "2026-10-19T09:00:00+08:00",
+      "processed": 2,
+      "blocked": 0,
+      "remaining": 0
+    },
+    "settled": {
+      "order": {
+        "id": "ord_9d246613-042a-5ac3-a8a9-00d1ae10a9c9",
+        "status": "SETTLED",
+        "units": "100.0000",
+        "amount_cents": 12311,
+        "nav": "1.2311",
+        "reserved_cost_cents": 12311
+      },
+      "holding": {
+        "units": "1524.5633",
+        "reserved_units": "0.0000",
+        "cost_cents": 187689,
+        "reserved_cost_cents": 0
+      },
+      "account": {
+        "balance_cents": 1112311,
+        "pending_cents": 0
+      },
+      "event": {
+        "event_id": "job_fund_settle_915145e7-ccdf-5ff9-bfcd-ab134ad3cb3a",
+        "status": "SUCCESS",
+        "evidence": {
+          "type": "SYSTEM_ORDER",
+          "order_id": "ord_9d246613-042a-5ac3-a8a9-00d1ae10a9c9"
+        }
+      },
+      "ledger": {
+        "balanced": true,
+        "pending_zero": true
+      },
+      "payout_transfer_count": 1
+    }
+  }
+}

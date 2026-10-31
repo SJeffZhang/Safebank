@@ -77,3 +77,23 @@ standard-entrypoint fresh-generation acceptance, which remains pending.
 Exact malformed-response fixture and quote feedback: full unit3576 passed/1071
 conditional skips; lint/format passed. Final standard-entrypoint live and full
 workflow-equivalent exact-SHA CI remain pending.
+
+Final production live at ccf5d3330b44f4d5049fbbdb5bf5d78ac352ba1b:
+fresh generation demo_20261031113502_21268cec, standard entrypoint without
+diagnostic mounts. Actual L1 case34 returned CONFIRMED (exit9) after real yellow
+approval, plan pln_01M68VWQDNPS51MBP23SZRMKZR. Independent SQL confirmed
+10000.0000→9000.0000 units, cash1200000→1300000 cents, zero reserve, exactly one
+SETTLED1000-unit/100000-cent order, USED/YELLOW approval and balanced ledger.
+
+Deferred product proof uses actual F/app approval and OTP, on bbeb765 generation
+demo_20261031112505_b658884c; bankcore/contracts/gateway/backend trees are unchanged
+through ccf5d33. A200000-cent RED subscription reserved cash, confirmed1624.5633
+units at NAV1.2311 after D3. A100-unit YELLOW redemption reserved100 units and
+12311-cent cost before settlement; D3 to2026-10-19 settled12311 cents exactly once,
+leaving1524.5633 units,1112311-cent cash, no reserves, balanced ledger and matching
+SYSTEM_ORDER evidence. This is not presented as an L1 deferred-product test.
+
+Sanitized SQL receipts and exact code/generation IDs are in
+[redemption-sources-live.json](redemption-sources-live.json). Final whole-workflow
+CI must still pass on the exact final documentation-and-code SHA before merge.
+No demo-v1 freeze or tag is claimed.
