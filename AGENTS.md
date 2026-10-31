@@ -949,6 +949,8 @@
 | 2026-10-31 | Codex | #103精确63bfd47完整本机CI通过（unit3552/1040条件skip、W2 274、S1 29、其余真实PG/并发5/一致性17/网络与恢复/契约），合并74baf71，长期栈healthy，公开摘要38ea028。独立feat/form-authorization补FORM G4/G8：7新PG旧503红测后接线，独审发现末次污染与快照混用，已补真实PG红绿；16专项通过，真实绿/黄/红OTP及UNKNOWN/PAUSED恢复验证中。未合表单组件/未冻结。 |
 | 2026-10-31 | Codex | FORM共享replay旧缓存问题已独审定位并补G8红绿，改为fresh正式快照重建来源，独审APPROVE；真实PG16项及L3绿/黄/红OTP/UNKNOWN/PAUSED共5项通过。额外撤销前置阶段回归发现epoch增后cleanup前仍可加载FORM，旧码失败；0005_form_epoch新增plans nullable捕获版本，G4绑定、复演核对，旧agent不变/无版本FORM拒。迁移+专项20通过、实际L3含撤销/过期/丢绑定共8通过；最终组合与增量独审进行中，未合。 |
 
+| 2026-10-31 | Codex | FORM候选f6479e1新代际live真实F/app路径通过：黄级G19→G4→G9/G6→G8转20000分、绿级冻结成功，重复G4/G8不重复写。SQL两app_form计划EXECUTED/捕获epoch0，两永久绑定/CONSUMED claims、零伪造utterance、一笔20000分转账、卡FROZEN、审批USED/YELLOW、L3各一次、账本平衡、迁移0005。证据form-authorization-live.json；unit3552/1065条件skip，组件295项，独审APPROVE；开始最终head完整CI，未合104/未冻结。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：

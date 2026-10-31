@@ -1,0 +1,30 @@
+{
+  "generation": "demo_20261031014249_e694d3ac",
+  "candidate": "f6479e1f3afe05efc4bd98b7c76fa2f5fae612ee",
+  "api": [
+    {
+      "kind": "TRANSFER_EXTERNAL",
+      "action_id": "act_01M67T09PEQWEQH4F6PVY45ZRQ",
+      "plan_id": "pln_01M67T09PMAC2HM33JB28V9295",
+      "risk": "YELLOW",
+      "status": "EXECUTED"
+    },
+    {
+      "kind": "CARD_FREEZE",
+      "action_id": "act_01M67T09W4AYC92AEGK1YSXZGP",
+      "plan_id": "pln_01M67T09W80D4X438RQ95A0PWE",
+      "risk": "GREEN",
+      "status": "EXECUTED"
+    }
+  ],
+  "plans": "app_form|EXECUTED|0|2",
+  "claims": "CONSUMED|2",
+  "bound": "2",
+  "fake_utterances": "0",
+  "migration": "0005_form_epoch",
+  "executions": "EXECUTED|2",
+  "transfer": "1|20000",
+  "card": "FROZEN",
+  "approval": "USED|YELLOW|1",
+  "balanced": "t|t"
+}

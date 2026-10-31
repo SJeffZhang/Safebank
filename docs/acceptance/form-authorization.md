@@ -43,3 +43,15 @@ Epoch/schema independent review APPROVE; reviewer reran frozen DDL drift. Added
 scope_ids equality alongside original IDs. Final component combination295 passed,
 covering G4, approval, execution/recovery and migrated PostgreSQL. Full unit and
 fresh-deployment live pending; no merge or freeze claim.
+
+Candidatef6479e1, generation demo_20261031014249_e694d3ac, clean deployed services:
+actual F/app HTTP login→G15→G19→G4→G9/G6→G8 completed yellow20000-cent transfer;
+second FORM completed green freeze. Same G4/G8 requests replayed without additional
+writes. Independent SQL: two EXECUTED app_form plans capturing epoch0, two permanent
+bindings/two CONSUMED claims, zero fake utterances; one20000-cent transfer, FROZEN card,
+one USED/YELLOW approval, two L3 executions total, balanced ledger. Gateway migration
+0005_form_epoch verified. Evidence form-authorization-live.json. This is F/app real
+L2/L3 validation; full six-scenario L1 rehearsals remain pending.
+
+Full unit3552 passed /1065 conditional skips before live. Final exact-head complete
+local CI is the remaining merge gate.
