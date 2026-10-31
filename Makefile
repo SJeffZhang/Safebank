@@ -57,9 +57,12 @@ test-p1: test-p1-build test-p1-db
 probe:
 	$(PYTHON) -m scripts.deepseek_probe
 # Deliberately fail until later stages implement full demo/evaluation and baseline reset.
-demo eval reset:
+eval reset:
 	@echo '$@ is not implemented in P1; see PRD stages P2-P9.' >&2
 	@exit 2
+
+demo:
+	LLM_MODE=$(if $(LLM_MODE),$(LLM_MODE),replay) $(PYTHON) -m scripts.demo_runner $(ARGS)
 
 contracts-check:
 	PYTHONPATH=packages/contracts/src $(PYTHON) -m scripts.freeze_contracts --check
@@ -175,11 +178,11 @@ test-try-agent:
 
 .PHONY: demo-up
 demo-up:
-	$(PYTHON) -m scripts.demo_environment up
+	$(PYTHON) -m scripts.demo_environment up $(ARGS)
 
 .PHONY: demo-reset
 demo-reset:
-	$(PYTHON) -m scripts.demo_environment reset
+	$(PYTHON) -m scripts.demo_environment reset $(ARGS)
 
 .PHONY: test-w5-clock
 test-w5-clock:

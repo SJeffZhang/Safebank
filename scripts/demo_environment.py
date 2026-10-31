@@ -374,17 +374,19 @@ class DemoEnvironment:
         return {"generation": current["generation"], "url": "http://127.0.0.1:3001"}
 
 
-def default_deploy() -> Path:
-    if (Path.cwd() / "e2e.override.yml").is_file():
-        return Path.cwd()
-    common = Path(
-        subprocess.check_output(
-            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
-            cwd=Path(__file__).parent,
-            text=True,
-        ).strip()
-    )
-    return common.parent.parent / "Fintech2026-wt/e2e-deploy"
+def default_deploy(explicit: Path | None = None) -> Path:
+    """Resolve only a deliberately selected local deployment; never guess or seed."""
+    selected = explicit
+    if selected is None and os.environ.get("SAFEBANK_DEMO_DEPLOY"):
+        selected = Path(os.environ["SAFEBANK_DEMO_DEPLOY"])
+    if selected is None and (Path.cwd() / "e2e.override.yml").is_file():
+        selected = Path.cwd()
+    if selected is None:
+        raise ValueError("set SAFEBANK_DEMO_DEPLOY or pass --deploy to an initialized checkout")
+    selected = selected.expanduser().resolve()
+    if not (selected / "e2e.override.yml").is_file():
+        raise ValueError("selected deployment requires e2e.override.yml")
+    return selected
 
 
 def main() -> None:
@@ -393,10 +395,14 @@ def main() -> None:
     parser.add_argument(
         "--deploy",
         type=Path,
-        default=default_deploy(),
+        default=None,
     )
     args = parser.parse_args()
-    demo = DemoEnvironment(args.deploy)
+    try:
+        deploy = default_deploy(args.deploy)
+    except ValueError as exc:
+        parser.error(str(exc))
+    demo = DemoEnvironment(deploy)
     with (demo.state / "lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         try:
