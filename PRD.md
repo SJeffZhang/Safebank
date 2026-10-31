@@ -1837,3 +1837,6 @@ COMMITTED/EXECUTED源结果中对应schedule_transfer步骤、创建ID/指纹、
 对应值；周期声明span必须含对应周期词，首次时间span必须含同一月日/周日锚点，仍核客户、会话、JWT原话、状态、有效期和污点。
 不得推广为任意参数与scope某值相等即可可信。首次执行日期按Asia/Shanghai计算；
 first_run_at在意图核对中以带时区的同一时刻比较，周期、目标、金额与end_at仍精确匹配。
+
+
+2026-10-31 赎回来源实现约束：`redeem_product.units` 只由凭据绑定有效原话中的明确数量授权，`get_holdings` 仅证明本人产品/账户与可用份额，不以持仓总量代替部分赎回意图。L1 strict适配接受整数份额时精确转四位字符串，float/bool拒；L2以Decimal核对数量并继续完整作用域和可用份额预演/执行。

@@ -952,6 +952,7 @@
 | 2026-10-31 | Codex | FORM候选f6479e1新代际live真实F/app路径通过：黄级G19→G4→G9/G6→G8转20000分、绿级冻结成功，重复G4/G8不重复写。SQL两app_form计划EXECUTED/捕获epoch0，两永久绑定/CONSUMED claims、零伪造utterance、一笔20000分转账、卡FROZEN、审批USED/YELLOW、L3各一次、账本平衡、迁移0005。证据form-authorization-live.json；unit3552/1065条件skip，组件295项，独审APPROVE；开始最终head完整CI，未合104/未冻结。 |
 
 | 2026-10-31 | Codex | #104 a9cb028最终CI在旧0001升级保留测试停下：测试增量列清单漏authorization_epoch，实际旧行原字段一致但新增NULL未剥离。补BIGINT/NULL增量断言、保留所有原字段严格相等，真实迁移schema3通过；重跑新最终head完整CI。34独立分支仅新增红测，预审子代理报Codex用量上限，未请求DeepSeek重试，资金修复仍需独审后合并。 |
+| 2026-10-31 | Codex | 34独立fix/redemption-sources：L1强制units读持仓导致部分赎回失败，新增旧3fail3pass；现数量只取typed明确span、持仓仅作可用边界。strict适配仅int→精确四位str，float/bool拒，不改冻结schema。真实G3/JWT/PG旧1fail5pass，新6pass并断言完整intent；Agent/契约718pass39skip。独审APPROVE亲跑11；实核当前seed李四已有安心货币10000份（非此前交接推断），待live赎1000及结算/SQL/最终CI。 |
 
 ## 5. 下一步待办（按顺序）
 

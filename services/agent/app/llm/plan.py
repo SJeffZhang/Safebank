@@ -81,8 +81,9 @@ _SYSTEM = (
     "account_id 选自己名下唯一活期账户（type=CHECKING，acc_ 开头）并用 read 来源引用，"
     "amount_cents 来自用户原话或 derived 的 available_less_7d_charges，"
     "不要自行判断适当性（适当性由网关判定）。"
-    "redeem_product 的 units（赎回份额）必须从 get_holdings 的 holdings 里用 read 来源引用，"
-    "不能自己编造份额；product_id 同样从已读产品数据引用。"
+    "redeem_product 的 units（赎回份额）只能取用户原话明确的数量，声明utterance来源，"
+    "用四位小数字符串；不得用持仓总份额代替部分赎回数量。必须先get_holdings读取本人可用持仓，"
+    "product_id/account_id使用读取来源，缺少明确赎回数量时追问，不得默认全部赎回。"
     "产品相关问题（产品列表/详情/比较）是只读任务，用 list_products / compare_products / "
     "get_product 读取，不要生成任何写计划。"
     "X-3「把下周要扣的会员费留够，剩下的钱买稳健型理财」：先读 upcoming_charges、"
@@ -294,8 +295,8 @@ def _wealth_source_problems(draft: PlanDraft, state: AgentState) -> list[str]:
       get_product; amount must come from the user's words or the
       available_less_7d_charges derived template (never a read/step/hint/action
       source or the wrong derived template).
-    - redeem_product.units must be read-sourced from get_holdings (never
-      invented from the utterance or another step).
+    - redeem_product.units must be selected by a typed utterance, never by holding data.
+      Holdings only establish the owned product/account and available bound.
 
     These are bounded local checks, not authorization — L2 re-derives sources.
     """
@@ -333,17 +334,36 @@ def _wealth_source_problems(draft: PlanDraft, state: AgentState) -> list[str]:
                     )
         elif step.tool == "redeem_product":
             units = sources.get("units")
-            if units is None or units.source.kind != "read":
+            if units is None or units.source.kind != "utterance":
                 problems.append(
-                    f"steps[{index}].units: 赎回份额必须从 get_holdings 的 holdings 里"
-                    "用 read 来源引用，不能自己编造或从原话取值"
+                    f"steps[{index}].units: 赎回份额必须来自用户原话utterance的明确数量，"
+                    "不能用持仓总份额代替；可用份额由get_holdings与L2核验"
                 )
-            else:
-                read = read_by_ref.get(units.source.ref)
-                if read is None or read.tool != "get_holdings":
-                    problems.append(
-                        f"steps[{index}].units: 赎回份额的 read 来源必须指向 get_holdings"
+            elif units.source.kind == "utterance":
+                from decimal import Decimal, InvalidOperation
+
+                ref = next(
+                    (
+                        u
+                        for u in state.get("utterances", [])
+                        if u.id == units.source.ref and u.kind is UtteranceKind.TYPED
+                    ),
+                    None,
+                )
+                start, end = units.source.span
+                raw = ref.text[start:end] if ref is not None else ""
+                try:
+                    exact = (
+                        bool(re.fullmatch(r"[0-9]{1,14}(?:\.[0-9]{1,4})?(?:份)?", raw))
+                        and Decimal(raw.removesuffix("份")) == step.args.units
                     )
+                except InvalidOperation:
+                    exact = False
+                if not exact:
+                    problems.append(f"steps[{index}].units: 赎回份额来源必须逐字对应原话明确数量")
+            holdings = [r for r in state.get("reads", []) if r.tool == "get_holdings"]
+            if not holdings:
+                problems.append(f"steps[{index}].units: 赎回前必须读取get_holdings")
     return problems
 
 
