@@ -113,7 +113,7 @@ def _ctx(l3):
     return EvalContext(
         plan_draft=plan,
         plan_id="pln_replay",
-        origin="app_form",
+        origin="agent",
         customer_id="cus_zs",
         session_id="ses_replay",
         l3=l3,

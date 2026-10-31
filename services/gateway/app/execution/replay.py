@@ -45,6 +45,19 @@ async def replay_with_context(ctx: EvalContext) -> tuple[Decision, EvalContext]:
         l3=ctx.l3,
         audit=ctx.audit,
     )
+    if fresh.origin == "app_form":
+        from ..forms import load_forms
+
+        fresh.authorization, _, _, _ = await load_forms(
+            fresh.conn,
+            fresh.session_id,
+            fresh.customer_id,
+            fresh.plan_draft.utterance_ids,
+            fresh.wall_now(),
+            plan_id=fresh.plan_id,
+            bank=await fresh.bank_state(),
+            require_bound=True,
+        )
     result = await pipeline.evaluate(fresh, mode=EvalMode.EXECUTE_REPLAY)
     if result.decision is None:
         raise RuntimeError("replay pipeline produced no Decision")

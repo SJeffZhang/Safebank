@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-GATEWAY_REVISION = "0004_in_progress"
+GATEWAY_REVISION = "0005_form_epoch"
 
 
 def engine(url: str, **kwargs) -> AsyncEngine:

@@ -20,12 +20,12 @@ NEW_COLUMNS = {
     "evaluations": {"view_json": "JSONB"},
     "otp_challenges": {"code_ciphertext": "TEXT"},
     "execution_jobs": {"authorization_evidence": "JSONB", "deadline_cap_wall": "TIMESTAMP"},
-    "plans": {"plan_draft": "JSONB"},
+    "plans": {"plan_draft": "JSONB", "authorization_epoch": "BIGINT"},
 }
 
 
 def test_wave1_metadata_requires_incremental_schema():
-    assert GATEWAY_REVISION == "0004_in_progress"
+    assert GATEWAY_REVISION == "0005_form_epoch"
     assert {"FENCING", "PAUSED"} <= {v.value for v in ExecutionJobStatus}
     for table, columns in NEW_COLUMNS.items():
         for name in columns:

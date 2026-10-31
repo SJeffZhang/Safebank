@@ -3,7 +3,7 @@
 Replaces the W0 placeholder stub.  The A‑path (agent + assistant JWT) runs the
 full 9‑stage pipeline in a read transaction, then persists atomically in a
 single write transaction under unified lock order (session → plan → evaluation →
-approval).  The F‑path (app‑form) returns 503 until a future component fills it.
+approval). F builds the same pipeline input only from persisted FORM actions.
 """
 
 from __future__ import annotations
@@ -28,11 +28,14 @@ from ..approval.service import create_for_evaluation
 from ..audit.chain import append as audit_append
 from ..errors import GatewayError
 from ..evaluation.repo import append_evaluation, latest_revision
+from ..forms import form_draft, load_forms
 from ..idempotency import request_idempotent
+from ..middleware import digest_hex
 from ..pipeline import evaluate as run_pipeline
 from ..pipeline.context import EvalContext, EvalMode
 from ..schemas.decision import Decision, DecisionValue
 from ..schemas.enums import PlanStatus, ServiceKind, UtteranceStatus
+from ..schemas.requests import AppFormPlanRequest
 from ..schemas.scope import AuthorizationInputs, UtteranceRef
 from ..utterance.loader import as_ref
 from ..utterance.service import new_id
@@ -61,8 +64,27 @@ async def _load_authorization(
     session_id: str,
     customer_id: str,
     now: datetime,
+    *,
+    origin="agent",
+    source_ids=None,
+    plan_id=None,
+    l3=None,
+    bank=None,
 ) -> AuthorizationInputs:
     """Load ACTIVE, unexpired utterances for *session_id* into AuthorizationInputs."""
+    if origin == "app_form":
+        auth, _, _, _ = await load_forms(
+            conn,
+            session_id,
+            customer_id,
+            source_ids,
+            now,
+            plan_id=plan_id,
+            l3=l3,
+            bank=bank,
+            require_bound=True,
+        )
+        return auth
     rows = (
         (
             await conn.execute(
@@ -148,6 +170,8 @@ async def _persist_plan(
     status: str,
     now: datetime,
     plan_draft: dict | None = None,
+    origin: str = "agent",
+    authorization_epoch: int | None = None,
 ) -> None:
     """Insert the plan row; raises 409 if *request_id* is already used."""
     existing = await conn.scalar(
@@ -164,7 +188,8 @@ async def _persist_plan(
             id=plan_id,
             customer_id=customer_id,
             sid=sid,
-            origin="agent",
+            origin=origin,
+            authorization_epoch=authorization_epoch,
             request_id=request_id,
             request_hash=request_hash,
             plan_hash=plan_hash,
@@ -191,54 +216,35 @@ async def evaluate_plan(request: Request) -> JSONResponse:
     if caller is None:
         raise GatewayError(Code.UNAUTHENTICATED, 401)
 
-    # F path skeleton: app‑form evaluation lands in a later component.
-    if caller.kind is ServiceKind.F:
-        raise GatewayError(
-            Code.DEPENDENCY_UNAVAILABLE,
-            503,
-            "app-form evaluate lands in later component",
-        )
-
-    if caller.kind is not ServiceKind.A:
+    if caller.kind not in (ServiceKind.A, ServiceKind.F) or not caller.customer_id:
         raise GatewayError(Code.UNAUTHENTICATED, 401)
-    if not caller.customer_id or not caller.sid:
-        raise GatewayError(Code.UNAUTHENTICATED, 401, "assistant JWT requires sub and sid")
-
-    customer_id: str = caller.customer_id
-    sid: str = caller.sid
-
-    # ── Parse body ──────────────────────────────────────────────────────
+    is_form = caller.kind is ServiceKind.F
     try:
-        raw_body: dict[str, Any] = await request.json()
+        raw_body = await request.json()
+        form_request = AppFormPlanRequest.model_validate(raw_body) if is_form else None
+        plan_draft = None if is_form else PlanDraft.model_validate(raw_body)
     except Exception as exc:
         raise GatewayError(Code.CONTRACT_INVALID, 422) from exc
-
-    # PRD §9.5 G4: an assistant (A) caller posts the PlanDraft itself as the
-    # body; ``request_id`` lives inside it.  Keep the idempotent_body structure
-    # below unchanged so already-persisted idempotency records stay valid.
-    try:
-        plan_draft = PlanDraft.model_validate(raw_body)
-    except Exception as exc:
-        raise GatewayError(Code.CONTRACT_INVALID, 422, "invalid plan_draft") from exc
-
-    request_id: str = plan_draft.request_id
-    if not request_id or not isinstance(request_id, str):
-        raise GatewayError(Code.CONTRACT_INVALID, 422, "request_id is required")
-
-    # Body digest for idempotency (plan_draft + request_id without JWT).
-    idempotent_body: dict[str, Any] = {
-        "request_id": request_id,
-        "plan_draft": plan_draft.model_dump(mode="json"),
-    }
-
-    # ── Cross‑validate JWT ↔ body ──────────────────────────────────────
-    if plan_draft.session_id != sid:
-        raise GatewayError(Code.OWNERSHIP_MISMATCH, 404, "session does not match JWT")
-
-    utts_set: set[str] = set(caller.utts)
-    for uid in plan_draft.utterance_ids:
-        if uid not in utts_set:
-            raise GatewayError(Code.AUTHORIZATION_CONSUMED, 409, f"utterance {uid} not in JWT")
+    if is_form:
+        ids = tuple(form_request.form_action_ids)
+        if len(ids) != len(set(ids)):
+            raise GatewayError(Code.CONTRACT_INVALID, 422)
+        sid = form_request.session_id
+        request_id = form_request.request_id
+        idempotent_body = form_request.model_dump(mode="json")
+    else:
+        sid = caller.sid
+        if not sid or plan_draft.session_id != sid:
+            raise GatewayError(Code.OWNERSHIP_MISMATCH, 404)
+        request_id = plan_draft.request_id
+        idempotent_body = {
+            "request_id": request_id,
+            "plan_draft": plan_draft.model_dump(mode="json"),
+        }
+        for uid in plan_draft.utterance_ids:
+            if uid not in set(caller.utts):
+                raise GatewayError(Code.AUTHORIZATION_CONSUMED, 409)
+    customer_id = caller.customer_id
 
     # ── Runtime resources ──────────────────────────────────────────────
     db_engine = getattr(request.app.state, "db", None)
@@ -252,13 +258,43 @@ async def evaluate_plan(request: Request) -> JSONResponse:
     now = wall_now()
     plan_id = new_id("pln")
 
+    form_rows = None
+    form_auth = None
+    form_bank = None
+    if is_form:
+        async with db_engine.connect() as conn:
+            # Completed retries must resolve before checking the already-bound FORM.
+            dedup = (
+                (
+                    await conn.execute(
+                        select(t.request_dedup).where(
+                            t.request_dedup.c.customer_id == customer_id,
+                            t.request_dedup.c.route == ROUTE,
+                            t.request_dedup.c.request_id == request_id,
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if dedup is not None:
+                if dedup["request_hash"] != digest_hex(idempotent_body):
+                    raise GatewayError(Code.IDEMPOTENCY_CONFLICT, 409)
+                if dedup["status_code"] == 0:
+                    raise GatewayError(Code.EXECUTION_IN_PROGRESS, 409)
+                return JSONResponse(dedup["response"], status_code=dedup["status_code"])
+            form_auth, steps, form_rows, form_bank = await load_forms(
+                conn, sid, customer_id, ids, now, plan_id=plan_id, l3=l3_client
+            )
+            plan_draft = form_draft(request_id, sid, ids, steps)
+
     # ── Phase 1: Pipeline execution (read transaction) ──────────────────
     ctx = EvalContext(
         plan_draft=plan_draft,
         customer_id=customer_id,
         session_id=sid,
         plan_id=plan_id,
-        origin="agent",
+        origin=caller.origin,
         identity=caller,
         profile=profile,
         mode=EvalMode.EVALUATE,
@@ -269,7 +305,22 @@ async def evaluate_plan(request: Request) -> JSONResponse:
     async with db_engine.connect() as read_conn:
         ctx.conn = read_conn
         try:
-            ctx.authorization = await _load_authorization(read_conn, sid, customer_id, now)
+            if is_form:
+                form_bank = await ctx.bank_state()
+                form_auth, _, _, _ = await load_forms(
+                    read_conn,
+                    sid,
+                    customer_id,
+                    ids,
+                    now,
+                    plan_id=plan_id,
+                    bank=form_bank,
+                    expected_rows=form_rows,
+                    expected_epoch=form_auth.authorization_epoch,
+                )
+                ctx.authorization = form_auth
+            else:
+                ctx.authorization = await _load_authorization(read_conn, sid, customer_id, now)
         except GatewayError:
             raise
         except Exception as exc:
@@ -309,6 +360,25 @@ async def evaluate_plan(request: Request) -> JSONResponse:
         if session_row["revoked_at_wall"] is not None:
             raise GatewayError(Code.AUTHORIZATION_CANCELLED, 409)
 
+        if is_form:
+            final_auth, _, final_rows, _ = await load_forms(
+                conn,
+                sid,
+                customer_id,
+                ids,
+                wall_now(),
+                plan_id=plan_id,
+                bank=form_bank,
+                lock=True,
+                expected_rows=form_rows,
+                expected_epoch=form_auth.authorization_epoch,
+            )
+            if final_rows != form_rows or final_auth != form_auth:
+                raise GatewayError(Code.AUTHORIZATION_CANCELLED, 409)
+            await conn.execute(
+                t.form_actions.update().where(t.form_actions.c.id.in_(ids)).values(used_by=plan_id)
+            )
+
         revision = (await latest_revision(conn, plan_id)) + 1
         evaluation_id = new_id("evl")
         plan_status = _DECISION_STATUS[decision_value]
@@ -327,6 +397,8 @@ async def evaluate_plan(request: Request) -> JSONResponse:
             status=plan_status.value,
             now=now,
             plan_draft=plan_draft.model_dump(mode="json"),
+            origin=caller.origin,
+            authorization_epoch=form_auth.authorization_epoch if is_form else None,
         )
 
         risk_str: str = decision.risk.value

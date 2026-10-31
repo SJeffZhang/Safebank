@@ -35,7 +35,7 @@
 
 ## 3. 当前状态（每次工作后更新）
 
-**最后更新**：2026-10-31（Codex 实施基础版冻结；#96/#98完成，代际初始化已完成，PR100 D3已合main，06日历来源新数据集live通过、精确head CI待跑；表单G4/G8及36仍阻塞）
+**最后更新**：2026-10-31（#96/#98/#99/#100/#101/#102/#103已验收合并；FORM G4/G8实现与恢复/污点回归中，赎回及六场景彩排仍待）
 
 | 模块 | 状态 |
 |---|---|
@@ -45,8 +45,8 @@
 | L2 网关 | main `62e83ac`（L1 SSE修复 #33）：W4b2a/b/c（PR #23/#25/#27）、W3b（#29）、W4c（#31）均已合入。W4c 独立复审 APPROVE；精确 head `79229ae` 的 push/PR 四 CI 成功。前任协调者合并后组合回归与真实网络/HTTP集成通过；本次只读复核六服务 healthy、gateway 库 `0003_plan_draft`、两持久卷未重建。启动恢复扫描/孤儿 PAUSED job 归档仍属 W5。 |
 | L1 Agent | C1a–C1e 全部合入（C1c2 #24、C1d #26、C1e #28）；真实 PG checkpoint/服务/输出与回放组件已验收，L1 SSE结构化输出小修 #33 已合，39真实PG通过；完整 live 三层黄级转账尚未闭合。E0a #30 已合（405 条语料）；E0b worktree 保留 `ba76448`，收尾/live 与 try-agent 按用户指令暂停。中文金额角/分与中阿混写的输出解析缺口见 C1e 验收。 |
 | 前端 | **2026-10-29**：主项目 frontend/ 内竖版375×812 App，继承原Graphite & Champagne tokens；六场景、同站BFF、审批/OTP、叠卡/PIN/用途、报表/理财、我的整合订阅及圆形主题过渡、助手满内容区均实现合成预览。PR #71已合入main（7734f1f），最终head共6项CI成功；合并后全量384项（含新App61）、BFF10项与build复跑通过。交接文档及新Agent Prompt已随PR交付；真实三层联调/开户/PAN/主动推送边界见frontend/HANDOFF.md。未派DS worker，未写队友仓库。 |
-| 协调状态 | **2026-10-31 Codex 实施中**：main=7b6d5ab（#96/#97/#98/#99/#100已合）；通知审计、验收工具及代际初始化完成。PR100 D3/S1已通过独审、红绿专项、新代际live跨两期与SQL核对、精确a26c764完整本机CI，长期栈已部署回main。旧worktree、库与数据卷保留；无DS worker、无对比。 |
-| 下一步 | 在独立fix/schedule-provenance修06日历来源，再补表单G4/G8真实授权链及36、23/34/09阻塞，六场景两轮新数据集live、43条实测清单和断网回放通过后才冻结demo-v1。D6/D7攻击与控制台排在冻结之后，D8/指标最后；402/403/429立即停止。 |
+| 协调状态 | **2026-10-31 Codex 实施中**：main=74baf71（#96–#103相关基础组件已合）；通知审计、代际初始化、D3/S1、06/36及23均完成独审、本机完整CI与干净环境live。表单G4/G8独立分支实施；旧worktree、库和数据卷保留，无DS worker、无对比。 |
+| 下一步 | 收尾feat/form-authorization（真实审批、恢复与撤销），再修34/09；六场景两轮新数据集live、43条实测清单和断网回放通过后才冻结demo-v1。D6/D7攻击与控制台在冻结之后，D8/指标最后；402/403/429立即停止。 |
 
 ### 已确认事实
 
@@ -945,6 +945,13 @@
 | 2026-10-31 | Codex | 23 a86e015新代际在gather遇gateway404，未生成计划且无业务写。补仅404/NOT_FOUND的固定脱敏反馈、既有轮数内重收集；失败不产生来源，其余403/429/503仍一次停。另修get_cards补读为冻结契约要求的account_id=null，两个回归旧码失败；Agent611通过39skip，独审APPROVE亲跑11。未持久化失败read参数，不猜其具体值；继续live。 |
 
 | 2026-10-31 | Codex | 23候选a01611d新代际真实L1红级审批/OTP/确认通过，SQL plan EXECUTED、approval USED/RED、L3 COMMITTED/EXECUTED；李四唯一卡LOST且无补卡，一条挂失operation、零转账、账本平衡。OTP挑战成功后已消耗，凭审计计数及确认HTTP200取证，不保存验证码。证据lost-card-source-live.json；开始最终head完整本机CI，尚未合103/冻结。 |
+
+| 2026-10-31 | Codex | #103精确63bfd47完整本机CI通过（unit3552/1040条件skip、W2 274、S1 29、其余真实PG/并发5/一致性17/网络与恢复/契约），合并74baf71，长期栈healthy，公开摘要38ea028。独立feat/form-authorization补FORM G4/G8：7新PG旧503红测后接线，独审发现末次污染与快照混用，已补真实PG红绿；16专项通过，真实绿/黄/红OTP及UNKNOWN/PAUSED恢复验证中。未合表单组件/未冻结。 |
+| 2026-10-31 | Codex | FORM共享replay旧缓存问题已独审定位并补G8红绿，改为fresh正式快照重建来源，独审APPROVE；真实PG16项及L3绿/黄/红OTP/UNKNOWN/PAUSED共5项通过。额外撤销前置阶段回归发现epoch增后cleanup前仍可加载FORM，旧码失败；0005_form_epoch新增plans nullable捕获版本，G4绑定、复演核对，旧agent不变/无版本FORM拒。迁移+专项20通过、实际L3含撤销/过期/丢绑定共8通过；最终组合与增量独审进行中，未合。 |
+
+| 2026-10-31 | Codex | FORM候选f6479e1新代际live真实F/app路径通过：黄级G19→G4→G9/G6→G8转20000分、绿级冻结成功，重复G4/G8不重复写。SQL两app_form计划EXECUTED/捕获epoch0，两永久绑定/CONSUMED claims、零伪造utterance、一笔20000分转账、卡FROZEN、审批USED/YELLOW、L3各一次、账本平衡、迁移0005。证据form-authorization-live.json；unit3552/1065条件skip，组件295项，独审APPROVE；开始最终head完整CI，未合104/未冻结。 |
+
+| 2026-10-31 | Codex | #104 a9cb028最终CI在旧0001升级保留测试停下：测试增量列清单漏authorization_epoch，实际旧行原字段一致但新增NULL未剥离。补BIGINT/NULL增量断言、保留所有原字段严格相等，真实迁移schema3通过；重跑新最终head完整CI。34独立分支仅新增红测，预审子代理报Codex用量上限，未请求DeepSeek重试，资金修复仍需独审后合并。 |
 
 ## 5. 下一步待办（按顺序）
 

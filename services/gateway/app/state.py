@@ -938,14 +938,15 @@ async def _finish_terminal(
     )
     # Revoked/CANCELLED/SUPERSEDED originals remain revoked, including when a
     # genuine COMMITTED result wins a race against cancellation.
-    await conn.execute(
-        t.utterances.update()
-        .where(
-            t.utterances.c.id.in_(plan["utterance_ids"]),
-            t.utterances.c.status == "ACTIVE",
+    if plan["origin"] == "agent":
+        await conn.execute(
+            t.utterances.update()
+            .where(
+                t.utterances.c.id.in_(plan["utterance_ids"]),
+                t.utterances.c.status == "ACTIVE",
+            )
+            .values(status="CONSUMED", consumed_by=plan["id"])
         )
-        .values(status="CONSUMED", consumed_by=plan["id"])
-    )
 
 
 async def archive_orphan_execution_terminal(
