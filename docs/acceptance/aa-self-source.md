@@ -54,3 +54,25 @@ complete; its equal AA bool must still be unknown. No production check changed.
 Rerun all AA cases plus adjacent lost-card/redemption actual-PG tests:36 passed,
 no skips, including all11 new real G3/JWT/lineage tests. Standard live09 and final
 complete exact-head CI remain pending.
+
+## Increment: AA command incorrectly classified as read-only
+
+The coordinator's `/private/tmp/sbg-freeze-continuation/aa-992b5dd-readonly-failure.json` records an actual fresh run on exact head `992b5ddad6ac5be4f05d8692f49a60174d939a40`: G3 returned SCOPED, sole SPLIT_CREATE, correct AA fields and no clarification; checkpoint Understanding returned `intents=[split_bill]`, `needs_write=false`. No plan, split or execution was created. Root completed the earlier 36 actual-PG cases; this new failure is earlier than the plan/source stages and cannot be repaired by retrying live09 blindly.
+
+Only `understand.py`, the new `tests/agent/test_aa_understanding.py`, and this acceptance note are changed in this increment. The coordinator's rebased commits and prior actual-PG fixture correction remain intact.
+
+The system prompt distinguishes creating an AA collection request from pure calculations and progress queries. A bounded semantic check rejects only a false `needs_write` proposal when state contains exactly one typed utterance, parse_status=SCOPED, no clarification object or clarification ID, and the entire text has the observed narrow `昨晚聚餐<digits[.fraction]>元，我和<Chinese names separated by 、>AA` shape. It does not inspect unavailable UtteranceRef.scope fields, infer action kinds, or use arbitrary scope-field equality. Quoted/questions/calculation/progress/mixed instructions, context/hint/action/multiple inputs, missing/unclear parse state and actual clarification remain outside this check. Other expense names, time synonyms and omitted-self forms are deliberately uncovered by this repair.
+
+A mismatch consumes the existing one-regeneration budget with fixed feedback, shared with schema failures. Exhaustion raises an explicit LlmToolError. There is no deterministic True substitution: the adapter returns the complete validated Understanding from an actual model response, including its original slots. No amounts, participants, sources, plan args, contracts, graph routes, auth paths or retry budgets are changed. Provider 402/403/429 propagates immediately, including during the semantic regeneration.
+
+All tests use scripted HTTP only, with `NO_PROXY=127.0.0.1,localhost`:
+
+| Gate | Actual result |
+|---|---|
+| New understanding tests on unchanged `992b5dd` | 9 failed / 26 passed; `/private/tmp/sbg-aa-understanding-red.log` |
+| Same new tests after the narrow guard | 35 passed; `/private/tmp/sbg-aa-understanding-green.log` |
+| Offline Agent suite (`-m 'not db'`) | 687 passed / 40 deselected; `/private/tmp/sbg-aa-understanding-agent.log` |
+| `make lint contracts-check` | PASS, 505 formatted Python files, frozen v1 unchanged |
+| Full default suite, external DB/Linux secret flags explicitly zero | 3643 passed / 1082 skipped, exit 0 (30.90s); `/private/tmp/sbg-aa-understanding-full.log` |
+
+This implementer made no new real LLM/API, PG, Docker, deployment or publication request. The increment requires independent safety review and the coordinator's fresh live09 before any freeze acceptance claim; all skipped/deselected cases remain unaccepted by these pure runs.
