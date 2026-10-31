@@ -83,6 +83,26 @@ def _lost_card_no_replacement(tool, param, value, row, span_text):
     )
 
 
+def _split_includes_self(tool, param, value, row, span_text):
+    """Only the self phrase in a persisted, scoped typed AA command proves True.
+
+    The caller obtains ``row`` through the existing live, credential-bound lineage
+    proof. Equal arbitrary scope fields or a boolean read value are not this rule.
+    """
+    if tool != "create_split_request" or param != "include_self" or value is not True:
+        return False
+    scope = row.get("normalized_scope")
+    if not isinstance(scope, dict) or not isinstance(scope.get("fields"), dict):
+        return False
+    return (
+        row.get("kind") == "typed"
+        and row.get("parse_status") == "SCOPED"
+        and scope.get("action_kinds") == ["SPLIT_CREATE"]
+        and scope["fields"].get("include_self") is True
+        and normalize(span_text) == "我和"
+    )
+
+
 def _schedule_calendar_value(tool, param, value, row, span_text):
     """Only verified persisted typed scopes may normalize schedule calendar fields.
 
@@ -203,6 +223,9 @@ class ProvenanceStage(Stage):
                                     step.tool, param, value, row, text[start:end]
                                 )
                                 or _lost_card_no_replacement(
+                                    step.tool, param, value, row, text[start:end]
+                                )
+                                or _split_includes_self(
                                     step.tool, param, value, row, text[start:end]
                                 )
                             )

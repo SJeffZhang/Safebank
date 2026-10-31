@@ -69,6 +69,9 @@ _SYSTEM = (
     "AA 收款（create_split_request）的 participant_payee_ids 必须把原话中的人名逐个映射为 "
     "list_payees 读取结果 items 中对应的 id，不得为空；其来源只声明一条 utterance，"
     "span 覆盖原话中全部参与人名字（如「小林、小周、小陈」）。"
+    "include_self 也必须声明 typed 原话的 utterance 来源；「我和小林、小周AA」中 "
+    "include_self=true 的 span 只指向「我和」，不能省略、编造或从读取数据取布尔值；"
+    "缺少真实收款人列表或来源时不能猜ID或参数，必须补足信息再生成。"
     "订阅组合（找出没用的订阅取消掉并定时把省下的钱转走）里，schedule_transfer 的 "
     "amount_cents 必须用 derived 来源且 template 只能是 cancelled_monthly_fees，"
     "inputs 只能引用订阅读取（read）或取消步骤（step），不得引用原话字面金额；"
@@ -794,8 +797,6 @@ def _split_participant_problems(draft: PlanDraft, state: AgentState) -> list[str
             for entry in read.data.get("items", []):
                 if isinstance(entry, dict) and entry.get("id"):
                     known_payee_ids.add(entry["id"])
-    if not known_payee_ids:
-        return []  # no payee data available; L2 will catch
     problems: list[str] = []
     for index, step in enumerate(draft.steps):
         if step.tool != "create_split_request":
@@ -808,6 +809,23 @@ def _split_participant_problems(draft: PlanDraft, state: AgentState) -> list[str
                     "或先将收款人姓名映射到对应的 payee_id"
                 )
                 break  # one problem per step is enough
+    return problems
+
+
+def _split_source_problems(draft: PlanDraft, state: AgentState) -> list[str]:
+    """Require declared typed text evidence; L2 independently verifies its meaning."""
+    typed_ids = {u.id for u in state.get("utterances", []) if u.kind is UtteranceKind.TYPED}
+    problems = []
+    for index, step in enumerate(draft.steps):
+        if step.tool != "create_split_request":
+            continue
+        sources = [s.source for s in step.arg_sources if s.param == "include_self"]
+        if len(sources) != 1 or sources[0].kind != "utterance" or sources[0].ref not in typed_ids:
+            problems.append(
+                f"steps[{index}].include_self: 必须声明真实typed原话的utterance来源；"
+                "原话「我和」表示true时span仅指向这两个字，不能省略、编造或引用read数据；"
+                "金额、参与人和memo保持用户原意，仍交L2核验"
+            )
     return problems
 
 
@@ -1034,7 +1052,9 @@ class PlanAdapter:
                 sem_problems = _semantic_problems(draft, state)
                 ch_problems = _channel_source_problems(draft, state)
                 sch_problems = _schedule_intent_vs_tool_problems(draft, state)
-                split_problems = _split_participant_problems(draft, state)
+                split_problems = _split_participant_problems(draft, state) + _split_source_problems(
+                    draft, state
+                )
                 der_problems = _derived_schedule_problems(draft, state)
                 idle_problems = _idle_subscription_problems(draft, state)
                 card_problems = _lost_card_source_problems(draft, state)
