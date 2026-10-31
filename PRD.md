@@ -1853,3 +1853,5 @@ AA理解补充（2026-10-31）：对于单typed、L2 SCOPED且无实际澄清的
 ### 完整自然月账单只读路径增量（2026-10-31）
 
 仅单条typed完整月报请求、L2确定性NO_WRITE、needs_write=false且无实际clarification时，B4固定读取fresh get_profile业务时间，以Asia/Shanghai解析月份，读取get_spending_summary完整聚合及detect_anomalies的[月初,下月月初)范围；不以流水分页求月合计，也不取主机墙钟。固定报告只格式化真实可信汇总、异常时间/金额/规则，商户/备注指令不进入输出，原数字校验器和掩码继续执行。缺失或错范围证据返回固定失败。CLI完成只读要求实际NO_WRITE、完整读结果/最终回复且无计划/写Decision/执行/结构化错误，实际澄清优先；整条规范化后精确等于保留错误模板时不得计COMPLETED。混合写、未知后缀、引用和实际澄清不借月报短语绕过原规则。
+
+G9状态消费约定（2026-10-31）：`GET /approvals/{id}` 的当前响应status使用ApprovalStatus，合法待确认值为`PENDING`；不能直接当作UI PlanStatus的`PENDING_APPROVAL`比较。前端getView仅在读取边界将严格`PENDING`映射为UI待审批状态，其余状态原样禁确认，不修改服务端wire、ID/view_hash、期限、风险/OTP要求或请求权限，也不自动确认/执行。后端依旧独立核对完整审批绑定。
