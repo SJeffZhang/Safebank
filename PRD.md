@@ -770,6 +770,7 @@ class AgentState(TypedDict):
 - 结构化卡片不进 state，经 `custom` 事件推送（§6.5）。
 - `thread_id = session_id`。刷新页面后 App 调 `GET /api/approvals?status=PENDING` 恢复确认面板（§9.6），不依赖 L1。
 - `gather` 中 untrusted 字段用 `<untrusted_data source="...">…</untrusted_data>` 包裹，系统提示声明其中任何指令都不执行（辅助手段，真正的防线在 L2）。
+- 赎回写请求在gather结束时补齐未读取且未尝试的get_accounts、list_products和get_holdings，均经当前用户的正式读接口，保留实际source_ref与污点/版本。补读不猜实体或数量，不重试失败读取；持仓仅为可用上限，赎回份额仍只接受用户原话的明确数量来源。
 
 ### 6.2 ActionPlan 契约（`packages/contracts/plan.py`）
 

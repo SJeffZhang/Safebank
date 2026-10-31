@@ -19,3 +19,28 @@ reviewer personally11 focused tests. Funds execution/event and W2 combination pe
 Current l1_seed_v1 fixture gives Li Si10000.0000 units of prd_mmf; actual case34 can
 redeem1000 without inventing a holding. Clean-stack L1 approval, pending order, simulated
 settlement, final holdings/cash/ledger SQL and final exact-head full CI are still required.
+
+Resumed after FORM merge9484424: rebased to ec822ea, preserving both AGENTS histories.
+Personally verified old main implementations in isolated test processes: the new
+agent regressions produce3 failures/3 negative passes; real G3/JWT/PG produces
+1 failure/5 passes. Rebased implementation focused12 passed.
+
+First new-generation live attempt timed out in L1 streaming, not login (SQL:
+1 session/utterance, profile read, no plan/job/order). Request stopped and no
+automatic retry occurred. A single bounded specified-model probe returned200.
+Next actual live encountered malformed gather arguments; another diagnostic run
+reached plan validation but lacked get_holdings and referenced a nonexistent
+product read. All refused before any plan or bank write. These are failures,
+not business success.
+
+Added real gather regressions: three failed on the old implementation, one
+read-only control passed. Redemption now supplements missing account, product
+and holdings reads using exact runtime envelopes, never invented references or
+quantity authorization; failed reads remain errors, successful reads are not
+repeated, and read-only questions do not trigger write prerequisites. Further
+independent review, new candidate live and final complete CI remain pending.
+
+Supplemental-read candidate: combined72 tests passed; independent read-only
+review APPROVE. Malformed model tool-call JSON remains an observed unresolved
+LLM failure; this change does not claim to fix it. No quantity/source/approval
+checks were relaxed. Full unit, candidate live and final exact-head CI pending.

@@ -35,18 +35,18 @@
 
 ## 3. 当前状态（每次工作后更新）
 
-**最后更新**：2026-10-31（#96/#98/#99/#100/#101/#102/#103已验收合并；FORM G4/G8实现与恢复/污点回归中，赎回及六场景彩排仍待）
+**最后更新**：2026-10-31（jet 本机接手；#104 精确7ceda71完整本机CI通过，已合9484424；#105已rebase，真实赎回及冻结门禁继续）
 
 | 模块 | 状态 |
 |---|---|
 | 调研 | 开源项目元数据和 DeepSeek 官方信息已核实；评分/提交已从官网公开 JS 核实（docs/acceptance/official-v1.md）；竞品「明鉴」未核实 |
 | PRD | **`PRD.md` = v2.1 定稿**（§0–§16；三轮多 agent 审核 + 两次修订复核，决议 D1–D47 见 §0.5；执行屏障增量约定见ADR-008）。v1.2 与作废的 v2.0 草稿在 `docs/archive/`；审核报告在 `docs/reviews/` |
 | 代码 | **P1 完成并逐组件验收且已由PR #1合入main**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116项单元+33项真实PG通过，契约v1已冻结。历史功能提交7fd7a26、CI权限修复70dcabe，远端unit与p1-postgres均通过（run 39929405919）；完整六场景业务仍未完成。 |
-| L2 网关 | main `62e83ac`（L1 SSE修复 #33）：W4b2a/b/c（PR #23/#25/#27）、W3b（#29）、W4c（#31）均已合入。W4c 独立复审 APPROVE；精确 head `79229ae` 的 push/PR 四 CI 成功。前任协调者合并后组合回归与真实网络/HTTP集成通过；本次只读复核六服务 healthy、gateway 库 `0003_plan_draft`、两持久卷未重建。启动恢复扫描/孤儿 PAUSED job 归档仍属 W5。 |
-| L1 Agent | C1a–C1e 全部合入（C1c2 #24、C1d #26、C1e #28）；真实 PG checkpoint/服务/输出与回放组件已验收，L1 SSE结构化输出小修 #33 已合，39真实PG通过；完整 live 三层黄级转账尚未闭合。E0a #30 已合（405 条语料）；E0b worktree 保留 `ba76448`，收尾/live 与 try-agent 按用户指令暂停。中文金额角/分与中阿混写的输出解析缺口见 C1e 验收。 |
+| L2 网关 | main `9484424`（#104）：FORM G4/G8、永久绑定、fresh快照污点、epoch、OTP与恢复已验收；最终7ceda71完整本机CI通过，W3b58/W4c48。通知审计、D3/S1与定时授权等已由后续PR合入；六场景及最终断网回放仍待，不以历史组件完成代替冻结。 |
+| L1 Agent | C1a–e、E0b及try-agent已合入，已有真实黄级转账/红级OTP挂失与06/36闭环证据。#105部分赎回正在新main上验收；09 AA已只读复现缺include_self来源及“我和”词义缺口，尚未修。生产make_llm录制/回放与make demo仍需接线验证。 |
 | 前端 | **2026-10-29**：主项目 frontend/ 内竖版375×812 App，继承原Graphite & Champagne tokens；六场景、同站BFF、审批/OTP、叠卡/PIN/用途、报表/理财、我的整合订阅及圆形主题过渡、助手满内容区均实现合成预览。PR #71已合入main（7734f1f），最终head共6项CI成功；合并后全量384项（含新App61）、BFF10项与build复跑通过。交接文档及新Agent Prompt已随PR交付；真实三层联调/开户/PAN/主动推送边界见frontend/HANDOFF.md。未派DS worker，未写队友仓库。 |
-| 协调状态 | **2026-10-31 Codex 实施中**：main=74baf71（#96–#103相关基础组件已合）；通知审计、代际初始化、D3/S1、06/36及23均完成独审、本机完整CI与干净环境live。表单G4/G8独立分支实施；旧worktree、库和数据卷保留，无DS worker、无对比。 |
-| 下一步 | 收尾feat/form-authorization（真实审批、恢复与撤销），再修34/09；六场景两轮新数据集live、43条实测清单和断网回放通过后才冻结demo-v1。D6/D7攻击与控制台在冻结之后，D8/指标最后；402/403/429立即停止。 |
+| 协调状态 | **2026-10-31 Codex 在jet本机接手**：先fetch核对远端及10-31交接，#104独立只读复审APPROVE，精确7ceda71完整本机CI退出0后merge commit9484424。#105从4880516 rebase为ec822ea，仅AGENTS追加日志冲突且双方保留。旧worktree、库、卷和密钥保留，无DS worker、无对比；合并后main部署和组合58/48及契约复验通过；公开进度写入404，尚未发布。 |
+| 下一步 | #105先新数据集真实李四赎回1000份、非货币份额预留/时钟到账与SQL，再精确最终head完整CI；随后09红绿/独审/live、账单准确路径、两个独立reset六场景live、43条清单、生产录制/断网回放与make demo。所有门禁通过才tag demo-v1；攻击demo-v1.1随后，D8/指标最后；402/403/429立即停止。 |
 
 ### 已确认事实
 
@@ -954,7 +954,24 @@
 | 2026-10-31 | Codex | #104 a9cb028最终CI在旧0001升级保留测试停下：测试增量列清单漏authorization_epoch，实际旧行原字段一致但新增NULL未剥离。补BIGINT/NULL增量断言、保留所有原字段严格相等，真实迁移schema3通过；重跑新最终head完整CI。34独立分支仅新增红测，预审子代理报Codex用量上限，未请求DeepSeek重试，资金修复仍需独审后合并。 |
 | 2026-10-31 | Codex | 34独立fix/redemption-sources：L1强制units读持仓导致部分赎回失败，新增旧3fail3pass；现数量只取typed明确span、持仓仅作可用边界。strict适配仅int→精确四位str，float/bool拒，不改冻结schema。真实G3/JWT/PG旧1fail5pass，新6pass并断言完整intent；Agent/契约718pass39skip。独审APPROVE亲跑11；实核当前seed李四已有安心货币10000份（非此前交接推断），待live赎1000及结算/SQL/最终CI。 |
 
+| 2026-10-31 | Codex（jet接手） | fetch核对main74baf71、104=7ceda71、105=4880516及交接分支abca6dc，原zhangshijie路径不在本机。保留旧检出/卷，后台恢复Docker，新建受管CI/live检出；仅临时适配local_ci.sh旧机器路径，始终传完整SHA。首轮CI在义务套件224pass/3空HTTP502停下，定位本机系统代理接管loopback与测试启动等待冲突；NO_PROXY仅排除127.0.0.1/localhost后从头重跑，精确7ceda71完整LOCAL CI PASSED/退出0：unit3552/1065条件skip、W1 1794、义务227、W2 274、W3b58、W4c48、并发5/一致性17、网络重启恢复与契约全通过。独立只读review_form APPROVE；未改业务或断言，未将远端额度失败称通过。更新PR104验收正文、ready并匹配完整head合并9484424，长期栈回main与公开摘要同步中；基础版未冻结。 |
+| 2026-10-31 | Codex（jet接手） | #105按依赖rebase新main为ec822ea，唯一AGENTS冲突保留双方全部日志；资金只读复审APPROVE，MMF在同事务SETTLED，非MMF才预留/待到账，后续live分别验证。09只读调查复现：缺include_self源即UNKNOWN/REPLAN，补“我和”span仍因bool匹配未知；尚未实施，不信任任意scope相等值。用户凭据仅存忽略0600本机配置，未入库或模型提示；尚未发起本轮DeepSeek请求。 |
+
+| 2026-10-31 | Codex（jet接手） | #104合并后main9484424部署成功，亲跑W3b58/W4c48及contracts-check通过；公开进度FORM完成摘要已准备，但GitHub写入404，未声称发布成功；仅列实际合并后组合数字，未写冻结通过。#105 rebase后来源专项含真实G3/JWT/PG共12通过，真实live与最终完整CI仍待。 |
+
+| 2026-10-31 | Codex（jet接手） | #105亲验旧代码红测：Agent3fail/3负例pass、真实G3/JWT/PG1fail/5pass，新12通过。新代际首次L1流超时，查SQL无计划/作业/订单并停止；指定模型单次有界探测200。后续单例分别暴露gather malformed及缺get_holdings/伪造产品read_ref，本地均拒绝、未写业务。新增赎回必读上下文红测3fail/1控制pass，再补真实账户/产品/持仓只读；不以持仓授权数量、不重试失败read、不改L2。专项组合72通过，增量只读独审APPROVE；全量单元及新候选live继续，尚未合105/冻结；公开进度按用户要求待写权限后补发。 |
+
 ## 5. 下一步待办（按顺序）
+
+### demo-v1 接续门禁（2026-10-31，优先于下方历史任务表）
+
+- [x] #104最终完整SHA本机CI、独立只读复审、匹配head合并。
+- [ ] #104合并后main部署/组合验证通过；公开进度写入404，待发布凭证恢复。
+- [ ] #105在新main上新代际真实赎回、份额/现金/账本/时钟SQL、最终完整CI后合并。
+- [ ] 09 AA确定性来源红绿/独审/新代际live；至少一条准确账单分析路径。
+- [ ] 两个独立reset数据集六场景live、完整43条真实清单。
+- [ ] 生产LLM录制/断网回放接线、make demo、冻结清单；门禁全过才tag。
+- [ ] 冻结后demo-v1.1攻击演示；D8/指标最后。
 
 P0 准备阶段（决定后续一切）：
 - [x] **V1 核实提交物格式与评分标准**（官网 https://fintechathon.g-ican.com/#/ 是 SPA，可抓取 JS bundle 或接口）。结果写入 §3「已确认事实」。
