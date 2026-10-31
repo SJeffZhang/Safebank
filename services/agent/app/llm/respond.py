@@ -18,6 +18,7 @@ from services.agent.app.llm.fixed_templates import (
     executed_fallback,
     respond_template,
 )
+from services.agent.app.llm.gather import monthly_report_period, monthly_report_requested
 from services.agent.app.llm.verify import mask_long_numbers
 
 # ── Prompt templates (kept minimal — LLM fills real numbers from state) ─────
@@ -173,6 +174,8 @@ class RespondAdapter:
 
     def _respond_analysis(self, state: AgentState) -> str:
         """LLM analysis response: utterance + reads data summary."""
+        if monthly_report_requested(state):
+            return _monthly_report_reply(state) or respond_template("GENERIC_ERROR")
         utterance_text = _utterance_text(state)
         reads_text = _reads_summary(state)
 
@@ -417,6 +420,90 @@ def _replan_user_items(decision: dict[str, object]) -> list[str]:
 # ── Reads summary (C1e fix: compact per-tool summaries, never drop data) ─────
 
 _SHANGHAI = ZoneInfo("Asia/Shanghai")
+
+_ANOMALY_LABELS = {
+    "ANOMALY_NIGHT_LARGE": "凌晨大额消费",
+    "ANOMALY_DUPLICATE": "短时重复交易",
+    "ANOMALY_NEW_MERCHANT_LARGE": "首次商户大额消费",
+    "ANOMALY_CATEGORY_OUTLIER": "同类消费偏离历史水平",
+}
+
+
+def _monthly_report_reply(state: AgentState) -> str | None:
+    """Format B4 from the complete matching reads; never sum transaction pages."""
+    reads = state.get("reads") or []
+    profile = next((r for r in reads if r.tool == "get_profile"), None)
+    if profile is None:
+        return None
+    try:
+        month, start, end = monthly_report_period(state, profile.data["sim_now"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    spending = next(
+        (
+            r
+            for r in reads
+            if r.tool == "get_spending_summary"
+            and r.args.get("month") == month
+            and r.args.get("account_id") is None
+            and r.data.get("month") == month
+        ),
+        None,
+    )
+    anomalies = next(
+        (
+            r
+            for r in reads
+            if r.tool == "detect_anomalies"
+            and r.args.get("from_at") == start
+            and r.args.get("to_at") == end
+            and r.args.get("account_id") is None
+        ),
+        None,
+    )
+    if spending is None or anomalies is None:
+        return None
+    data = spending.data
+    total, previous = data.get("total_cents"), data.get("previous_total_cents")
+    if type(total) is not int or type(previous) is not int:
+        return None
+    year, month_number = month.split("-")
+    lines = [f"{year}年{int(month_number)}月账单报告（刷卡及代扣消费，不含转账）"]
+    lines.append(f"消费支出{_cents_yuan(total)}；上月{_cents_yuan(previous)}。")
+    mom = data.get("mom_change_bp")
+    if mom is not None:
+        lines.append(f"环比{_bp_percent(mom)}。")
+    else:
+        lines.append("上月无消费，环比不适用。")
+    categories = data.get("categories") or []
+    if categories:
+        lines.append(
+            "分类："
+            + "；".join(
+                f"{cat['category']}{_cents_yuan(cat['amount_cents'])}（{_bp_percent(cat['share_bp'])}）"
+                for cat in categories
+            )
+            + "。"
+        )
+    items = anomalies.data.get("items")
+    if not isinstance(items, list):
+        return None
+    if not items:
+        lines.append("本月规则检测无异常交易。")
+    else:
+        lines.append(f"规则提示异常交易{len(items)}笔，请核实：")
+        for item in items:
+            tx = item["transaction"]
+            labels = [_ANOMALY_LABELS.get(code, "异常标记") for code in item["codes"]]
+            # Names and memos remain untrusted. The fixed report needs only the
+            # trusted time/amount and deterministic reason, never their commands.
+            lines.append(
+                f"{_fmt_ts(tx['occurred_at'])}；金额{_cents_yuan(tx['amount_cents'])}；"
+                + "、".join(labels)
+                + "。"
+            )
+    return mask_long_numbers("\n".join(lines))
+
 
 # Key args shown alongside the tool name so the model can attribute each result
 # to the account / date window / product the read was actually about.
