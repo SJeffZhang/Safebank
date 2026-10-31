@@ -35,19 +35,19 @@
 
 ## 3. 当前状态（每次工作后更新）
 
-**最后更新**：2026-10-31（#105已合a113787；AA真实PG36、全新代际live09及SQL通过，最终完整CI待；其他并行候选待串行集成）
+**最后更新**：2026-10-31（AA最终160d004完整CI通过，#107已合c6a1d2e；账单候选已rebase/独审，真实live与SQL待）
 
 | 模块 | 状态 |
 |---|---|
 | 调研 | 开源项目元数据和 DeepSeek 官方信息已核实；评分/提交已从官网公开 JS 核实（docs/acceptance/official-v1.md）；竞品「明鉴」未核实 |
 | PRD | **`PRD.md` = v2.1 定稿**（§0–§16；三轮多 agent 审核 + 两次修订复核，决议 D1–D47 见 §0.5；执行屏障增量约定见ADR-008）。v1.2 与作废的 v2.0 草稿在 `docs/archive/`；审核报告在 `docs/reviews/` |
 | 代码 | **P1 完成并逐组件验收且已由PR #1合入main**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116项单元+33项真实PG通过，契约v1已冻结。历史功能提交7fd7a26、CI权限修复70dcabe，远端unit与p1-postgres均通过（run 39929405919）；完整六场景业务仍未完成。 |
-| L2 网关 | main `a113787`（#105）：FORM G4/G8、永久绑定、fresh快照污点、epoch、OTP与恢复已验收；最终7ceda71完整本机CI通过，W3b58/W4c48。通知审计、D3/S1与定时授权等已由后续PR合入；六场景及最终断网回放仍待，不以历史组件完成代替冻结。 |
-| L1 Agent | C1a–e、E0b及try-agent已合入，已有真实黄级转账/红级OTP挂失与06/36闭环证据。#105部分赎回正在新main上验收；标准生产入口李四赎回1000份及MMF SQL已通过，非货币F/app真实OTP申购、预留和时钟结算SQL通过，最终66f6837完整CI已通过并合a113787。AA有效“我和”来源、必读收款人及窄理解重生成已红绿/独审、真实PG36和fresh live09/SQL通过，最终完整CI待；账单与生产回放并行候选正在独审/修复，尚未合入。 |
+| L2 网关 | main `c6a1d2e`（#107）：FORM G4/G8、永久绑定、fresh快照污点、epoch、OTP与恢复已验收；最终7ceda71完整本机CI通过，W3b58/W4c48。通知审计、D3/S1与定时授权等已由后续PR合入；六场景及最终断网回放仍待，不以历史组件完成代替冻结。 |
+| L1 Agent | C1a–e、E0b及try-agent已合入，已有真实黄级转账/红级OTP挂失与06/36闭环证据。#105部分赎回正在新main上验收；标准生产入口李四赎回1000份及MMF SQL已通过，非货币F/app真实OTP申购、预留和时钟结算SQL通过，最终66f6837完整CI已通过并合a113787。AA有效“我和”来源、必读收款人及窄理解重生成已红绿/独审、真实PG36和fresh live09/SQL、最终160d004完整CI通过并合#107。账单/月报和生产回放及演示runner均独审修复通过候选，仍需实际接线、SQL与最终CI。 |
 | 前端 | **2026-10-29**：主项目 frontend/ 内竖版375×812 App，继承原Graphite & Champagne tokens；六场景、同站BFF、审批/OTP、叠卡/PIN/用途、报表/理财、我的整合订阅及圆形主题过渡、助手满内容区均实现合成预览。PR #71已合入main（7734f1f），最终head共6项CI成功；合并后全量384项（含新App61）、BFF10项与build复跑通过。交接文档及新Agent Prompt已随PR交付；真实三层联调/开户/PAN/主动推送边界见frontend/HANDOFF.md。未派DS worker，未写队友仓库。 |
 | 本机 Demo | **2026-10-31最近live检查**：唯一 `safebank-e2e-1029` 七容器 healthy；`http://127.0.0.1:3001/health` 返回 ok，浏览器真实登录张三并显示总余额2600000分（活期600000/储蓄2000000）。页面已打开保留；本次未重置数据、未执行业务写操作、未调用模型，不代表六场景或离线回放完成验收。 |
-| 协调状态 | **2026-10-31 jet接续**：#104精确7ceda71完整CI通过合9484424；#105 rebase后最终66f6837完整CI通过合a113787，main部署和112组合复验通过。多Codex子agent独立worktree并行，部署/API/真实DB/最终CI与合并由协调者串行；无DS worker/攻击/对比。AA候选已独审、真实PG/live/SQL，最终CI待；账单、回放、runner独审修复后候选已备，SQL收据工具仍审修。旧worktree/数据库/卷/WIP保留；公开进度按用户最新指令暂停。 |
-| 下一步 | #105已合，09真实PG/新代际live/SQL已通过，先最终head完整CI及合并；随后串行集成账单准确路径与生产回放；完成两个独立reset六场景live、43条清单及断网make demo。所有门禁通过才tag demo-v1；攻击demo-v1.1随后，D8/指标最后；402/403/429立即停止。 |
+| 协调状态 | **2026-10-31 jet接续**：#104已合9484424；#105最终66f6837完整CI合a113787并112组合通过；#107最终160d004完整CI合c6a1d2e。原checkout另有答辩素材AGENT/output未提交工作，原样保留，主栈部署/后续集成使用独立worktree。多Codex子agent独立worktree并行，部署/API/真实DB/最终CI与合并由协调者串行；无DS worker/攻击/对比。AA候选已独审、真实PG/live/SQL，最终CI待；账单、回放、runner独审修复后候选已备，SQL收据工具仍审修。旧worktree/数据库/卷/WIP保留；公开进度按用户最新指令暂停。 |
+| 下一步 | #105/#107均已合，先账单16新代际live/精确自然月SQL/最终head完整CI；随后生产回放/演示runner及只读自动SQL接线；完成两个独立reset六场景live、43条清单及断网make demo。所有门禁通过才tag demo-v1；攻击demo-v1.1随后，D8/指标最后；402/403/429立即停止。 |
 
 ### 已确认事实
 
@@ -985,6 +985,8 @@
 | 2026-10-31 | Codex（AA真实PG） | #105合并后main已部署a113787；补齐正式GATEWAY_DB_TESTS/OBLIGATIONS_DB_TESTS后赎回/G4/G8组合112pass（前轮65pass/47条件skip未计完整）。AA真实PG首轮35pass/1负例夹具fail：CARD_LOST缺card_id被既有loader提前INTENT_UNCLEAR拒绝；仅补完整其他动作夹具，仍要求AA bool unknown，不改生产。AA加挂失/赎回真实PG重跑36pass/0skip，含新11真实G3/JWT/父链用例。新代际09及最终完整CI待。 |
 
 | 2026-10-31 | Codex（AA真实闭环） | 992b5dd新代际09曾UNKNOWN无写，实际checkpoint证实G3已SCOPED/SPLIT_CREATE而LLM needs_write=false。只对单typed/SCOPED/无澄清的原型“昨晚聚餐…我和…AA”误读使用既有一次重生成，绝不硬置写标志或改参数；35新测旧9fail/26负控pass→35pass，增量独审APPROVE/116pass，协调者56pass。新e884e0c再reset至demo_20261031121900_17ea362a，真实09 ALLOW/EXECUTED，SQL一份40000/本人10000/三正确收款人各10000 UNPAID、单次操作/执行、余额流水订单不变、账本平衡；typed“我和”同session/customer、原话/会话/执行epoch和scope IDs一致。证据aa-self-source-live.json；最终完整CI待，未冻结。 |
+
+| 2026-10-31 | Codex（AA收尾/月报接续） | AA精确160d00431c8298b213dab15489149ed0f4c87cdd完整本机CI PASSED/exit0：unit3643/1082条件skip、W1 1794、义务227、W2 305、W3b58、W4c48、E0b119、P1 33/并发5/一致性17、网络重启契约、S1 29/clock4/通知18，#107精确head合c6a1d2e。另一已完成答辩素材会话曾在CI期间自行恢复e2e；已只读核其idle、保留原checkout未提交AGENT/output和全部数据，再停e2e恢复单栈。原checkout main未强制快进、不stash或覆盖；后续精确head CI均确认其他栈已停。账单32817d9及两轮独审APPROVE后rebase至c6a1d2e为2e20a46，AA与账单107专项组合通过；新代际16/SQL及完整CI待。 |
 
 ## 5. 下一步待办（按顺序）
 

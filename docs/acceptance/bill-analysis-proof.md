@@ -99,3 +99,10 @@ env -u P1_TEST_DATABASE_URL NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,loca
 ```
 
 No provider, DB, Docker, deployment, push/merge/tag or shared AGENTS/PRD change occurred in this follow-up. Root's integrated live and full CI gates remain open.
+
+Coordinator integration: both source candidates and the fixed-error driver
+follow-up independently APPROVED. Rebased unchanged business patches onto
+merged AA c6a1d2e as2e20a46. Root integrated bill+AA focused107 tests passed.
+Original checkout's unrelated AGENTS/output WIP is retained and untouched;
+actual deployment/SQL/final whole CI use isolated worktrees, one stack at a time.
+Fresh standard-entrypoint case16, exact SQL and final full-SHA CI remain gates.
