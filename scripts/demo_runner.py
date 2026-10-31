@@ -19,6 +19,7 @@ import secrets
 import signal
 import subprocess
 import sys
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -333,7 +334,8 @@ class DemoRunner:
         run_directory.mkdir(mode=0o700, parents=True, exist_ok=False)
         manifest = {
             **metadata,
-            "run_id": run_directory.name,
+            "run_id": secrets.token_hex(16),
+            "run_directory_name": run_directory.name,
             "mode": mode,
             "profile": "B2",
             "created_at": datetime.now(UTC).isoformat(),
@@ -378,10 +380,12 @@ class DemoRunner:
                     )
                     if offline != {"external_tcp_blocked": ["1.1.1.1", "api.deepseek.com"]}:
                         raise DemoFailure("external network blocking could not be verified")
-                trace_path = f"/tmp/demo-{run_directory.name}-{case.id}.json"
+                request_id = str(uuid.uuid4())
+                trace_path = f"/tmp/demo-{manifest['run_id']}-{case.id}-{request_id}.json"
                 driver_env = {
                     **self.env,
                     "TRY_AGENT_OUT": trace_path,
+                    "TRY_AGENT_REQUEST_ID": request_id,
                     "GW_PUBLIC": self.env.get("GW_PUBLIC", "172.30.10.12"),
                 }
                 result = self.command(
@@ -413,6 +417,7 @@ class DemoRunner:
                     or not isinstance(trace.get("config"), dict)
                     or trace["config"].get("customer_id") != case.customer_id
                     or trace.get("config", {}).get("text") != case.text
+                    or trace["config"].get("request_id_prefix") != request_id
                     or type(trace.get("exit_code")) is not int
                     or trace["exit_code"] != result.returncode
                     or not isinstance(trace.get("events"), list)
@@ -429,6 +434,7 @@ class DemoRunner:
                         "customer_id": case.customer_id,
                         "typed_text": case.text,
                         "driver_exit": result.returncode,
+                        "request_id": request_id,
                         "trace_sha256": hashlib.sha256(trace_bytes).hexdigest(),
                         "business_verified": False,
                         "health": health,

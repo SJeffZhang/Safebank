@@ -250,7 +250,11 @@ def environment(runner, tmp_path):
             elif "operator" in argv:
                 output = json.dumps(
                     {
-                        "config": {"customer_id": last["customer"], "text": last["text"]},
+                        "config": {
+                            "customer_id": last["customer"],
+                            "text": last["text"],
+                            "request_id_prefix": last["request_id"],
+                        },
                         "exit_code": settings["exit"],
                         "events": [{"kind": "result"}],
                     }
@@ -258,7 +262,11 @@ def environment(runner, tmp_path):
                 if settings["trace_bad"]:
                     output = '{"exit_code":1,"events":[]}'
         elif "drive_try_agent.py" in " ".join(argv):
-            last.update(customer=argv[-3], text=argv[-2])
+            last.update(
+                customer=argv[-3],
+                text=argv[-2],
+                request_id=kwargs["env"].get("TRY_AGENT_REQUEST_ID"),
+            )
             code = settings["exit"]
         elif argv[:3] != ["docker", "compose", "up"]:
             raise AssertionError("unhandled command boundary")
@@ -463,3 +471,118 @@ def test_missing_selected_case_cannot_be_hidden_by_complete_first_case(runner, t
     (tmp_path / "16.json").write_text(json.dumps(proof()))
     with pytest.raises(runner.DemoFailure):
         runner.verify_receipts(value, tmp_path)
+
+
+def test_each_run_has_fresh_identity_and_request_bound_completed_trace(environment):
+    import uuid
+
+    env = environment
+    result = invoke(env)
+    calls = [(a, k) for a, k in env.calls if "drive_try_agent.py" in " ".join(a)]
+    assert result["run_id"] != env.output.name
+    ids = [k["env"].get("TRY_AGENT_REQUEST_ID") for a, k in calls]
+    assert all(isinstance(value, str) and str(uuid.UUID(value)) == value for value in ids)
+    assert len(set(ids)) == len(ids)
+    for case, request_id in zip(result["cases"], ids, strict=True):
+        trace = json.loads((env.output / f"{case['case_id']}.trace.json").read_text())
+        assert trace["config"]["request_id_prefix"] == request_id
+
+
+def test_same_basename_new_parent_rejects_old_trace_after_driver_startup_failure(environment):
+    import subprocess
+
+    from scripts.demo_runner import Case, DemoFailure, DemoRunner
+
+    env = environment
+    one = env.output.parent / "one/same-name"
+    two = env.output.parent / "two/same-name"
+    kwargs = dict(
+        cases=(Case("a", "cus_zs", "first"),),
+        mode="replay",
+        recordings=env.recordings,
+        observe_only=True,
+    )
+    first = env.runner.run(run_directory=one, **kwargs)
+    old_bytes = (one / "a.trace.json").read_bytes()
+    old_trace = json.loads(old_bytes)
+    old_trace["config"].setdefault("request_id_prefix", "old-request")
+    normal = env.runner.command
+    second_driver = []
+
+    def failed_startup(argv, **command_kwargs):
+        if "drive_try_agent.py" in " ".join(argv):
+            second_driver.append(command_kwargs)
+            return subprocess.CompletedProcess(argv, 1, "", "Traceback: PIN file unavailable")
+        if argv[:3] == ["docker", "compose", "exec"] and "operator" in argv:
+            return subprocess.CompletedProcess(argv, 0, json.dumps(old_trace), "")
+        return normal(argv, **command_kwargs)
+
+    with pytest.raises(DemoFailure, match="trace"):
+        DemoRunner(env.demo, failed_startup).run(run_directory=two, **kwargs)
+    first_driver = next(k for a, k in env.calls if "drive_try_agent.py" in " ".join(a))
+    assert first_driver["env"]["TRY_AGENT_OUT"] != second_driver[0]["env"]["TRY_AGENT_OUT"]
+    assert (one / "a.trace.json").read_bytes() == old_bytes
+    assert first["run_id"] != json.loads((two / "manifest.json").read_text())["run_id"]
+
+
+@pytest.mark.parametrize(
+    "request_id", ["../old-trace", "not-a-uuid", "", "01M68W8X2T8ZJEE4V6962ERSS7"]
+)
+def test_try_agent_rejects_invalid_explicit_request_id_before_pin_prompt(monkeypatch, request_id):
+    from scripts import try_agent
+
+    def no_prompt(*args, **kwargs):
+        raise AssertionError("invalid request id should be rejected before reading PIN")
+
+    monkeypatch.setattr(try_agent.getpass, "getpass", no_prompt)
+    with pytest.raises(SystemExit) as stopped:
+        try_agent._parse_args(
+            ["--customer-id", "cus_zs", "--text", "查询余额", "--request-id", request_id]
+        )
+    assert stopped.value.code == 2
+
+
+def test_try_agent_accepts_explicit_uuid_and_keeps_fresh_default():
+    import uuid
+
+    from scripts import try_agent
+
+    args = ["--customer-id", "cus_zs", "--text", "查询余额", "--pin", "synthetic-only"]
+    expected = "d174ee1e-31bc-4885-9b54-1c355b14796c"
+    assert try_agent._parse_args([*args, "--request-id", expected]).request_id == expected
+    assert str(uuid.UUID(try_agent._parse_args(args).request_id))
+
+
+@pytest.mark.parametrize("request_id", [None, "d174ee1e-31bc-4885-9b54-1c355b14796c"])
+def test_driver_forwards_only_explicit_invocation_request_id(monkeypatch, tmp_path, request_id):
+    import importlib.util
+    import io
+    import sys
+    from types import SimpleNamespace
+
+    spec = importlib.util.spec_from_file_location(
+        "runner_driver", ROOT / "docs/handoffs/2026-10-30-tools/drive_try_agent.py"
+    )
+    driver = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(driver)
+    pins = tmp_path / "synthetic-pins.json"
+    pins.write_text('{"cus_zs":"synthetic-only"}')
+    captured = []
+    child = SimpleNamespace(
+        stdout=io.BytesIO(b"EXIT: COMPLETED\n"), stdin=io.BytesIO(), returncode=1, wait=lambda: 1
+    )
+    monkeypatch.setattr(
+        driver.subprocess, "Popen", lambda argv, **kwargs: captured.append(argv) or child
+    )
+    monkeypatch.setattr(driver.select, "select", lambda *args: ([child.stdout], [], []))
+    monkeypatch.setattr(sys, "argv", ["driver", str(tmp_path), str(pins), "cus_zs", "查询余额"])
+    if request_id is None:
+        monkeypatch.delenv("TRY_AGENT_REQUEST_ID", raising=False)
+    else:
+        monkeypatch.setenv("TRY_AGENT_REQUEST_ID", request_id)
+    assert driver.main() == 1
+    if request_id is None:
+        assert "--request-id" not in captured[0]
+    else:
+        index = captured[0].index("--request-id")
+        assert captured[0][index + 1] == request_id

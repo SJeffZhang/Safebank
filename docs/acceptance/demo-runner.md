@@ -131,3 +131,19 @@ receipt. Failed runs remain failed, including partial observations and their evi
 The coordinator should update AGENTS§3/§4 and PRD§6.6/§11.5 for the portable commands,
 recording layout and explicit observed-vs-SQL-verified result contract. Shared AGENTS/PRD
 were not edited in this worktree.
+
+## Independent review R1 correction
+
+Review reproduced stale observation reuse across different parent directories with the
+same run-directory basename after a driver startup exception returned1. New run IDs are
+random128-bit nonces independent of directory names; every case also gets a fresh UUID.
+The trusted driver forwards that UUID through the new optional `try_agent --request-id`
+parameter, validated as UUID before the PIN prompt. Omitted parameter retains the existing
+UUID default. The resulting trace must contain exactly this request_id_prefix before any
+artifact is accepted. Operator-container trace paths contain both fresh nonce and UUID.
+No old trace is deleted or overwritten; same-name run directories remain independent.
+
+Four old-code failures /53 controls passed; corrected runner+entire try_agent suite:
+127 passed. This parameter is correlation only and changes no authorization or terminal
+state logic. The existing bill branch's separate terminal-state fix is intentionally not
+copied here; coordinator must preserve both during serial integration. R2 remains pending.
