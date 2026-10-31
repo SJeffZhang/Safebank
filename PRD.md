@@ -924,7 +924,7 @@ SSE 事件（字段形状与 `@langchain/langgraph-sdk` 的事件类型一致，
 - 实现约束（2026-10-31）：工厂支持同步/异步真实调用和进程内回放，replay不加载API key、不构造真实网络传输；record仅记录成功响应，402/403/429立即传播，不录假成功或重试。校验实际模型设置、工具Schema、动态提示构造源码及profile指纹，format固定2并逐条checksum校验；重复请求按已录顺序消费，缺失/耗尽/陈旧/损坏明确失败。运行期ID只重绑当前请求已有引用，字面占位符可逆保留，禁止把字面`<ID1>`洗成有效来源；provider call ID使用独立结构映射。记录不存HTTP头/请求消息；统一敏感键、Unicode与已知秘密回声清理，损坏且含敏感字段的JSON在任何写盘前整条拒绝。回放只替代LLM输出，L2原话/来源/意图/审批/OTP/L3执行照常，代码与自动测试通过不等于真实生产断网验收已通过。
 - 冻结规则：contracts、工具 Schema 与系统提示在录制前冻结，打 `replay_schema_version` 标签；版本不一致时 replay 直接报 `REPLAY_STALE`。replay 未命中时报错并打印 key，不回退到真实 API。录制安排在功能冻结后的闲时（§13）。
 - 录制费用：（35 正常 + 24 攻击）× 2 组 × 约 6 次调用 ≈ 700 次，闲时约 10 美元以内。
-- 演示与评测默认 replay；`make demo LLM_MODE=live` 现场用真实模型。
+- 演示与评测默认 replay；`make demo ARGS="--mode live"` 现场用真实模型。
 
 ### 6.7 幻觉防护
 
@@ -1855,3 +1855,13 @@ AA理解补充（2026-10-31）：对于单typed、L2 SCOPED且无实际澄清的
 仅单条typed完整月报请求、L2确定性NO_WRITE、needs_write=false且无实际clarification时，B4固定读取fresh get_profile业务时间，以Asia/Shanghai解析月份，读取get_spending_summary完整聚合及detect_anomalies的[月初,下月月初)范围；不以流水分页求月合计，也不取主机墙钟。固定报告只格式化真实可信汇总、异常时间/金额/规则，商户/备注指令不进入输出，原数字校验器和掩码继续执行。缺失或错范围证据返回固定失败。CLI完成只读要求实际NO_WRITE、完整读结果/最终回复且无计划/写Decision/执行/结构化错误，实际澄清优先；整条规范化后精确等于保留错误模板时不得计COMPLETED。混合写、未知后缀、引用和实际澄清不借月报短语绕过原规则。
 
 G9状态消费约定（2026-10-31）：`GET /approvals/{id}` 的当前响应status使用ApprovalStatus，合法待确认值为`PENDING`；不能直接当作UI PlanStatus的`PENDING_APPROVAL`比较。前端getView仅在读取边界将严格`PENDING`映射为UI待审批状态，其余状态原样禁确认，不修改服务端wire、ID/view_hash、期限、风险/OTP要求或请求权限，也不自动确认/执行。后端依旧独立核对完整审批绑定。
+
+### 开发命令与自动核验接口（2026-10-31）
+
+`make demo`接`scripts.demo_runner`，运行模式默认replay，可用`ARGS`传`--mode live|record|replay`、`--deploy`、`--recordings`、`--run-dir`、`--cases`或`--case-ids`。部署目录只取显式`--deploy`、`SAFEBANK_DEMO_DEPLOY`、当前目录已有e2e.override.yml，缺失明确失败，不猜旧机路径、不隐式初始化/另起一栈。模式覆盖仅作用当前既有代际agent，profile固定B2，case映射到生产工厂文件布局；record挂载可写记录目录，replay只读且清空API key。命令不会自动改防火墙/网络；replay前须实际核所有agent网络Internal、L2/PG可达和外网TCP不可达，缺条件失败而不回退live。
+
+默认六固定用例01/16/27/34/36/23走自动只读SQL核验：每例driver前就近采bank；从当前UUID绑定的G15成功响应白名单session_id取得实际sid并核session_created；后采bank/gateway，固定SELECT经PGOPTIONS强制只读执行。实际seed与所声明seed必须一致，代际、源码/部署SHA、case、保存trace哈希、sid和新请求nonce绑定。源码中的SQL验证器独立核资金/份额/账单异常/授权原话、审批/OTP审计及状态变化；不由模型回复或driver退出码授予绿色结果。辅助脚本的`--request-id`只作可信driver关联，不授予任何权限。
+
+`--observe-only`始终只生成OBSERVED/business_verified=false；外部`--proofs`及`--verify-run`只接受完整批次且精确匹配元数据与trace哈希的可信SQL收据。非默认固定用例无内置verified支持时须明确拒绝或使用观察/外部收据，不推断43条通过。快照私有保存，秘密字段拒绝而不篡改金融事实；OTP已验证布尔/authorization_epoch整数等非秘密元数据保留。quota/超时/未知或不完整trace、SQL/来源/seed错误立即停止批次；持久化失败亦清除全局与case绿色标志，保留故障文件不覆盖旧partial。
+
+上述是已开发接口与自动化测试约束。本对话按用户最新指令不执行演示、生产录制、彩排或实际断网验收，相关发布冻结门禁仍待单独完成，未全过不tag。

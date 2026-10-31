@@ -246,3 +246,21 @@ proof modes and no-partial/partial-write variants produced4 old failures/2 succe
 controls; corrected affected suite317 passed. Final default suite:3807 passed/1071 conditional
 skips in33.00s, exit0. Full ruff/format/diff checks passed. The reviewed oracle remains byte-identical6fcf6bd...; no demonstration,
 provider, database or Docker operation was performed. Independent re-review remains pending.
+
+Coordinator integration and current scope:
+- Final source296b444 independently APPROVED after both Task6 P2 regressions
+  closed. The317 focused suite passed; old source6 failed/2 positive passed.
+- Rebased onto merged confirmation/runtime/bill main6aa8004 asb349c26; owned
+  runner/SQL/lifecycle files match the approved source byte-for-byte, and Bill
+  terminal-state plus new G15/request-ID changes are both retained.
+- Root integrated runner/SQL/lifecycle/CLI343 tests passed in5.86s. Oracle file
+  remains exactly6fcf6bd2f31dd8f22d1f713d55a8aaa9b4ef93e7fa18cce61aaaad9e3a8762f3.
+- Existing saved current.json.initial.seed and the pre-cutoff actual bill SQL
+  snapshot both label l1_seed_v1.0; construction/source checks made no API/DB call.
+- Seven independent development reviews are archived under
+  docs/reviews/development-2026-10-31. Final full workflow-equivalent local CI
+  must pass on this development PR's exact full head before publication.
+- No actual demonstration, production recording, rehearsal or network-disabled
+  banking run is executed under the latest user scope. Only the earlier bill16
+  actual SQL positive was collected before that change; five other positives,
+  full43/two broad rounds/clock/rollback and freeze remain separate gates.
