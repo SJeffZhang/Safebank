@@ -6,10 +6,16 @@ and schema-version validation.  Never logs JWT, tokens or API keys.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
 import re
+import tempfile
+import threading
+import uuid
+from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -61,334 +67,325 @@ _SEED_IDS: frozenset[str] = frozenset(
     }
 )
 
-# ── ID normalisation regex (PRD §6.6) ────────────────────────────────────
-# Matches IDs with any recognised prefix (2-4 lowercase letters + underscore)
-# followed by either 26 Crockford base32 chars or a UUIDv5 hex pattern.
-
+# Runtime bank IDs, distinct from opaque provider tool-call IDs.
 _ID_PATTERN = re.compile(
     r"\b[a-z]{2,4}_([0-9A-HJKMNP-TV-Z]{26}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b"
 )
-
-# ── Wall-field stripping pattern ─────────────────────────────────────────
-
-_WALL_SUFFIX = "_wall"
-
-
-# ── LLM_MODE ─────────────────────────────────────────────────────────────
+_PLACEHOLDER = re.compile(r"<(?:ID|CALL|NEWCALL|UNBOUND)\d+>")
+_SAFE_COMPONENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}\Z")
 
 
 class LLMMode:
     LIVE = "live"
     RECORD = "record"
     REPLAY = "replay"
-
     _VALID = frozenset({LIVE, RECORD, REPLAY})
 
     @classmethod
     def from_env(cls, default: str = "live") -> str:
-        """Read ``LLM_MODE`` from environment, fail-closed on unknown value."""
         value = os.environ.get("LLM_MODE", default).strip().lower()
         if value not in cls._VALID:
-            raise ValueError(f"LLM_MODE={value!r} is not one of {sorted(cls._VALID)}")
+            raise ValueError("LLM_MODE must be live, record or replay")
         return value
 
 
-# ── canonical ─────────────────────────────────────────────────────────────
+class ReplayMissError(RuntimeError):
+    """Missing recording/key/sequence entry; never fall back to a provider."""
 
 
-def canonical_text(text: str) -> str:
-    """Replace run-time IDs in *text* with ``<ID1>``, ``<ID2>``, ....
-
-    Seed IDs (from PRD §2.2) are left untouched.  IDs are replaced in order of
-    first appearance; the reverse mapping can be applied later via
-    ``replay_reverse_map``.
-
-    Returns the canonicalised string — does **not** modify the original.
-    """
-    seen: dict[str, str] = {}
-    counter = 0
-
-    def _replacement(m: re.Match) -> str:
-        nonlocal counter
-        token = m.group(0)
-        if token in _SEED_IDS:
-            return token
-        if token not in seen:
-            counter += 1
-            seen[token] = f"<ID{counter}>"
-        return seen[token]
-
-    return _ID_PATTERN.sub(_replacement, text)
+class ReplayStaleError(RuntimeError):
+    """Incompatible, corrupt or unbound recording; never reuse old authority."""
 
 
-def canonical_messages(messages: object) -> str:
-    """Canonicalise messages for replay-key computation.
-
-    Serialises to JSON (sorted keys, ASCII-encoded), then replaces run-time IDs.
-    """
-    raw = json.dumps(messages, sort_keys=True, ensure_ascii=True, default=str)
-    return canonical_text(raw)
-
-
-def canonical_tools(tools: object) -> str:
-    """Canonicalise tool definitions for replay-key computation."""
-    if tools is None:
-        return "[]"
-    raw = json.dumps(tools, sort_keys=True, ensure_ascii=True, default=str)
-    return canonical_text(raw)
-
-
-def canonical_params(params: dict[str, object]) -> str:
-    """Canonicalise request parameters for replay-key computation.
-
-    Per E1, ALL parameters participate — nothing is excluded.
-    """
-    raw = json.dumps(params, sort_keys=True, ensure_ascii=True, default=str)
-    return canonical_text(raw)
-
-
-# ── replay_key ───────────────────────────────────────────────────────────
-
-
-def replay_key(
-    model: str,
-    messages: object,
-    tools: object,
-    params: dict[str, object],
-) -> str:
-    """Compute deterministic replay key per PRD §6.6.
-
-    ``sha256(model ‖ canonical(messages) ‖ canonical(tools) ‖ canonical(params))``
-
-    E1: ALL request parameters (temperature, max_tokens, extra_body, etc.)
-    are included — nothing is excluded from *params*.
-    """
-    parts = [
-        model,
-        canonical_messages(messages),
-        canonical_tools(tools),
-        canonical_params(params),
-    ]
-    joined = "\n".join(parts)
-    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
-
-
-# ── strip_wall_fields ────────────────────────────────────────────────────
+def _json(obj: object) -> str:
+    return json.dumps(obj, sort_keys=True, ensure_ascii=True, default=str)
 
 
 def strip_wall_fields(obj: object) -> object:
-    """Recursively remove keys ending with ``_wall`` from dicts.
-
-    Lists and dicts are traversed; other values are returned unchanged.
-    Returns a new object — never mutates the input.
-    """
+    """Strip wall fields, including JSON encoded inside provider message content."""
     if isinstance(obj, dict):
-        return {k: strip_wall_fields(v) for k, v in obj.items() if not _is_wall_key(k)}
+        return {
+            k: strip_wall_fields(v)
+            for k, v in obj.items()
+            if not (isinstance(k, str) and k.endswith("_wall"))
+        }
     if isinstance(obj, (list, tuple)):
         return type(obj)(strip_wall_fields(v) for v in obj)
+    if isinstance(obj, str):
+        try:
+            parsed = json.loads(obj)
+        except (ValueError, TypeError):
+            return obj
+        if isinstance(parsed, (dict, list)):
+            return _json(strip_wall_fields(parsed))
     return obj
 
 
-def _is_wall_key(key: object) -> bool:
-    return isinstance(key, str) and key.endswith(_WALL_SUFFIX)
+class _Bindings:
+    """One mapping shared across all request fields; tool IDs are structural."""
+
+    def __init__(self) -> None:
+        self.ids: dict[str, str] = {}
+        self.calls: dict[str, str] = {}
+
+    def bank_text(self, text: str, *, response: bool = False) -> str:
+        def replace(match: re.Match) -> str:
+            token = match.group(0)
+            if token in _SEED_IDS:
+                return token
+            if token not in self.ids:
+                kind = "UNBOUND" if response else "ID"
+                self.ids[token] = f"<{kind}{len(self.ids) + 1}>"
+            return self.ids[token]
+
+        return _ID_PATTERN.sub(replace, text)
+
+    def walk(self, obj: object, *, response: bool = False, in_calls: bool = False) -> object:
+        if isinstance(obj, dict):
+            result = {}
+            for key in sorted(obj):
+                value = obj[key]
+                if key == "tool_call_id" or (in_calls and key == "id"):
+                    if not isinstance(value, str) or not value:
+                        raise ReplayStaleError("Invalid provider tool-call ID")
+                    if value not in self.calls:
+                        kind = "NEWCALL" if response else "CALL"
+                        self.calls[value] = f"<{kind}{len(self.calls) + 1}>"
+                    result[key] = self.calls[value]
+                else:
+                    result[key] = self.walk(value, response=response, in_calls=key == "tool_calls")
+            return result
+        if isinstance(obj, list):
+            return [self.walk(v, response=response, in_calls=in_calls) for v in obj]
+        if isinstance(obj, str):
+            return self.bank_text(obj, response=response)
+        return obj
+
+    def restore(self, obj: object) -> object:
+        reverse = {v: k for k, v in (self.ids | self.calls).items()}
+        generated: dict[str, str] = {}
+
+        def replace(match: re.Match) -> str:
+            token = match.group(0)
+            if token.startswith("<NEWCALL"):
+                return generated.setdefault(token, "call_replay_" + uuid.uuid4().hex)
+            if token not in reverse or token.startswith("<UNBOUND"):
+                raise ReplayStaleError("Unbound replay ID; refusing recorded authority")
+            return reverse[token]
+
+        # JSON substitution handles IDs embedded in function.arguments strings as well.
+        return json.loads(_PLACEHOLDER.sub(replace, _json(obj)))
 
 
-# ── replay_schema_version ────────────────────────────────────────────────
+def canonical_text(text: str) -> str:
+    return _Bindings().bank_text(text)
+
+
+def canonical_messages(messages: object) -> str:
+    return _json(_Bindings().walk(strip_wall_fields(messages)))
+
+
+def canonical_tools(tools: object) -> str:
+    return canonical_messages(tools if tools is not None else [])
+
+
+def canonical_params(params: dict[str, object]) -> str:
+    return canonical_messages(params)
+
+
+def _request_key(body: dict) -> tuple[str, _Bindings]:
+    bindings = _Bindings()
+    normalized = bindings.walk(strip_wall_fields(body))
+    return hashlib.sha256(_json(normalized).encode()).hexdigest(), bindings
+
+
+def replay_key(model: str, messages: object, tools: object, params: dict[str, object]) -> str:
+    return _request_key({**params, "model": model, "messages": messages, "tools": tools or []})[0]
 
 
 def replay_schema_version(
-    tools_schema: object,
-    system_prompts: dict[str, str],
+    tools_schema: object, system_prompts: dict[str, str], model_settings: dict | None = None
 ) -> str:
-    """Compute a deterministic schema version for replay files.
-
-    ``sha256(canonical(tools_schema) ‖ canonical(system_prompts))``
-
-    Used in the file header: when an existing replay file's schema version
-    does not match the current tools/system prompts, the file is REPLAY_STALE.
-    """
-    joined = "\n".join(
-        [
-            canonical_tools(tools_schema),
-            canonical_params(system_prompts),
-        ]
-    )
-    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
-
-
-# ── replay directory helpers ─────────────────────────────────────────────
+    return hashlib.sha256(
+        _json(
+            {
+                "format": 2,
+                "tools": tools_schema,
+                "systems": system_prompts,
+                "settings": model_settings or {},
+            }
+        ).encode()
+    ).hexdigest()
 
 
 def _replay_dir() -> Path:
-    """Resolve the replay directory from environment variables.
-
-    ``LLM_PROFILE`` (default ``b1``) and ``LLM_CASE_ID`` (default ``default``)
-    determine the sub-path under ``evaluation/replay/``.
-    """
     profile = os.environ.get("LLM_PROFILE", "b1")
     case_id = os.environ.get("LLM_CASE_ID", "default")
-    return Path("evaluation") / "replay" / profile / case_id
+    for value in (profile, case_id):
+        if not _SAFE_COMPONENT.fullmatch(value):
+            raise ValueError("Unsafe LLM_PROFILE or LLM_CASE_ID")
+    return Path(os.environ.get("LLM_REPLAY_ROOT", "evaluation/replay")) / profile / case_id
 
 
-# ── RecordTransport ──────────────────────────────────────────────────────
+def runtime_location() -> tuple[Path, str]:
+    profile = os.environ.get("LLM_PROFILE", "B2")
+    case_id = os.environ.get("LLM_CASE_ID", "default")
+    if profile not in {"B1", "B2"}:
+        raise ValueError("Production LLM_PROFILE must be B1 or B2")
+    if not _SAFE_COMPONENT.fullmatch(case_id):
+        raise ValueError("Unsafe LLM_CASE_ID")
+    root = Path(os.environ.get("LLM_REPLAY_ROOT", "evaluation/replay"))
+    return root / profile / case_id / "replay.jsonl", profile
+
+
+def _validated_lines(path: Path, schema_version: str, profile: str) -> tuple[dict, list[dict]]:
+    if not path.exists():
+        raise ReplayMissError(f"Replay file not found: {path}")
+    try:
+        lines = path.read_text().splitlines()
+        if not lines:
+            raise ReplayMissError(f"Replay file is empty: {path}")
+        header = json.loads(lines[0])
+        if not isinstance(header, dict) or header.get("schema_version") != schema_version:
+            raise ReplayStaleError("Replay schema version mismatch")
+        if header.get("profile") != profile:
+            raise ReplayStaleError("Replay profile mismatch")
+        entries = []
+        for line in lines[1:]:
+            entry = json.loads(line)
+            if (
+                not isinstance(entry, dict)
+                or not isinstance(entry.get("key"), str)
+                or not isinstance(entry.get("response"), dict)
+                or not isinstance(entry.get("params"), dict)
+                or not isinstance(entry.get("model"), str)
+            ):
+                raise ReplayStaleError("Corrupt replay entry")
+            if header.get("format") == 2:
+                digest = entry.pop("digest", None)
+                if digest != hashlib.sha256(_json(entry).encode()).hexdigest():
+                    raise ReplayStaleError("Corrupt replay checksum")
+                entry["digest"] = digest
+            entries.append(entry)
+        return header, entries
+    except (ValueError, UnicodeError, TypeError) as exc:
+        raise ReplayStaleError("Corrupt replay JSON") from exc
 
 
 class RecordTransport:
-    """Wrap an *httpx* transport, writing each response to a replay file.
+    """Record successful JSON responses atomically under a cross-process file lock.
 
-    The first recorded entry is a metadata header with ``schema_version``,
-    ``profile``, ``tools`` and ``systems``.  Subsequent entries are ``{key,
-    model, params, response}`` lines.
-
-    Never writes JWT, service tokens, API keys or Authorization headers —
-    the ``_scrub`` method strips them from params and response before writing.
+    No request messages or HTTP headers are persisted. Response references use
+    placeholders; only the current replay request can bind their authority.
     """
 
     def __init__(
         self,
-        inner: object,
+        inner: Callable,
         *,
         schema_version: str,
         profile: str,
         tools_schema: object,
         system_prompts: dict[str, str],
+        path: Path | None = None,
     ) -> None:
         self._inner = inner
         self._schema_version = schema_version
         self._profile = profile
-        self._header_written = False
-        self._dir = _replay_dir()
-        self._dir.mkdir(parents=True, exist_ok=True)
-        self._tools_schema = tools_schema
-        self._system_prompts = system_prompts
-        self._path = self._dir / "replay.jsonl"
+        self._path = path if path is not None else _replay_dir() / "replay.jsonl"
+        self._header = {
+            "format": 2,
+            "schema_version": schema_version,
+            "profile": profile,
+            "tools": _scrub_sensitive(tools_schema),
+            "systems": _scrub_sensitive(system_prompts),
+        }
+        if self._path.exists():
+            _validated_lines(self._path, schema_version, profile)
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
-        response = self._inner(request)  # type: ignore[call-arg]
-        self._record(request, response)
+        response = self._inner(request)
+        response.read()
+        if response.is_success:
+            self._record(request, response)
         return response
 
     def _record(self, request: httpx.Request, response: httpx.Response) -> None:
-        # Compute key from the original request payload
-        try:
-            body = json.loads(request.content) if request.content else {}
-        except json.JSONDecodeError:
-            body = {}
-
-        messages = body.get("messages", [])
-        tools = body.get("tools", [])
-        # Everything else is a parameter (model, temperature, max_tokens, extra_body, …)
-        params = {k: v for k, v in body.items() if k not in ("messages", "tools")}
-
-        key = replay_key(body.get("model", ""), messages, tools, params)
-
-        # Scrub sensitive data before writing
-        scrubbed_params = _scrub_sensitive(params)
-
-        try:
-            resp_body = response.json()
-        except (json.JSONDecodeError, AttributeError):
-            resp_body = {"_raw": response.text[:200]}
-        scrubbed_resp = _scrub_sensitive(resp_body)
-
-        entry: dict[str, object] = {
+        body = json.loads(request.content)
+        if not isinstance(body, dict):
+            raise ReplayStaleError("Invalid provider request")
+        body.setdefault("tools", [])
+        key, bindings = _request_key(body)
+        # Known credentials echoed by the provider must not survive plain-text output.
+        secrets = _secret_values(body) | _secret_values(response.json())
+        for name, value in request.headers.items():
+            if _is_sensitive_key(name):
+                secrets.add(value)
+                if value.lower().startswith("bearer "):
+                    secrets.add(value[7:])
+        normalized = bindings.walk(response.json(), response=True)
+        entry = {
             "key": key,
             "model": body.get("model", ""),
-            "params": scrubbed_params,
-            "response": scrubbed_resp,
+            "params": _scrub_sensitive(
+                {k: v for k, v in body.items() if k not in {"messages", "tools"}}
+            ),
+            "response": _scrub_sensitive(normalized),
         }
-
-        with open(self._path, "a") as fh:
-            if not self._header_written:
-                header = {
-                    "schema_version": self._schema_version,
-                    "profile": self._profile,
-                    "tools": strip_wall_fields(self._tools_schema),
-                    "systems": self._system_prompts,
-                }
-                fh.write(json.dumps(header, sort_keys=True, ensure_ascii=True) + "\n")
-                self._header_written = True
-            fh.write(json.dumps(entry, sort_keys=True, ensure_ascii=True) + "\n")
-
-
-# ── ReplayLoader ─────────────────────────────────────────────────────────
+        entry["params"] = _remove_known_secrets(entry["params"], secrets)
+        entry["response"] = _remove_known_secrets(entry["response"], secrets)
+        entry["digest"] = hashlib.sha256(_json(entry).encode()).hexdigest()
+        self._path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        lock_path = self._path.with_suffix(".lock")
+        with os.fdopen(os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600), "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            entries = []
+            if self._path.exists():
+                _, entries = _validated_lines(self._path, self._schema_version, self._profile)
+            # Replace a complete file; a crash cannot leave a half header/entry visible.
+            with tempfile.NamedTemporaryFile(
+                mode="w", dir=self._path.parent, prefix=".replay-", delete=False
+            ) as output:
+                output.write(_json(self._header) + "\n")
+                for item in [*entries, entry]:
+                    output.write(_json(item) + "\n")
+                output.flush()
+                os.fsync(output.fileno())
+                temporary = output.name
+            os.replace(temporary, self._path)
 
 
 class ReplayLoader:
-    """Load a replay file and look up responses by key.
-
-    Reads the first line as a metadata header, then builds an in-memory index
-    of ``{key: (model, params, response)}``.
-
-    Raises ``ReplayStaleError`` if the header ``schema_version`` does not match
-    the given value, or ``ReplayMissError`` when a key is not found.
-    """
+    """Consume a per-key response sequence; exhaustion and corruption fail closed."""
 
     def __init__(
-        self,
-        *,
-        schema_version: str,
+        self, *, schema_version: str, profile: str | None = None, path: Path | None = None
     ) -> None:
-        self._schema_version = schema_version
-        self._dir = _replay_dir()
-        self._path = self._dir / "replay.jsonl"
-        self._index: dict[str, object] = {}
-        self._profile: str = ""
-        self._load()
-
-    def _load(self) -> None:
-        if not self._path.exists():
-            raise ReplayMissError(
-                f"Replay file not found: {self._path} — run with LLM_MODE=record first"
-            )
-
-        lines = self._path.read_text().strip().splitlines()
-        if not lines:
-            raise ReplayMissError(f"Replay file is empty: {self._path}")
-
-        # First line is the metadata header
-        try:
-            header = json.loads(lines[0])
-        except json.JSONDecodeError as exc:
-            raise ReplayStaleError(f"Replay file header is not valid JSON: {self._path}") from exc
-
-        file_version = header.get("schema_version", "")
-        if file_version != self._schema_version:
-            raise ReplayStaleError(
-                f"Replay schema version mismatch: "
-                f"file={file_version[:16]}... current={self._schema_version[:16]}..."
-            )
-
-        self._profile = header.get("profile", "")
-
-        # Remaining lines are data entries
-        for line in lines[1:]:
-            if not line.strip():
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            key = entry.get("key")
-            if key:
-                self._index[key] = entry
+        self._path = path if path is not None else _replay_dir() / "replay.jsonl"
+        self._profile = profile if profile is not None else os.environ.get("LLM_PROFILE", "b1")
+        _, entries = _validated_lines(self._path, schema_version, self._profile)
+        self._index: dict[str, list[dict]] = defaultdict(list)
+        self._positions: dict[str, int] = defaultdict(int)
+        self._lock = threading.Lock()
+        for entry in entries:
+            self._index[entry["key"]].append(entry)
 
     def lookup(self, key: str) -> dict[str, object]:
-        """Return the recorded ``{model, params, response}`` for *key*.
+        with self._lock:
+            entries = self._index.get(key, [])
+            position = self._positions[key]
+            if position >= len(entries):
+                raise ReplayMissError(f"Replay miss or sequence exhausted for key {key[:16]}")
+            self._positions[key] += 1
+            return json.loads(_json(entries[position]))
 
-        Raises ``ReplayMissError`` when the key is not found.
-        """
-        entry = self._index.get(key)
-        if entry is None:
-            raise ReplayMissError(
-                f"Replay miss for key {key[:16]}... — "
-                f"file={self._path}, keys_loaded={len(self._index)}"
-            )
-        return {
-            "model": entry.get("model"),
-            "params": entry.get("params"),
-            "response": entry.get("response"),
-        }
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        body.setdefault("tools", [])
+        key, bindings = _request_key(body)
+        entry = self.lookup(key)
+        response = bindings.restore(entry["response"])
+        return httpx.Response(200, json=response, request=request)
 
     @property
     def profile(self) -> str:
@@ -399,23 +396,9 @@ class ReplayLoader:
         return len(self._index)
 
 
-# ── Replay errors ────────────────────────────────────────────────────────
-
-
-class ReplayMissError(RuntimeError):
-    """Replay key not found in recorded data (no fallback to live)."""
-
-
-class ReplayStaleError(RuntimeError):
-    """Replay file schema version does not match current tools/systems."""
-
-
-# ── Sensitive data scrubbing ─────────────────────────────────────────────
-
 _SENSITIVE_KEYS = frozenset(
     {
         "authorization",
-        "Authorization",
         "api_key",
         "api-key",
         "x-api-key",
@@ -424,33 +407,91 @@ _SENSITIVE_KEYS = frozenset(
         "access_token",
         "assistant_token",
         "auth",
+        "password",
+        "pin",
+        "otp",
+        "csrf",
+        "cookie",
+        "secret",
     }
+)
+_SECRET_TEXT = re.compile(
+    r"(?i)\bBearer\s+[^\s\"\\]+|\bsk-[A-Za-z0-9_-]+|"
+    r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|"
+    r"(?:\b(?:pin|otp|password)\s*(?:is|[:=])?\s*|(?:验证码|密码)\s*[:：=]?\s*)[A-Za-z0-9_-]+"
 )
 
 
-def _scrub_sensitive(obj: object, depth: int = 0) -> object:
-    """Recursively remove sensitive keys from dicts.
-
-    Depth-limited to avoid infinite recursion on circular structures.
-    """
-    if depth > 10:
-        return "<max-depth>"
-    if isinstance(obj, dict):
-        scrubbed: dict[str, object] = {}
-        for k, v in obj.items():
-            if isinstance(k, str) and _is_sensitive_key(k):
-                scrubbed[k] = "<REDACTED>"
-            else:
-                scrubbed[k] = _scrub_sensitive(v, depth + 1)
-        return scrubbed
-    if isinstance(obj, (list, tuple)):
-        return type(obj)(_scrub_sensitive(v, depth + 1) for v in obj)
-    return obj
+_QUOTED_SECRET = re.compile(
+    r"(?i)([\"'](?:[A-Za-z0-9_-]*_)?"
+    r"(?:pin|otp|token|password|secret|jwt|api_key|authorization|cookie)"
+    r"[\"']\s*:\s*[\"'])([^\"']*)"
+)
 
 
 def _is_sensitive_key(key: str) -> bool:
     lower = key.lower()
-    for sensitive in _SENSITIVE_KEYS:
-        if sensitive.lower() in lower:
-            return True
-    return False
+    return (
+        lower == "token"
+        or lower.endswith("_token")
+        or any(sensitive in lower for sensitive in _SENSITIVE_KEYS)
+    )
+
+
+def _secret_values(obj: object) -> set[str]:
+    values: set[str] = set()
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            if _is_sensitive_key(key) and isinstance(value, (str, int)):
+                values.add(str(value))
+            else:
+                values.update(_secret_values(value))
+    elif isinstance(obj, list):
+        for value in obj:
+            values.update(_secret_values(value))
+    elif isinstance(obj, str):
+        try:
+            parsed = json.loads(obj)
+        except ValueError:
+            values.update(match.group(2) for match in _QUOTED_SECRET.finditer(obj))
+        else:
+            if isinstance(parsed, (dict, list)):
+                values.update(_secret_values(parsed))
+    return values
+
+
+def _remove_known_secrets(obj: object, secrets: set[str]) -> object:
+    if isinstance(obj, dict):
+        return {k: _remove_known_secrets(v, secrets) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_remove_known_secrets(v, secrets) for v in obj]
+    if isinstance(obj, str):
+        for secret in sorted(secrets, key=len, reverse=True):
+            if secret:
+                obj = obj.replace(secret, "<REDACTED>")
+        return obj
+    if isinstance(obj, int) and str(obj) in secrets:
+        return "<REDACTED>"
+    return obj
+
+
+def _scrub_sensitive(obj: object, depth: int = 0) -> object:
+    if depth > 30:
+        return "<max-depth>"
+    if isinstance(obj, dict):
+        return {
+            k: "<REDACTED>" if _is_sensitive_key(k) else _scrub_sensitive(v, depth + 1)
+            for k, v in obj.items()
+        }
+    if isinstance(obj, (list, tuple)):
+        return type(obj)(_scrub_sensitive(v, depth + 1) for v in obj)
+    if isinstance(obj, str):
+        try:
+            parsed = json.loads(obj)
+        except ValueError:
+            quoted = _QUOTED_SECRET.sub(r"\1<REDACTED>", obj)
+            return _SECRET_TEXT.sub("<REDACTED>", quoted)
+        if isinstance(parsed, (dict, list)):
+            return _json(_scrub_sensitive(parsed, depth + 1))
+        return _SECRET_TEXT.sub("<REDACTED>", obj)
+    return obj
