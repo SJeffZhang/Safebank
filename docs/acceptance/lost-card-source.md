@@ -40,3 +40,10 @@ get_cards call to the frozen required-nullable account_id=null contract (not omi
 Both new regressions fail on a86e015. New agent611 passed /39 conditional skips;
 independent read-only review APPROVE, personally11 focused tests. Actual failing live
 read args were not persisted, so this does not claim the precise model filter value.
+
+Candidatea01611d, fresh generation demo_20261031012557_9dcbf820: real L1 case23
+completed RED approval, OTP send/read and confirmation. SQL plan EXECUTED; approval
+USED/RED/confirmed; bank COMMITTED/EXECUTED; crd_ls_1 LOST, only one owned card and no
+replacement. Exactly one CARD_LOST operation, zero transfers, balanced ledger. Successful
+OTP challenge was consumed; evidence uses audit event counts and HTTP200 confirmation,
+never OTP bytes. Machine evidence lost-card-source-live.json. Final full CI pending.
