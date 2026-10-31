@@ -9,6 +9,7 @@ mark a run business-verified. See docs/acceptance/demo-runner.md.
 from __future__ import annotations
 
 import argparse
+import ast
 import copy
 import fcntl
 import hashlib
@@ -19,6 +20,7 @@ import secrets
 import signal
 import subprocess
 import sys
+import unicodedata
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -130,27 +132,180 @@ def write_runtime_overlay(directory: Path, recordings: Path, mode: str, case_id:
     return path
 
 
-_SECRET_FIELD = re.compile(
-    r"(?:authorization|cookie|password|secret|token|api.?key|^pin$|^otp$)", re.I
+# Same field-token strategy as the independently reviewed runtime recorder at
+# a2f9d86: one credential predicate for structured, nested and malformed data.
+_SENSITIVE_KEYS = frozenset(
+    {
+        "authorization",
+        "api_key",
+        "api-key",
+        "x-api-key",
+        "service_token",
+        "jwt",
+        "access_token",
+        "assistant_token",
+        "auth",
+        "password",
+        "pin",
+        "otp",
+        "csrf",
+        "cookie",
+        "secret",
+    }
 )
 _SECRET_TEXT = re.compile(
-    r"Bearer\s+[^\s\"']+|sk-[A-Za-z0-9_-]{16,}|"
-    r"(?:pin|otp|password|api[_-]?key|token|secret)\s*[=:]\s*[^\s,;\"']+",
-    re.I,
+    r"(?i)\bBearer\s+[^\s\"\\]+|\bsk-[A-Za-z0-9_-]+|"
+    r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|"
+    r"(?:\b(?:pin|otp|password)\s*(?:is|[:=])?\s*|(?:验证码|密码)\s*[:：=]?\s*)[A-Za-z0-9_-]+"
 )
+
+
+def _is_sensitive_key(key: str) -> bool:
+    lower = unicodedata.normalize("NFKC", key).casefold()
+    lower = "".join(char for char in lower if unicodedata.category(char) != "Cf")
+    return (
+        lower == "token"
+        or lower.endswith("_token")
+        or any(sensitive in lower for sensitive in _SENSITIVE_KEYS)
+    )
+
+
+def _malformed_secret_fields(text: str) -> list[object]:
+    """Recover field tokens, not a repaired object, using one secret-key predicate.
+
+    Recoverable JSON values use the JSON decoder (including unicode escapes).
+    An incomplete value still produces an entry so recording can fail closed.
+    No malformed input is made into an executable valid tool call.
+    """
+    decoder = json.JSONDecoder()
+    fields: list[object] = []
+    offset = 0
+    while offset < len(text):
+        char = text[offset]
+        if char == '"':
+            try:
+                key, end = decoder.raw_decode(text, offset)
+            except ValueError:
+                offset += 1
+                continue
+        elif char == "'":
+            # Invalid JSON sometimes uses Python-style single-quoted keys.
+            end = offset + 1
+            while end < len(text):
+                if text[end] == "\\":
+                    end += 2
+                    continue
+                if text[end] == "'":
+                    break
+                end += 1
+            end = min(end + 1, len(text))
+            try:
+                key = ast.literal_eval(text[offset:end])
+            except (ValueError, SyntaxError):
+                offset += 1
+                continue
+        elif char.isalpha() or char == "_":
+            end = offset + 1
+            while end < len(text) and (text[end].isalnum() or text[end] in "_-"):
+                end += 1
+            key = text[offset:end]
+        else:
+            offset += 1
+            continue
+        offset = end
+        while end < len(text) and text[end].isspace():
+            end += 1
+        if (
+            not isinstance(key, str)
+            or not _is_sensitive_key(key)
+            or end == len(text)
+            or text[end] != ":"
+        ):
+            continue
+        end += 1
+        while end < len(text) and text[end].isspace():
+            end += 1
+        try:
+            value, _ = decoder.raw_decode(text, end)
+        except ValueError:
+            value = None  # A damaged secret value is reason to reject, not to guess.
+        fields.append(value)
+    return fields
+
+
+def _secret_values(obj: object) -> set[str]:
+    values: set[str] = set()
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            if _is_sensitive_key(str(key)) and isinstance(value, (str, int)):
+                values.add(str(value))
+            else:
+                values.update(_secret_values(value))
+    elif isinstance(obj, list):
+        for value in obj:
+            values.update(_secret_values(value))
+    elif isinstance(obj, str):
+        try:
+            parsed = json.loads(obj)
+        except ValueError:
+            values.update(
+                str(value)
+                for value in _malformed_secret_fields(obj)
+                if isinstance(value, (str, int))
+            )
+        else:
+            if isinstance(parsed, (dict, list, str)):
+                values.update(_secret_values(parsed))
+    return values
+
+
+def _remove_known_secrets(obj: object, secrets: set[str]) -> object:
+    if isinstance(obj, dict):
+        return {k: _remove_known_secrets(v, secrets) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_remove_known_secrets(v, secrets) for v in obj]
+    if isinstance(obj, str):
+        for secret in sorted(secrets, key=len, reverse=True):
+            if secret:
+                obj = obj.replace(secret, "<REDACTED>")
+        return obj
+    if isinstance(obj, int) and str(obj) in secrets:
+        return "<REDACTED>"
+    return obj
+
+
+def _scrub_sensitive(obj: object, depth: int = 0) -> object:
+    if depth > 30:
+        return "<max-depth>"
+    if isinstance(obj, dict):
+        return {
+            k: "<REDACTED>" if _is_sensitive_key(str(k)) else _scrub_sensitive(v, depth + 1)
+            for k, v in obj.items()
+        }
+    if isinstance(obj, (list, tuple)):
+        return type(obj)(_scrub_sensitive(v, depth + 1) for v in obj)
+    if isinstance(obj, str):
+        try:
+            parsed = json.loads(obj)
+        except ValueError:
+            if _malformed_secret_fields(obj):
+                # Reject the whole response before any header/temp/file write.
+                # Scrubbing part of damaged JSON cannot establish what was hidden
+                # in its remaining fields or echoed elsewhere in the response.
+                raise DemoFailure("malformed sensitive JSON; trace evidence refused") from None
+            return _SECRET_TEXT.sub("<REDACTED>", obj)
+        if isinstance(parsed, (dict, list, str)):
+            return json.dumps(
+                _scrub_sensitive(parsed, depth + 1), ensure_ascii=False, separators=(",", ":")
+            )
+        return _SECRET_TEXT.sub("<REDACTED>", obj)
+    return obj
 
 
 def sanitize_trace(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            str(k): "[REDACTED]" if _SECRET_FIELD.search(str(k)) else sanitize_trace(v)
-            for k, v in value.items()
-        }
-    if isinstance(value, list):
-        return [sanitize_trace(v) for v in value]
-    if isinstance(value, str):
-        return _SECRET_TEXT.sub("[REDACTED]", value)
-    return value
+    """Scrub valid data, reject damaged sensitive fields, never repair a tool call."""
+    known = _secret_values(value)
+    return _remove_known_secrets(_scrub_sensitive(value), known)
 
 
 def verify_receipts(manifest: dict, proof_directory: Path) -> dict:
@@ -424,15 +579,16 @@ class DemoRunner:
                     or not trace["events"]
                 ):
                     raise DemoFailure("missing, stale or invalid current trace; batch stopped")
+                clean_trace = sanitize_trace(trace)
                 trace_bytes = (
-                    json.dumps(sanitize_trace(trace), ensure_ascii=False, indent=2) + "\n"
+                    json.dumps(clean_trace, ensure_ascii=False, indent=2) + "\n"
                 ).encode()
                 private_write(run_directory / f"{case.id}.trace.json", trace_bytes)
                 manifest["cases"].append(
                     {
                         "case_id": case.id,
                         "customer_id": case.customer_id,
-                        "typed_text": case.text,
+                        "typed_text": clean_trace["config"]["text"],
                         "driver_exit": result.returncode,
                         "request_id": request_id,
                         "trace_sha256": hashlib.sha256(trace_bytes).hexdigest(),

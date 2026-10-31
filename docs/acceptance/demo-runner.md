@@ -91,7 +91,7 @@ attach receipts without making any banking calls. A receipt `<case_id>.json` mus
 
 ```json
 {
-  "run_id": "the-current-run-directory-name",
+  "run_id": "the-fresh-run-id-from-the-manifest",
   "checkout_sha": "the-exact-40-character-commit",
   "generation": "demo_20261031000000_1234abcd",
   "case_id": "16",
@@ -146,4 +146,25 @@ No old trace is deleted or overwritten; same-name run directories remain indepen
 Four old-code failures /53 controls passed; corrected runner+entire try_agent suite:
 127 passed. This parameter is correlation only and changes no authorization or terminal
 state logic. The existing bill branch's separate terminal-state fix is intentionally not
-copied here; coordinator must preserve both during serial integration. R2 remains pending.
+copied here; coordinator must preserve both during serial integration. R2 correction is recorded below.
+
+## Independent review R2 correction
+
+Structured and nested values now use one credential-key predicate, with Unicode NFKC
+normalization/case-folding and JSON decoding (including escaped field names). The strategy
+follows the independently reviewed runtime recorder at a2f9d86; its source is not changed.
+Valid nested JSON is parsed, cleaned and serialized; known credential echoes elsewhere in
+the same trace are also removed. Malformed sensitive JSON, including single-quoted or
+Unicode field names, refuses the entire trace before any evidence file is written. It is
+never repaired into a valid call. Benign malformed calls remain exactly malformed.
+
+The manifest takes typed_text from the same sanitized trace rather than copying raw case
+text. Both structured and JSON-string secrets are therefore excluded from both artifacts.
+Failure status/checkpoint remains available with no partially accepted case. The local
+operator-container trace is retained for trusted inspection and is not deleted.
+
+R2 original9 failed /59 passed; the manifest metadata-copy regression independently produced1 fail /
+68 passed before correction. Complete reports, ordinary monetary values, source IDs and
+normal error behavior are controls. Final affected suite (runner, all try_agent, lifecycle
+and deployment paths):160 passed. Final default suite: **3650 passed /1071 conditional skips** in30.26s, exit0.
+Full ruff check passed; format505 files already formatted; diff-check passed. Actual Docker, API, SQL and independent incremental re-review remain coordinator gates.

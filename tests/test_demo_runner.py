@@ -586,3 +586,100 @@ def test_driver_forwards_only_explicit_invocation_request_id(monkeypatch, tmp_pa
     else:
         index = captured[0].index("--request-id")
         assert captured[0][index + 1] == request_id
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"otp_code": "276543"},
+        {"payload": '{"pin":984321,"ok":false}'},
+        {"payload": r'{"\u0070\u0069\u006e":984321,"ok":false}'},
+        {"payload": '{"ＯＴＰ＿ＣＯＤＥ":"276543","ok":false}'},
+    ],
+)
+def test_explicit_sensitive_keys_and_nested_json_never_persist_credentials(runner, value):
+    cleaned = json.dumps(runner.sanitize_trace(value), ensure_ascii=False)
+    assert "276543" not in cleaned
+    assert "984321" not in cleaned
+    assert value != runner.sanitize_trace(value)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '{"pin":984321,"ok":',
+        r'{"\u006f\u0074\u0070_code":"276543","ok":',
+        "{'pin':984321,'ok':",
+        '{"ＯＴＰ＿ＣＯＤＥ":"276543","ok":',
+    ],
+)
+def test_malformed_sensitive_json_is_refused_without_repair(runner, text):
+    with pytest.raises(runner.DemoFailure) as refused:
+        runner.sanitize_trace({"payload": text})
+    assert "984321" not in str(refused.value)
+    assert "276543" not in str(refused.value)
+
+
+def test_complete_legitimate_report_and_ordinary_money_keep_semantics(runner):
+    value = {
+        "total_cents": 644800,
+        "previous_month_cents": 133190,
+        "source_ref": "src_01M68W92GJFHMKBRB89AB5GVH3",
+        "categories": [{"category": "entertainment", "amount_cents": 128000, "share_bp": 1985}],
+        "payload": '{"amount_cents":349900,"memo":"normal report","ok":false}',
+    }
+    clean = runner.sanitize_trace(value)
+    assert clean["total_cents"] == 644800
+    assert clean["previous_month_cents"] == 133190
+    assert clean["source_ref"] == value["source_ref"]
+    assert clean["categories"] == value["categories"]
+    assert json.loads(clean["payload"]) == json.loads(value["payload"])
+
+
+def test_benign_malformed_call_remains_malformed(runner):
+    malformed = '{"product_id": prd_mmf}'
+    clean = runner.sanitize_trace({"payload": malformed})
+    assert clean["payload"] == malformed
+    with pytest.raises(ValueError):
+        json.loads(clean["payload"])
+
+
+def test_malformed_sensitive_trace_stops_before_any_evidence_file(environment):
+    from scripts.demo_runner import DemoFailure
+
+    env = environment
+    original = env.runner.command
+
+    def secret_trace(argv, **kwargs):
+        result = original(argv, **kwargs)
+        if argv[:3] == ["docker", "compose", "exec"] and "operator" in argv:
+            trace = json.loads(result.stdout)
+            trace["events"].append(
+                {"kind": "sse_event", "detail": {"payload": '{"pin":984321,"ok":'}}
+            )
+            result.stdout = json.dumps(trace)
+        return result
+
+    env.runner.command = secret_trace
+    with pytest.raises(DemoFailure):
+        invoke(env)
+    assert not (env.output / "a.trace.json").exists()
+    assert not (env.output / "b.trace.json").exists()
+    value = json.loads((env.output / "manifest.json").read_text())
+    assert value["status"] == "FAILED" and value["cases"] == []
+
+
+def test_manifest_uses_same_sanitized_typed_text_as_trace(environment):
+    from scripts.demo_runner import Case
+
+    env = environment
+    result = env.runner.run(
+        cases=(Case("a", "cus_zs", '{"pin":984321,"amount_cents":128000}'),),
+        mode="replay",
+        recordings=env.recordings,
+        run_directory=env.output,
+        observe_only=True,
+    )
+    assert "984321" not in json.dumps(result)
+    assert "984321" not in (env.output / "a.trace.json").read_text()
+    assert json.loads(result["cases"][0]["typed_text"])["amount_cents"] == 128000
