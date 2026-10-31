@@ -209,7 +209,7 @@ def environment(runner, tmp_path):
         deploy=deploy,
         state=state,
         base=[str(deploy / "docker-compose.yml")],
-        current=lambda: {"generation": generation},
+        current=lambda: {"generation": generation, "initial": {"seed": "l1_seed_v1.0"}},
         sql=lambda *a: "l1_seed_v1.0",
     )
     calls = []
@@ -363,7 +363,7 @@ def test_subprocess_stderr_is_not_repeated_in_failure(environment):
     assert "never-print-me" not in str(caught.value)
 
 
-def test_default_verified_mode_requires_explicit_proof_workflow_before_any_command(environment):
+def test_empty_automatic_batch_is_refused_before_any_command(environment):
     from scripts.demo_runner import DemoFailure
 
     env = environment
@@ -683,3 +683,393 @@ def test_manifest_uses_same_sanitized_typed_text_as_trace(environment):
     assert "984321" not in json.dumps(result)
     assert "984321" not in (env.output / "a.trace.json").read_text()
     assert json.loads(result["cases"][0]["typed_text"])["amount_cents"] == 128000
+
+
+def session_events(sid="ses_fixture"):
+    return [
+        {"kind": "http_request", "detail": {"to": "G15", "url": "http://gateway:8200/sessions"}},
+        {
+            "kind": "http_response",
+            "detail": {"from": "G15", "status": 201, "body": {"session_id": sid}},
+        },
+        {"kind": "result", "detail": {"event": "session_created", "session_id": sid}},
+    ]
+
+
+def test_session_binding_uses_trusted_response_and_ignores_free_text(runner):
+    trace = {
+        "events": [
+            {"kind": "sse_event", "detail": {"message": "ses_attack"}},
+            *session_events(),
+            {"kind": "result", "detail": {"event": "l1_complete", "reply": "ses_other"}},
+        ]
+    }
+    assert runner.session_from_trace(trace) == "ses_fixture"
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_body",
+        "duplicate_response",
+        "wrong_created",
+        "wrong_path",
+        "wrong_order",
+        "invalid_sid",
+    ],
+)
+def test_session_response_must_be_unique_bound_and_valid(runner, mutation):
+    events = session_events()
+    if mutation == "missing_body":
+        events[1]["detail"].pop("body")
+    elif mutation == "duplicate_response":
+        events.insert(2, events[1])
+    elif mutation == "wrong_created":
+        events[2]["detail"]["session_id"] = "ses_other"
+    elif mutation == "wrong_path":
+        events[0]["detail"]["url"] = "http://gateway:8200/plans"
+    elif mutation == "wrong_order":
+        events[0], events[1] = events[1], events[0]
+    else:
+        events[1]["detail"]["body"]["session_id"] = "ses_bad';SELECT 1"
+    with pytest.raises(runner.DemoFailure):
+        runner.session_from_trace({"events": events})
+
+
+@pytest.fixture
+def auto_sql(environment):
+    import importlib.util
+    from types import SimpleNamespace
+
+    env = environment
+    spec = importlib.util.spec_from_file_location(
+        "owned_sql_payloads", ROOT / "tests/test_demo_sql.py"
+    )
+    payloads = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(payloads)
+    env.demo.current = lambda: {
+        "generation": "demo_20261031000000_1234abcd",
+        "initial": {"seed": "l1_seed_v1.0"},
+    }
+    state = {"case": "16", "sql_failure": None, "trace_mutation": None, "payload_mutation": None}
+    calls = []
+    original = env.runner.command
+
+    def facts():
+        before, after = payloads.good(state["case"])
+        raw = json.dumps([before["bank"], after["bank"], after["gateway"]])
+        raw = raw.replace(payloads.GEN, "demo_20261031000000_1234abcd")
+        raw = raw.replace("ses_fixture", "ses_fixture_" + state["case"])
+        values = json.loads(raw)
+        if state["payload_mutation"]:
+            state["payload_mutation"](values)
+        return values
+
+    def compose(*args, **kwargs):
+        index = len(calls) % 3
+        calls.append((args, kwargs))
+        env.calls.append((["SQL", str(index)], {}))
+        if state["sql_failure"] == index:
+            raise RuntimeError("postgresql://private-password@postgres-bank/secret")
+        return json.dumps(facts()[index])
+
+    env.demo.compose = compose
+
+    def command(argv, **kwargs):
+        env.settings["exit"] = 1 if state["case"] in {"16", "27"} else 9
+        result = original(argv, **kwargs)
+        if argv[:3] == ["docker", "compose", "exec"] and "operator" in argv:
+            trace = json.loads(result.stdout)
+            trace["events"] = session_events("ses_fixture_" + state["case"]) + [
+                {
+                    "kind": "result",
+                    "detail": {
+                        "event": "l1_complete",
+                        "reply": "report complete",
+                        "decision": None,
+                    },
+                }
+            ]
+            if state["trace_mutation"]:
+                state["trace_mutation"](trace)
+            result.stdout = json.dumps(trace)
+        return result
+
+    env.runner.command = command
+    return SimpleNamespace(env=env, state=state, calls=calls, payloads=payloads)
+
+
+def run_core(auto, case_id="16", **kwargs):
+    from scripts.demo_runner import Case
+
+    auto.state["case"] = case_id
+    customer = "cus_ls" if case_id in {"34", "23"} else "cus_zs"
+    return auto.env.runner.run(
+        cases=(Case(case_id, customer, auto.payloads.TEXTS[case_id]),),
+        mode="live",
+        recordings=auto.env.recordings,
+        run_directory=auto.env.output,
+        observe_only=False,
+        **kwargs,
+    )
+
+
+@pytest.mark.parametrize("case_id", ["01", "16", "27", "34", "36", "23"])
+def test_default_verified_mode_runs_actual_oracle_on_captured_payloads(auto_sql, case_id):
+    auto = auto_sql
+    value = run_core(auto, case_id)
+    assert value["status"] == "VERIFIED" and value["business_verified"] is True
+    assert value["cases"][0]["business_verified"] is True
+    assert len(auto.calls) == 3
+    for args, kwargs in auto.calls:
+        assert args[:4] == ("exec", "-T", "-e", "PGOPTIONS=-c default_transaction_read_only=on")
+        assert "postgres-bank" in args and "-X" in args and "ON_ERROR_STOP=1" in args
+        assert kwargs["data"].lstrip().startswith("SELECT ")
+    before = json.loads((auto.env.output / f"{case_id}.before.json").read_text())
+    after = json.loads((auto.env.output / f"{case_id}.after.json").read_text())
+    proof = json.loads((auto.env.output / "sql-receipts" / f"{case_id}.json").read_text())
+    assert before["meta"] == after["meta"]
+    assert before["meta"]["session_id"] == "ses_fixture_" + case_id
+    assert before["meta"]["run_id"] == value["run_id"]
+    assert before["meta"]["trace_sha256"] == value["cases"][0]["trace_sha256"]
+    assert proof["verified"] is True
+    assert (auto.env.output / f"{case_id}.before.json").stat().st_mode & 0o777 == 0o600
+    driver_index = next(
+        i for i, (a, k) in enumerate(auto.env.calls) if "drive_try_agent.py" in " ".join(a)
+    )
+    sql_indices = [i for i, (a, k) in enumerate(auto.env.calls) if a[0] == "SQL"]
+    assert sql_indices[0] < driver_index < sql_indices[1] < sql_indices[2]
+
+
+def test_unsupported_automatic_case_fails_before_any_runtime(environment):
+    from scripts.demo_runner import Case, DemoFailure
+
+    env = environment
+    with pytest.raises(DemoFailure, match="unsupported"):
+        env.runner.run(
+            cases=(Case("99", "cus_zs", "unknown"),),
+            mode="live",
+            recordings=env.recordings,
+            run_directory=env.output,
+            observe_only=False,
+        )
+    assert env.calls == []
+
+
+@pytest.mark.parametrize("failure", [0, 1, 2])
+def test_sql_failure_stops_without_false_receipt_and_withholds_connection_details(
+    auto_sql, failure
+):
+    from scripts.demo_runner import DemoFailure
+
+    auto = auto_sql
+    auto.state["sql_failure"] = failure
+    with pytest.raises(DemoFailure) as stopped:
+        run_core(auto)
+    assert "private-password" not in str(stopped.value)
+    assert not (auto.env.output / "sql-receipts/16.json").exists()
+    value = json.loads((auto.env.output / "manifest.json").read_text())
+    assert value["status"] == "FAILED" and value["business_verified"] is False
+    if failure > 0:
+        assert (auto.env.output / "16.before-bank.json").exists()
+
+
+def test_oracle_mismatch_preserves_snapshots_but_never_issues_receipt(auto_sql):
+    from scripts.demo_runner import DemoFailure
+
+    auto = auto_sql
+    auto.state["payload_mutation"] = lambda values: values[2].update(reads=[])
+    with pytest.raises(DemoFailure):
+        run_core(auto)
+    assert (auto.env.output / "16.before.json").exists()
+    assert (auto.env.output / "16.after.json").exists()
+    assert not (auto.env.output / "sql-receipts/16.json").exists()
+
+
+def test_unbound_session_cannot_trigger_after_sql_or_receipt(auto_sql):
+    from scripts.demo_runner import DemoFailure
+
+    auto = auto_sql
+    auto.state["trace_mutation"] = lambda trace: trace["events"].clear()
+    with pytest.raises(DemoFailure):
+        run_core(auto)
+    assert len(auto.calls) == 1
+    assert not (auto.env.output / "sql-receipts/16.json").exists()
+
+
+def test_try_agent_session_response_exposes_only_actual_session_id(monkeypatch):
+    import httpx
+
+    from scripts import try_agent
+
+    monkeypatch.setenv("FRONTEND_SERVICE_TOKEN", "synthetic-frontend")
+    sid = "ses_actual_response"
+
+    def handler(request):
+        if request.url.path == "/auth/login":
+            return httpx.Response(200, json={"app_token": "synthetic-app"})
+        if request.url.path == "/sessions":
+            return httpx.Response(201, json={"session_id": sid, "token": "must-not-copy"})
+        return httpx.Response(400, json={"code": "EXPECTED_TEST_STOP"})
+
+    cfg = try_agent.Config(
+        gateway_url="http://gateway:8200",
+        agent_url="http://agent:8100",
+        customer_id="cus_zs",
+        text="查询余额",
+        pin="synthetic",
+    )
+    events = []
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        assert try_agent.run(cfg, client, events) == try_agent.EXIT_HTTP_FAILURE
+    response = next(
+        e.detail for e in events if e.kind == "http_response" and e.detail.get("from") == "G15"
+    )
+    assert response.get("body") == {"session_id": sid}
+    assert "must-not-copy" not in json.dumps(response)
+
+
+def test_sensitive_sql_payload_is_refused_before_snapshot_or_driver(auto_sql):
+    from scripts.demo_runner import DemoFailure
+
+    auto = auto_sql
+    auto.state["payload_mutation"] = lambda values: values[0].update(otp_code="276543")
+    with pytest.raises(DemoFailure):
+        run_core(auto)
+    assert not (auto.env.output / "16.before-bank.json").exists()
+    assert not any("drive_try_agent.py" in " ".join(a) for a, k in auto.env.calls)
+    assert not (auto.env.output / "sql-receipts/16.json").exists()
+
+
+def test_observation_mode_makes_no_oracle_sql_and_stays_unverified(auto_sql):
+    from scripts.demo_runner import Case
+
+    auto = auto_sql
+    result = auto.env.runner.run(
+        cases=(Case("16", "cus_zs", auto.payloads.TEXTS["16"]),),
+        mode="live",
+        recordings=auto.env.recordings,
+        run_directory=auto.env.output,
+        observe_only=True,
+    )
+    assert result["business_verified"] is False and result["status"] == "OBSERVED"
+    assert auto.calls == []
+    assert not (auto.env.output / "sql-receipts").exists()
+
+
+def test_external_proofs_mode_retains_explicit_proof_contract_without_auto_sql(auto_sql, tmp_path):
+    from scripts.demo_runner import DemoFailure
+
+    auto = auto_sql
+    external = tmp_path / "external-proofs"
+    external.mkdir()
+    with pytest.raises(DemoFailure, match="receipt"):
+        run_core(auto, proofs=external)
+    assert auto.calls == []
+    assert (auto.env.output / "16.trace.json").exists()
+    assert not (auto.env.output / "sql-receipts").exists()
+
+
+@pytest.mark.parametrize("field", ["text", "customer_id"])
+def test_noncanonical_auto_case_refuses_before_runtime(environment, field):
+    from scripts.demo_runner import Case, DemoFailure
+
+    env = environment
+    case = {"id": "16", "customer_id": "cus_zs", "text": "给我出一份9月的账单报告"}
+    case[field] = "different"
+    with pytest.raises(DemoFailure, match="unsupported"):
+        env.runner.run(
+            cases=(Case(**case),),
+            mode="live",
+            recordings=env.recordings,
+            run_directory=env.output,
+            observe_only=False,
+        )
+    assert env.calls == []
+
+
+def test_first_oracle_failure_stops_next_case_and_retains_fault_snapshots(auto_sql):
+    from scripts.demo_runner import Case, DemoFailure
+
+    auto = auto_sql
+    auto.state["payload_mutation"] = lambda values: values[2].update(reads=[])
+    cases = tuple(Case(i, "cus_zs", auto.payloads.TEXTS[i]) for i in ("16", "27"))
+    with pytest.raises(DemoFailure):
+        auto.env.runner.run(
+            cases=cases,
+            mode="live",
+            recordings=auto.env.recordings,
+            run_directory=auto.env.output,
+            observe_only=False,
+        )
+    drivers = [a for a, k in auto.env.calls if "drive_try_agent.py" in " ".join(a)]
+    assert len(drivers) == 1
+    assert (auto.env.output / "16.before.json").exists()
+    assert (auto.env.output / "16.after.json").exists()
+    assert not (auto.env.output / "runtime-27.yml").exists()
+    assert not list((auto.env.output / "sql-receipts").iterdir())
+
+
+def test_error_trace_cannot_be_turned_green_by_correct_sql(auto_sql):
+    from scripts.demo_runner import DemoFailure
+
+    auto = auto_sql
+    auto.state["trace_mutation"] = lambda trace: trace["events"].append(
+        {"kind": "error", "detail": "controlled failure"}
+    )
+    with pytest.raises(DemoFailure):
+        run_core(auto)
+    assert len(auto.calls) == 1
+    assert not (auto.env.output / "sql-receipts/16.json").exists()
+
+
+def test_default_replay_cli_automatically_verifies_core_case_without_external_proof(
+    auto_sql, monkeypatch
+):
+    import sys
+
+    from scripts import demo_runner
+
+    auto = auto_sql
+    (auto.env.demo.deploy / "e2e.override.yml").write_text("services: {}\n")
+    recording = auto.env.recordings / "B2/16/replay.jsonl"
+    recording.parent.mkdir()
+    recording.write_text("synthetic replay boundary\n")
+    monkeypatch.delenv("LLM_MODE", raising=False)
+    monkeypatch.setattr(demo_runner, "DemoEnvironment", lambda deploy: auto.env.demo)
+    monkeypatch.setattr(demo_runner, "DemoRunner", lambda demo: auto.env.runner)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "demo",
+            "--deploy",
+            str(auto.env.demo.deploy),
+            "--case-ids",
+            "16",
+            "--recordings",
+            str(auto.env.recordings),
+            "--run-dir",
+            str(auto.env.output),
+        ],
+    )
+    assert demo_runner.main() == 0
+    value = json.loads((auto.env.output / "manifest.json").read_text())
+    assert value["mode"] == "replay" and value["status"] == "VERIFIED"
+    assert value["business_verified"] is True and len(auto.calls) == 3
+    assert value["internal_networks"] == ["private"]
+    assert value["cases"][0]["offline_probe"]["external_tcp_blocked"] == [
+        "1.1.1.1",
+        "api.deepseek.com",
+    ]
+
+
+@pytest.mark.parametrize("mutation", ["invalid_event", "invalid_url"])
+def test_corrupt_session_metadata_is_a_controlled_refusal(runner, mutation):
+    events = session_events()
+    if mutation == "invalid_event":
+        events.insert(0, None)
+    else:
+        events[0]["detail"]["url"] = 17
+    with pytest.raises(runner.DemoFailure):
+        runner.session_from_trace({"events": events})

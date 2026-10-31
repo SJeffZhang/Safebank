@@ -26,9 +26,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
 
+from scripts import demo_sql
 from scripts.demo_environment import (
     DemoEnvironment,
     default_deploy,
@@ -308,6 +310,93 @@ def sanitize_trace(value: Any) -> Any:
     return _remove_known_secrets(_scrub_sensitive(value), known)
 
 
+def require_safe_sql_snapshot(value: Any, depth: int = 0) -> None:
+    """Reject credentials without modifying the financial facts sent to the oracle."""
+    if depth > 30:
+        raise DemoFailure("SQL snapshot nesting exceeds evidence limit")
+    if isinstance(value, dict):
+        for key, child in value.items():
+            # These fixed SELECT projections prove authorization, not credentials.
+            if key == "authorization_epoch":
+                if child is not None and type(child) is not int:
+                    raise DemoFailure("invalid authorization epoch in SQL snapshot")
+                continue
+            if key == "otp_verified":
+                if child is not None and type(child) is not bool:
+                    raise DemoFailure("invalid OTP confirmation flag in SQL snapshot")
+                continue
+            if _is_sensitive_key(str(key)):
+                raise DemoFailure("sensitive SQL snapshot field; evidence refused")
+            require_safe_sql_snapshot(child, depth + 1)
+    elif isinstance(value, list):
+        for child in value:
+            require_safe_sql_snapshot(child, depth + 1)
+    elif isinstance(value, str):
+        clean = sanitize_trace(value)
+        if clean != value:
+            try:
+                # Benign nested JSON may be canonicalized without changing facts.
+                if json.loads(clean) == json.loads(value):
+                    return
+            except ValueError:
+                pass
+            raise DemoFailure("sensitive SQL snapshot text; evidence refused")
+
+
+def session_from_trace(trace: dict) -> str:
+    """Use only the trusted CLI's paired session HTTP events, never model text."""
+    events = trace.get("events", [])
+    if not isinstance(events, list):
+        raise DemoFailure("invalid trusted session event list")
+    request, response, created = [], [], []
+    for index, event in enumerate(events):
+        if not isinstance(event, dict):
+            raise DemoFailure("invalid trusted session event")
+        detail = event.get("detail")
+        if not isinstance(detail, dict):
+            continue
+        kind = event.get("kind")
+        if kind == "http_request" and detail.get("to") == "G15":
+            request.append((index, detail))
+        elif kind == "http_response" and detail.get("from") == "G15":
+            response.append((index, detail))
+        elif kind == "result" and detail.get("event") == "session_created":
+            created.append((index, detail))
+    if len(request) != 1 or len(response) != 1 or len(created) != 1:
+        raise DemoFailure("missing or multiple trusted session responses")
+    req_i, req = request[0]
+    res_i, res = response[0]
+    created_i, result = created[0]
+    url = req.get("url")
+    if not isinstance(url, str):
+        raise DemoFailure("invalid trusted session request URL")
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        raise DemoFailure("invalid trusted session request URL") from None
+    body = res.get("body")
+    sid = body.get("session_id") if isinstance(body, dict) else None
+    if (
+        not req_i < res_i < created_i
+        or parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path != "/sessions"
+        or parsed.query
+        or parsed.fragment
+        or type(res.get("status")) is not int
+        or res["status"] not in {200, 201}
+        or not isinstance(body, dict)
+        or set(body) != {"session_id"}
+        or not isinstance(sid, str)
+        or re.fullmatch(r"ses_[A-Za-z0-9_-]{1,128}", sid) is None
+        or result.get("session_id") != sid
+    ):
+        raise DemoFailure("invalid or unbound trusted session response")
+    return sid
+
+
 def verify_receipts(manifest: dict, proof_directory: Path) -> dict:
     verified = copy.deepcopy(manifest)
     cases = verified.get("cases")
@@ -435,12 +524,99 @@ class DemoRunner:
         )
         if json.loads(raw).get("database") != f"bank_{generation}":
             raise DemoFailure("running bank database differs from selected generation")
-        seed = self.demo.sql(
-            "postgres-bank",
-            f"bank_{generation}",
-            "SELECT dataset_revision FROM clock WHERE id=1;",
-        )
+        initial = current.get("initial", {})
+        seed = initial.get("seed") if isinstance(initial, dict) else None
+        if not isinstance(seed, str) or not seed:
+            raise DemoFailure("current generation initialization seed is missing")
         return {"generation": generation, "checkout_sha": sha, "seed": seed}
+
+    def sql_snapshot(self, kind: str, generation: str, query: str) -> dict:
+        """Execute a fixed oracle SELECT only in host-side Postgres, read-only."""
+        if kind not in {"bank", "gateway"}:
+            raise DemoFailure("unsupported SQL snapshot database")
+        generation_names(generation)
+        try:
+            raw = self.demo.compose(
+                "exec",
+                "-T",
+                "-e",
+                "PGOPTIONS=-c default_transaction_read_only=on",
+                "postgres-bank",
+                "psql",
+                "-X",
+                "-U",
+                "postgres",
+                "-d",
+                f"{kind}_{generation}",
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-tA",
+                overlay=Path(self.files[-1]),
+                data=query,
+            )
+            payload = json.loads(raw)
+            if not isinstance(payload, dict):
+                raise ValueError("snapshot is not an object")
+            require_safe_sql_snapshot(payload)
+            return payload
+        except (RuntimeError, OSError, ValueError, subprocess.SubprocessError):
+            raise DemoFailure("read-only SQL snapshot failed; raw details withheld") from None
+
+    def automatic_receipt(
+        self,
+        *,
+        case: Case,
+        bank_before: dict,
+        trace: dict,
+        manifest: dict,
+        row: dict,
+        directory: Path,
+        proofs: Path,
+        seen_sessions: set[str],
+    ) -> None:
+        sid = session_from_trace(trace)
+        if sid in seen_sessions:
+            raise DemoFailure("session reused across independent cases")
+        seen_sessions.add(sid)
+        expected_exit = 1 if case.id in {"16", "27"} else 9
+        if row["driver_exit"] != expected_exit or any(
+            event.get("kind") == "error" for event in trace["events"]
+        ):
+            raise DemoFailure("case did not reach its required successful driver outcome")
+        binding = {
+            **{key: manifest[key] for key in ("run_id", "checkout_sha", "generation")},
+            "case_id": case.id,
+            "trace_sha256": row["trace_sha256"],
+            "session_id": sid,
+        }
+        before = {"meta": binding, "bank": bank_before}
+        before_path = directory / f"{case.id}.before.json"
+        private_write(before_path, json.dumps(before, ensure_ascii=False, indent=2) + "\n")
+        queries = demo_sql.build_queries(sid)
+        bank_after = self.sql_snapshot("bank", manifest["generation"], queries["bank"])
+        private_write(
+            directory / f"{case.id}.after-bank.json",
+            json.dumps({"meta": binding, "bank": bank_after}, ensure_ascii=False, indent=2) + "\n",
+        )
+        gateway_after = self.sql_snapshot("gateway", manifest["generation"], queries["gateway"])
+        private_write(
+            directory / f"{case.id}.after-gateway.json",
+            json.dumps({"meta": binding, "gateway": gateway_after}, ensure_ascii=False, indent=2)
+            + "\n",
+        )
+        after = {"meta": binding, "bank": bank_after, "gateway": gateway_after}
+        after_path = directory / f"{case.id}.after.json"
+        private_write(after_path, json.dumps(after, ensure_ascii=False, indent=2) + "\n")
+        try:
+            receipt = demo_sql.verify_case(case.id, before, after, binding)
+        except demo_sql.OracleError:
+            raise DemoFailure("case-specific SQL verification failed") from None
+        private_write(proofs / f"{case.id}.json", json.dumps(receipt, indent=2) + "\n")
+        row.update(
+            session_id=sid,
+            sql_before_sha256=hashlib.sha256(before_path.read_bytes()).hexdigest(),
+            sql_after_sha256=hashlib.sha256(after_path.read_bytes()).hexdigest(),
+        )
 
     def offline_networks(self) -> list[str]:
         container_id = self.compose("ps", "-q", "agent").strip()
@@ -470,9 +646,18 @@ class DemoRunner:
         observe_only: bool,
         proofs: Path | None = None,
     ) -> dict:
-        if not observe_only and proofs is None:
+        automatic = not observe_only and proofs is None
+        if automatic and (
+            not cases
+            or any(
+                case.id not in demo_sql.CASES
+                or case.text != demo_sql.CASES[case.id]
+                or case.customer_id != ("cus_ls" if case.id in {"34", "23"} else "cus_zs")
+                for case in cases
+            )
+        ):
             raise DemoFailure(
-                "provide --proofs for verified mode or --observe-only for observations"
+                "unsupported automatic case; use explicit external proofs or observation"
             )
         if mode not in {"live", "record", "replay"}:
             raise DemoFailure("invalid LLM mode")
@@ -501,6 +686,10 @@ class DemoRunner:
             "internal_networks": network_names,
         }
         private_write(run_directory / "manifest.json", json.dumps(manifest, indent=2) + "\n")
+        if automatic:
+            proofs = run_directory / "sql-receipts"
+            proofs.mkdir(mode=0o700)
+        seen_sessions: set[str] = set()
 
         def checkpoint() -> None:
             temporary = run_directory / "manifest.next.json"
@@ -543,6 +732,27 @@ class DemoRunner:
                     "TRY_AGENT_REQUEST_ID": request_id,
                     "GW_PUBLIC": self.env.get("GW_PUBLIC", "172.30.10.12"),
                 }
+                bank_before = None
+                if automatic:
+                    bank_before = self.sql_snapshot(
+                        "bank", manifest["generation"], demo_sql.bank_snapshot_query()
+                    )
+                    private_write(
+                        run_directory / f"{case.id}.before-bank.json",
+                        json.dumps(
+                            {
+                                "capture": "before_driver",
+                                "run_id": manifest["run_id"],
+                                "checkout_sha": manifest["checkout_sha"],
+                                "generation": manifest["generation"],
+                                "case_id": case.id,
+                                "bank": bank_before,
+                            },
+                            ensure_ascii=False,
+                            indent=2,
+                        )
+                        + "\n",
+                    )
                 result = self.command(
                     [
                         sys.executable,
@@ -598,6 +808,18 @@ class DemoRunner:
                     }
                 )
                 checkpoint()
+                if automatic:
+                    self.automatic_receipt(
+                        case=case,
+                        bank_before=bank_before,
+                        trace=trace,
+                        manifest=manifest,
+                        row=manifest["cases"][-1],
+                        directory=run_directory,
+                        proofs=proofs,
+                        seen_sessions=seen_sessions,
+                    )
+                    checkpoint()
             manifest["status"] = "OBSERVED"
             checkpoint()
             if not observe_only:

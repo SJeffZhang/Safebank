@@ -327,6 +327,11 @@ def run(
                 "from": "G15",
                 "status": sid_resp.status_code,
                 "headers": _sanitise_headers(dict(sid_resp.headers)),
+                **(
+                    {"body": {"session_id": sid_resp.json().get("session_id")}}
+                    if sid_resp.status_code in (200, 201)
+                    else {}
+                ),
             },
         )
     )
