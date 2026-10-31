@@ -55,3 +55,8 @@ L2/L3 validation; full six-scenario L1 rehearsals remain pending.
 
 Full unit3552 passed /1065 conditional skips before live. Final exact-head complete
 local CI is the remaining merge gate.
+
+Final a9cb028 full CI stopped at historical0001 upgrade preservation: the expected
+incremental-column list omitted the new nullable epoch. Extended that list with
+BIGINT/NULL, retaining every original-field equality assertion. All3 real migration
+schema tests now pass; rerun complete CI on the resulting final head.

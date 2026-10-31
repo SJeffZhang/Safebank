@@ -20,7 +20,7 @@ NEW_COLUMNS = {
     "evaluations": {"view_json": "JSONB"},
     "otp_challenges": {"code_ciphertext": "TEXT"},
     "execution_jobs": {"authorization_evidence": "JSONB", "deadline_cap_wall": "TIMESTAMP"},
-    "plans": {"plan_draft": "JSONB"},
+    "plans": {"plan_draft": "JSONB", "authorization_epoch": "BIGINT"},
 }
 
 
