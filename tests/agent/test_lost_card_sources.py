@@ -43,7 +43,13 @@ def proposal(*, with_source=True):
                     ]
                     if with_source
                     else []
-                ),
+                )
+                + [
+                    {
+                        "param": "replace",
+                        "source": {"kind": "utterance", "ref": "utt_a", "span": [8, 10]},
+                    }
+                ],
             }
         ],
         "rationale": "挂失本人卡片",
@@ -115,3 +121,17 @@ def test_unique_explicit_card_tail_can_continue_to_gateway_validation():
     )
     scripted = ScriptedLLM([tool_response("submit_action_plan", proposal())])
     assert PlanAdapter(build(scripted))(current, ctx()).steps[0].args.card_id == "crd_a"
+
+
+def test_missing_no_replacement_source_is_retried():
+    bad = proposal()
+    bad["steps"][0]["arg_sources"] = [
+        s for s in bad["steps"][0]["arg_sources"] if s["param"] != "replace"
+    ]
+    good = proposal()
+    scripted = ScriptedLLM(
+        [tool_response("submit_action_plan", bad), tool_response("submit_action_plan", good)]
+    )
+    draft = PlanAdapter(build(scripted))(state(), ctx())
+    assert len(scripted.requests) == 2
+    assert any(s.param == "replace" for s in draft.steps[0].arg_sources)

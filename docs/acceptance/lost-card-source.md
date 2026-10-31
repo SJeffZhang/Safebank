@@ -18,3 +18,16 @@ local CI remain pending; no six-scenario freeze claimed.
 All agent tests606 passed /39 conditional skips. Independent read-only security review
 APPROVE; reviewer personally reran6 focused tests and diff checks. No runtime API used
 by reviewer. Final live and full CI remain pending.
+
+Candidate2684788 live read the correct owned card but omitted replace=false provenance;
+L2 returned UNKNOWN_SENSITIVE_ARG / REPLAN, no card writes. New real G3/JWT/PostgreSQL
+regression reproduced the fixed no-replacement default as unknown (1 failed /4 negative
+cases passed). Added a narrow proof only for report_card_lost.replace=false, persisted
+typed CARD_LOST scope with a card and exact loss-action span. Scope, lineage, customer,
+session and expiry checks still apply; true is never supplied by this rule. New tests
+5 pass, including true tampering, unrelated span, expired and other-session references.
+Planner missing-replace-source regression also failed before local retry correction.
+
+Combined real-PG W2 + agent881 passed /39 conditional skips. Incremental security review
+APPROVE, reviewer personally12 targeted tests. Card target equality remains mandatory in
+IntentStage; this default proof supplies neither a card ID nor replacement permission.
