@@ -265,9 +265,9 @@ def test_malformed_retry_does_not_persist_quoted_secrets(recording):
         )
         return httpx.Response(200, json=result)
 
-    make_llm("synthetic", httpx.Client(transport=httpx.MockTransport(provider))).invoke("hi")
-    for secret in ("984321", "276543", "synthetic-refresh"):
-        assert secret not in recording.read_text()
+    with pytest.raises(ReplayStaleError, match="Malformed sensitive"):
+        make_llm("synthetic", httpx.Client(transport=httpx.MockTransport(provider))).invoke("hi")
+    assert not recording.exists()
 
 
 def test_response_token_fields_are_scrubbed_without_removing_usage(recording):
@@ -387,13 +387,10 @@ def test_malformed_unquoted_secrets_are_not_recorded(recording, arguments, secre
         body["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = arguments
         return httpx.Response(200, json=body)
 
-    make_llm("synthetic", httpx.Client(transport=httpx.MockTransport(provider))).invoke("hi")
-    raw = recording.read_text()
-    assert secret not in raw
-    entry = json.loads(raw.splitlines()[1])
-    stored = entry["response"]["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"]
-    if "120000" in arguments:
-        assert "120000" in stored
+    with pytest.raises(ReplayStaleError, match="Malformed sensitive") as exc:
+        make_llm("synthetic", httpx.Client(transport=httpx.MockTransport(provider))).invoke("hi")
+    assert secret not in str(exc.value)
+    assert not recording.exists()
 
 
 @pytest.mark.parametrize("bad_format", [None, 1, 3, "2", True])
@@ -447,7 +444,89 @@ def test_malformed_json_escaped_secret_key_is_scrubbed(recording):
         )
         return httpx.Response(200, json=body)
 
+    with pytest.raises(ReplayStaleError, match="Malformed sensitive"):
+        make_llm("synthetic", httpx.Client(transport=httpx.MockTransport(provider))).invoke("hi")
+    assert not recording.exists()
+
+
+@pytest.mark.parametrize(
+    "arguments,content",
+    [
+        ('{"otp_code":"276543","ok":', ""),
+        (r'{"pin":"\u0039\u0038\u0034\u0033\u0032\u0031","ok":', "echo 984321"),
+    ],
+)
+def test_malformed_secret_recording_is_rejected_atomically(recording, arguments, content):
+    calls = []
+
+    def provider(request):
+        calls.append(request)
+        result = tool_response("propose", {}, content=content).json()
+        result["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = arguments
+        return httpx.Response(200, json=result)
+
+    # Any explicit recorder error is acceptable; never include response data in it.
+    with pytest.raises(RuntimeError, match="Malformed sensitive") as exc:
+        make_llm("synthetic", httpx.Client(transport=httpx.MockTransport(provider))).invoke("hi")
+    assert "276543" not in str(exc.value) and "984321" not in str(exc.value)
+    assert len(calls) == 1
+    assert not recording.exists()
+
+
+def test_malformed_known_secret_values_use_json_unicode_decoding():
+    from services.agent.app.llm.replay import _secret_values
+
+    assert _secret_values(r'{"pin":"\u0039\u0038\u0034\u0033\u0032\u0031","ok":') == {"984321"}
+    assert _secret_values('{"otp_code":"276543","ok":') == {"276543"}
+
+
+def test_non_sensitive_malformed_amounts_keep_invalid_call_branch(recording, monkeypatch):
+    arguments = '{"amount_cents":120000,"source_ref":"<ID1>","ok":'
+
+    def provider(request):
+        result = tool_response("propose", {}).json()
+        result["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = arguments
+        return httpx.Response(200, json=result)
+
+    live = make_llm("synthetic", httpx.Client(transport=httpx.MockTransport(provider))).invoke("hi")
+    assert live.invalid_tool_calls and not live.tool_calls
+    offline = replay(monkeypatch).invoke("hi")
+    assert offline.invalid_tool_calls and not offline.tool_calls
+    assert offline.invalid_tool_calls[0]["args"] == arguments
+
+
+def test_rejected_secret_recording_preserves_previous_file(recording):
+    calls = []
+
+    def provider(request):
+        calls.append(request)
+        if len(calls) == 1:
+            return text_response("ok")
+        result = tool_response("propose", {}, content="echo 984321").json()
+        result["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = (
+            r'{"pin_code":"\u0039\u0038\u0034\u0033\u0032\u0031","ok":'
+        )
+        return httpx.Response(200, json=result)
+
+    llm = make_llm("synthetic", httpx.Client(transport=httpx.MockTransport(provider)))
+    llm.invoke("first")
+    previous = recording.read_bytes()
+    with pytest.raises(ReplayStaleError, match="Malformed sensitive"):
+        llm.invoke("second")
+    assert len(calls) == 2
+    assert recording.read_bytes() == previous
+    assert list(recording.parent.glob(".replay-*")) == []
+
+
+def test_valid_unicode_secret_and_echo_redact_without_losing_amount(recording):
+    def provider(request):
+        result = tool_response("propose", {}, content="echo 984321").json()
+        result["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = (
+            r'{"pin_code":"\u0039\u0038\u0034\u0033\u0032\u0031","amount_cents":120000}'
+        )
+        return httpx.Response(200, json=result)
+
     make_llm("synthetic", httpx.Client(transport=httpx.MockTransport(provider))).invoke("hi")
     raw = recording.read_text()
-    assert "984321" not in raw and "276543" not in raw
+    assert "984321" not in raw
     assert "120000" in raw

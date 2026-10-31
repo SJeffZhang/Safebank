@@ -6,6 +6,7 @@ and schema-version validation.  Never logs JWT, tokens or API keys.
 
 from __future__ import annotations
 
+import ast
 import fcntl
 import hashlib
 import json
@@ -456,22 +457,6 @@ _SECRET_TEXT = re.compile(
 )
 
 
-_QUOTED_SECRET = re.compile(
-    r"(?i)([\"'](?:[A-Za-z0-9_-]*_)?"
-    r"(?:pin|otp|token|password|secret|jwt|api_key|authorization|cookie)"
-    r"[\"']\s*:\s*[\"'])([^\"']*)"
-)
-
-# A malformed JSON object's value may be an unquoted number, exponent, partial
-# token or incomplete credential. Stop at structural delimiters, not digits;
-# unrelated business fields (e.g. amount_cents) keep their original values.
-_UNQUOTED_SECRET = re.compile(
-    r"(?i)([\"'](?:[A-Za-z0-9_-]*_)?"
-    r"(?:pin|otp|token|password|secret|jwt|api_key|authorization|cookie)"
-    r"[\"']\s*:\s*)([^\s\"',}\]][^,}\]]*)"
-)
-
-
 def _is_sensitive_key(key: str) -> bool:
     lower = key.lower()
     return (
@@ -481,23 +466,67 @@ def _is_sensitive_key(key: str) -> bool:
     )
 
 
-_MALFORMED_KEY = re.compile(r'("(?:\\.|[^"\\])*")(\s*:)')
+def _malformed_secret_fields(text: str) -> list[object]:
+    """Recover field tokens, not a repaired object, using one secret-key predicate.
 
-
-def _decode_sensitive_keys(text: str) -> str:
-    """Decode escaped ASCII secret labels even when their enclosing JSON is broken."""
-
-    def decode(match: re.Match) -> str:
+    Recoverable JSON values use the JSON decoder (including unicode escapes).
+    An incomplete value still produces an entry so recording can fail closed.
+    No malformed input is made into an executable valid tool call.
+    """
+    decoder = json.JSONDecoder()
+    fields: list[object] = []
+    offset = 0
+    while offset < len(text):
+        char = text[offset]
+        if char == '"':
+            try:
+                key, end = decoder.raw_decode(text, offset)
+            except ValueError:
+                offset += 1
+                continue
+        elif char == "'":
+            # Invalid JSON sometimes uses Python-style single-quoted keys.
+            end = offset + 1
+            while end < len(text):
+                if text[end] == "\\":
+                    end += 2
+                    continue
+                if text[end] == "'":
+                    break
+                end += 1
+            end = min(end + 1, len(text))
+            try:
+                key = ast.literal_eval(text[offset:end])
+            except (ValueError, SyntaxError):
+                offset += 1
+                continue
+        elif char.isalpha() or char == "_":
+            end = offset + 1
+            while end < len(text) and (text[end].isalnum() or text[end] in "_-"):
+                end += 1
+            key = text[offset:end]
+        else:
+            offset += 1
+            continue
+        offset = end
+        while end < len(text) and text[end].isspace():
+            end += 1
+        if (
+            not isinstance(key, str)
+            or not _is_sensitive_key(key)
+            or end == len(text)
+            or text[end] != ":"
+        ):
+            continue
+        end += 1
+        while end < len(text) and text[end].isspace():
+            end += 1
         try:
-            key = json.loads(match.group(1))
+            value, _ = decoder.raw_decode(text, end)
         except ValueError:
-            return match.group(0)
-        # Leave every other literal untouched, especially replay's escaped alphabet.
-        if re.fullmatch(r"[A-Za-z0-9_-]+", key) and _is_sensitive_key(key):
-            return json.dumps(key) + match.group(2)
-        return match.group(0)
-
-    return _MALFORMED_KEY.sub(decode, text)
+            value = None  # A damaged secret value is reason to reject, not to guess.
+        fields.append(value)
+    return fields
 
 
 def _secret_values(obj: object) -> set[str]:
@@ -515,9 +544,11 @@ def _secret_values(obj: object) -> set[str]:
         try:
             parsed = json.loads(obj)
         except ValueError:
-            obj = _decode_sensitive_keys(obj)
-            values.update(match.group(2) for match in _QUOTED_SECRET.finditer(obj))
-            values.update(match.group(2).strip() for match in _UNQUOTED_SECRET.finditer(obj))
+            values.update(
+                str(value)
+                for value in _malformed_secret_fields(obj)
+                if isinstance(value, (str, int))
+            )
         else:
             if isinstance(parsed, (dict, list)):
                 values.update(_secret_values(parsed))
@@ -553,10 +584,12 @@ def _scrub_sensitive(obj: object, depth: int = 0) -> object:
         try:
             parsed = json.loads(obj)
         except ValueError:
-            obj = _decode_sensitive_keys(obj)
-            quoted = _QUOTED_SECRET.sub(r"\1<REDACTED>", obj)
-            unquoted = _UNQUOTED_SECRET.sub(r'\1"<REDACTED>"', quoted)
-            return _SECRET_TEXT.sub("<REDACTED>", unquoted)
+            if _malformed_secret_fields(obj):
+                # Reject the whole response before any header/temp/file write.
+                # Scrubbing part of damaged JSON cannot establish what was hidden
+                # in its remaining fields or echoed elsewhere in the response.
+                raise ReplayStaleError("Malformed sensitive JSON; recording refused") from None
+            return _SECRET_TEXT.sub("<REDACTED>", obj)
         if isinstance(parsed, (dict, list)):
             return _json(_scrub_sensitive(parsed, depth + 1))
         return _SECRET_TEXT.sub("<REDACTED>", obj)

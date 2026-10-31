@@ -49,3 +49,15 @@ The initial commit was REQUEST_CHANGES on R1 (P1 literal-placeholder source laun
 Final correction checks: runtime+existing replay **95 passed**; all Agent **683 passed, 39 skipped**; scoped ruff check/format and diff-check passed. The production source fingerprint changes, so prior recordings require re-recording. No real model/network, Docker, DB, shared document or deployment actions occurred during this correction. Independent re-review and coordinator live/offline integration gates remain open.
 
 Final correction project-default run: `NO_PROXY=localhost,127.0.0.1,::1 /Users/jet/Downloads/WeBank/.venv/bin/python -m pytest -q` → **3624 passed, 1071 skipped in 41.17s**, exit 0. Log: `/tmp/sbg-runtime-replay-r1-final-pytest.log`.
+
+## Independent review correction round 2 — conservative malformed-secret handling
+
+Re-review closed R1/R3 but found two remaining R2 variants: malformed `otp_code` and an escaped quoted PIN echoed in decoded plain text. Both factory cases plus a known-secret decoding assertion were red before this change (**3 failed, 48 deselected**, `/tmp/sbg-replay-r2-strategy-red.log`).
+
+This round supersedes round 1's attempt to scrub damaged credential-bearing JSON in place. The quoted/unquoted sensitive-field regex branches were removed. A general field-token scanner recovers quoted, escaped or unquoted field names and applies the **same `_is_sensitive_key` predicate** used on valid structured JSON. Recoverable values use JSON decoding, including Unicode escapes. If malformed JSON contains any sensitive field—even with an incomplete/unrecoverable value—the recorder raises a generic `ReplayStaleError` **before writing the header, a temporary file or an entry**. The raw JSON error context is suppressed. It does not return a repaired valid call, record a partially cleaned credential or alter existing recording bytes.
+
+Tests that previously expected malformed-secret redaction now require explicit refusal and no file; this is the approved stronger behavior, not removal of the secret cases. Existing non-sensitive malformed retries still record/replay with unchanged invalid-tool-call arguments and branch. Controls cover malformed amount_cents/literal placeholders, valid JSON amounts and Unicode secret echoes, no new temp file/unchanged previous recording on refusal, and immediate 402/403/429 propagation.
+
+Final scoped checks: **101 runtime+replay passed; 689 Agent passed, 39 skipped**; ruff check/format passed. No real API, Docker, DB, shared docs, deployment or remote Git action. R2 still requires independent re-review; production recording and actual offline banking gates remain coordinator-owned.
+
+Correction round 2 project default: `NO_PROXY=localhost,127.0.0.1,::1 /Users/jet/Downloads/WeBank/.venv/bin/python -m pytest -q` → **3630 passed, 1071 skipped in 31.06s**, exit 0. Log `/tmp/sbg-replay-r2-strategy-final.log`.
