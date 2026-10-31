@@ -39,3 +39,9 @@ The good legacy AA fixture now declares truthful account, amount, participants a
 Eleven real G3→assistant JWT→load_for_plan→entity/provenance/intent PostgreSQL cases were written in `tests/gateway/w2/db/test_aa_self_source.py`: valid, absent source, false value, unrelated span, false/numeric/wrong-action persisted scope, stale scope snapshot, exact expiry, cross-session source and tampered total. The fourteen pure cases also reject card-control/replace reuse, broad span, unscoped/context evidence, mixed action and non-bool scope values. Pure tests substitute only the I/O loaders and do not prove real lineage.
 
 This implementer did not run any PostgreSQL, Docker, deployment, live09, push, merge, tag or deletion operation. No skipped/deselected case is counted as passed. Coordinator must run real PG, independent review, actual live09 and exact-final-head full local CI before integration. `make demo` replay remains the separate coordinator/runtime task; this base has no demo target. No AGENTS, PRD, Makefile, compose or deployment configuration was edited here.
+
+Coordinator integration: original candidate cb52eb6 independent read-only review
+APPROVE; reviewer reproduced old14 failures/18 negative passes, current32 pure
+passes. Root separately ran35 passed/11 actual-PG skips, not counted as actual
+PG acceptance. Rebased onto merged105 a113787 as01ffa3a; actual PG/live/SQL and
+final whole-workflow exact-SHA CI are still required.
