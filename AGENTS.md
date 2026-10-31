@@ -942,6 +942,8 @@
 
 | 2026-10-31 | Codex | 23候选2684788真实卡读取正确，但replace=false缺源且原来源层不支持固定不补卡默认，L2正确REPLAN无写。新增真实G3/JWT/PG回归旧1fail4pass，新窄规则仅同有效typed CARD_LOST范围+精确挂失动作证明False，拒True/过期/跨会话/无关span，5通过；L1漏replace源红测后补重试。组合回归/独审中，未称挂失live通过。 |
 
+| 2026-10-31 | Codex | 23 a86e015新代际在gather遇gateway404，未生成计划且无业务写。补仅404/NOT_FOUND的固定脱敏反馈、既有轮数内重收集；失败不产生来源，其余403/429/503仍一次停。另修get_cards补读为冻结契约要求的account_id=null，两个回归旧码失败；Agent611通过39skip，独审APPROVE亲跑11。未持久化失败read参数，不猜其具体值；继续live。 |
+
 ## 5. 下一步待办（按顺序）
 
 P0 准备阶段（决定后续一切）：

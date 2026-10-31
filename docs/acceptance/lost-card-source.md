@@ -31,3 +31,12 @@ Planner missing-replace-source regression also failed before local retry correct
 Combined real-PG W2 + agent881 passed /39 conditional skips. Incremental security review
 APPROVE, reviewer personally12 targeted tests. Card target equality remains mandatory in
 IntentStage; this default proof supplies neither a card ID nor replacement permission.
+
+Candidatea86e015 live stopped during gather on gateway404 NOT_FOUND, before a plan;
+no business writes. The read collector now gives fixed, sanitized missing-entity feedback
+within its existing round cap; unsuccessful reads never produce source records. All other
+errors, including403/429/503, immediately propagate. Also corrected the supplemental
+get_cards call to the frozen required-nullable account_id=null contract (not omitted).
+Both new regressions fail on a86e015. New agent611 passed /39 conditional skips;
+independent read-only review APPROVE, personally11 focused tests. Actual failing live
+read args were not persisted, so this does not claim the precise model filter value.
