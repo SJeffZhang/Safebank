@@ -410,3 +410,32 @@ def test_form_execution_replay_refreshes_taint_on_its_own_snapshot(app_config):
         await db.dispose()
 
     asyncio.run(run())
+
+
+def test_form_replay_rejects_epoch_revoked_before_cleanup(app_config):
+    from services.gateway.app.api.plans import _load_authorization
+    from services.gateway.app.errors import GatewayError
+    from services.gateway.app.utterance.lifecycle import revoke_session
+    from tests.gateway.w3b.db.conftest import FakeL3Client
+
+    async def run():
+        app, db, h, body = await setup_form(app_config)
+        response = await app.client.post("/plans/evaluate", json=body, headers=h)
+        pid = response.json()["plan_id"]
+        async with db.begin() as conn:
+            await revoke_session(conn, "ses_form")
+        async with db.connect() as conn:
+            with pytest.raises(GatewayError):
+                await _load_authorization(
+                    conn,
+                    "ses_form",
+                    "cus_a",
+                    WALL,
+                    origin="app_form",
+                    source_ids=["act_form"],
+                    plan_id=pid,
+                    l3=FakeL3Client(),
+                )
+        await db.dispose()
+
+    asyncio.run(run())

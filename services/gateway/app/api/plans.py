@@ -171,6 +171,7 @@ async def _persist_plan(
     now: datetime,
     plan_draft: dict | None = None,
     origin: str = "agent",
+    authorization_epoch: int | None = None,
 ) -> None:
     """Insert the plan row; raises 409 if *request_id* is already used."""
     existing = await conn.scalar(
@@ -188,6 +189,7 @@ async def _persist_plan(
             customer_id=customer_id,
             sid=sid,
             origin=origin,
+            authorization_epoch=authorization_epoch,
             request_id=request_id,
             request_hash=request_hash,
             plan_hash=plan_hash,
@@ -396,6 +398,7 @@ async def evaluate_plan(request: Request) -> JSONResponse:
             now=now,
             plan_draft=plan_draft.model_dump(mode="json"),
             origin=caller.origin,
+            authorization_epoch=form_auth.authorization_epoch if is_form else None,
         )
 
         risk_str: str = decision.risk.value

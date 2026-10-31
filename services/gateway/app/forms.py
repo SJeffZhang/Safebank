@@ -51,6 +51,28 @@ async def load_forms(
         raise GatewayError(Code.OWNERSHIP_MISMATCH, 404)
     if session["revoked_at_wall"] is not None:
         raise GatewayError(Code.AUTHORIZATION_CANCELLED, 409)
+    if require_bound:
+        bound_plan = (
+            (
+                await conn.execute(
+                    select(t.plans).where(
+                        t.plans.c.id == plan_id,
+                        t.plans.c.customer_id == customer_id,
+                        t.plans.c.sid == sid,
+                        t.plans.c.origin == "app_form",
+                    )
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if (
+            bound_plan is None
+            or bound_plan["authorization_epoch"] != session["authorization_epoch"]
+            or list(ids) != bound_plan["utterance_ids"]
+            or list(ids) != bound_plan["scope_ids"]
+        ):
+            raise GatewayError(Code.AUTHORIZATION_CANCELLED, 409)
     query = (
         select(t.form_actions)
         .where(t.form_actions.c.sid == sid, t.form_actions.c.id.in_(ids))

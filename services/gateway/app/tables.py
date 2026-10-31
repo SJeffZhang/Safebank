@@ -166,6 +166,7 @@ plans = Table(
     Column("steps_hash", String(64), nullable=False),
     Column("resolved_steps", JSONB, nullable=False),
     Column("plan_draft", JSONB, nullable=True),
+    Column("authorization_epoch", BigInteger, nullable=True),
     Column("utterance_ids", JSONB, nullable=False, server_default="[]"),
     Column("scope_ids", JSONB, nullable=False, server_default="[]"),
     Column("status", String(32), nullable=False),

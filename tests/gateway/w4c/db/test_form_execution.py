@@ -41,7 +41,7 @@ async def form_runtime(app_config, obligations_db):
         await admin.dispose()
 
 
-@pytest.mark.parametrize("mode", ["normal", "lost_reply", "fence"])
+@pytest.mark.parametrize("mode", ["normal", "lost_reply", "fence", "revoked", "unbound", "expired"])
 def test_form_green_execution_consumes_bound_action_once(app_config, obligations_db, mode):
     async def run():
         async with form_runtime(app_config, obligations_db) as (app, db, admin, h):
@@ -72,6 +72,44 @@ def test_form_green_execution_consumes_bound_action_once(app_config, obligations
             pid = result["plan_id"]
             url = f"/plans/{pid}/execute"
             body = {"request_id": "req_form_execute"}
+            if mode in ("revoked", "unbound", "expired"):
+                from services.gateway.app.utterance.lifecycle import revoke_session
+
+                async with db.begin() as conn:
+                    if mode == "revoked":
+                        await revoke_session(conn, "ses_direct_form")
+                    else:
+                        values = (
+                            {"used_by": None}
+                            if mode == "unbound"
+                            else {"expires_at_wall": t.form_actions.c.created_at_wall}
+                        )
+                        await conn.execute(
+                            t.form_actions.update()
+                            .where(t.form_actions.c.id == act)
+                            .values(**values)
+                        )
+                denied = await app.client.post(url, json=body, headers=h)
+                assert denied.status_code == 409, denied.text
+                async with admin.connect() as conn:
+                    assert (
+                        await conn.scalar(select(func.count()).select_from(m.plan_executions)) == 0
+                    )
+                    assert (
+                        await conn.scalar(
+                            select(m.cards.c.status).where(m.cards.c.id == "crd_zs_1")
+                        )
+                        == "ACTIVE"
+                    )
+                if mode != "unbound":
+                    async with db.connect() as conn:
+                        assert (
+                            await conn.scalar(
+                                select(t.form_actions.c.used_by).where(t.form_actions.c.id == act)
+                            )
+                            == pid
+                        )
+                return
             l3 = app.client._transport.app.state.l3
             original_execute = l3.execute
             if mode != "normal":

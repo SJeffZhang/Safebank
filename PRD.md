@@ -1417,7 +1417,9 @@ scheduler job 用真实时间 lease 防重复工作器；金融执行幂等由 e
 
 **AppFormPlanRequest**（仅 F）：`{request_id, session_id, form_action_ids: string[1..5]}`。L2 读取各 form_action 已保存的 `action_kind` 与 `normalized_fields`，按 §9.4 生成 steps，参数来源记为 `{kind:"action", ref:<act_id>}`。BFF 不提交 steps、args、arg_sources、utterance_ids。
 
-实现约束（2026-10-31）：FORM仅在内存中适配为action授权视图，禁止伪造utterance落库；G4最终事务重新核客户/会话版本、字段、期限和完整污点视图，同事务永久绑定used_by。相同request_id先按原请求摘要重放，其他请求不得复用来源。G8初执行及STATE_CHANGED/PAUSED复演均在共享复演入口基于该次正式快照重新构造FORM视图，要求used_by严格等于plan_id，继续原审批/OTP、污点及claims消费规则。
+网关 plans 追加 nullable `authorization_epoch`（迁移 `0005_form_epoch`）：仅FORM绑定时捕获会话授权版本，agent历史行保持NULL；升级前缺捕获版本的FORM计划拒绝执行，不推断或回填授权。
+
+实现约束（2026-10-31）：FORM仅在内存中适配为action授权视图，禁止伪造utterance落库；G4在计划中捕获授权会话版本，最终事务重新核客户/会话版本、字段、期限和完整污点视图，同事务永久绑定used_by。相同request_id先按原请求摘要重放，其他请求不得复用来源。G8初执行及STATE_CHANGED/PAUSED复演均在共享复演入口基于该次正式快照重新构造FORM视图，要求used_by严格等于plan_id且捕获版本等于当前会话版本（含撤销已提交、清理未完成窗口），继续原审批/OTP、污点及claims消费规则。
 
 
 **状态枚举**：PlanStatus 与 ApprovalStatus 同 §7.2；TransactionStatus = `POSTED | PENDING | SETTLED | RELEASED`（§8.3）。

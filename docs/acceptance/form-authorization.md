@@ -25,3 +25,21 @@ Real G19/G4/G8 green freeze, yellow20000-cent transfer and RED loss with real OT
 UNKNOWN lost-reply and STATE_CHANGED/PAUSED recovery exercised; final combined rerun,
 independent review conclusion and clean-deployment live still pending. This component
 is not merged and demo-v1 is not frozen.
+
+Shared replay correction:16 focused PG tests pass; existing generic replay fixture
+changed to agent because it intentionally has no FORM DB and stubs the whole pipeline.
+New FORM tests retain real DB proof. Actual L3 tests now8 pass: normal/UNKNOWN/PAUSED,
+revoked/unbound/expired refusals, yellow transfer and RED OTP. Requests that recover
+from PAUSED may differ only in replayed metadata; business result equality and one
+L3 commit are asserted.
+
+Additional revoke-before-cleanup regression failed: a FORM lacks the cancelled typed
+utterance that protects A. Add forward-only0005_form_epoch capturing the G4 session
+epoch on the plan; require equality at every execution proof load. Historical agent
+plans remain unaffected; missing FORM capture fails closed. New migration + focused
+PG20 pass. Independent incremental review and final combined verification pending.
+
+Epoch/schema independent review APPROVE; reviewer reran frozen DDL drift. Added
+scope_ids equality alongside original IDs. Final component combination295 passed,
+covering G4, approval, execution/recovery and migrated PostgreSQL. Full unit and
+fresh-deployment live pending; no merge or freeze claim.
