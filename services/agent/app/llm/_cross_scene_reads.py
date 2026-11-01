@@ -7,7 +7,7 @@ import unicodedata
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from services.agent.app.graph.state import AgentState, ReadRecord, UtteranceKind
+from services.agent.app.graph.state import AgentContext, AgentState, ReadRecord, UtteranceKind
 
 _MONTH = (
     r"(?:(?:(?P<year>20\d{2})年)?(?P<month>0?[1-9]|1[0-2])月|"
@@ -128,3 +128,57 @@ def x1_analysis_records(state: AgentState) -> tuple[ReadRecord, ...]:
         return summaries[0], anomalies[0]
     except (KeyError, TypeError, ValueError):
         return ()
+
+
+def current_x3_selection(state: AgentState, context: AgentContext) -> dict | None:
+    """Whitelist context from one current G20 action, never an authorization source.
+
+    G20 already validates the runtime customer/session/JWT and live utterance. The
+    graph preserves its action scope in hints and its parent chain in parent_ids.
+    Arbitrary hint scopes, previous refs and financial amount fields are excluded.
+    """
+    utterances = state.get("utterances") or []
+    parents = state.get("parent_ids") or ()
+    hints = state.get("hints") or []
+    if (
+        state.get("session_id") != context.session_id
+        or state.get("customer_id") != context.customer_id
+        or state.get("parse_status") != "SCOPED"
+        or state.get("clarification")
+        or state.get("clarification_id")
+        or state.get("echoes_untrusted")
+        or len(utterances) != 1
+        or utterances[0].kind != UtteranceKind.ACTION
+        or utterances[0].text != ""
+        or not parents
+        or len(hints) != 1
+    ):
+        return None
+    hint = hints[0]
+    if hint.get("id") != utterances[0].id or hint.get("kind") != "action":
+        return None
+    scope = hint.get("scope")
+    if not isinstance(scope, dict) or scope.get("action_kinds") != ["FUND_SUBSCRIBE"]:
+        return None
+    fields = scope.get("fields")
+    if (
+        not isinstance(fields, dict)
+        or fields.get("derived_template") != "available_less_7d_charges"
+    ):
+        return None
+    product = fields.get("product_id")
+    if not isinstance(product, str) or re.fullmatch(r"prd_[A-Za-z0-9_-]+", product) is None:
+        return None
+    selected_fields = {"product_id": product}
+    account = fields.get("account_id")
+    if account is not None:
+        if not isinstance(account, str) or re.fullmatch(r"acc_[A-Za-z0-9_-]+", account) is None:
+            return None
+        selected_fields["account_id"] = account
+    selected_fields["derived_template"] = "available_less_7d_charges"
+    return {
+        "utterance_id": utterances[0].id,
+        "parent_utterance_ids": sorted(parents),
+        "action_kinds": ["FUND_SUBSCRIBE"],
+        "fields": selected_fields,
+    }

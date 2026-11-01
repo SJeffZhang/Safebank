@@ -37,3 +37,15 @@ X2已有test_x2_sources/test_idle_subscription_plan/test_subs_bills_prompt、L2 
 `.venv/bin/pytest -q tests/agent/test_cross_scene_x4_gather.py tests/agent/test_cross_scene_gather.py tests/agent/test_llm_adapters.py tests/agent/test_lost_card_sources.py tests/gateway/w1/test_predicates.py tests/gateway/w1/test_parser_coverage_c.py`
 
 相关ruff与diff检查通过。只证明只读前提与本地来源校验；完整X4实际审批、转账、卡状态及回滚仍未由本任务运行。
+
+## X3-A：G20选择后结构化上下文
+
+确凿缺口：G3产品澄清完成后，G20当前utterance为ACTION且text=null；ingest只把已签发scope保存在state.hints、parent链保存在parent_ids，原理解/规划提示均未消费它，不能依赖空文本重建用户选择。现仅允许运行时customer/sid一致、单个当前SCOPED ACTION、非空实际G20 parent链、无实际澄清/echo、唯一同id/kind scope、FUND_SUBSCRIBE和available_less_7d_charges及单个合法product_id的上下文。白名单只包含当前utterance_id、parent IDs、action_kinds、product_id/account_id/derived_template；scope的任意amount、memo、额外产品列表不传入上下文。
+
+理解与规划提示传这份结构化选择，保持ACTION原text为空，不伪造typed原话。理解误判只读时沿原max_retries有界反馈重生成，最终仍使用模型返回值；规划忽略当前选择而选其他真实产品/账户时同样反馈重生成，不替换模型字段。实际read来源、derived计算和L2最后授权/适当性/确认保持原路径。未完成澄清、错customer/sid、任意hint/typed/context附加scope、旧ref、重复选择、缺产品/多产品均不获得这份上下文。
+
+红测：基于真实G20 text=null形状的理解/规划/有界重生成最初3 failed / 5 passed；加入当前选择上下文后8 passed。再用两个均有真实读来源的产品重现“模型忽略当前选择”，1 failed / 23 passed；补选择一致性反馈后24 passed。联合原AA理解、LLM adapter、理财、X2派生和闲置订阅回归共131 passed：
+
+`.venv/bin/pytest -q tests/agent/test_selection_context.py tests/agent/test_aa_understanding.py tests/agent/test_llm_adapters.py tests/agent/test_funds_prompt.py tests/agent/test_x2_sources.py tests/agent/test_idle_subscription_plan.py`
+
+包含402/403/429单次调用止步、scope金额99999999被忽略且金额仍来自原derived计划的负控。ruff通过。该单元只闭合结构化上下文；X3必要读取已另有2项红测，留下一独立单元补足，不把X3生产整体标完成。

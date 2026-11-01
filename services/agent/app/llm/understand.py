@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable
 
@@ -10,6 +11,7 @@ from pydantic import ValidationError
 
 from services.agent.app.graph.state import AgentContext, AgentState, Understanding, UtteranceKind
 from services.agent.app.llm._common import LlmToolError, single_tool_call
+from services.agent.app.llm._cross_scene_reads import current_x3_selection
 from services.agent.app.llm.schema import UNDERSTANDING_TOOL, understanding_tool
 
 _SYSTEM = (
@@ -32,6 +34,17 @@ _AA_RETRY_NOTE = (
     "needs_write应为true，不能仅作为计算或进度查询。请重新生成理解，"
     "保留用户原意，不在此处生成或更改金额、参与人、来源及执行参数；授权仍由L2判定。"
 )
+
+
+_SELECTION_RETRY_NOTE = (
+    "上次理解未通过语义校验：当前G20绑定的已完成产品选择包含FUND_SUBSCRIBE写请求，"
+    "不能作为仅查询处理。请结合结构化选择重新生成理解，不更改目标、金额、来源或权限；"
+    "授权、适当性和确认仍由L2决定。"
+)
+
+
+class _SelectionWriteMismatch(LlmToolError):
+    """A current structured G20 selection was incorrectly treated as read-only."""
 
 
 class _AAWriteMismatch(LlmToolError):
@@ -66,13 +79,16 @@ class UnderstandAdapter:
 
     def __call__(self, state: AgentState, context: AgentContext) -> Understanding:
         note = ""
+        selection = current_x3_selection(state, context)
         for attempt in range(self._max_retries + 1):
-            message = self._model.invoke(self._messages(state, note))
+            message = self._model.invoke(self._messages(state, note, selection))
             if self._observer is not None:
                 self._observer(message)
             try:
                 args = single_tool_call(message, UNDERSTANDING_TOOL)
                 result = Understanding.model_validate(args)
+                if not result.needs_write and selection is not None:
+                    raise _SelectionWriteMismatch("当前G20产品选择被误判为只读")
                 if not result.needs_write and _scoped_aa_collection(state):
                     raise _AAWriteMismatch("AA collection incorrectly classified as read-only")
                 return result
@@ -82,14 +98,19 @@ class UnderstandAdapter:
                 note = (
                     _AA_RETRY_NOTE
                     if isinstance(exc, _AAWriteMismatch)
+                    else _SELECTION_RETRY_NOTE
+                    if isinstance(exc, _SelectionWriteMismatch)
                     else f"上次输出未通过校验（{type(exc).__name__}），请重新生成合法结构。"
                 )
         raise AssertionError("unreachable")
 
     @staticmethod
-    def _messages(state: AgentState, note: str) -> list:
+    def _messages(state: AgentState, note: str, selection: dict | None = None) -> list:
         texts = [utterance.text for utterance in state.get("utterances", [])]
         content = "\n".join(texts)
+        if selection is not None:
+            content += "\n当前G20绑定的结构化选择，仅供理解上下文，不能代替实际读取或L2授权：\n"
+            content += json.dumps({"current_g20_selection": selection}, ensure_ascii=False)
         if note:
             content = f"{content}\n\n{note}"
         return [SystemMessage(content=_SYSTEM), HumanMessage(content=content)]
