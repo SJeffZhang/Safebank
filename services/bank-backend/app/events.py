@@ -7,8 +7,9 @@ token applied globally in :mod:`app.main`.
 
 Locking follows :class:`app.execution.ExecutionService`: customer existence
 check → ``SET LOCAL lock_timeout`` → event job row ``FOR UPDATE`` → clock
-``FOR UPDATE`` (read) → ``state_versions`` ``FOR UPDATE`` → version/clock
-comparison (409 ``STATE_CHANGED``) → ``load_bank_state`` → bankcore applier →
+barrier (peer transfers use ``FOR SHARE``) → all involved ``state_versions``
+``FOR UPDATE`` in customer-ID order → version/clock comparison
+(409 ``STATE_CHANGED``) → ``load_bank_state`` → bankcore applier →
 ``persist`` → ``instruction_runs`` row → terminal ``event_executions`` row →
 mark the job ``DONE``. The job row itself is the per-event serialization point,
 so two concurrent executions of the same event cannot both post.
@@ -17,7 +18,9 @@ so two concurrent executions of the same event cannot both post.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from datetime import datetime
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field, ValidationError
@@ -32,6 +35,7 @@ from safebank_contracts.obligations import InstructionRun
 from safebank_contracts.plan import DemoEvidence
 from safebank_contracts.state import StateScope
 from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncConnection
 
 from . import models as m
 from .errors import BankError
@@ -440,6 +444,96 @@ class EventService:
             raise BankError(Code.STATE_CHANGED)
         return version
 
+    async def _scheduled_scope(
+        self, conn: AsyncConnection, row: Mapping[str, Any], customer_id: str
+    ) -> tuple[StateScope, tuple[str | None, ...]]:
+        """Resolve only the immutable DB instruction/payee target, never callback scope."""
+        instruction = (
+            (
+                await conn.execute(
+                    select(m.standing_instructions).where(
+                        m.standing_instructions.c.id == row["source_id"],
+                        m.standing_instructions.c.customer_id == customer_id,
+                    )
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if instruction is None or instruction["kind"] != "SCHEDULED_TRANSFER":
+            raise BankError(Code.NOT_FOUND, 404)
+        target_id = peer_id = None
+        if instruction["payee_id"] is not None:
+            payee = (
+                (
+                    await conn.execute(
+                        select(m.payees).where(
+                            m.payees.c.id == instruction["payee_id"],
+                            m.payees.c.customer_id == customer_id,
+                        )
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if payee is None:
+                raise BankError(Code.NOT_FOUND, 404)
+            target_id = payee["target_account_id"]
+            if target_id is not None:
+                peer_id = await conn.scalar(
+                    select(m.accounts.c.customer_id).where(m.accounts.c.id == target_id)
+                )
+                if peer_id is None or peer_id == customer_id:
+                    raise BankError(Code.NOT_FOUND, 404)
+        ids = tuple(sorted({customer_id, peer_id} if peer_id is not None else {customer_id}))
+        binding = (
+            instruction["id"],
+            instruction["from_account_id"],
+            instruction["payee_id"],
+            instruction["to_account_id"],
+            target_id,
+            peer_id,
+        )
+        return StateScope(customer_ids=ids), binding
+
+    async def _lock_peer_versions(
+        self,
+        conn: AsyncConnection,
+        customer_ids: tuple[str, ...],
+        clock_version: int,
+        expected_versions: dict[str, int],
+    ) -> dict[str, Mapping[str, Any]]:
+        """Clock barrier then sorted locks for every actually affected customer."""
+        clock = (
+            (
+                await conn.execute(
+                    select(m.clock).where(m.clock.c.id == 1).with_for_update(read=True)
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if clock is None or clock["version"] != clock_version:
+            raise BankError(Code.STATE_CHANGED)
+        rows = (
+            (
+                await conn.execute(
+                    select(m.state_versions)
+                    .where(m.state_versions.c.customer_id.in_(customer_ids))
+                    .order_by(m.state_versions.c.customer_id)
+                    .with_for_update()
+                )
+            )
+            .mappings()
+            .all()
+        )
+        versions = {row["customer_id"]: row for row in rows}
+        if set(versions) != set(customer_ids) or any(
+            expected_versions.get(id_) != versions[id_]["version"] for id_ in customer_ids
+        ):
+            raise BankError(Code.STATE_CHANGED)
+        return versions
+
     async def _bump_version(self, conn, customer_id: str, version: int) -> None:
         await conn.execute(
             m.state_versions.update()
@@ -629,9 +723,23 @@ class EventService:
             )
         customer_id = await self._customer_for(conn, row)
         await self._check_customer(conn, customer_id)
-        version = await self._lock_clock_and_version(
-            conn, customer_id, clock_version, expected_versions
-        )
+        scope = StateScope(customer_ids=(customer_id,))
+        binding = None
+        if kind == "SCHEDULED_TRANSFER":
+            scope, binding = await self._scheduled_scope(conn, row, customer_id)
+        if len(scope.customer_ids) > 1:
+            versions = await self._lock_peer_versions(
+                conn, scope.customer_ids, clock_version, expected_versions
+            )
+        else:
+            version = await self._lock_clock_and_version(
+                conn, customer_id, clock_version, expected_versions
+            )
+            versions = {customer_id: version}
+        if binding is not None:
+            checked_scope, checked_binding = await self._scheduled_scope(conn, row, customer_id)
+            if checked_scope != scope or checked_binding != binding:
+                raise BankError(Code.STATE_CHANGED)
         if kind == "DEMO_EVENT":
             data = _demo_data(row["immutable_payload"])
             expected_kind = {
@@ -657,7 +765,7 @@ class EventService:
                 raise BankError(Code.EVENT_NOT_DUE)
         state = await load_bank_state(
             conn,
-            StateScope(customer_ids=(customer_id,)),
+            scope,
             row["due_at"],
             customer_id=customer_id,
         )
@@ -698,7 +806,16 @@ class EventService:
                 )
                 if changed.rowcount != 1:
                     raise BankError(Code.SPLIT_INVALID)
-        await self._bump_version(conn, customer_id, version["version"] + 1)
+        changed_customers = {customer_id}
+        if (
+            kind == "SCHEDULED_TRANSFER"
+            and isinstance(run, InstructionRun)
+            and run.status == "SUCCESS"
+            and run.transfer_id is not None
+        ):
+            changed_customers.update(scope.customer_ids)
+        for changed in sorted(changed_customers):
+            await self._bump_version(conn, changed, versions[changed]["version"] + 1)
         if isinstance(run, InstructionRun):
             await conn.execute(m.instruction_runs.insert().values(**run.model_dump(mode="python")))
             result = {
