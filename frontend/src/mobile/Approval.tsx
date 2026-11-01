@@ -1,5 +1,5 @@
 import { explainCode } from "./copy";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { getView, getPlan, request, isPreview, demoSms, BankError } from "./api";
 import { uid, type PlanView, type PlanStatus, type Decision } from "./types";
 import {
@@ -195,7 +195,11 @@ export function Approval({
                     <div key={f.key}>
                       <dt>{f.label}</dt>
                       <dd>
-                        {f.unit === "cents" || f.unit === "分"
+                        {f.unit === "datetime"
+                          ? typeof f.value === "string" && Number.isFinite(Date.parse(f.value))
+                            ? dateTime(f.value)
+                            : "时间待核实"
+                          : f.unit === "cents" || f.unit === "分"
                           ? `¥ ${money(Number(f.value))}`
                           : typeof f.value === "boolean"
                             ? f.value
@@ -217,12 +221,20 @@ export function Approval({
                   资金变化预演
                 </div>
                 {view.preflight.balances.map((b) => (
-                  <div key={b.account_id} className="balance-diff">
-                    <span>可用余额</span>
-                    <Money value={b.available_before_cents} animate={false} />
-                    <Icon name="arrow" size={18} />
-                    <Money value={b.available_after_cents} animate={false} />
-                  </div>
+                  <Fragment key={b.account_id}>
+                    <div className="balance-diff">
+                      <span>可用余额</span>
+                      <Money value={b.available_before_cents} animate={false} />
+                      <Icon name="arrow" size={18} />
+                      <Money value={b.available_after_cents} animate={false} />
+                    </div>
+                    <div className="balance-diff">
+                      <span>当日限额占用</span>
+                      <Money value={b.daily_used_before_cents} animate={false} />
+                      <Icon name="arrow" size={18} />
+                      <Money value={b.daily_used_after_cents} animate={false} />
+                    </div>
+                  </Fragment>
                 ))}
                 <div className="reserve-note">
                   <Icon name="clock" size={16} />

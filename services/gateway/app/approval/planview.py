@@ -20,7 +20,9 @@ import hashlib
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from safebank_bankcore.funds import fund_event_at
 from safebank_bankcore.ids import canonical, derive
+from safebank_bankcore.periods import normalize_period
 from safebank_contracts import risk_questionnaire
 from safebank_contracts.enums import Risk
 from safebank_contracts.state import BankState
@@ -252,6 +254,31 @@ def _fields_for(ctx: EvalContext, state: BankState | None, step: ResolvedStep):
             PlanViewField(key="instruction_id", label="代扣授权", value=args["instruction_id"])
         )
         fields.append(PlanViewField(key="merchant", label="商户", value=subscription.merchant_name))
+        active = subscription.status == "ACTIVE"
+        monthly: int | None = None if active else 0
+        if state.obligations is not None:
+            instruction = state.obligations.standing_instructions.get(subscription.instruction_id)
+            billing = state.obligations.billings.get(subscription.billing_id)
+            if (
+                instruction is None
+                or billing is None
+                or instruction.kind != "MERCHANT_MANDATE"
+                or instruction.billing_id != billing.id
+                or instruction.customer_id != billing.customer_id
+                or instruction.from_account_id != billing.account_id
+                or instruction.merchant_id != billing.merchant_id
+            ):
+                raise ValueError("subscription is absent from the authoritative billing snapshot")
+            active = active and instruction.status == "ACTIVE" and billing.active
+            monthly = normalize_period(billing.amount_cents, billing.period)[0] if active else 0
+        fields.append(
+            PlanViewField(
+                key="monthly_saving",
+                label="预计每月节省",
+                value=_yuan(monthly) if monthly is not None else "暂无法确定",
+                unit="元" if monthly is not None else None,
+            )
+        )
     elif tool == "submit_risk_assessment":
         fields.extend(_assessment_fields(ctx, args))
     elif tool in _FUND_TOOLS:
@@ -264,9 +291,25 @@ def _fields_for(ctx: EvalContext, state: BankState | None, step: ResolvedStep):
         fields.append(PlanViewField(key="product", label="产品", value=product.name))
         if tool == "subscribe_product":
             fields.append(amount(args["amount_cents"]))
+            fields.append(
+                PlanViewField(
+                    key="expected_confirm_at",
+                    label="预计确认时间",
+                    value=fund_event_at(product, state.sim_now, "SUB").isoformat(),
+                    unit="datetime",
+                )
+            )
         else:
             fields.append(
                 PlanViewField(key="units", label="份额", value=str(args["units"]), unit="份")
+            )
+            fields.append(
+                PlanViewField(
+                    key="expected_settle_at",
+                    label="预计到账时间",
+                    value=fund_event_at(product, state.sim_now, "RED").isoformat(),
+                    unit="datetime",
+                )
             )
     return tuple(fields)
 
