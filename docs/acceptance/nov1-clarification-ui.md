@@ -50,3 +50,17 @@ No API/model/DB/Docker/browser/demo-generation operations were performed. Reposi
 ## Unit 3a — unmounted candidate submission safety stop
 
 Added a deferred-G19 test that unmounts Assistant before the response arrives. RED on Unit 2 HEAD: **1 failed / 9 passed**, because the old component emitted a second, action-kind message to G3 after unmount. Cleanup now invalidates the pending choice marker before aborting any stream, so the delayed response cannot enter G3. GREEN: **10/10 clarification tests passed**; TypeScript and diff-check exit 0. Logs: `/private/tmp/sbg-nov1-repairs/unmount-{red,green}.log`. This test proves no stale G3 attempt occurs; it does not rely on backend ownership rejection. No full-suite repeat was run for this isolated safety stop.
+
+## Unit 3b — fixed current-G21 form guidance and clarification-ID deduplication
+
+The existing G21 `prompt_template_id` selects three frontend-owned fixed messages:
+
+- `risk_assessment_form`: only the customer's own six-question assessment computes the level; direct R5 assignment is unavailable. The fixed link opens existing `#wealth`, with an explicit instruction to enter Risk Assessment there (the current native Wealth route does not support directly opening its assessment tab).
+- `register_payee_form`: the unregistered target is not automatically added or paid; the fixed `#transfer` link leads to manual payee entry and review without URL parameters or prefilled values.
+- `transfer_consultation`: consultation is not authorization; no transfer has been initiated. Existing `#overview` / `#cards` links allow balance and limit inspection, without claiming feasibility has passed.
+
+Unknown template IDs use the safe generic business-page/new-request text. The lookup accepts only its own fixed whitelist keys, including safe fallback for inherited JavaScript keys such as `__proto__` and `constructor`. Empty required_fields no longer produce an empty “您可以在下方补充” line. SLOTS candidate and explicit typed-answer behavior stays intact. Custom clarification cards with the current G21 ID are displayed only in the active G21 area; repeated historical clarification IDs display once. Other historical replies and business cards are retained in state and in view.
+
+RED: the new guidance/dedup tests gave **5 failed / 10 passed** before implementation (`guidance-red.log`). Additional unknown-key probes caught two initial object-lookup failures before the whitelist-own-key guard (`guidance-unknown-red.log`), then passed. GREEN: the focused AssistantClarification/Comparison/Topics/Wire/PlanLifecycle command gave **5 files / 55 passed**, with TypeScript and diff-check exit 0 (`guidance-green.log`). Tests use the production request/stream/SSE code with complete current-G21 HTTP fixtures. Link rendering and zero action/proposal side effects are asserted; no actual navigation/browser or live G21 emission was exercised.
+
+After all added units were implemented, one final combined frontend verification was run: **49 files / 474 frontend tests**, **16 BFF tests**, TypeScript and Vite production build all passed with exit 0. Logs: `/private/tmp/sbg-nov1-repairs/frontend-final-{full,bff,build}.log`. These replace the earlier 466-test count for this worktree's final handoff. Root owns the server-side selection of these three template IDs, the 15 read-only NO_WRITE cases, secure Agent SSE errors, integration, independent review and exact-head CI. No backend/auth/contract wire fields, form prefill, OTP/approval, demo state, original reports, AGENTS or PRD were changed here.

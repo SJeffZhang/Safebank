@@ -28,6 +28,29 @@ const topics = [
   { icon: "transfer", title: "资金安排", description: "转账、定时与 AA 收款" },
   { icon: "repeat", title: "跨场景联动", description: "先分析，再预演整份计划" },
 ];
+const genericFormGuidance = {
+  title: "请在对应业务页面补充操作细节",
+  body: "请在对应业务页面核对并补充操作信息，或发送一条新的明确需求。",
+  links: [] as { href: string; label: string }[],
+};
+// Template IDs come from current G21; destinations and copy never come from L1 text.
+const formGuidance: Record<string, typeof genericFormGuidance> = {
+  risk_assessment_form: {
+    title: "请亲自完成风险测评",
+    body: "风险等级由您亲自完成六题测评后计算，小安不能直接将等级设为 R5。请前往理财页的风险测评，按实际情况作答。",
+    links: [{ href: "#wealth", label: "前往理财页" }],
+  },
+  register_payee_form: {
+    title: "请先核对并登记收款人",
+    body: "该收款目标尚未登记，无法自动新增收款人或转账。请在转账页手工填写并核对收款人信息。",
+    links: [{ href: "#transfer", label: "前往转账页" }],
+  },
+  transfer_consultation: {
+    title: "转账咨询不代表操作授权",
+    body: "这是转账咨询，本次没有发起转账。您可以查看账户余额和卡限额，或重新发送明确的转账指令；是否可办理仍需安全预演。",
+    links: [{ href: "#overview", label: "查看账户余额" }, { href: "#cards", label: "查看卡片限额" }],
+  },
+};
 export function Assistant(
   p: PageProps & {
     openApproval: (id: string) => void;
@@ -256,6 +279,20 @@ export function Assistant(
       }
     }
   }
+  const guidance = clar && Object.prototype.hasOwnProperty.call(formGuidance, clar.prompt_template_id)
+    ? formGuidance[clar.prompt_template_id] : genericFormGuidance;
+  const seenClarifications = new Set(clar ? [clar.id] : []);
+  const displayedMessages = messages.map(message => ({
+    ...message,
+    cards: message.cards?.filter(card => {
+      if (card.type !== "CLARIFICATION" || !card.data || typeof card.data !== "object") return true;
+      const id = (card.data as Fields).id;
+      if (typeof id !== "string") return true;
+      if (seenClarifications.has(id)) return false;
+      seenClarifications.add(id);
+      return true;
+    }),
+  }));
   return (
     <div className="assistant-page">
       <div className="chat-layout">
@@ -303,7 +340,7 @@ export function Assistant(
                 </small>
               </div>
             ) : (
-              messages.map((m) => (
+              displayedMessages.map((m) => (
                 <div className={`chat-message ${m.role}`} key={m.id}>
                   {m.role === "assistant" && (
                     <span className="chat-avatar">
@@ -363,10 +400,14 @@ export function Assistant(
                 <Badge>需要补充信息</Badge>
                 <h3>
                   {clar.kind === "FORM_REQUIRED"
-                    ? "请在对应业务页面补充操作细节"
+                    ? guidance.title
                     : "请选择您指的目标"}
                 </h3>
-                {clar.candidates.map((c) => (
+                {clar.kind === "FORM_REQUIRED" && <>
+                  <p>{guidance.body}</p>
+                  <div className="row">{guidance.links.map(link => <a className="button secondary" href={link.href} key={link.href}>{link.label}</a>)}</div>
+                </>}
+                {clar.kind === "SLOTS" && clar.candidates.map((c) => (
                   <Button
                     key={`${c.field}-${c.entity_id}`}
                     variant="secondary"
@@ -380,7 +421,7 @@ export function Assistant(
                   <label>补充本次目标<input value={answer} onChange={e => setAnswer(e.target.value)} disabled={busy || selecting || !!pending} maxLength={2000}/></label>
                   <Button disabled={busy || selecting || !!pending || !answer.trim()} onClick={() => void submitAnswer()}>提交补充</Button>
                 </form>}
-                {!clar.candidates.length && (
+                {!clar.candidates.length && clar.required_fields.length > 0 && (
                   <p>您可以在下方补充：{clar.required_fields.join("、")}</p>
                 )}
               </div>

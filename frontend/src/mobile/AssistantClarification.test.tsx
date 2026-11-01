@@ -31,13 +31,14 @@ let actions: Body[];
 let messages: { sid: string; body: Body }[];
 let rejected: string[];
 let actionReply: (() => Promise<Response>) | undefined;
+let streamCards: Record<string, unknown>[];
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 const failure = (code: string, status = 422) => json({ error: { code, message: code, details: {} } }, status);
-const sse = () => new Response(`event: updates\ndata: {"reply":{"id":"reply_${messages.length}","content":"已读取本次请求。"}}\n\n`, { headers: { "Content-Type": "text/event-stream" } });
+const sse = () => new Response(`${streamCards.length ? `event: custom\ndata: ${JSON.stringify({ type: "cards", cards: streamCards })}\n\n` : ""}event: updates\ndata: {"reply":{"id":"reply_${messages.length}","content":"已读取本次请求。"}}\n\n`, { headers: { "Content-Type": "text/event-stream" } });
 beforeEach(() => {
   vi.clearAllMocks();
   Element.prototype.scrollIntoView = vi.fn();
-  current = slots(); actions = []; messages = []; rejected = []; actionReply = undefined;
+  current = slots(); actions = []; messages = []; rejected = []; actionReply = undefined; streamCards = [];
   vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) => {
     const b: Body = init?.body ? JSON.parse(String(init.body)) : {};
     if (path.endsWith("/state")) return json({ values: { messages: [] }, tasks: [] });
@@ -149,4 +150,41 @@ it("does not register an action utterance after the choosing Assistant has unmou
   expect(messages).toHaveLength(1);
   expect(actions).toHaveLength(1);
   expect(props.onPropose).not.toHaveBeenCalled();
+});
+it.each([
+  { template: "risk_assessment_form", text: "帮我把风险测评改成R5", detail: /亲自.*六题|六题.*亲自/, link: "前往理财页", href: "#wealth" },
+  { template: "register_payee_form", text: "给钱七6222020000009999转5000", detail: /手工.*收款人|收款人.*手工/, link: "前往转账页", href: "#transfer" },
+  { template: "transfer_consultation", text: "我能不能给王五转100？", detail: /本次没有发起转账/, link: "查看账户余额", href: "#overview" },
+])("renders server-selected $template guidance without submitting a form", async ({ template, text, detail, link, href }) => {
+  current = { ...slots(), kind: "FORM_REQUIRED", required_fields: [], candidates: [], prompt_template_id: template };
+  await begin(text);
+  expect(screen.getByText(detail)).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: link })).toHaveAttribute("href", href);
+  expect(screen.queryByText(/您可以在下方补充/)).toBeNull();
+  expect(screen.queryByRole("textbox", { name: "补充本次目标" })).toBeNull();
+  expect(actions).toEqual([]); expect(messages).toHaveLength(1);
+  expect(props.onPropose).not.toHaveBeenCalled(); expect(props.openApproval).not.toHaveBeenCalled();
+});
+it.each(["unknown_template", "__proto__", "constructor"])("uses safe generic guidance for unknown FORM_REQUIRED template %s without an empty slot prompt", async (template) => {
+  current = { ...slots(), kind: "FORM_REQUIRED", required_fields: [], candidates: [], prompt_template_id: template };
+  await begin("办理未知事项");
+  expect(screen.getByText(/对应业务页面补充/)).toBeInTheDocument();
+  expect(screen.queryByText(/您可以在下方补充/)).toBeNull();
+  expect(screen.queryByRole("textbox", { name: "补充本次目标" })).toBeNull();
+  expect(actions).toEqual([]); expect(messages).toHaveLength(1);
+});
+it("deduplicates the same clarification id across stream and current G21 while retaining other history", async () => {
+  streamCards = [
+    { id: "stream_current", type: "CLARIFICATION", source_ref: "src_current", data: slots(), actions: [] },
+    { id: "stream_old", type: "CLARIFICATION", source_ref: "src_history", data: { ...slots(), id: "clr_history" }, actions: [] },
+    { id: "stream_old_duplicate", type: "CLARIFICATION", source_ref: "src_duplicate", data: { ...slots(), id: "clr_history" }, actions: [] },
+    { id: "account", type: "ACCOUNT", source_ref: "src_account", data: { accounts: [{ id: "acc_ls_chk", display_name: "活期", available_cents: 1000000 }] }, actions: [] },
+  ];
+  await begin();
+  expect(screen.queryByText("来源 src_current")).toBeNull();
+  expect(screen.getByText("来源 src_history")).toBeInTheDocument();
+  expect(screen.queryByText("来源 src_duplicate")).toBeNull();
+  expect(screen.getByText("来源 src_account")).toBeInTheDocument();
+  expect(screen.getByText("已读取本次请求。")).toBeInTheDocument();
+  expect(screen.getAllByRole("button", { name: "稳盈短债" })).toHaveLength(1);
 });
