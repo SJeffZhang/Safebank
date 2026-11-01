@@ -243,3 +243,95 @@ def test_required_query_failure_propagates_without_another_read(status):
             state("比较一下稳盈短债和稳健增利"), _context()
         )
     assert calls == ["get_profile"]
+
+
+def test_holdings_query_reads_product_names_without_guessing_from_codes():
+    calls = []
+
+    def execute(tool, args):
+        calls.append(tool)
+        data = {
+            "get_profile": {"sim_now": "2026-10-15T09:00:00+08:00"},
+            "get_accounts": {"accounts": []},
+            "get_holdings": {"holdings": [], "orders": []},
+            "list_products": {"items": [], "next_cursor": None},
+        }[tool]
+        return ReadResult(source_ref="src_" + tool, data=data)
+
+    GatherAdapter(NoInference(), execute, fetch_business_date=True)(
+        state("我的持仓和在途订单有哪些"), _context()
+    )
+    assert calls == ["get_profile", "get_accounts", "get_holdings", "list_products"]
+
+
+def test_upcoming_query_uses_business_clock_for_its_window_and_separates_reserve():
+    from services.agent.app.llm.respond import RespondAdapter
+    from services.agent.app.llm.verify import OutputVerifier
+
+    def execute(tool, args):
+        data = (
+            {"sim_now": "2026-10-15T01:00:00Z"}
+            if tool == "get_profile"
+            else {
+                "items": [],
+                "scheduled_items": [],
+                "charges_total_cents": 4500,
+                "scheduled_transfers_total_cents": 20000,
+                "reserve_total_cents": 24500,
+            }
+        )
+        return ReadResult(source_ref="src_" + tool, data=data)
+
+    st = state("未来7天有哪些扣费")
+    st["reads"] = GatherAdapter(NoInference(), execute, fetch_business_date=True)(st, _context())
+    st["reply_draft"] = RespondAdapter(NoInference())(st, _context())
+    text = OutputVerifier()(st, _context())
+    assert "2026-10-15 09:00" in text and "2026-10-22 09:00" in text
+    assert "245.00元" in text and "200.00元" in text and "45.00元" in text
+
+
+@pytest.mark.parametrize("status", ["ACTIVE", "FROZEN"])
+def test_card_query_distinguishes_single_daily_and_funds_constraints(status):
+    from services.agent.app.llm.respond import RespondAdapter
+    from services.agent.app.llm.verify import OutputVerifier
+
+    def execute(tool, args):
+        data = {
+            "get_profile": {"sim_now": "2026-10-15T09:00:00+08:00"},
+            "get_accounts": {
+                "accounts": [
+                    {
+                        "id": "acc_chk",
+                        "available_cents": 610000,
+                        "balance_cents": 610000,
+                        "pending_debit_cents": 0,
+                    }
+                ]
+            },
+            "get_cards": {
+                "items": [
+                    {
+                        "id": "crd_current",
+                        "account_id": "acc_chk",
+                        "current": True,
+                        "last4": "1234",
+                        "status": status,
+                        "single_limit_cents": 500000,
+                        "daily_limit_cents": 2000000,
+                        "daily_used_cents": 40000,
+                        "remaining_daily_cents": 1960000,
+                    }
+                ]
+            },
+        }[tool]
+        return ReadResult(source_ref="src_" + tool, data=data)
+
+    st = state("我的卡今天还能刷多少")
+    st["reads"] = GatherAdapter(NoInference(), execute, fetch_business_date=True)(st, _context())
+    st["reply_draft"] = RespondAdapter(NoInference())(st, _context())
+    text = OutputVerifier()(st, _context())
+    if status == "ACTIVE":
+        assert "当日剩余限额19600.00元" in text
+        assert "单笔最多5000.00元" in text and "今日合计最多6100.00元" in text
+    else:
+        assert "不能刷卡" in text and "最多" not in text

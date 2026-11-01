@@ -479,6 +479,60 @@ class GatherAdapter:
         self.last_business_date = self._format_date_line(sim_now)
         records = [profile]
         kind, values = selected
+        if kind in ("holdings", "scheduled", "upcoming", "card_capacity"):
+            if kind == "card_capacity":
+                records.extend(
+                    [
+                        self._execute_supplemental(
+                            "get_accounts", {"history_days": 0}, "src_gather_accounts"
+                        ),
+                        self._execute_supplemental(
+                            "get_cards", {"account_id": None}, "src_gather_cards"
+                        ),
+                    ]
+                )
+            elif kind == "holdings":
+                records.extend(
+                    [
+                        self._execute_supplemental(
+                            "get_accounts", {"history_days": 0}, "src_gather_accounts"
+                        ),
+                        self._execute_supplemental(
+                            "get_holdings",
+                            {"account_id": None, "product_id": None},
+                            "src_gather_holdings",
+                        ),
+                    ]
+                )
+                records.extend(
+                    self._query_pages(
+                        "list_products",
+                        {
+                            "max_risk_level": None,
+                            "product_type": None,
+                            "cursor": None,
+                            "limit": 100,
+                        },
+                    )
+                )
+            elif kind == "scheduled":
+                records.extend(
+                    self._query_pages(
+                        "list_scheduled", {"status": "ACTIVE", "cursor": None, "limit": 100}
+                    )
+                )
+                records.extend(
+                    self._query_pages("list_payees", {"query": None, "cursor": None, "limit": 100})
+                )
+            else:
+                records.append(
+                    self._execute_supplemental(
+                        "upcoming_charges",
+                        {"days": int(values[0]), "account_id": None},
+                        "src_gather_upcoming",
+                    )
+                )
+            return records
         if kind == "compare":
             args = {"max_risk_level": None, "product_type": None, "cursor": None, "limit": 100}
             catalog = self._query_pages("list_products", args)

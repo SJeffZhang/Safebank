@@ -32,6 +32,15 @@ def query(state: AgentState) -> tuple[str, tuple[str, ...]] | None:
         return None
     text = unicodedata.normalize("NFKC", utterances[0].text).strip(" 。.!！?？")
     text = re.sub(r"^(?:请帮我|帮我|请)", "", text)
+    if re.fullmatch(r"我的卡今天还能刷多少", text):
+        return "card_capacity", ()
+    if re.fullmatch(r"(?:我|我的)?持仓(?:和|及)在途订单(?:有哪些|情况)", text):
+        return "holdings", ()
+    if re.fullmatch(r"(?:我有)?哪些定时转账", text):
+        return "scheduled", ()
+    upcoming = re.fullmatch(r"未来([1-9]|[12]\d|30)天有哪些扣费", text)
+    if upcoming:
+        return "upcoming", (upcoming[1],)
     comparison = re.fullmatch(
         r"(?:比较|对比)(?:一下)?([^，,。；;]{1,30}?)(?:和|与)([^，,。；;]{1,30})", text
     )

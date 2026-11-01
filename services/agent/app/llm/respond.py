@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from services.agent.app.graph.state import AgentContext, AgentState
@@ -51,10 +51,10 @@ _REPLAN_USER_CODE_LABELS: dict[str, str] = {
     "TAINTED_SENSITIVE_ARG": "计划中的敏感信息来源不可信",
     "INTENT_UNCLEAR": "未能明确您的操作意图",
     "PAYEE_NOT_FOUND": "未找到您指定的收款人",
-    "AMOUNT_ABOVE_YELLOW_CAP": "金额超过安全上限，请降低金额或确认风险后重试",
-    "CARD_SINGLE_LIMIT": "超出单笔限额",
+    "AMOUNT_ABOVE_YELLOW_CAP": "该金额需要更高等级确认",
+    "CARD_SINGLE_LIMIT": "超出单笔限额，请降低金额；短信确认不能解除限额",
     "CARD_DAILY_LIMIT": "超出每日限额",
-    "CUMULATIVE_OUTFLOW": "超出累计转出上限",
+    "CUMULATIVE_OUTFLOW": "累计转出触发更高等级确认",
     "INSUFFICIENT_FUNDS": "账户余额不足",
     "DAILY_OUTFLOW_LIMIT": "超出当日转出上限",
     "SCHEDULED_SHORTFALL": "该定时操作可能因余额不足无法完成",
@@ -136,7 +136,7 @@ class RespondAdapter:
         try:
             result = self._llm.invoke([SystemMessage(content=system), HumanMessage(content=user)])
             text: str = getattr(result, "content", "") or ""
-            text = text.strip()
+            text = _data_label(text).strip()
             if len(text) > _MAX_RESPONSE_CHARS:
                 text = text[:_MAX_RESPONSE_CHARS] + "…"
             return text
@@ -848,12 +848,140 @@ def _summarise_upcoming(data: object) -> tuple[str, bool]:
     return "\n".join(lines), True
 
 
+def _read_names(reads: list, tool: str) -> dict[str, str]:
+    return {
+        item["id"]: _data_label(item.get("name"))
+        for r in reads
+        if r.tool == tool
+        for item in r.data.get("items", [])
+        if item.get("id") and item.get("name")
+    }
+
+
+def _summarise_holdings(data: dict, names: dict[str, str]) -> str:
+    lines = ["当前持仓："]
+    holdings = data.get("holdings") or []
+    if not holdings:
+        lines.append("暂无持仓")
+    for item in holdings:
+        name = names.get(item.get("product_id"), "名称待核对的产品")
+        line = (
+            f"{name}；持有{item.get('units', '—')}份；"
+            f"可用{item.get('available_units', '—')}份；"
+            f"冻结{item.get('reserved_units', '—')}份"
+        )
+        for key, label in (
+            ("cost_cents", "成本"),
+            ("market_value_cents", "可用份额估值"),
+            ("reserved_receivable_cents", "赎回待到账"),
+        ):
+            if type(item.get(key)) is int:
+                line += f"；{label}{_cents_yuan(item[key])}"
+        lines.append(line)
+    lines.append("在途与近期订单（待结算款不计入可用余额）：")
+    orders = data.get("orders") or []
+    labels = {
+        "PENDING_CONFIRM": "待确认",
+        "PENDING_SETTLEMENT": "待结算",
+        "SETTLED": "已结算",
+        "FAILED": "失败",
+        "EXPIRED": "已过期",
+    }
+    if not orders:
+        lines.append("暂无订单")
+    for item in orders:
+        name = names.get(item.get("product_id"), "名称待核对的产品")
+        kind = {"SUB": "申购", "RED": "赎回"}.get(item.get("type"), "业务订单")
+        line = (
+            f"{name}；{kind}；{labels.get(item.get('status'), '状态待核对')}；"
+            f"金额{_cents_yuan(item.get('amount_cents'))}；交易日{item.get('trade_date', '—')}"
+        )
+        for key, label in (("confirm_at", "预计确认"), ("settle_at", "预计到账")):
+            if item.get(key):
+                line += f"；{label}{_fmt_ts(item[key])}（北京时间）"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _summarise_scheduled(data: dict, names: dict[str, str]) -> str:
+    lines = []
+    for item in data.get("items", []):
+        name = names.get(item.get("payee_id"), _data_label(item.get("target_display")))
+        period = {"MONTHLY": "每月", "WEEKLY": "每周", "ONCE": "单次"}.get(item.get("period"), "")
+        lines.append(
+            f"{name}；{period}；{_cents_yuan(item.get('amount_cents'))}；"
+            f"下次执行{_fmt_ts(item.get('next_run_at'))}（北京时间）"
+        )
+    if data.get("next_cursor"):
+        lines.append("还有未读取页，当前列表未完整。")
+    return "\n".join(lines) or "暂无定时转账记录"
+
+
 def _query_reply(state: AgentState) -> str | None:
     selected = query(state)
     if selected is None:
         return None
     kind, values = selected
     reads = state.get("reads") or []
+    if kind == "card_capacity":
+        cards = [
+            item
+            for r in reads
+            if r.tool == "get_cards"
+            for item in r.data.get("items", [])
+            if item.get("current") is True
+        ]
+        if len(cards) != 1:
+            return "请明确要查询哪张银行卡，暂不估算可刷金额。"
+        card = cards[0]
+        if card.get("status") != "ACTIVE":
+            return "当前银行卡状态不能刷卡，请先核对卡片状态。"
+        account = next(
+            (
+                item
+                for r in reads
+                if r.tool == "get_accounts"
+                for item in r.data.get("accounts", [])
+                if item.get("id") == card.get("account_id")
+            ),
+            None,
+        )
+        amounts = [
+            card.get("single_limit_cents"),
+            card.get("remaining_daily_cents"),
+            (account or {}).get("available_cents"),
+        ]
+        if any(type(value) is not int or value < 0 for value in amounts):
+            return "额度或可用余额尚未完整读取，暂不估算可刷金额。"
+        single, remaining, available = amounts
+        return (
+            f"当日剩余限额{_cents_yuan(remaining)}；可用余额{_cents_yuan(available)}。"
+            f"结合资金和额度，今日合计最多{_cents_yuan(min(remaining, available))}；"
+            f"单笔最多{_cents_yuan(min(single, remaining, available))}。"
+        )
+    if kind == "holdings":
+        holding = next((r for r in reads if r.tool == "get_holdings"), None)
+        if holding is None:
+            return "尚未完整取得持仓与订单数据，请稍后重新查询。"
+        text = _summarise_holdings(holding.data, _read_names(reads, "list_products"))
+        accounts = next((r for r in reads if r.tool == "get_accounts"), None)
+        return text + ("\n" + _summarise_accounts(accounts.data)[0] if accounts else "")
+    if kind == "scheduled":
+        names = _read_names(reads, "list_payees")
+        return "\n".join(
+            _summarise_scheduled(r.data, names) for r in reads if r.tool == "list_scheduled"
+        )
+    if kind == "upcoming":
+        profile = next((r for r in reads if r.tool == "get_profile"), None)
+        upcoming = next((r for r in reads if r.tool == "upcoming_charges"), None)
+        if profile is None or upcoming is None:
+            return "尚未取得完整扣费范围，请稍后重新查询。"
+        start = datetime.fromisoformat(profile.data["sim_now"]).astimezone(_SHANGHAI)
+        end = start + timedelta(days=int(values[0]))
+        return (
+            f"扣费范围：（{_fmt_ts(start.isoformat())}，"
+            f"{_fmt_ts(end.isoformat())}]（北京时间）。\n" + _summarise_upcoming(upcoming.data)[0]
+        )
     if kind == "compare":
         compared = next((r for r in reversed(reads) if r.tool == "compare_products"), None)
         if compared is None:
@@ -980,7 +1108,12 @@ def _reads_summary(state: AgentState) -> str:
         tool = getattr(r, "tool", "") or ""
         data = getattr(r, "data", None)
         args = getattr(r, "args", None)
-        text, has_data = _summarise_tool(tool, data)
+        if tool == "get_holdings":
+            text, has_data = _summarise_holdings(data, _read_names(reads, "list_products")), True
+        elif tool == "list_scheduled":
+            text, has_data = _summarise_scheduled(data, _read_names(reads, "list_payees")), True
+        else:
+            text, has_data = _summarise_tool(tool, data)
         label = _args_label(args)
         header = f"{tool}{label}" if label else tool
         blocks.append((f"{header}:\n{text}", has_data))

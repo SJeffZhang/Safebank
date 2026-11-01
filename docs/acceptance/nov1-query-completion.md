@@ -39,3 +39,13 @@ Pending.
 - Two new REDs reproduced through actual load_bank_state/read boundaries with only SQL execute replaced: UTC10/14 16:00 storage incorrectly yielded10/14 trade_date instead of Shanghai10/15, and list_products included history. Both pass with business timezone restoration and history-free catalog projection; detail history and in-memory source remain unchanged.
 - Focused pure domain/loader/read suite: see latest command output; real PG opt-in tests remain skipped. Root must run actual PostgreSQL persistence/reload plus concurrency/consistency gates before publishing. No DB or migration/state rewrite performed here.
 - Production change is exactly trade_date restoration in state.py and list-only nav_history projection in reads.py, separate from L1 changes.
+
+### T4 display semantics and final default suite
+
+- Eight new REDs observed before implementation: holdings/orders and scheduled data fell back to raw IDs/JSON/UTC; protocol wrappers leaked through analysis output; risk labels implied OTP could bypass limits; holdings names and future-charge clock window were not deterministic; ACTIVE/FROZEN card capacity query lacked exact read/computation. All eight pass.
+- Holdings query reads actual catalog names and renders current holdings separately from Chinese order states; account available/pending facts remain distinct. Scheduled query joins actual payee IDs to read names and converts execution time to Shanghai. Future-charge query reads fresh profile and expresses the exact open/closed business interval, merchant fees, scheduled transfers and total reserve. Card capacity states daily remainder, funds-limited daily capacity and funds/daily/single-limited single capacity; inactive cards never claim spend availability.
+- Display-only protocol stripping does not alter ReadRecord/source metadata or write authorization. At B's request only the three finding labels changed; no REPLAN/hint or verification logic changed.
+- Final focused query suite:25 passed. Full default repository pytest:4504 passed,1121 skipped in40.26s. All real provider/PG opt-ins remain unrun. Ruff check/format on touched Python files pass.
+- Original formal43 results remain19/16/8; no new live or frozen-success claims. Root owns independent review, PG persist/reload, concurrency/consistency and exact-head full CI. Original12 fallback provenance still requires previously saved intermediate evidence; tests prove the new authoritative-source reply passes the unchanged verifier, not which original provider failure occurred.
+
+All assigned implementation units are committed. Shared AGENTS/PRD untouched.

@@ -201,3 +201,113 @@ def test_subscription_totals_are_present_even_when_items_exist():
         }
     )
     assert "265.00元" in text and "3180.00元" in text
+
+
+def test_holdings_and_orders_use_read_product_names_and_business_time():
+    text = _reads_summary(
+        {
+            "reads": [
+                read(
+                    "list_products",
+                    {
+                        "items": [
+                            {"id": "prd_mmf", "name": "安心货币"},
+                            {"id": "prd_stable", "name": "稳健增利"},
+                        ]
+                    },
+                ),
+                read(
+                    "get_holdings",
+                    {
+                        "holdings": [
+                            {
+                                "product_id": "prd_mmf",
+                                "units": "10000.0000",
+                                "available_units": "10000.0000",
+                                "reserved_units": "0.0000",
+                                "cost_cents": 1000000,
+                                "market_value_cents": 1000000,
+                            }
+                        ],
+                        "orders": [
+                            {
+                                "id": "ord_internal",
+                                "product_id": "prd_stable",
+                                "type": "SUB",
+                                "status": "PENDING_CONFIRM",
+                                "amount_cents": 200000,
+                                "trade_date": "2026-10-15",
+                                "confirm_at": "2026-10-16T01:00:00Z",
+                                "settle_at": None,
+                            }
+                        ],
+                    },
+                ),
+            ]
+        }
+    )
+    assert "安心货币" in text and "稳健增利" in text and "待确认" in text
+    assert "2026-10-16 09:00" in text and "ord_internal" not in text
+    assert '"holdings"' not in text and '"orders"' not in text
+
+
+def test_scheduled_summary_resolves_read_payee_and_local_time_without_internal_id():
+    text = _reads_summary(
+        {
+            "reads": [
+                read("list_payees", {"items": [{"id": "pye_zl", "name": "赵六"}]}),
+                read(
+                    "list_scheduled",
+                    {
+                        "items": [
+                            {
+                                "id": "si_internal",
+                                "payee_id": "pye_zl",
+                                "target_display": "他行收款人",
+                                "amount_cents": 100000,
+                                "period": "MONTHLY",
+                                "anchor_day": 5,
+                                "time_of_day": "06:00:00",
+                                "next_run_at": "2026-11-04T22:00:00Z",
+                                "status": "ACTIVE",
+                            }
+                        ]
+                    },
+                ),
+            ]
+        }
+    )
+    assert "赵六" in text and "2026-11-05 06:00" in text
+    scheduled = text.split("list_scheduled:", 1)[1]
+    assert "si_internal" not in scheduled and "pye_zl" not in scheduled
+
+
+def test_analysis_response_does_not_echo_prompt_only_provenance_markers():
+    from langchain_core.messages import AIMessage
+
+    from services.agent.app.llm.respond import RespondAdapter
+
+    class Model:
+        def invoke(self, _):
+            return AIMessage(
+                content='<untrusted_data source="src_actual">合成商户</untrusted_data>'
+            )
+
+    final = RespondAdapter(Model())({"reads": []}, None)
+    assert final == "合成商户"
+
+
+def test_risk_upgrade_labels_do_not_offer_otp_as_a_hard_limit_override():
+    from services.agent.app.llm.respond import _replan_user_items
+
+    labels = _replan_user_items(
+        {
+            "findings": [
+                {"code": "AMOUNT_ABOVE_YELLOW_CAP"},
+                {"code": "CARD_SINGLE_LIMIT"},
+                {"code": "CUMULATIVE_OUTFLOW"},
+            ]
+        }
+    )
+    assert any("短信" in label and "不能" in label for label in labels)
+    assert not any("确认风险后重试" in label or "累计转出上限" in label for label in labels)
