@@ -14,6 +14,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from services.agent.app.graph.state import AgentContext, AgentState
+from services.agent.app.llm._query_reads import data_text, query
 from services.agent.app.llm.execution_receipts import execution_receipt
 from services.agent.app.llm.fixed_templates import (
     executed_failed_fallback,
@@ -171,6 +172,9 @@ class RespondAdapter:
         """LLM analysis response: utterance + reads data summary."""
         if monthly_report_requested(state):
             return _monthly_report_reply(state) or respond_template("GENERIC_ERROR")
+        selected_reply = _query_reply(state)
+        if selected_reply is not None:
+            return selected_reply
         utterance_text = _utterance_text(state)
         reads_text = _reads_summary(state)
         if state.get("business_date"):
@@ -842,6 +846,75 @@ def _summarise_upcoming(data: object) -> tuple[str, bool]:
         if value is not None:
             lines.append(f"{label} {_cents_yuan(value)}")
     return "\n".join(lines), True
+
+
+def _query_reply(state: AgentState) -> str | None:
+    selected = query(state)
+    if selected is None:
+        return None
+    kind, values = selected
+    reads = state.get("reads") or []
+    if kind == "compare":
+        compared = next((r for r in reversed(reads) if r.tool == "compare_products"), None)
+        if compared is None:
+            return "未能唯一对应到两款产品，请核对产品名称后重试。此查询没有购买任何产品。"
+        return "产品比较（历史收益不代表未来表现）：\n" + _summarise_products(compared.data)[0]
+    transactions = [r for r in reads if r.tool == "get_transactions"]
+    if not transactions:
+        return "尚未取得交易数据，请明确查询期间后重试。"
+    period = transactions[0].args
+    window = f"{_fmt_ts(period.get('from_at'))}至{_fmt_ts(period.get('to_at'))}（北京时间）"
+    if kind == "transactions":
+        summary = next(
+            (
+                r
+                for r in reversed(reads)
+                if r.tool == "get_spending_summary"
+                and r.args.get("month") == period.get("from_at", "")[:7]
+                and r.data.get("month") == r.args.get("month")
+            ),
+            None,
+        )
+        if summary is None or type(summary.data.get("total_cents")) is not int:
+            return "消费汇总尚未完整读取，请稍后重新查询；不能用流水总支出代替消费合计。"
+        text = f"查询范围：{window}。刷卡及代扣消费合计{_cents_yuan(summary.data['total_cents'])}。"
+        transfer = summary.data.get("transfer_out_cents")
+        if type(transfer) is int:
+            text += f"转账支出另列{_cents_yuan(transfer)}，不计入消费。"
+        text += "流水明细见数据卡。"
+        if any(r.data.get("next_cursor") for r in transactions[-1:]):
+            text += "明细尚有未读取页，数据卡不是全部流水；消费合计来自银行月汇总。"
+        return text
+    name = values[0]
+    ids = {
+        item.get("merchant_id")
+        for r in transactions
+        if not r.args.get("merchant_id")
+        for item in r.data.get("items", [])
+        if data_text(item.get("merchant_name") or item.get("counterparty")) == name
+    }
+    filtered = next(
+        (
+            r
+            for r in reversed(transactions)
+            if len(ids) == 1
+            and None not in ids
+            and r.args.get("merchant_id") in ids
+            and r.data.get("totals_scope") == "filtered_all"
+            and type(r.data.get("expense_cents")) is int
+        ),
+        None,
+    )
+    if filtered is not None:
+        return (
+            f"您未指定期间，本次查询近180天：{window}。"
+            f"该商户在此范围内支出合计{_cents_yuan(filtered.data['expense_cents'])}。"
+            "这不是全部历史期间的合计。"
+        )
+    return (
+        f"您未指定期间，本次只读取近180天：{window}。"
+        "尚未获得唯一商户对应的完整支出合计，请明确期间或商户名称；不能据此认定没有消费。"
+    )
 
 
 def _summarise_other(data: object) -> tuple[str, bool]:

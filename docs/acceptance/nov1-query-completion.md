@@ -25,3 +25,11 @@ Pending.
 - Targeted summary/respond/bill tests: 69 passed. Pure agent suite: 936 passed, 39 skipped (PG/live opt-ins remain skipped); ruff check and format pass.
 - Products project comparison fields instead of full NAV-history JSON. Transaction overview omits free-form memo bulk and never silently drops an entire overflowing later block; incomplete overview is labelled. Card daily remaining, available/pending balance, subscription annual totals and scheduled reserve facts survive. Historical charges are labelled as historical.
 - No provider or real service calls; no change to verification or authorization. Subsequent gather completion, holdings projection and L3 timezone work remain pending.
+
+### T2 bounded query completion
+
+- Six new regressions observed RED before implementation: comparison never called; merchant page completion absent; invalid/404 holdings attempts suppressed prerequisites; monthly/merchant verified replies fell back to generic failure. All pass after implementation.
+- Narrow read-only selectors use fresh business time and actual gateway IDs; two products must match uniquely, then real compare_products is read. Merchant lookup discloses the otherwise unspecified recent-180-day interval, follows cursor pages with a 16-page ceiling/repeated-cursor stop, then reads actual merchant_id filtered_all totals. Incomplete or ambiguous lookup explicitly avoids a zero/absence claim. No invented read refs/IDs or writable scope.
+- Monthly consumption reads an authoritative get_spending_summary and separates transfers; verifier-inclusive 550.50/400.00 and filtered merchant45.50 pure chains pass unchanged OutputVerifier. This closes the demonstrated missing-source/analysis-output failure mechanisms; original case12's precise production fallback stage is still unconfirmed without its prior intermediate checkpoint/provider trace.
+- Failed validation/NOT_FOUND redemption holdings calls no longer count as successful prerequisite reads; dependency/provider errors still propagate. Success is deduplicated.
+- Final pure agent suite: 947 passed,39 skipped; focused gather/redemption/format suite:23 passed. Ruff check/format pass. Continuous required-read failure at402/403/429 stops after one call in boundary tests. No real services/provider/DB.
