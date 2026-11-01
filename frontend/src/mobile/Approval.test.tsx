@@ -76,6 +76,22 @@ beforeEach(() => {
   vi.mocked(request).mockResolvedValue({ status: "REJECTED" });
 });
 describe("L2 sourced approval sheet", () => {
+  it.each([true, false, undefined])("distinguishes computed reserve from missing projection (%s)", async (available) => {
+    const view = sample();
+    Object.assign(view.preflight!, { reserve_projection_available: available });
+    vi.mocked(getView).mockResolvedValue(view);
+    mount();
+    await screen.findByText("800.00 元");
+    if (available === true) {
+      expect(screen.getByText(/计划前未来 7 天预留/)).toBeInTheDocument();
+      expect(screen.getByText(/45\.00/)).toBeInTheDocument();
+      expect(screen.queryByText(/预留未计算/)).not.toBeInTheDocument();
+    } else {
+      expect(screen.getByText(/未来 7 天预留未计算/)).toBeInTheDocument();
+      expect(screen.queryByText(/45\.00/)).not.toBeInTheDocument();
+    }
+    expect(request).not.toHaveBeenCalled();
+  });
   it("uses actual PlanStatus PENDING_APPROVAL, delays confirm and renders untrusted text safely", async () => {
     const { container } = mount();
     expect(await screen.findByText("800.00 元")).toBeInTheDocument();

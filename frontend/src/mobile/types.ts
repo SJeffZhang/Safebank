@@ -95,6 +95,7 @@ export interface Preflight {
     daily_used_after_cents: number;
   }[];
   scheduled_reserve_cents: number;
+  reserve_projection_available?: boolean;
   steps: unknown[];
   holdings: unknown[];
 }

@@ -182,3 +182,32 @@ def test_self_transfer_dropping_below_reserve_is_shortfall(obligations_db):
             await l3.close()
 
     asyncio.run(run())
+
+
+def test_protective_cancellation_snapshot_displays_before_reserve_without_bank_write(
+    obligations_db,
+):
+    from services.agent.app.gateway.wire import GatewayPreflight
+    from services.gateway.app.pipeline.decision import DecisionStage
+
+    async def run():
+        admin, runtime, l3 = await _serve_l3(obligations_db)
+        try:
+            plan = _plan([step("cancel_subscription", instruction_id="si_zs_music")])
+            ctx, state = await _preflight(plan, l3)
+            view = DecisionStage._preflight_view(ctx).model_dump(mode="json")
+            assert ctx.preflight.executable
+            assert not any(f.code is Code.SCHEDULED_SHORTFALL for f in ctx.findings)
+            assert view["scheduled_reserve_cents"] == 4500
+            assert view["reserve_projection_available"] is True
+            assert GatewayPreflight.model_validate(view).reserve_projection_available is True
+            request = SnapshotRequest(customer_id="cus_zs", steps=list(plan.steps), event_id=None)
+            after = BankState.model_validate(await l3.snapshot(request.model_dump(mode="json")))
+            assert after.model_dump(mode="json") == state.model_dump(mode="json")
+            assert after.obligations.standing_instructions["si_zs_music"].status == "ACTIVE"
+        finally:
+            await admin.dispose()
+            await runtime.dispose()
+            await l3.close()
+
+    asyncio.run(run())

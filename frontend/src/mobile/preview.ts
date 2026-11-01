@@ -430,6 +430,7 @@ function evaluate(action: {
         ]
       : [],
     scheduled_reserve_cents: reserve(),
+    reserve_projection_available: true,
     steps: [],
     holdings: [],
   };

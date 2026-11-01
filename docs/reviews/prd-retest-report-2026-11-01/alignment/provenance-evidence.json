@@ -1,0 +1,15 @@
+{
+  "mode": "requirement_provenance_review_no_new_demo",
+  "baseline_commit": "ffcfe23cdec8d5567240951f3423a9872c734d07",
+  "baseline_prd_sha256": "5df9db6d7a61928c6e3600583e6b8141f74b5bf93f2e6f4bc30d1a60b78e7efe",
+  "execution_source_commit": "8e2810e6764e3fd3e37406b31e694605751e0356",
+  "old_reports_preserved": true,
+  "new_runtime_tests": false,
+  "product_changes": false,
+  "archived_report_files": {
+    "REPORT.md": "7f385743019e88b8f723acd639cf267f5bd542ca2fad8c92e60d8ad8f60ac840",
+    "issues.json": "c2aea99d020ddea24953011cd82fe2346f030b80d476ff6c90bdc95f01ae3ce5",
+    "manifest.json": "29d9a6f4879a4c721d2b200a55dc5b27af9c3fae4a4cffcaf4a3cffd303616ef",
+    "report.html": "26c3d6f69f6c8c9192e19cce6cf4677ab2a1a9f28933f7064847b4a1d2700938"
+  }
+}

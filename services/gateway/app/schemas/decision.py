@@ -78,6 +78,7 @@ class PreflightView(Contract):
     balances: tuple[BalanceView, ...] = ()
     holdings: tuple[HoldingView, ...] = ()
     scheduled_reserve_cents: int = 0
+    reserve_projection_available: bool = False
 
 
 class Decision(Contract):

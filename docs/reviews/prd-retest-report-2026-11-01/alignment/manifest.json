@@ -1,0 +1,26 @@
+{
+  "remaining-issues.md": {
+    "source": "remaining-issues-2026-11-01/REPORT.md",
+    "sha256": "c05773c24083cffcd7ecb401e24f0a1f02688e4cdde21810e5c2e48a3ddcd297"
+  },
+  "remaining-issues.json": {
+    "source": "remaining-issues-2026-11-01/issues.json",
+    "sha256": "aabb4850f3af7d3b9e2bda04a0a2f6c2f59f253d72ef015ce8d7bbdafe008947"
+  },
+  "requirement-provenance.md": {
+    "source": "requirement-provenance-2026-11-01/REPORT.md",
+    "sha256": "f32e399356980f2df40126036e142811d9a55e8f384ef4bf55d27e223a990f39"
+  },
+  "provenance-evidence.json": {
+    "source": "requirement-provenance-2026-11-01/evidence.json",
+    "sha256": "8551eee9a7d93816bb9365ca548d290a6f731fd26bc0b74f8a727693f9a20304"
+  },
+  "initial-prd-excerpts.txt": {
+    "source": "requirement-provenance-2026-11-01/initial-prd-excerpts.txt",
+    "sha256": "3bbe7d787ad1e14ef683f06abe9fe4928525116c80bec7c311c3da818006ebf2"
+  },
+  "PRD-ALIGNMENT-NOTICE.md": {
+    "source": "prd-retest-2026-11-01/PRD-ALIGNMENT-NOTICE.md",
+    "sha256": "279f719c40fb63249b5988b6daec0c6ef4aa342bd3b7c75b4d1addd0bd2dc60d"
+  }
+}

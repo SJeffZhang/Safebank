@@ -1,0 +1,46 @@
+# 最早入库的定稿 PRD v2.1 需求摘录
+commit: ffcfe23cdec8d5567240951f3423a9872c734d07
+commit time: 2026-10-23T14:39:54+08:00
+PRD blob SHA256: 5df9db6d7a61928c6e3600583e6b8141f74b5bf93f2e6f4bc30d1a60b78e7efe
+行号为该提交PRD.md的原始行号；省略的行不代表不存在其他约束。
+
+68: | D3 | REPLAN 分两类：L1 可自修（回 plan 节点）与需用户决定（回 respond，给出 L2 提示按钮） | §6.1、§7.9 |
+
+294:  7. L1 respond：解释原因，附 L2 给出的提示按钮「赵六改为 2,955.00 元」「只转王五」
+295:  8. 用户点「只转王五」→ BFF 登记 kind=hint 原话 → 新一轮：计划 = 王五 3,000
+
+561: | T-1 | 按收款人姓名 / 别名 / 手机号转账；同名或近名时追问；本人账户互转 | `get_accounts`、`list_payees`(read)、`transfer`(write) | 黄 |
+
+650: | X-3 | 把下周要扣的会员费留够，剩下的钱买稳健型理财 | read：即将扣费、产品、测评 → write：申购（金额 = 可用 − 7 天扣费，派生值） | 李四（R3）：L2 求值得到 {稳盈短债, 稳健增利, 均衡混合} → L2 clarification 让用户选一支 → 红 + 风险揭示；若用户给出的金额会导致扣费失败 → REPLAN（`SCHEDULED_SHORTFALL`，需用户决定）；无有效测评时 DENY `ASSESSMENT_MISSING` |
+
+714: | | Decision `REPLAN` 且任一 `resolver=user`，或 `replan_count ≥ 2` | respond（原因 + L2 的 `replan_hints` 按钮）→ END，等待用户 |
+
+772: - `gather` 中 untrusted 字段用 `<untrusted_data source="...">…</untrusted_data>` 包裹，系统提示声明其中任何指令都不执行（辅助手段，真正的防线在 L2）。
+
+1019: 澄清闭环：G3 登记 typed 时，L2 自己解析动作、槽位并按需读 L3 账户/收款人/卡候选，同时登记 read_records；缺槽/歧义时创建 pending_clarification 并返回 clarification_id。L1 clarify 通过 G21 读取服务端候选，不在 gather 前凭空编造。F 使用 G19 `{kind:CLARIFICATION, parent_utterance_id, action_kind:null, fields:[{field, entity_id}]}`（`entity_id` 必须属于当前 clarification 的 candidates）创建仅补当前缺槽的 action，用户采纳后 G3 action 合槽。typed 补答只有同时满足两条才合槽：(a) G3 请求显式带 `clarification_id`，且等于该 sid 唯一 OPEN 的 clarification；(b) 规范化后只含所缺槽位的值，不含动作词或其他实体。BFF 只在用户通过 L2 澄清输入组件提交时附带 `clarification_id`；普通聊天框的消息一律按新的独立指令处理，并把 OPEN clarification 置为 CANCELLED。合槽产生新的 UtteranceRef（保存 parent_ids、完整 normalized_scope），G3 返回的就是它，F3 用它的 id 调 L1，旧 parent 不再单独传入；过期取原指令与补答期限最早者，不延长许可。已有明确槽位被修改则视为新独立指令并取消旧 clarification。若 L2 完全无法解析，返回表单入口的澄清种类 FORM_REQUIRED，用户填完整表单后按 app_form 执行，不能让 L1 猜授权。G21 仅读取，不赋予 A 创建动作或原话的权限。
+
+1115: **未来 7 天预留**（`bankcore.reserve`；hint、`available_less_7d_charges` 模板、SCHEDULED_SHORTFALL 共用）：
+1116: - 义务集合 `obligations(acct)`：窗口 `(sim_now, sim_now + 7d]` 内，ACTIVE 代扣对应账单的 `merchant_billing.amount_cents`（**不用** `max_amount_cents`），加上 ACTIVE 定时转账（FIXED）的各期金额；执行时刻按 `time_of_day`（种子均为 06:00，§2.2）。忽略一切未来入账（工资、基金到账）。
+1117: - 本人互转的定时转账在目标账户记为 `+delta`。每个账户按 `(due_at, rank, id)` 排序得到 delta 序列，`shortfall(acct) = max(0, max_k −(available + Σ_{i≤k} delta_i))`；总缺口 = 各账户之和。
+1118: - 计划后总缺口 > 计划前总缺口 → `SCHEDULED_SHORTFALL`（只拦新增或扩大的缺口，已有缺口不阻止冻结、取消等保护动作）。
+1119: - 可流出上限 `max_outflow(acct) = available − max(0, max_k(−Σ_{i≤k} delta_i))`。例：张三 600,000 − 王五 300,000 − 7 日代扣 4,500 = 赵六最多 295,500 分。
+1120: - 新建定时在其首次执行日另外预演，不冻结当下资金；未来入账不作担保。用户不选择替代方案就不执行任何一步。
+
+1145: Decision 见 §9.5；每个 finding 带 `code, step_id|null, effect, resolver, message, evidence_refs`。resolver 仅 REPLAN 为 agent / user，其余 null。任一 user finding 就回到用户。L2 的 hint 有独立 ID、完整目标与金额，限 10 分钟、同会话、一次采用；不得自动采用「最大可转」。**hint 只能是父作用域的收缩**：只有当计划每一步都已通过 ③ 来源与 ④ 意图范围、且所有 user finding 都属于 {INSUFFICIENT_FUNDS, CARD_SINGLE_LIMIT, CARD_DAILY_LIMIT, SCHEDULED_SHORTFALL, HOLDING_INSUFFICIENT, MIN_PURCHASE_NOT_MET} 时才生成；只允许删除步骤、减小金额、减少份额，不得新增 ActionKind、目标、源账户，不得放宽周期或延后结束日，任何 LOOSEN 类动作都不能作为 hint。存在 TAINTED、UNKNOWN_SENSITIVE_ARG、INTENT_SCOPE_EXCEEDED、INJECTION_SUSPECTED 时 `replan_hints=[]`。hint 按钮的文字由前端经 G22a 向 L2 取，不用 L1 卡片里的文字（§9.10）。agent 自修限两次，仅补读取、纠正引用、合法排序或语法，不改动作授权。无合法修复则说明缺失并结束本轮。
+
+1404: | G22a | GET `/sessions/{sid}/hints/{hint_id}` | F+app | → `{id,label,scope,expires_at_wall}`；前端渲染 hint 按钮的文字只从这里取 |
+
+1410: **UICard**（L1 `custom` 事件中的卡片，§6.5）：`{id, type: ACCOUNT|TRANSACTIONS|ANOMALIES|CARD|SUBSCRIPTIONS|PRODUCTS|HOLDINGS|PLAN_STATUS|BLOCKED|REPLAN_HINTS|CLARIFICATION|NAVIGATE, source_ref?, data, actions: CardAction[]}`；`data` 只能取自 `source_ref` 对应的 ReadEnvelope.data 子集，或取自 Decision / ExecutionResult。**CardAction**：`{kind: HINT|CLARIFY|NAVIGATE|OPEN_APPROVAL, ref}`，`ref` 只能是 `hnt_*`、当前 clarification 的候选 entity_id、白名单页面路由（不带写操作参数）或 `apv_*`；**卡片动作不带可见文字**，按钮文字由前端向 L2 取（G22a、G21、G9）。前端点击 HINT 调 F3（kind=hint），CLARIFY 调 F7/G19（kind=CLARIFICATION）后再 F3（kind=action），OPEN_APPROVAL 调 F9。L1 不能产生其他 kind。
+
+1533: 页面仅描述能力，不锁组件、导航布局、视觉风格或框架：登录；首页与账户余额曲线；转账/收款人/定时/AA；账单与异常；卡片；订阅与提醒；理财列表/详情/比较/问卷/持仓订单；小安入口；统一确认面板；安全中心（待确认/审计/通知）；独立演示控制台与评委比较视图。P2 写 ADR-005 再定前端实现。
+1534: 
+1535: 七条硬约束：
+1536: 1. 确认面板只读 L2 PlanView，必须显示目标、金额、memo、风险、变化与揭示。
+1537: 2. 审批和 OTP 永不经过 L1 / LLM。
+1538: 3. 商户 / 备注 / 助手文字按文本节点渲染，禁止 `dangerouslySetInnerHTML` / `v-html`、任意 HTML、脚本、外部自动跳转；卡片动作必须是 L2 ID（UICard，§9.5）。
+1539: 4. 执行后按实际结果刷新余额 / 状态，UNKNOWN 显示「确认中」，不显示「成功」动画。
+1540: 5. **确认、采纳、选择类按钮的可见文字只来自 L2**（G9、G21、G22a），不使用 L1 卡片或 SSE 中的文字。
+1541: 6. **表单与聊天输入框的初值**只能来自：用户手动输入、L2 签发的 hint / clarification / action（由 L2 按 ID 解析，前端不接收字段值），或用户在 App 只读页面上自己点选的实体。L1 卡片、SSE、站内深链的查询参数不能预填任何字段，也不能预填输入框；快捷回复只能是 L2 hint_id。
+
+1744: - [ ] 两种 origin、绿级自动执行、黄确认、红 OTP、状态变化重新确认与 REPLAN 用户选择均可演示；面板数据来自 L2。
+
