@@ -1430,7 +1430,9 @@ scheduler job 用真实时间 lease 防重复工作器；金融执行幂等由 e
 
 **UICard**（L1 `custom` 事件中的卡片，§6.5）：`{id, type: ACCOUNT|TRANSACTIONS|ANOMALIES|CARD|SUBSCRIPTIONS|PRODUCTS|HOLDINGS|PLAN_STATUS|BLOCKED|REPLAN_HINTS|CLARIFICATION|NAVIGATE, source_ref?, data, actions: CardAction[]}`；`data` 只能取自 `source_ref` 对应的 ReadEnvelope.data 子集，或取自 Decision / ExecutionResult。**CardAction**：`{kind: HINT|CLARIFY|NAVIGATE|OPEN_APPROVAL, ref}`，`ref` 只能是 `hnt_*`、当前 clarification 的候选 entity_id、白名单页面路由（不带写操作参数）或 `apv_*`；**卡片动作不带可见文字**，按钮文字由前端向 L2 取（G22a、G21、G9）。前端点击 HINT 调 F3（kind=hint），CLARIFY 调 F7/G19（kind=CLARIFICATION）后再 F3（kind=action），OPEN_APPROVAL 调 F9。L1 不能产生其他 kind。
 
-UtteranceRef 为 `{id,kind,text,scope,parse_status:SCOPED/NO_WRITE/INTENT_UNCLEAR/CLARIFYING,echoes_untrusted:bool,parent_ids:string[],clarification_id?,created_at_wall,expires_at_wall}`，scope 与 parse_status 为服务端确定性结果（L1 按 parse_status 路由，§6.1）。AuditView 为 `{id,trace_id,event_type,plan_id?,step_id?,code?,message,payload,prev_hash,hash,created_at_wall}`；NotificationView 为 `{id,type,title,body,related_plan_id?,related_event_id?,created_at,read_at_wall?}`，message/body 是 L2 模板拼接的已转义文本。
+只读卡片显示投影（2026-11-01展示改进）：名称等字符串可按已标记的 `untrusted_paths` 和对应 `source_ref` 精确移除一层模型上下文包装，作为React纯文本展示；原始ReadRecord及污点不变，不能从显示文字生成授权动作。持仓/订单可附 `product_name` 与 `product_name_source_ref`，但必须来自同轮成功产品读取且按真实 `product_id` 唯一一致关联；该附加名称的来源是所标产品读取，不能冒称来自持仓源，也不作为写参数来源。无可靠名称时保守展示待核名称。后台溯源ID继续保留；隐藏技术ID、可读表格与本地时间是展示改进，不新增银行功能或改写历史功能判定。
+
+UtteranceRef 为 `{id,kind,text,scope,parse_status:SCOPED/NO_WRITE/INTENT_UNCLEAR/CLARIFYING,echoes_untrusted:bool,parent_ids:string[],clarification_id?,created_at_wall,expires_at_wall}`，scope 与 parse_status 为服务端确定性结果（L1 按 parse_status 路由，§6.1）。`kind=action/hint` 的wire文本允许null；Agent HTTP与G20入口共用适配，仅在L1本地prompt引用中将其表示为空字符串，仍按ID从G20取得权威内容，不能转为typed原话；typed null/非字符串仍拒绝。AuditView 为 `{id,trace_id,event_type,plan_id?,step_id?,code?,message,payload,prev_hash,hash,created_at_wall}`；NotificationView 为 `{id,type,title,body,related_plan_id?,related_event_id?,created_at,read_at_wall?}`，message/body 是 L2 模板拼接的已转义文本。
 
 **Decision**：
 

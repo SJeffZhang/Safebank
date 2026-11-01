@@ -43,9 +43,9 @@
 | PRD | **`PRD.md` = v2.1 定稿**（§0–§16；三轮多 agent 审核 + 两次修订复核，决议 D1–D47 见 §0.5；执行屏障增量约定见ADR-008）。v1.2 与作废的 v2.0 草稿在 `docs/archive/`；审核报告在 `docs/reviews/` |
 | 代码 | **P1历史基础已由PR #1合入main**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116单元+33真实PG，契约v1已冻结。历史提交7fd7a26/70dcabe，远端run39929405919；该P1验收不等于完整六场景现场通过。当前业务开发/验收见以下模块与本次PR完整head回执。 |
 | L3基础业务 | 六场景29项有生产实现；新报告逐29项已核，历史消费的权威MCC/类别/当前自有商户目录、上海基金日/风险有效期/午夜NAV基准、未来定时目标已修复并独审。基金日期真实PG旧1红与后续两日期红已转当前3绿；账本、AA、双客户版本/到期保护保持。最终完整CI待，不把静态/专项当原43已现场通过。 |
-| L2 网关 | 第二轮复测预留语义补显式计算标志及计划前标签；纯取消/赎回最佳努力展示、不新增保护动作拒绝规则，正式W3a实际PG64通过。独审/最终完整CI待。FORM永久绑定/epoch/OTP保持。正式只读NO_WRITE、真实payee取消/近名候选/固定引导、失败transfer步上限与服务端严格收缩hint来源闭环均已独审；真实PG W1 4、hint15/完整W3b88、取消归档全状态252/S1 113通过，套件重叠不相加。取消墓碑只拒绝，懒回填不复活，G9 app-only仍403；最终完整head CI/发布另核。 |
-| L1 Agent | 新报告商户完整分页/实际比较/成功持仓补读、业务月消费转账分列、完整语义摘要/有界行、X4严格结构反馈、span反馈与安全SSE、实际绑定REPLAN及百分比Unicode方向已修并独审。SSE真实Agent PG2过；原12唯一fallback触发未留完整轨迹，合成编译图固定事实校验通过，不称生产模型已重验。 |
-| 前端 | 主项目frontend/竖版App/BFF；新修真实G21 parent→G19→G3 action，typed SLOTS唯一携clarification_id、同步一次补答/跨会话卸载停止、双月source卡、固定安全引导。独审APPROVE，集成476/16 BFF/build阶段通过，最终head CI仍重跑。Preview开户/PAN/系统推送边界不扩作银行能力，无DS worker。 |
+| L2 网关 | 第二轮复测预留语义补显式计算标志及计划前标签；纯取消/赎回最佳努力展示、不新增保护动作拒绝规则，正式W3a实际PG64通过。独审APPROVE，最终完整CI待。FORM永久绑定/epoch/OTP保持。正式只读NO_WRITE、真实payee取消/近名候选/固定引导、失败transfer步上限与服务端严格收缩hint来源闭环均已独审；真实PG W1 4、hint15/完整W3b88、取消归档全状态252/S1 113通过，套件重叠不相加。取消墓碑只拒绝，懒回填不复活，G9 app-only仍403；最终完整head CI/发布另核。 |
+| L1 Agent | 第二报告合法action/hint空文本HTTP入口及真实hint.id卡片已修并独审；只读显示投影保留名称和原始污点，按完整精确查询收敛卡片，组合101纯测通过。新报告商户完整分页/实际比较/成功持仓补读、业务月消费转账分列、完整语义摘要/有界行、X4严格结构反馈、span反馈与安全SSE、实际绑定REPLAN及百分比Unicode方向已修并独审。SSE真实Agent PG2过；原12唯一fallback触发未留完整轨迹，合成编译图固定事实校验通过，不称生产模型已重验。 |
+| 前端 | 第二报告只读实体卡/安全React表格/上海日期已集成，root完整FE494/BFF16/build通过，FE独审及最终完整CI待。主项目frontend/竖版App/BFF；新修真实G21 parent→G19→G3 action，typed SLOTS唯一携clarification_id、同步一次补答/跨会话卸载停止、双月source卡、固定安全引导。独审APPROVE，集成476/16 BFF/build阶段通过，最终head CI仍重跑。Preview开户/PAN/系统推送边界不扩作银行能力，无DS worker。 |
 | 本机 Demo | 历史浏览器/业务live证据保留在各组件acceptance；当前唯一运行栈是自动化CI项目safebank，旧safebank-e2e-1029已停止并保留代际和卷。本对话按用户最新指令不再运行演示、截图、生产录制或断网彩排，不以旧健康检查或截图替代发布验收。 |
 | 协调状态 | 三个Codex子agent独立worktree并行实现/交叉只读评审，root集成/真实PG/单栈CI。新报告原件在docs/reviews/prd-demo-report-2026-11-01，独审原红与复审在prd-repairs-2026-11-01，汇总prd-report-repairs-2026-11-01.md。旧WIP/库卷/分支保留；CI前bank_p1_test无损改名，公开进度暂停。 |
 | 下一步 | 最终完整40位head本机CI全部PASSED后按head PR合并并恢复main栈；随后用户另会话按原43句复验。两轮独立数据集、生产录制/断网及冻结清单仍属其他会话；本轮不新增现场结论、不tag、不更新公开进度，攻击/指标/对比依赖不变。 |
@@ -1053,7 +1053,19 @@
 
 | 2026-11-01 | Codex（第二报告与预留语义） | 结合PRD的remaining-issues及requirement-provenance原文/最早定稿摘录按哈希归档alignment；明确R1/R2原功能、R3展示/R4体验、R5字段语义/R6文档冲突，不用8/14/2推PRD功能完成率。R5保留计划前预留、加reserve_projection_available及旧记录未计算显示；新取消/赎回等纯测旧红闭合、79纯过/8条件skip，正式W3a真实临时PG64过/0skip含实际L3快照无写，审批FE16过。R6仅对齐原三预埋与后续§8.2九月4/全窗5，种子/规则不动，独审和最终head全CI待。重复e2e七容器已停保留，唯一safebank整栈；无演示或生产模型。 |
 
+| 2026-11-01 | Codex（候选入口与建议集成） | 集成A e0ea17d→2fe862a：合法action/hint空text共享适配，typed/父链/G20不放宽，旧6红/11正控→17专项绿；B 15b9a6a→61fd32c真实hint.id卡片33专项绿，d91fddf→c0830b2只读显示投影55专项绿/真实Gather编译图。root实际gateway PG组合8通过：真实G4→Agentwire→card.ref→G22a→G3采纳→新G4/G9精确金额，保留原篡改/并发/过期负控与零执行；L3仍快照替身不称银行live。三独立review进行，FE/最终精确head完整CI待，无现场复演。 |
+
+| 2026-11-01 | Codex（显示投影与交叉独审） | C前端5c86b0c→269e53f集成，root组合101纯测/完整FE494(50文件)/BFF16/build过；原source选择器旧断言改可见group仍保留G21/action验证，失败日志保留。A独审rootR5/R6及B hint、B独审A nullable、C独审B readcard均APPROVE，独立负控与真实基线红核验归档retest-repairs-2026-11-01。PRD补nullable本地适配及持仓product_name_source_ref显示关联边界，不改原污点/写来源；D独立整分支29ID审查及B前端审查收尾，最终完整head全部CI尚未运行。 |
+
 ## 5. 下一步待办（按顺序）
+
+### 第二轮复测双报告修复（2026-11-01）
+
+- [x] 原复测与按PRD归属修正的报告、需求溯源及哈希归档；R1/R2原功能与展示/体验/语义/文档问题分开记录。
+- [x] R1候选null入口、R2 hint.id动作、R3来源绑定显示投影、R4实体/表格/日期呈现、R5预留计算标志与计划前口径、R6文档冲突均已实现及专项红绿。
+- [ ] 独立整分支与前端复审最终结论、最终完整40位head全部本机CI、按head合并并恢复main。
+- [ ] 用户在另一对话复演新版本；本轮不reset、不演示、不请求生产模型、不tag、不更新公开站点。
+
 
 ### 11-01 正式PRD复验后的开发修复
 
