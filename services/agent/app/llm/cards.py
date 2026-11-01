@@ -7,6 +7,7 @@ events and never enter AgentState.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 from safebank_contracts.base import Contract
@@ -206,7 +207,7 @@ def _card_blocked(state: AgentState, cards: list[UICard]) -> None:
 
 
 def _card_replan_hints(state: AgentState, cards: list[UICard]) -> None:
-    """REPLAN_HINTS card with L2's replan_hints labels."""
+    """Expose L2 hint IDs; visible action labels are fetched from G22a."""
     decision = state.get("decision")
     if decision is None:
         return
@@ -214,10 +215,10 @@ def _card_replan_hints(state: AgentState, cards: list[UICard]) -> None:
     hint_actions: list[CardAction] = []
     hint_labels: list[str] = []
     for h in hints_raw:
-        ref = _attr_or_get(h, "ref", None)
+        ref = _attr_or_get(h, "id", None)
         label = _attr_or_get(h, "label", None)
-        if ref is not None:
-            hint_actions.append(CardAction(kind="HINT", ref=str(ref)))
+        if isinstance(ref, str) and re.fullmatch(r"hnt_[A-Za-z0-9_-]+", ref):
+            hint_actions.append(CardAction(kind="HINT", ref=ref))
         if label is not None:
             hint_labels.append(str(label))
     cards.append(
