@@ -65,6 +65,7 @@ class Parsed:
     cancel: bool = False
     required_fields: list[str] = field(default_factory=list)
     candidates: list[dict[str, str]] = field(default_factory=list)
+    guidance_template: str | None = None
 
 
 def near_name(left: str, right: str) -> bool:
@@ -276,10 +277,51 @@ def _transfer_clause(clause: str) -> Command | None:
     return None
 
 
+_QUERY_CLAUSES = tuple(
+    re.compile(pattern + r"[?？]?")
+    for pattern in (
+        r"我有哪些定时转账",
+        r"AA收款进度怎么样",
+        r"查(?:一下)?我(?:(?:20\d{2}年)?(?:0?[1-9]|1[0-2])月|上个月|上月)的消费流水",
+        r"我在[\u4e00-\u9fffA-Za-z0-9·]{1,40}花了多少钱",
+        r"我上个月各类消费的占比",
+        r"和前一个月比怎么样",
+        r"最近有没有异常交易",
+        r"我的卡今天还能刷多少",
+        r"找出所有周期性扣费",
+        r"我有哪些订阅",
+        r"一年总共要花多少",
+        r"未来[1-9]\d?天有哪些扣费",
+        r"哪些订阅是闲置没用的",
+        r"我的风险等级是多少",
+        r"有哪些理财产品适合我",
+        r"我的持仓和在途订单有哪些",
+    )
+)
+
+
+def _query_clause(clause: str) -> bool:
+    if any(pattern.fullmatch(clause) for pattern in _QUERY_CLAUSES):
+        return True
+    compare = re.fullmatch(
+        r"比较(?:一下)?[\u4e00-\u9fffA-Za-z0-9·]{1,24}和"
+        r"[\u4e00-\u9fffA-Za-z0-9·]{1,24}[?？]?",
+        clause,
+    )
+    return bool(
+        compare and not re.search(r"申购|赎回|转账|取消|冻结|解冻|挂失|开启|关闭|新增", clause)
+    )
+
+
 def _clause(clause: str) -> Command | None:
     """Each alternative consumes its entire clause, including direction and units."""
     clause = re.sub(r"^(?:然后|并|再)\s*", "", clause, count=1)
     clause = re.sub(r"^(?:请帮我|帮我|替我|请)\s*", "", clause, count=1)
+    # These are read-only clauses, not write capabilities. Match the whole
+    # clause so a query cannot swallow a trailing operation or manufacture
+    # authorization from its dates, product names or numeric filter values.
+    if _query_clause(clause):
+        return Command("read")
     # Consume the whole report clause. A following write clause is still parsed
     # independently; report keywords cannot hide an unknown action suffix.
     if re.fullmatch(
@@ -519,11 +561,23 @@ def _payees(label: str, payees: list) -> list:
     exact = [payee for payee in payees if _exact_payee(label, payee)]
     if exact or _phone_target(label) is not None:
         return exact
-    return [
+    near = [
         payee
         for payee in payees
         if near_name(payee.name, label) or (payee.alias and near_name(payee.alias, label))
     ]
+    if near:
+        return near
+    # A partial registered name is a clarification candidate only. It never
+    # satisfies _exact_payee and therefore cannot directly authorize transfer.
+    if re.fullmatch(r"[\u4e00-\u9fff]{1,7}", label):
+        return [
+            payee
+            for payee in payees
+            if normalize(payee.name).startswith(label)
+            or (payee.alias and normalize(payee.alias).startswith(label))
+        ]
+    return []
 
 
 _WEEKDAYS = {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "日": 6, "天": 6}
@@ -634,8 +688,18 @@ def parse(
     clauses = [part.strip() for part in re.split(r"[，,；;。]", clean)]
     if not all(clauses):
         return Parsed()
+    # Refuse direct risk-level assignment before bare-number shorthand can
+    # interpret the R5 suffix. This is a form guide, never an assessment scope.
+    if len(clauses) == 1 and re.fullmatch(
+        r"(?:请帮我|帮我|替我|请)?把?风险测评(?:改成|改为|设为|调到)R[1-5][?？]?", clean
+    ):
+        return Parsed(guidance_template="risk_assessment_form")
     commands = [_clause(clause) for clause in clauses]
     if any(command is None for command in commands):
+        if len(clauses) == 1:
+            consultation = re.fullmatch(r"我?能不能(?P<body>(?:给|向).+?)[?？]?", clean)
+            if consultation and _transfer_clause(consultation["body"].rstrip("?？")) is not None:
+                return Parsed(guidance_template="transfer_consultation")
         return Parsed()
     owned = [account for account in state.accounts.values() if account.customer_id == customer_id]
     payees = [payee for payee in state.payees.values() if payee.customer_id == customer_id]
@@ -791,6 +855,8 @@ def parse(
             else:
                 matches = _payees(command.target, payees)
                 if not matches:
+                    if re.search(r"\d{8,}", command.target):
+                        return Parsed(guidance_template="register_payee_form")
                     return Parsed()
                 exact = [payee for payee in matches if _exact_payee(command.target, payee)]
                 if len(exact) == 1:
@@ -922,12 +988,41 @@ def parse(
                 return Parsed()
             kinds.append(action_kind(tool, {}, state).value)
         elif tool == "cancel_scheduled":
-            selected = [
-                item
-                for item in state.instructions
-                if normalize(command.target) in {normalize(item.id), normalize(item.target_display)}
-            ]
-            if len(selected) != 1 or not put("instruction_id", selected[0].id):
+            selected = []
+            payee_by_id = {payee.id: payee for payee in payees}
+            target_accounts = {a.id for a in _accounts(command.target, owned)}
+            for item in state.instructions:
+                if item.from_account_id not in {account.id for account in owned}:
+                    continue
+                if normalize(command.target) == item.id:
+                    selected.append(item)
+                elif item.status == "ACTIVE":
+                    payee = payee_by_id.get(item.payee_id)
+                    if (payee is not None and _exact_payee(command.target, payee)) or (
+                        item.payee_id is None and item.to_account_id in target_accounts
+                    ):
+                        selected.append(item)
+            if not selected:
+                return Parsed()
+            if len(selected) == 1:
+                if not put("instruction_id", selected[0].id):
+                    return Parsed()
+            elif not missing(
+                "instruction_id",
+                [
+                    _candidate(
+                        "instruction_id",
+                        item.id,
+                        f"{command.target} {item.amount_cents // 100}.{item.amount_cents % 100:02d}元 "
+                        + (
+                            item.next_run_at.astimezone(BUSINESS_TIMEZONE).isoformat()
+                            if item.next_run_at is not None
+                            else "下次时间待核实"
+                        ),
+                    )
+                    for item in selected
+                ],
+            ):
                 return Parsed()
             kinds.append(action_kind(tool, {}, state).value)
         elif tool == "add_payee":

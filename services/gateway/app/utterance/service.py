@@ -489,7 +489,7 @@ async def register(
                 kind="SLOTS" if parsed.required_fields and parsed.candidates else "FORM_REQUIRED",
                 prompt_template_id="select_missing_slot"
                 if parsed.required_fields and parsed.candidates
-                else "open_structured_form",
+                else parsed.guidance_template or "open_structured_form",
                 parent_utterance_ids=[id_],
                 authorization_epoch=epoch,
                 required_fields=parsed.required_fields,

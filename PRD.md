@@ -1886,3 +1886,7 @@ G9在原审批hash内展示当日限额占用前后值、取消的预计每月�
 客户通知新增CHARGE_UPCOMING、CHARGE_BLOCKED、SCHEDULE_RESULT、FUND_RESULT。每日模拟09:00生成未来三天实际有效扣款提醒，唯一标识绑定billing与due_at；S1复核当前授权、payload、源计划与撤销状态。事件终态/审计/通知在同一网关事务，恢复补写幂等，不把audit等同用户通知。均为站内通知，不声称已接外部短信/系统推送。
 
 授权有效性补充：ACTIVE代扣仍须实际due_at不晚于inclusive end_at，过期按MANDATE_NOT_ACTIVE拒扣，账单后续发起/拒扣通知及幂等不变。G9、取消结果的月/年金额与X2月费派生均只使用当前可核实原始账单费率；超授权cap、到期、无完整归属/覆盖/时间线不得提供正数节省依据。X2仍只接受同源账户MONTHLY、所有被取消步骤和有效read来源、本人储蓄，未知或无有效月费时拒绝正金额派生，不自动改成0或另选金额。
+
+### 11-01 正式查询与取消解析修订
+
+正式只读的定时/AA/流水/商户/双月/异常/卡余限/订阅年费/扣费/风险/产品/持仓问句明确NO_WRITE，不生成空FORM_REQUIRED；完整分句匹配，不将未知写后缀吞为查询。近名只提供当前已登记候选，不自动当精确授权。取消定时以当前客户自有源账户及实际payee_id对应姓名/别名解析，多条仍选择确切instruction_id；对方展示“他行收款人”或自由文本不证明取消目标。G21可返回固定prompt_template_id risk_assessment_form、register_payee_form、transfer_consultation用于安全页面引导，scope仍为空，不能直接设风险、登记或转账。G19/G3父链/单次使用/epoch/OTP契约保持。
