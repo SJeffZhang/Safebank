@@ -235,6 +235,8 @@ export interface UICard {
 }
 export interface Clarification {
   id: string;
+  parent_utterance_ids: string[];
+  expires_at_wall: string;
   kind: string;
   required_fields: string[];
   prompt_template_id: string;

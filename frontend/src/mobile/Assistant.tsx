@@ -43,13 +43,19 @@ export function Assistant(
   const [steps, setSteps] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [pending, setPending] = useState<string>();
-  const [clar, setClar] = useState<Clarification | null>(null);
+  const [clarification, setClar] = useState<{ sid: string; value: Clarification } | null>(null);
+  const clar = clarification?.sid === p.sid ? clarification.value : null;
+  const [answer, setAnswer] = useState("");
+  const [selecting, setSelecting] = useState(false);
+  const selection = useRef<object | null>(null);
+  const currentSession = useRef(p.sid);
+  currentSession.current = p.sid;
   const controller = useRef<AbortController>();
   const refreshedPlans = useRef(new Set<string>());
   const end = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   function openTopic(topic: (typeof topics)[number]) {
-    if (busy || pending) return;
+    if (busy || selecting || pending) return;
     void send(topic.title);
   }
   useEffect(() => () => controller.current?.abort(), []);
@@ -57,6 +63,12 @@ export function Assistant(
     end.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [messages, stage]);
   useEffect(() => {
+    let live = true;
+    controller.current?.abort();
+    selection.current = null;
+    setBusy(false);
+    setSelecting(false);
+    setAnswer("");
     refreshedPlans.current.clear();
     setMessages([]);
     setPending(undefined);
@@ -67,6 +79,7 @@ export function Assistant(
         tasks?: { interrupts: { value: { approval_id?: string } }[] }[];
       }>(`/sessions/${p.sid}/state`)
         .then((s) => {
+          if (!live) return;
           setMessages(
             (s.values.messages ?? [])
               .filter((m) => typeof m.content === "string")
@@ -81,7 +94,8 @@ export function Assistant(
             .find((i) => i.value.approval_id)?.value.approval_id;
           if (id) setPending(id);
         })
-        .catch(() => setError("历史会话暂不可用，新的原话仍需安全登记。"));
+        .catch(() => { if (live) setError("历史会话暂不可用，新的原话仍需安全登记。"); });
+    return () => { live = false; controller.current?.abort(); };
   }, [p.sid]);
   function handle(event: StreamEvent, requestedMonth?: string | null) {
     const data = event.data;
@@ -136,9 +150,10 @@ export function Assistant(
     setBusy(true);
     setSteps([]);
     setError("");
+    const sid = p.sid;
     const current = new AbortController();
     controller.current = current;
-    const active = () => controller.current === current && !current.signal.aborted;
+    const active = () => currentSession.current === sid && controller.current === current && !current.signal.aborted;
     try {
       await stream(p.sid, body, event => { if (active()) handle(event, typeof body.text === "string" && detectTopic(body.text) === "账单分析" ? billMonth(body.text, p.profile.sim_now) : undefined); }, current.signal, resume);
       if (!active()) return false;
@@ -146,14 +161,15 @@ export function Assistant(
         `/sessions/${p.sid}/clarifications/current`,
       );
       if (!active()) return false;
-      setClar(c.clarification);
+      setClar(c.clarification ? { sid, value: c.clarification } : null);
+      setAnswer("");
       return true;
     } catch (e) {
       if (active())
         setError(e instanceof Error ? e.message : "连接中断，请检查任务状态");
       return false;
     } finally {
-      if (controller.current === current) {
+      if (currentSession.current === sid && controller.current === current) {
         setBusy(false);
         setStage("");
       }
@@ -167,7 +183,7 @@ export function Assistant(
   });
   async function send(selected?: string) {
     const value = (selected ?? text).trim();
-    if (!value || busy || pending) return;
+    if (!value || busy || selecting || pending) return;
     setText("");
     setMessages((m) => [...m, { id: uid(), role: "user", text: value }]);
     const completed = await run({
@@ -176,34 +192,68 @@ export function Assistant(
       text: value,
       hint_id: null,
       action_id: null,
-      clarification_id: clar?.id ?? null,
+      clarification_id: null,
     });
     const topic = detectTopic(value);
     if (completed && topic) setMessages(m => [...m,{id:uid(),role:"assistant",text:"",business:{topic,month:billMonth(value,p.profile.sim_now)}}]);
     input.current?.focus();
   }
+  function slotParent() {
+    if (clar?.kind !== "SLOTS" || !Array.isArray(clar.parent_utterance_ids) ||
+        clar.parent_utterance_ids.length !== 1 || !/^utt_[\w-]+$/.test(clar.parent_utterance_ids[0]) ||
+        clar.required_fields.length !== 1 || !clar.candidates.length) return null;
+    return clar.parent_utterance_ids[0];
+  }
+  async function submitAnswer() {
+    if (busy || selecting || pending || !answer.trim()) return;
+    if (!slotParent()) { setError("补充信息已失效，请重新发起需求。"); return; }
+    const value = answer.trim();
+    setMessages(m => [...m, { id: uid(), role: "user", text: value }]);
+    await run({ request_id: uid(), kind: "typed", text: value, hint_id: null,
+      action_id: null, clarification_id: clar!.id });
+  }
   async function choose(c: Clarification["candidates"][number]) {
+    if (busy || pending || selection.current) return;
+    const parent = slotParent();
+    if (!parent || !clar?.candidates.some(candidate => candidate.field === c.field && candidate.entity_id === c.entity_id) ||
+        clar.required_fields[0] !== c.field) {
+      setError("补充信息已失效，请重新发起需求。");
+      return;
+    }
+    const sid = p.sid;
+    const choice = {};
+    selection.current = choice;
+    setSelecting(true);
+    setError("");
     try {
       const a = await request<{ action_id: string }>(
-        `/sessions/${p.sid}/actions`,
+        `/sessions/${sid}/actions`,
         {
           request_id: uid(),
           kind: "CLARIFICATION",
           action_kind: null,
           fields: [{ field: c.field, entity_id: c.entity_id }],
-          parent_utterance_id: null,
+          parent_utterance_id: parent,
         },
       );
+      if (currentSession.current !== sid || selection.current !== choice) return;
+      if (!/^act_[\w-]+$/.test(a.action_id)) throw new Error("补充信息登记失败，请重新发起需求。");
       await run({
         request_id: uid(),
         kind: "action",
         text: null,
         hint_id: null,
         action_id: a.action_id,
-        clarification_id: clar?.id,
+        clarification_id: null,
       });
     } catch (e) {
-      setError((e as Error).message);
+      if (currentSession.current === sid && selection.current === choice)
+        setError(e instanceof Error ? e.message : "补充信息登记失败，请重试。");
+    } finally {
+      if (selection.current === choice) {
+        selection.current = null;
+        setSelecting(false);
+      }
     }
   }
   return (
@@ -222,7 +272,7 @@ export function Assistant(
               <Icon name="shield" size={12} />
               安全网关保护
             </Badge>
-            <Button className="chat-new-session" variant="ghost" disabled={busy || !!pending} onClick={p.onNewSession}>
+            <Button className="chat-new-session" variant="ghost" disabled={busy || selecting || !!pending} onClick={p.onNewSession}>
               <Icon name="plus" size={14}/>新会话
             </Button>
           </div>
@@ -241,7 +291,7 @@ export function Assistant(
                 <div className="capability-list">
                   {topics.map((topic) => (
                     <button type="button" key={topic.title} aria-label={topic.title}
-                      disabled={busy || !!pending} onClick={() => openTopic(topic)}>
+                      disabled={busy || selecting || !!pending} onClick={() => openTopic(topic)}>
                       <Icon name={topic.icon} />
                       <strong>{topic.title}</strong>
                       <small>{topic.description}</small>
@@ -269,7 +319,7 @@ export function Assistant(
                         requestedMonth={m.requestedMonth}
                         key={card.id}
                         sid={p.sid}
-                        busy={busy}
+                        busy={busy || selecting}
                         revision={p.revision}
                         onStatus={(status) => {
                           if (status !== "PENDING_APPROVAL" && card.actions?.some(a => a.kind === "OPEN_APPROVAL" && a.ref === pending)) setPending(undefined);
@@ -320,12 +370,16 @@ export function Assistant(
                   <Button
                     key={`${c.field}-${c.entity_id}`}
                     variant="secondary"
-                    disabled={busy}
+                    disabled={busy || selecting}
                     onClick={() => choose(c)}
                   >
                     {c.label}
                   </Button>
                 ))}
+                {clar.kind === "SLOTS" && <form onSubmit={e => { e.preventDefault(); void submitAnswer(); }}>
+                  <label>补充本次目标<input value={answer} onChange={e => setAnswer(e.target.value)} disabled={busy || selecting || !!pending} maxLength={2000}/></label>
+                  <Button disabled={busy || selecting || !!pending || !answer.trim()} onClick={() => void submitAnswer()}>提交补充</Button>
+                </form>}
                 {!clar.candidates.length && (
                   <p>您可以在下方补充：{clar.required_fields.join("、")}</p>
                 )}
@@ -366,7 +420,7 @@ export function Assistant(
               placeholder={
                 pending ? "请先处理待确认计划" : "向小安描述您的需求…"
               }
-              disabled={busy || !!pending}
+              disabled={busy || selecting || !!pending}
               maxLength={2000}
               onKeyDown={(e) => {
                 if (
@@ -399,7 +453,7 @@ export function Assistant(
               <button
                 type="submit"
                 className="send-button"
-                disabled={!text.trim() || !!pending}
+                disabled={selecting || !text.trim() || !!pending}
                 aria-label="发送消息"
               >
                 <Icon name="arrow" />
