@@ -109,3 +109,26 @@ def test_actual_declining_monthly_report_keeps_negative_bp_direction_through_ver
     assert "-91.46%" in draft
     state["reply_draft"] = draft
     assert OutputVerifier()(state, _context()) == draft
+
+
+@pytest.mark.parametrize("text", ["环比- 91.46%", "环比−\t91.46%"])
+def test_sign_whitespace_cannot_turn_a_negative_percentage_into_an_unsigned_tail(text):
+    extracted = extract_percentages(text)
+    assert len(extracted) == 1 and extracted[0]["value"] == -91.46
+    assert extracted[0]["raw"] == text[2:]
+
+
+@pytest.mark.parametrize("bp,valid", [(-9146, True), (9146, False)])
+def test_spaced_negative_percentage_still_requires_a_negative_source(bp, valid):
+    text = "环比- 91.46%"
+    state = {
+        "reads": [
+            ReadRecord(
+                source_ref="src_percentage", tool="get_spending_summary", data={"mom_change_bp": bp}
+            )
+        ],
+        "reply_draft": text,
+    }
+    assert (check_against_facts(extract_percentages(text), build_fact_set(state)) == []) is valid
+    final = OutputVerifier()(state, None)
+    assert (final == text) is valid
