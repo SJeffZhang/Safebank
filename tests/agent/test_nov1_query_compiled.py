@@ -53,6 +53,7 @@ def test_original_month_query_never_repairs_consumption_into_transfer_total(rema
         respond=RespondAdapter(NoInference()),
         verify_output=OutputVerifier(),
     )
+
     class GatewayReads:
         def get_utterances(self, ids, context):
             item = _g20_item("utt_query", text=text, parse_status="NO_WRITE")

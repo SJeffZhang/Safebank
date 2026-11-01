@@ -1013,7 +1013,8 @@ def parse(
                     _candidate(
                         "instruction_id",
                         item.id,
-                        f"{command.target} {item.amount_cents // 100}.{item.amount_cents % 100:02d}元 "
+                        f"{command.target} "
+                        f"{item.amount_cents // 100}.{item.amount_cents % 100:02d}元 "
                         + (
                             item.next_run_at.astimezone(BUSINESS_TIMEZONE).isoformat()
                             if item.next_run_at is not None
