@@ -35,20 +35,20 @@
 
 ## 3. 当前状态（每次工作后更新）
 
-**最后更新**：2026-11-01（首轮1c60188完整CI因旧preflight夹具缺字段在W3b停止，失败证据保留；仅测试修订后实际PG322及整W3b88过，追加独审APPROVE；新完整40位head全部CI尚待，不称现场或冻结通过）
+**最后更新**：2026-11-01（双报告修复/独审完成，精确代码9545148a12fff197beea350dbadbd2abb89fe4d7全部35步本机CI PASSED；含回执最终head完整CI、匹配合并/恢复main结果以PR #114实际回执为准，原24/43现场未改、不冻结）
 
 | 模块 | 状态 |
 |---|---|
 | 调研 | 开源项目元数据和 DeepSeek 官方信息已核实；评分/提交已从官网公开 JS 核实（docs/acceptance/official-v1.md）；竞品「明鉴」未核实 |
 | PRD | **`PRD.md` = v2.1 定稿**（§0–§16；三轮多 agent 审核 + 两次修订复核，决议 D1–D47 见 §0.5；执行屏障增量约定见ADR-008）。v1.2 与作废的 v2.0 草稿在 `docs/archive/`；审核报告在 `docs/reviews/` |
 | 代码 | **P1历史基础已由PR #1合入main**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116单元+33真实PG，契约v1已冻结。历史提交7fd7a26/70dcabe，远端run39929405919；该P1验收不等于完整六场景现场通过。当前业务开发/验收见以下模块与本次PR完整head回执。 |
-| L3基础业务 | 六场景29项有生产实现；新报告逐29项已核，历史消费的权威MCC/类别/当前自有商户目录、上海基金日/风险有效期/午夜NAV基准、未来定时目标已修复并独审。基金日期真实PG旧1红与后续两日期红已转当前3绿；账本、AA、双客户版本/到期保护保持。最终完整CI待，不把静态/专项当原43已现场通过。 |
-| L2 网关 | 第二轮复测预留语义补显式计算标志及计划前标签；纯取消/赎回最佳努力展示、不新增保护动作拒绝规则，正式W3a实际PG64通过。独审APPROVE，最终完整CI待。FORM永久绑定/epoch/OTP保持。正式只读NO_WRITE、真实payee取消/近名候选/固定引导、失败transfer步上限与服务端严格收缩hint来源闭环均已独审；真实PG W1 4、hint15/完整W3b88、取消归档全状态252/S1 113通过，套件重叠不相加。取消墓碑只拒绝，懒回填不复活，G9 app-only仍403；最终完整head CI/发布另核。 |
-| L1 Agent | 第二报告合法action/hint空文本HTTP入口及真实hint.id卡片已修并独审；只读显示投影保留名称和原始污点，按完整精确查询收敛卡片，组合101纯测通过。新报告商户完整分页/实际比较/成功持仓补读、业务月消费转账分列、完整语义摘要/有界行、X4严格结构反馈、span反馈与安全SSE、实际绑定REPLAN及百分比Unicode方向已修并独审。SSE真实Agent PG2过；原12唯一fallback触发未留完整轨迹，合成编译图固定事实校验通过，不称生产模型已重验。 |
-| 前端 | 第二报告只读实体卡/安全React表格/上海日期已集成，root完整FE494/BFF16/build通过，FE独审APPROVE，最终完整CI待。主项目frontend/竖版App/BFF；新修真实G21 parent→G19→G3 action，typed SLOTS唯一携clarification_id、同步一次补答/跨会话卸载停止、双月source卡、固定安全引导。独审APPROVE，集成476/16 BFF/build阶段通过，最终head CI仍重跑。Preview开户/PAN/系统推送边界不扩作银行能力，无DS worker。 |
+| L3基础业务 | 本轮无L3/bankcore生产代码改动；六场景29项既有实现保留。954完整CI中实际账本义务334、P1资金33/并发5/预演执行一致性17及网络/真实进程重启恢复均过；不等于原43现场重演。 |
+| L2 网关 | FORM/epoch/OTP及确定性来源约束保持。新增reserve_projection_available区分实际0与未知，字段为计划前七日义务；保护动作最佳努力展示不新增拒绝，转出依赖缺失仍503。独审APPROVE，954完整W1 2042/W2 328/W3a64/W3b88/审批确认恢复/调度等实际PG通过；最终发布回执见PR114。 |
+| L1 Agent | 合法action/hint null的HTTP/G20共用适配、真实hint.id卡片、来源绑定只读显示及真实产品名关联已修，原污点/父链/写授权不放宽；全部非作者独审APPROVE。根代理组合101纯及实际G4→wire→卡片→G22a→G3→新G4/G9八项PG通过；生产模型现场复验留其他会话。 |
+| 前端 | 主项目frontend竖版App/BFF；客户卡片名称、金额分层、上海timestamp/业务date及安全React表格已修，G21/G22a/审批入口不变。954完整FE494/BFF16/build过、独审含独立负控APPROVE。展示/体验改进不混算原PRD功能失败；无可靠产品名保守待核。 |
 | 本机 Demo | 历史浏览器/业务live证据保留在各组件acceptance；当前唯一运行栈是自动化CI项目safebank，旧safebank-e2e-1029已停止并保留代际和卷。本对话按用户最新指令不再运行演示、截图、生产录制或断网彩排，不以旧健康检查或截图替代发布验收。 |
-| 协调状态 | 三个Codex子agent独立worktree并行实现/交叉只读评审，root集成/真实PG/单栈CI。新报告原件在docs/reviews/prd-demo-report-2026-11-01，独审原红与复审在prd-repairs-2026-11-01，汇总prd-report-repairs-2026-11-01.md。旧WIP/库卷/分支保留；CI前bank_p1_test无损改名，公开进度暂停。 |
-| 下一步 | 最终完整40位head本机CI全部PASSED后按head PR合并并恢复main栈；随后用户另会话按原43句复验。两轮独立数据集、生产录制/断网及冻结清单仍属其他会话；本轮不新增现场结论、不tag、不更新公开进度，攻击/指标/对比依赖不变。 |
+| 协调状态 | 三个独立worktree并行实现、额外test-only夹具修订和交叉只读评审/独立整合29ID审核均归档retest-repairs-2026-11-01；root实际PG和单栈完整CI。1c失败及954 unit中止均保留，954随后从头全部35步骤PASSED。prd06/07无损保留，全部旧WIP/库卷/分支不动；公开进度暂停。 |
+| 下一步 | 最终含CI回执head必须完整CI PASSED后按head合并并恢复main；实际结果统一见PR114：https://github.com/SJeffZhang/Safebank/pull/114。用户另会话取最新main用新数据集按PRD复验；不由本轮自动测试宣布现场24/43全通过或冻结，不提前tag，攻击/指标/对比仍后置。 |
 
 ### 已确认事实
 
@@ -1067,13 +1067,16 @@
 
 | 2026-11-01 | Codex（CI夹具门禁修复） | 独立test-only9a68→4cf3、8ea8→ea78：两默认preflight以当前Schema序列化，生产strict相等不变；RED仅40P01/55P03且done异常必传播，endpoint亦收后台异常、不丢业务transition/OTP断言。root实际四审批套件322过/0skip，endpoint补丁后整W3b88过/0skip；D非作者复审APPROVE/97纯测过，全部原日志/负控保留。1c首次完整CI仍FAILED，新head必须从头全部CI；P1测试库仍未重建、原prd06保留。 |
 
+| 2026-11-01 | Codex（完整代码CI通过） | 精确9545148a12fff197beea350dbadbd2abb89fe4d7全部35步骤本机CI PASSED/exit0：unit4977/1169条件skip、FE494/BFF16/build、GW17/锁63/状态252/共享79/AgentDB42、W1 2042/义务334/W2 328/W3a64/W3b88/审批120/确认58/屏障56/SMS8/恢复48、E0b119/P1资金33/并发5/一致性17/网络隔离/真实L3重启幂等/冻结契约、S1 113/clock6/notify52。回执retest-report-ci/9545148，聚合SHA9a6ee550…；重叠不相加、skip不算真实PG或模型。此前1c失败保留；954前置检查误启动已在unit精准停、未进PG，make up provision重建的零表test库101382也保留prd07，prd06原94369无损，守卫再核成功后才取得完整PASS。普通push并建PR114草稿；本次仅记录已实测954，含记录的最终head仍从头全CI且match-head合并，实际最终SHA/merge/恢复写PR114。 |
+
 ## 5. 下一步待办（按顺序）
 
 ### 第二轮复测双报告修复（2026-11-01）
 
 - [x] 原复测与按PRD归属修正的报告、需求溯源及哈希归档；R1/R2原功能与展示/体验/语义/文档问题分开记录。
 - [x] R1候选null入口、R2 hint.id动作、R3来源绑定显示投影、R4实体/表格/日期呈现、R5预留计算标志与计划前口径、R6文档冲突均已实现及专项红绿。
-- [ ] 独立整分支与前端复审最终结论、最终完整40位head全部本机CI、按head合并并恢复main。
+- [x] 独立整分支/前端/测试夹具复审全部APPROVE，精确954代码35步完整本机CI PASSED；回执已归档。
+- 最终含回执head的完整CI、按head合并与恢复main，以 [PR114](https://github.com/SJeffZhang/Safebank/pull/114) 的实际回执核对，不从本静态勾选推定发布结果。
 - [ ] 用户在另一对话复演新版本；本轮不reset、不演示、不请求生产模型、不tag、不更新公开站点。
 
 

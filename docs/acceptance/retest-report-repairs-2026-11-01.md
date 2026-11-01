@@ -38,7 +38,7 @@
 
 完整`1c601881590256af1b8d1251915f9dd52b66375c`从头运行，unit4977/1169条件skip、FE494/BFF16/build及GW17/锁63/状态252/共享79/AgentDB42/W1 2042/义务334/W2 328/W3a64均通过；W3b在旧并发夹具失败，立即停止，不称全CI通过。实际不是死锁，`create_for_evaluation`严格比较持久evaluation.preflight与view.model_dump时，旧手写夹具漏新增false计算标志而被正确拒绝。
 
-错误夹具位于W4b2b共享seed及W4b1创建夹具；将按当前PreflightView构建默认值，保留显式金额/来源/哈希不匹配负控与生产严格比较。还要将旧死锁RED只认SQLSTATE40P01/55P03，排除把任意结构异常算死锁的假阳性。该测试修复由独立worktree实现，root实际PG核验后仍须新完整head从头全部CI。原失败聚合与receipt在`retest-report-ci/1c60188-failed`，敏感raw trace只留私有临时日志。P1尚未执行，当前bank_p1_test已无损保存在prd06，尚未新建测试库。
+错误夹具位于W4b2b共享seed及W4b1创建夹具；将按当前PreflightView构建默认值，保留显式金额/来源/哈希不匹配负控与生产严格比较。还要将旧死锁RED只认SQLSTATE40P01/55P03，排除把任意结构异常算死锁的假阳性。该测试修复由独立worktree实现，root实际PG核验后仍须新完整head从头全部CI。原失败聚合与receipt在`retest-report-ci/1c60188-failed`，敏感raw trace只留私有临时日志。P1尚未执行，当前bank_p1_test已无损保存在prd06，尚未执行fresh P1；其后核对发现make up已重新建零表测试库，详见下方保留纠正。
 
 ## CI夹具修复及实际复核
 
@@ -48,3 +48,13 @@
 - 集成endpoint补丁后root实际整个W3b：**88通过/0skip**；旧失败GREEN转绿且RED确有锁SQLSTATE，endpoint后台任务异常不再被忽略。
 - 非作者D独审两提交APPROVE，97项纯hash/binding/panel测试过，确认显式不匹配负控与业务状态/OTP断言保留。报告归档retest-ci-fixture-review.md。
 - 之前1c完整CI仍是FAILED，以上专项不能补成PASSED；接下来必须对新完整40位head从头重跑全部本机CI。
+
+## 完整代码CI PASSED及发布回执
+
+完整`9545148a12fff197beea350dbadbd2abb89fe4d7` **全部35步骤PASSED/exit0**，回执`retest-report-ci/9545148`。聚合SHA256 `9a6ee5500b272790a56bfd4df58ac6805527e0c77f454ca93e984d4ec84b3c97`；runner SHA256 `ea34d079200889de14516cd389c69f8ee9b09e8d1543855f9bf6263b0254818c`。
+
+实际：unit4977/1169条件skip、FE494/BFF16/build；GW17/客户锁63/状态252/共享79/AgentDB42；W1 2042/义务334/W2 328/W3a64/W3b88/审批120/确认58/屏障56/SMS8/执行恢复48；E0b框架119；P1资金33/并发5/一致性17；实际网络隔离、L3进程重启后的结果恢复/幂等、冻结契约；S1 113/clock6/notify52全部通过。重叠套件不相加，条件skip/替身不算生产模型或现场通过。
+
+保留过程纠正：第一次954重跑前发现bank_p1_test已被make up的provision重新建立（OID101382/零表/零连接），先前“未新建”的推断撤回。协调者在前置检查失败后误启动CI，已精准停止该runner及2个子进程于unit阶段，未进入PG；中止日志单独保留，不算通过。该零表库也无损改名prd07，原prd06 OID94369与prd07 OID101382均重核不变。只有确认源库缺席及两保留OID一致后，才再次从头运行并取得上述954完整PASSED。全部既有应用库、卷、其他worktree/WIP保留。
+
+PR：https://github.com/SJeffZhang/Safebank/pull/114。本文及回执入库后的最终完整head仍须从头全部本机CI，通过才match-head merge commit并恢复main。**最终head、完整CI及合并/运行栈回执以该PR实际评论为准**，不由本文提前宣布。发布后的生产代码与上述已验954保持相同；原24/43现场结果不改，用户在另一对话按原PRD/后续明确口径，以新独立数据集复验。当前单栈项目safebank；若另一对话另起演示栈，先停止此栈并保留数据，避免并行两套整栈。
