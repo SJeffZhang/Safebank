@@ -12,8 +12,8 @@
 - R2：作者`15b9a6ad3507bdd2b2c1272f1f05391df0b062dc`，集成`61fd32c`。真实GatewayDecision/GatewayReplanHint.id映射HINT.ref，标签继续由G22a读取；真实wire/实际SSE旧红→33专项绿。见`retest-hint-card-2026-11-01.md`。
 - 根代理追加真实gateway PG组合8通过：`GATEWAY_DB_TESTS=1 UV_CACHE_DIR=/private/tmp/sbg-uv-cache uv run --group poc pytest -q tests/gateway/w3b/db/test_nov1_hint_publication.py`。实际G4输出经Agent wire→generate_cards的action.ref→G22a→G3单次采纳→新G4→G9面板金额；包含原TTL/epoch/根/绑定篡改与并发拒绝负控，零execution_job。该项L3为已有快照替身，不是实际资金执行/浏览器/模型通过。
 - R3：作者`d91fddf8bb74c98b91039576aa716d13eec3b93b`，集成`c0830b2`。只在显示副本按source+untrusted_paths精确去一层上下文包装，保留名称，原ReadRecord/污点不变；完整精确定位结果才抑制扫描卡，持仓名从成功产品读取按ID关联。作者旧10红/10正控→55卡片专项绿及Agent非DB1107通过/42deselected。见`retest-read-card-projection-2026-11-01.md`。
-- R4：作者`5c86b0ce4e61ede51c6bcfc89ab21fa08c085b43`，集成`269e53f624c8bf726745493b450079598f394665`。客户卡片名称/整数金额/上海timestamp和date-only区分、来源ID不直接展示；纯React窄表格，无HTML/URL/图片/动作解释；无可靠名称只显示待核占位。作者旧10红/2正控、非法日期旧1红/14正控→15专项绿；完整FE491、BFF16、build过，既有source选择器断言失败及纠正保留日志。根代理合并R5后的完整FE **494通过/50文件**、BFF16通过、build通过；交叉FE独审待。
-- 已完成独立评审：root预留/文档与B hint由A审，A入口由B审，B只读显示由C审，均APPROVE。独审原文在`docs/reviews/retest-repairs-2026-11-01/`；另有未参与实现的独立整分支/六场景29项需求映射审核，最终结论待精确提交固化。
+- R4：作者`5c86b0ce4e61ede51c6bcfc89ab21fa08c085b43`，集成`269e53f624c8bf726745493b450079598f394665`。客户卡片名称/整数金额/上海timestamp和date-only区分、来源ID不直接展示；纯React窄表格，无HTML/URL/图片/动作解释；无可靠名称只显示待核占位。作者旧10红/2正控、非法日期旧1红/14正控→15专项绿；完整FE491、BFF16、build过，既有source选择器断言失败及纠正保留日志。根代理合并R5后的完整FE **494通过/50文件**、build通过。BFF首轮因沙箱监听127.0.0.1被EPERM阻断，最初记录过早写通过；随后获准本机完整重跑16通过/0失败，实际日志`/private/tmp/sbg-retest-integrated-bff-approved.log`。首轮中断不计通过。B独立FE评审APPROVE：精确作者提交隔离archive下完整499通过/51文件（含8独立负控），tsc过；不把其额外临时负控数算作项目基线数量。
+- 已完成独立评审：root预留/文档与B hint由A审，A入口由B审，B只读显示由C审，均APPROVE。独审原文在`docs/reviews/retest-repairs-2026-11-01/`；另有未参与实现的独立整分支/六场景29项需求映射审核，最终固定`c8a881d5af6f46904a5df5367ef91b60c363e2bf`整合/需求审查APPROVE；独立101项Python、76项FE通过，附六场景29ID受影响边界映射，无可操作P0/P1/P2。
 - 根代理合并代码组合101项纯测通过；之前4938/1169skip默认套件运行与集成重叠，仅诊断，不是任何精确head完整CI回执。所有单元仍必须通过最终完整40位head全部CI才能发布。
 
 ## R5：计划前预留与计算状态
@@ -24,7 +24,7 @@
 - `UV_CACHE_DIR=/private/tmp/sbg-uv-cache uv run --group poc pytest -q tests/gateway/w3a tests/agent/gateway/test_wire.py`：79通过/8条件跳过，不把跳过当真实PG通过。
 - `UV_CACHE_DIR=/private/tmp/sbg-uv-cache make test-w3a`（正式两个DB flags）：**64通过/0跳过**。新实际PG/L3 HTTP快照测试验证取消前4500及计算标志、Agent wire接受、计划影子预演后重新快照完全一致/实际代扣仍ACTIVE，无银行写入。
 - `npm test -- --run src/mobile/Approval.test.tsx src/mobile/Approval.material.test.tsx`：16通过。覆盖已算值、false、旧记录缺标志、无写请求及既有审批/OTP行为。
-- 受影响Python ruff check/format通过；独立资金/安全只读评审和最终完整head CI仍待。
+- 受影响Python ruff check/format通过；独立资金/安全只读评审APPROVE；最终完整head CI仍待。
 
 ## R6：异常数量文档一致性
 

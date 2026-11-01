@@ -1,0 +1,11 @@
+{
+  "reviewed_code_head": "c8a881d5af6f46904a5df5367ef91b60c363e2bf",
+  "all_decisions": "APPROVE",
+  "reports_sha256": {
+    "retest-entry-review.md": "881adf5878f62d29ebd1a3056bdbecb0251e20d46985e7758446a78f656ac5eb",
+    "retest-final-requirements-review.md": "3d90cc553e1e69edf5194b37127057cde18880202f15cb460dfa89d6ea2e69d2",
+    "retest-readcard-review.md": "6876fb3ee17881130d98f6238163e17379fa4844aa5a9dc78c4507d1e43ec535",
+    "retest-reserve-review.md": "218b82106251474abd2b24e000cea9efecbcde26dcf2be1ee74287dc3979be43",
+    "retest-ui-review.md": "3ca5cdf282e423c4d5999c328df24428ea5b0e3d483eb3ba7cb262f6192169b1"
+  }
+}
