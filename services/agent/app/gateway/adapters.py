@@ -23,6 +23,7 @@ from services.agent.app.graph.ports import Ports
 from services.agent.app.graph.state import (
     AgentContext,
     AgentState,
+    UtteranceRef,
 )
 
 # ── make_gateway_ports ──────────────────────────────────────────────────
@@ -141,21 +142,24 @@ def ingest_via_gateway(
     return utts, clarification, warnings
 
 
-def gateway_utterance_to_ref(utt: GatewayUtterance):
-    """Convert a G20 ``GatewayUtterance`` to an L1-only ``UtteranceRef``.
+def utterance_ref_from_fields(*, id: str, kind: str, text: str | None) -> UtteranceRef:
+    """Adapt nullable reference text without inventing typed user input.
 
-    ``text`` may be null for hint/action; the ref preserves ``kind`` as a
-    plain string, ``text`` defaults to ``""`` for null (safe for LLM prompts).
-    ``scope`` and ``parse_status`` are carried into state for routing purposes
-    but never treated as authorization by L1.
+    Both the HTTP entry and authoritative G20 ingest use this local shape.
+    Only hint/action null is represented as an empty prompt string; invalid
+    typed text and kinds still go through ``UtteranceRef`` validation. This
+    conversion grants no authority: the gateway graph fetches G20 by ID.
     """
-    from services.agent.app.graph.state import UtteranceRef
-
     return UtteranceRef(
-        id=utt.id,
-        kind=utt.kind if isinstance(utt.kind, str) else "typed",
-        text=utt.text or "",
+        id=id,
+        kind=kind,
+        text="" if text is None and kind in ("hint", "action") else text,
     )
+
+
+def gateway_utterance_to_ref(utt: GatewayUtterance) -> UtteranceRef:
+    """Convert an authoritative G20 item using the shared boundary adapter."""
+    return utterance_ref_from_fields(id=utt.id, kind=utt.kind, text=utt.text)
 
 
 # ── Gather read bridge ──────────────────────────────────────────────────
