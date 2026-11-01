@@ -1,0 +1,39 @@
+== unit (in /Users/jet/.codex/worktrees/safebank-bill-analysis/WeBank)
+unit-sync                    OK  Checked 78 packages in 9ms
+unit-pytest                  OK  4477 passed, 1121 skipped in 40.74s
+unit-ruff-check              OK  All checks passed!
+unit-ruff-format             OK  560 files already formatted
+== frontend
+fe-npm-ci                    OK  Run `npm audit` for details.
+fe-test                      OK  
+fe-test-bff                  OK  ℹ duration_ms 116.350166
+fe-build                     OK  ✓ built in 403ms
+== p1-postgres (in /Users/jet/.codex/worktrees/safebank-freeze-ci/WeBank at f9fa85179cc2ed28414a9ec2604daea1d2e461df)
+p1-setup                     OK  Checked 78 packages in 11ms
+p1-test-postgres-bootstrap   OK  PASS: disposable Linux bootstrap acceptance; existing application volumes untouched
+p1-up                        OK   Container safebank-agent-1 Healthy 
+p1-test-gateway-db           OK  17 passed in 3.33s
+p1-test-customer-locks       OK  63 passed in 9.50s
+p1-test-wave1-state          OK  231 passed in 16.23s
+p1-test-shared-runtime       OK  79 passed in 9.24s
+p1-test-agent-db             OK  40 passed, 929 deselected in 3.62s
+p1-test-w1                   OK  1833 passed in 71.59s (0:01:11)
+p1-test-obligations          OK  317 passed, 1 warning in 69.57s (0:01:09)
+p1-test-w2                   OK  328 passed in 32.48s
+p1-test-w3a                  OK  51 passed in 5.22s
+p1-test-w3b                  OK  80 passed in 17.24s
+p1-test-w4b1                 OK  120 passed in 4.64s
+p1-test-w4b2b                OK  58 passed in 8.58s
+p1-test-w4b2c                OK  56 passed in 4.08s
+p1-test-w5-sms               OK  8 passed in 2.90s
+p1-test-w4c                  OK  48 passed in 30.91s
+p1-test-e0b                  OK  119 passed in 20.39s
+p1-test-p1                   OK  33 passed in 14.34s
+p1-test-p1-concurrency       OK  5 passed, 28 deselected in 6.43s
+p1-test-p1-consistency       OK  17 passed, 16 deselected in 3.19s
+p1-test-integration          OK  PASS: actual L3 process restart recovers committed result and idempotent replay
+p1-contracts-check           OK  PASS: contracts v1 match frozen schemas
+p1-test-s1                   OK  62 passed in 8.52s
+p1-test-w5-clock             OK  6 passed in 2.15s
+p1-test-w5-notify            OK  52 passed in 4.46s
+LOCAL CI PASSED for f9fa85179cc2ed28414a9ec2604daea1d2e461df

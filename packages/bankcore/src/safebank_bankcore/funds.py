@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from safebank_contracts.codes import Code
 from safebank_contracts.enums import Phase
@@ -91,6 +91,20 @@ def _plus_trading_days(d: date, n: int) -> date:
 
 def _at_09(d: date) -> datetime:
     return datetime.combine(d, time(9, 0), tzinfo=BUSINESS_TIMEZONE)
+
+
+def fund_event_at(product: ProductView, now: datetime, side: Literal["SUB", "RED"]) -> datetime:
+    """Shared expected/actual fund event date, using the existing trading calendar."""
+    if side not in ("SUB", "RED"):
+        raise ValueError("fund side must be SUB or RED")
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("fund event time requires a timezone offset")
+    if product.product_type == "MMF":
+        return now
+    days = product.confirm_days if side == "SUB" else product.settle_days
+    if type(days) is not int or days < 0:
+        raise ValueError("fund event delay requires non-negative integer trading days")
+    return _at_09(_plus_trading_days(trade_date(now), days))
 
 
 def _settlement_account_id(product_id: str) -> str:
@@ -245,6 +259,7 @@ def apply_subscribe(state: BankState, args, now: datetime, ctx: Context):
     if args.amount_cents < product.min_amount_cents:
         return _reject(state, ctx, Code.MIN_PURCHASE_NOT_MET)
     t_date = trade_date(now)
+    event_at = fund_event_at(product, now, "SUB")
     order_id = derive(ctx.plan_id, ctx.step_id, "ord")
     transfer_id = derive(ctx.plan_id, ctx.step_id, "trf")
     if product.product_type == "MMF":
@@ -281,8 +296,8 @@ def apply_subscribe(state: BankState, args, now: datetime, ctx: Context):
             plan_id=ctx.plan_id,
             step_id=ctx.step_id,
             trade_date=t_date,
-            confirm_at=now,
-            settle_at=now,
+            confirm_at=event_at,
+            settle_at=event_at,
             expires_at=None,
             failure_code=None,
         )
@@ -300,8 +315,8 @@ def apply_subscribe(state: BankState, args, now: datetime, ctx: Context):
             ),
             (),
         )
-    confirm_date = _plus_trading_days(t_date, product.confirm_days)
-    confirm_at = _at_09(confirm_date)
+    confirm_at = event_at
+    confirm_date = confirm_at.date()
     expires_at = _at_09(_plus_trading_days(confirm_date, 2))
     cmd = LedgerTransfer(
         id=transfer_id,
@@ -388,6 +403,7 @@ def apply_redeem(state: BankState, args, now: datetime, ctx: Context):
     if holding is None or holding.available_units < units:
         return _reject(state, ctx, Code.HOLDING_INSUFFICIENT)
     t_date = trade_date(now)
+    event_at = fund_event_at(product, now, "RED")
     nav_value = nav(product.nav, product.nav_date, product.product_type, t_date)
     amount_cents = _floor_cents(units * nav_value * Decimal(100))
     if units == holding.available_units:
@@ -432,7 +448,7 @@ def apply_redeem(state: BankState, args, now: datetime, ctx: Context):
             step_id=ctx.step_id,
             trade_date=t_date,
             confirm_at=None,
-            settle_at=now,
+            settle_at=event_at,
             expires_at=None,
             failure_code=None,
         )
@@ -450,7 +466,7 @@ def apply_redeem(state: BankState, args, now: datetime, ctx: Context):
             ),
             (),
         )
-    settle_at = _at_09(_plus_trading_days(t_date, product.settle_days))
+    settle_at = event_at
     order = FundOrderRecord(
         id=order_id,
         customer_id=ctx.customer_id,

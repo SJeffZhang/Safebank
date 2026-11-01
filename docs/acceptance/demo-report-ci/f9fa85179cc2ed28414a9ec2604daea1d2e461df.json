@@ -1,0 +1,13 @@
+{
+  "tested_sha": "f9fa85179cc2ed28414a9ec2604daea1d2e461df",
+  "exit_code": 0,
+  "result": "PASSED",
+  "summary_sha256": "faad37271c1a82f8546c043eed0f33f4e01a71df5d39eeddfb08845a8aaa090a",
+  "unit_passed": 4477,
+  "unit_conditional_skips": 1121,
+  "frontend_passed": 453,
+  "bff_passed": 16,
+  "required_steps": "all checks.yml and frontend.yml steps via local_ci.sh; including additional S1/clock/notify targets",
+  "full_logs_private": "/private/tmp/sbg-freeze-ci-20261031/.ds-logs/local-ci-f9fa851",
+  "publication_head": "The documentation-only follow-up must itself pass complete local CI; final exact SHA/merge receipt belongs to PR."
+}

@@ -8,6 +8,7 @@ from services.agent.app.graph.state import ReadRecord
 from services.agent.app.llm.client import make_llm
 from services.agent.app.llm.plan import PlanAdapter, ReferenceError
 from tests.agent.llm_mock import ScriptedLLM, tool_response
+from tests.agent.subscription_fixtures import detected_subscription
 from tests.agent.test_plan_e2e_fixes import (
     _good_cancel_sub_derived_amount,
     _subscription_schedule_state,
@@ -23,19 +24,8 @@ def state():
         args={"lookback_days": 180},
         data={
             "items": [
-                {
-                    "instruction_id": "si_zs_gym",
-                    "is_idle": True,
-                    "amount_cents": 19900,
-                    "period": "MONTHLY",
-                },
-                {
-                    "instruction_id": "si_zs_music",
-                    "is_idle": False,
-                    "amount_cents": 1500,
-                    "period": "MONTHLY",
-                    "usage_evidence": {"recent_usage_count": 0},
-                },
+                detected_subscription("si_zs_gym", 19900, is_idle=True, merchant_name="阳光健身"),
+                detected_subscription("si_zs_music", 1500, is_idle=False, merchant_name="乐听音乐"),
             ]
         },
     )
@@ -48,7 +38,7 @@ def proposal(*, overbroad=False):
         "inputs"
     ] = [
         {"kind": "step", "ref": "s1"},
-        {"kind": "read", "ref": "src_sub", "pointer": "/items/0/amount_cents"},
+        {"kind": "read", "ref": "src_sub", "pointer": "/items/0/typical_amount_cents"},
     ]
     if overbroad:
         extra = deepcopy(plan["steps"][0])

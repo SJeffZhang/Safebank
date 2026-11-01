@@ -11,6 +11,8 @@ import re
 from enum import StrEnum
 
 from services.agent.app.graph.state import AgentContext, AgentState
+from services.agent.app.llm.execution_receipts import execution_receipt
+from services.agent.app.llm.fixed_templates import executed_failed_fallback, respond_template
 
 # ── Extraction patterns ─────────────────────────────────────────────────────
 
@@ -548,6 +550,15 @@ class OutputVerifier:
         self._llm = llm
 
     def __call__(self, state: AgentState, _context: AgentContext) -> str:
+        # A free-text draft or repair cannot override committed business facts.
+        status = _obj_attr(state.get("execution"), "status")
+        if status == "EXECUTED":
+            return mask_long_numbers(execution_receipt(state))
+        if status == "UNKNOWN":
+            return mask_long_numbers(respond_template("UNKNOWN"))
+        if status == "FAILED":
+            return mask_long_numbers(executed_failed_fallback())
+
         draft: str = state.get("reply_draft") or ""
         if not draft:
             return "您的请求已收到。"
@@ -574,13 +585,19 @@ class OutputVerifier:
                     + extract_card_last4(repaired)
                 )
                 re_unverified = check_against_facts(re_extracted, fact_set)
-                if not re_unverified:
+                if not re_unverified and not check_semantic_consistency(repaired, state):
                     text = repaired
-                # else: fall through → use original text (will be masked below)
 
         # Step 4.5: deterministic scrub — an unverified card tail must never
         # reach the user, even when the LLM is absent or its repair failed.
         text = _scrub_unverified_card_tails(text, fact_set)
+
+        # Any failed/empty/invalid repair must not expose known wrong facts.
+        remaining = check_against_facts(
+            extract_amounts(text) + extract_percentages(text) + extract_card_last4(text), fact_set
+        )
+        if remaining or check_semantic_consistency(text, state):
+            text = respond_template("GENERIC_ERROR")
 
         # Step 5: always mask long numbers
         masked = mask_long_numbers(text)

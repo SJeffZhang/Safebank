@@ -57,10 +57,15 @@ export interface Subscription {
   next_due_at: string;
   status: string;
 }
+export type ProductType = "MMF" | "BOND" | "MIXED" | "EQUITY";
+export function productTypeLabel(value: unknown): string {
+  const labels: Record<ProductType, string> = {MMF:"货币基金",BOND:"债券产品",MIXED:"混合产品",EQUITY:"股票产品"};
+  return typeof value === "string" && Object.prototype.hasOwnProperty.call(labels,value) ? labels[value as ProductType] : "未知类型";
+}
 export interface Product {
   id: string;
   name: string;
-  product_type: string;
+  product_type: ProductType;
   risk_level: number;
   risk_label: string;
   nav: string;
@@ -134,7 +139,7 @@ export interface PlanView {
 export interface PlanStatus {
   plan_id: string;
   status: string;
-  decision: Decision;
+  decision?: Decision | null;
   execution?: {
     status: string;
     committed_at?: string;

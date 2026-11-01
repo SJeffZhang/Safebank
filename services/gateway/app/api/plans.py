@@ -71,7 +71,13 @@ async def _load_authorization(
     l3=None,
     bank=None,
 ) -> AuthorizationInputs:
-    """Load ACTIVE, unexpired utterances for *session_id* into AuthorizationInputs."""
+    """Load only the plan-declared ACTIVE, unexpired authorization roots.
+
+    G4 first binds these IDs to the assistant JWT; execution callers supply
+    the persisted plan IDs. The evidence verifier still requires exact root
+    set equality and loads/validates necessary parents separately. Session
+    context, including other SCOPED utterances, never becomes an extra root.
+    """
     if origin == "app_form":
         auth, _, _, _ = await load_forms(
             conn,
@@ -91,6 +97,7 @@ async def _load_authorization(
                 select(t.utterances)
                 .where(
                     t.utterances.c.sid == session_id,
+                    t.utterances.c.id.in_(tuple(source_ids or ())),
                     t.utterances.c.status == UtteranceStatus.ACTIVE.value,
                     t.utterances.c.expires_at_wall > now,
                 )
@@ -320,7 +327,9 @@ async def evaluate_plan(request: Request) -> JSONResponse:
                 )
                 ctx.authorization = form_auth
             else:
-                ctx.authorization = await _load_authorization(read_conn, sid, customer_id, now)
+                ctx.authorization = await _load_authorization(
+                    read_conn, sid, customer_id, now, source_ids=plan_draft.utterance_ids
+                )
         except GatewayError:
             raise
         except Exception as exc:

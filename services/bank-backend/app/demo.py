@@ -16,10 +16,10 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime
-from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, field_validator
 from safebank_contracts.codes import Code
+from safebank_contracts.demo import DemoEventPayload
 from safebank_contracts.state import EVENT_KIND_RANK
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -47,21 +47,14 @@ class DemoPrepareRequest(BaseModel):
     scenario_id: str
 
 
-class DemoEventRequest(BaseModel):
-    kind: Literal["EXTERNAL_CREDIT", "EXTERNAL_DEBIT", "SPLIT_PAYMENT"]
-    customer_id: str
-    account_id: str
-    amount_cents: int = Field(gt=0)
-    card_id: str | None = None
-    counterparty: str | None = None
-    memo: str | None = None
-    split_item_id: str | None = None
+class DemoEventRequest(DemoEventPayload):
     due_at: datetime
+    console_session_id: str = "scheduler"
 
     @field_validator("due_at")
     @classmethod
     def _timezone_aware(cls, value: datetime) -> datetime:
-        if value.tzinfo is None:
+        if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("due_at must be timezone-aware")
         return value
 
@@ -95,7 +88,11 @@ def register_demo_routes(app, database, admin_database, fingerprint_key: str) ->
         payload = body.model_dump(mode="json")
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         payload_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-        event_id = f"evt_demo_{payload_hash}"
+        event_id = "evt_demo_" + (
+            hashlib.sha256(f"{body.customer_id}:{body.request_id}".encode()).hexdigest()
+            if body.request_id is not None
+            else payload_hash
+        )
         source_id = f"demo:{payload_hash[:16]}"
         period_key = body.due_at.isoformat()
 
@@ -108,6 +105,28 @@ def register_demo_routes(app, database, admin_database, fingerprint_key: str) ->
             )
             if owner.scalar_one_or_none() is None:
                 raise BankError(Code.NOT_FOUND, 404)
+            # Serialize registration/retry of one client request, including a
+            # lost response after the first immutable job was committed.
+            await conn.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": event_id}
+            )
+            existing = (
+                await conn.execute(
+                    select(m.event_jobs.c.immutable_payload).where(m.event_jobs.c.id == event_id)
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                # due_at is resolved from the simulation clock, not a new user
+                # instruction. Retries at a later clock retain the original job.
+                old = {
+                    k: v for k, v in existing.items() if k not in ("due_at", "console_session_id")
+                }
+                new = {
+                    k: v for k, v in payload.items() if k not in ("due_at", "console_session_id")
+                }
+                if old != new:
+                    raise BankError(Code.IDEMPOTENCY_CONFLICT, 409)
+                return {"event_id": event_id}
             await conn.execute(
                 pg_insert(m.event_jobs)
                 .values(

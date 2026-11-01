@@ -529,6 +529,7 @@ function BankApp() {
                   <Assistant
                     {...props}
                     openApproval={setApproval}
+                    onExecuted={refresh}
                     onNewSession={newSession}
                     onResumeRegister={(h) => {
                       resume.current = h;

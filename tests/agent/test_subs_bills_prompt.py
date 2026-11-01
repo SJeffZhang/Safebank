@@ -19,6 +19,7 @@ from services.agent.app.llm.client import make_llm
 from services.agent.app.llm.gather import GatherAdapter
 from services.agent.app.llm.plan import PlanAdapter, ReferenceError
 from tests.agent.llm_mock import ScriptedLLM, text_response, tool_response
+from tests.agent.subscription_fixtures import detected_subscription
 
 API_KEY = "test-key"
 
@@ -33,7 +34,9 @@ def _subs_read() -> ReadRecord:
         tool="detect_subscriptions",
         args={"lookback_days": 180},
         data={
-            "items": [{"instruction_id": "si_sub1", "is_idle": True, "merchant_name": "视频会员"}]
+            "items": [
+                detected_subscription("si_sub1", 1500, is_idle=True, merchant_name="视频会员")
+            ]
         },
     )
 

@@ -18,6 +18,13 @@ from safebank_contracts.tools import READ_ARGS
 from services.agent.app.gateway.errors import GatewayResponseError
 from services.agent.app.graph.state import AgentContext, AgentState, ReadRecord, UtteranceKind
 from services.agent.app.llm._common import LlmToolError, validation_summary
+from services.agent.app.llm._cross_scene_reads import (
+    current_x3_selection,
+    natural_month_period,
+    suspicious_card_period,
+    x1_month_match,
+    x4_requested,
+)
 from services.agent.app.llm.redact import apply_untrusted_wrapping, strip_wall
 from services.agent.app.llm.schema import read_tools
 
@@ -33,7 +40,8 @@ _SYSTEM = (
     "订阅管理（取消订阅、找出没用的订阅）必须读取 list_subscriptions 或 "
     "detect_subscriptions 拿到带 si_ 开头的 instruction_id 与 is_idle 标记，"
     "取消订阅计划只能引用这些已读 id。"
-    "账单分析类问题（月度/商户账单、分类占比与环比、异常交易、消费报告）是只读任务："
+    "单独的账单分析（月度/商户账单、分类占比与环比、异常交易、消费报告）是只读任务；"
+    "分析和写操作联动时，保持needs_write和L2授权/确认要求，不把整条请求改为只读："
     "按月查询读取 get_spending_summary（month 为 YYYY-MM）与 get_transactions（日期范围），"
     "异常交易读取 detect_anomalies，涉及卡限额再读取 get_cards；"
     "「10月」「上个月」「9月」等自然月按北京时间（Asia/Shanghai，+08:00）换算日期范围，"
@@ -86,17 +94,7 @@ def monthly_report_period(state: AgentState, sim_now: str) -> tuple[str, str, st
     match = _monthly_report_match(state)
     if match is None:
         raise ValueError("not a complete read-only monthly report request")
-    now = datetime.fromisoformat(sim_now)
-    if now.tzinfo is None:
-        raise ValueError("business time must include timezone")
-    now = now.astimezone(ZoneInfo("Asia/Shanghai"))
-    if match["relative"]:
-        year, month = (now.year - 1, 12) if now.month == 1 else (now.year, now.month - 1)
-    else:
-        year, month = int(match["year"] or now.year), int(match["month"])
-    start = datetime(year, month, 1, tzinfo=ZoneInfo("Asia/Shanghai"))
-    end = start.replace(year=year + 1, month=1) if month == 12 else start.replace(month=month + 1)
-    return start.strftime("%Y-%m"), start.isoformat(), end.isoformat()
+    return natural_month_period(match, sim_now)
 
 
 # Intents that require account + payee reads for the plan step to construct valid
@@ -163,15 +161,69 @@ class GatherAdapter:
         return new
 
     def __call__(self, state: AgentState, context: AgentContext) -> list[ReadRecord]:
-        if self.fetch_business_date and monthly_report_requested(state):
-            # B4 always needs both aggregates and anomaly evidence. These reads
+        selection = current_x3_selection(state, context)
+        understanding = state.get("understanding")
+        if (
+            self.fetch_business_date
+            and selection is not None
+            and understanding is not None
+            and understanding.needs_write
+        ):
+            # The product was explicitly chosen through G3, not selected by L1.
+            # Read all financial prerequisites; no amount is calculated here.
+            profile = self._execute_supplemental("get_profile", {}, "src_gather_profile")
+            self.last_business_date = self._format_date_line(profile.data["sim_now"])
+            records = [
+                profile,
+                self._execute_supplemental(
+                    "get_accounts", {"history_days": 0}, "src_gather_accounts"
+                ),
+                self._execute_supplemental(
+                    "upcoming_charges", {"days": 7, "account_id": None}, "src_gather_upcoming"
+                ),
+                self._execute_supplemental("get_risk_profile", {}, "src_gather_risk"),
+                self._execute_supplemental(
+                    "get_product",
+                    {"product_id": selection["fields"]["product_id"]},
+                    "src_gather_product",
+                ),
+            ]
+            if records[-1].data.get("id") != selection["fields"]["product_id"]:
+                raise LlmToolError("product read disagrees with the current G20 selection")
+            return records
+        if self.fetch_business_date and x4_requested(state):
+            # Preserve the G3 suspicious-card predicate interval and all owned
+            # entity reads. This only provides sources; L2 still owns targets.
+            profile = self._execute_supplemental("get_profile", {}, "src_gather_profile")
+            sim_now = profile.data["sim_now"]
+            self.last_business_date = self._format_date_line(sim_now)
+            start, end = suspicious_card_period(sim_now)
+            return [
+                profile,
+                self._execute_supplemental(
+                    "detect_anomalies",
+                    {"from_at": start, "to_at": end, "account_id": None},
+                    "src_gather_anomalies",
+                ),
+                self._execute_supplemental("get_cards", {"account_id": None}, "src_gather_cards"),
+                self._execute_supplemental(
+                    "get_accounts", {"history_days": 0}, "src_gather_accounts"
+                ),
+            ]
+        x1_match = x1_month_match(state) if self.fetch_business_date else None
+        if self.fetch_business_date and (monthly_report_requested(state) or x1_match):
+            # B4 and narrow scoped X1 both need full aggregates and anomalies. These reads
             # remain behind the user's gateway executor, with its real lineage.
             # Refresh sim_now even if a prior turn left a business_date string.
             profile = self._execute_supplemental("get_profile", {}, "src_gather_profile")
             sim_now = profile.data["sim_now"]
             self.last_business_date = self._format_date_line(sim_now)
-            month, start, end = monthly_report_period(state, sim_now)
-            return [
+            month, start, end = (
+                natural_month_period(x1_match, sim_now)
+                if x1_match is not None
+                else monthly_report_period(state, sim_now)
+            )
+            records = [
                 profile,
                 self._execute_supplemental(
                     "get_spending_summary",
@@ -184,6 +236,13 @@ class GatherAdapter:
                     "src_gather_anomalies",
                 ),
             ]
+            if x1_match is not None:
+                records.append(
+                    self._execute_supplemental(
+                        "get_cards", {"account_id": None}, "src_gather_cards"
+                    )
+                )
+            return records
         reads: list[ReadRecord] = []
         tools_attempted: set[str] = set()
 

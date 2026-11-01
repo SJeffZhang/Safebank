@@ -17,6 +17,7 @@ from safebank_contracts.state import BankState
 from ..policy.registry import action_kind
 from ..schemas.enums import ParseStatus
 from ..schemas.scope import NormalizedScope, ScopeTransfer
+from .phone import phone_matches, phone_number
 
 LEXICON = yaml.safe_load(
     (Path(__file__).resolve().parents[2] / "policies/intent_lexicon.yaml").read_text()
@@ -500,12 +501,23 @@ def _card_candidates(label: str, cards: list, predicates: dict[str, list[str]]) 
     ]
 
 
+def _phone_target(label: str) -> str | None:
+    return phone_number(re.sub(r"^(?:手机号码|手机号)", "", normalize(label)))
+
+
+def _exact_payee(label: str, payee) -> bool:
+    number = _phone_target(label)
+    if number is not None:
+        # A phone-looking target must use the saved phone field, never a
+        # numeric name/alias or an account-number coincidence.
+        return phone_matches(number, payee.phone)
+    return normalize(label) in {normalize(payee.name), normalize(payee.alias or "")}
+
+
 def _payees(label: str, payees: list) -> list:
     label = normalize(label)
-    exact = [
-        payee for payee in payees if label in {normalize(payee.name), normalize(payee.alias or "")}
-    ]
-    if exact:
+    exact = [payee for payee in payees if _exact_payee(label, payee)]
+    if exact or _phone_target(label) is not None:
         return exact
     return [
         payee
@@ -780,12 +792,7 @@ def parse(
                 matches = _payees(command.target, payees)
                 if not matches:
                     return Parsed()
-                exact = [
-                    payee
-                    for payee in matches
-                    if normalize(command.target)
-                    in {normalize(payee.name), normalize(payee.alias or "")}
-                ]
+                exact = [payee for payee in matches if _exact_payee(command.target, payee)]
                 if len(exact) == 1:
                     transfers.append(
                         ScopeTransfer(

@@ -1,0 +1,29 @@
+"""Independent inclusive expiry/timezone controls; real pure merchant applier."""
+
+from datetime import UTC, timedelta
+
+import pytest
+from safebank_bankcore.events import apply_merchant_charge
+from safebank_contracts.codes import Code
+from tests.bankcore.obligations_fixtures import raw_billing, raw_mandate, raw_merchant, raw_projection_state
+
+
+@pytest.mark.parametrize("offset", [-1, 0, 1])
+@pytest.mark.parametrize("use_utc", [False, True])
+def test_authorized_due_instant_is_inclusive_across_timezone_representation(offset, use_utc):
+    bill = raw_billing()
+    end = bill.next_due_at + timedelta(microseconds=offset)
+    if use_utc:
+        end = end.astimezone(UTC)
+    state = raw_projection_state(billings=[bill], mandates=[raw_mandate(end_at=end)], merchants=[raw_merchant()])
+    result, effects, run = apply_merchant_charge(state, billing_id=bill.id, due_at=bill.next_due_at)
+    assert run.status == ("BLOCKED" if offset < 0 else "SUCCESS")
+    assert result.obligations.billings[bill.id].next_due_at > bill.next_due_at
+    if offset < 0:
+        assert run.code == Code.MANDATE_NOT_ACTIVE.value and run.transfer_id is None
+        assert not effects and result.accounts == state.accounts and result.transfers == state.transfers
+        assert result.transactions == state.transactions
+    else:
+        assert effects and run.transfer_id is not None
+    again, repeated_effects, repeated_run = apply_merchant_charge(result, billing_id=bill.id, due_at=bill.next_due_at)
+    assert again == result and not repeated_effects and repeated_run is None

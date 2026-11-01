@@ -197,24 +197,23 @@ class TestExecutedNoOp:
                 raise RuntimeError("API down")
 
         adapter = RespondAdapter(FailingLLM())
-        state = {
-            "utterances": [type("u", (), {"text": "添加收款人孙九"})],
-        }
-        execution = {
-            "plan_id": "pln_test",
-            "status": "EXECUTED",
-            "steps": [
-                {
-                    "step_id": "step_test",
-                    "tool": "add_payee",
-                    "status": "SUCCESS",
-                    "created_ids": (),
-                    "result": {"no_op": True, "payee_id": "pye_existing"},
-                }
-            ],
-            "committed_at": "2026-10-30T10:00:00+08:00",
-        }
-        state["execution"] = execution
+        from tests.agent.test_execution_receipt_facts import receipt_state
+
+        state = receipt_state()
+        state["plan_draft"]["steps"][0].update(
+            tool="add_payee",
+            args={
+                "name": "孙九",
+                "account_no": "6222021234567890",
+                "bank_name": "合成银行",
+                "phone": None,
+                "alias": None,
+            },
+        )
+        state["execution"]["steps"][0].update(
+            tool="add_payee",
+            result={"no_op": True, "payee_id": "pye_existing", "target_fingerprint": "synthetic"},
+        )
         result = adapter(state, None)
         # Must NOT say "操作已完成" when nothing actually happened
         assert "未重复" in result or "已存在" in result

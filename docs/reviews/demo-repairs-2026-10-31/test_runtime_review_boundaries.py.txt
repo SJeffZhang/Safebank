@@ -1,0 +1,84 @@
+"""Independent runtime negative controls; all memory-backed, no external IO."""
+
+import asyncio
+from datetime import timedelta
+
+import pytest
+from app.errors import BankError
+from app.events import EventService
+from safebank_bankcore.ids import digest
+
+from tests.obligations_data.test_reminder_runtime_unit import BankMemory, evidence, execute
+from tests.gateway.s1.test_notification_runtime_unit import MemoryOutcomeDB, definition, finalize
+
+
+@pytest.mark.parametrize("fault", ["bool_amount", "extra_payload", "naive_due", "extra_evidence"])
+def test_forged_but_rehashed_definition_and_nonexact_evidence_fail_closed(fault):
+    async def check():
+        db = BankMemory()
+        payload = db.job["immutable_payload"]["payload"]
+        args = {}
+        if fault == "bool_amount":
+            payload["amount_cents"] = True
+        elif fault == "extra_payload":
+            payload["source_plan_id"] = "pln_attacker"
+        elif fault == "naive_due":
+            payload["charge_due_at"] = payload["charge_due_at"].split("+")[0]
+        else:
+            args["authorization_evidence"] = {**evidence(db), "customer_id": "cus_a"}
+        db.job["payload_hash"] = digest(payload)
+        with pytest.raises(BankError):
+            await execute(db, **args)
+        assert db.writes == []
+
+    asyncio.run(check())
+
+
+def test_cancellation_between_initial_read_and_version_fence_is_rechecked(monkeypatch):
+    async def check():
+        db = BankMemory()
+        original = EventService._lock_clock_and_version
+
+        async def cancel_at_fence(self, conn, customer_id, clock_version, expected_versions):
+            result = await original(self, conn, customer_id, clock_version, expected_versions)
+            conn.tables["standing_instructions"][0]["status"] = "DELETED"
+            return result
+
+        monkeypatch.setattr(EventService, "_lock_clock_and_version", cancel_at_fence)
+        result = await execute(db)
+        assert result["status"] == "BLOCKED"
+        assert db.tables["state_versions"][0]["version"] == 11
+        assert db.writes == ["event_executions", "event_jobs"]
+
+    asyncio.run(check())
+
+
+def test_current_but_more_than_three_day_charge_cannot_emit_early_reminder():
+    async def check():
+        db = BankMemory()
+        due = db.tables["merchant_billing"][0]["next_due_at"]
+        db.tables["clock"][0]["sim_now"] = due - timedelta(days=3, microseconds=1)
+        db.job["due_at"] = db.tables["clock"][0]["sim_now"]
+        # Sources are already created in this synthetic boundary case.
+        for table in ("merchant_billing", "standing_instructions"):
+            db.tables[table][0]["created_at"] = db.job["due_at"] - timedelta(days=1)
+        result = await execute(db)
+        assert result["status"] == "BLOCKED"
+        assert db.writes == ["event_executions", "event_jobs"]
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize("kind", ["REMINDER", "MERCHANT_CHARGE"])
+def test_only_actual_terminal_type_outcome_can_produce_expected_notification(monkeypatch, kind):
+    async def check():
+        db = MemoryOutcomeDB()
+        await finalize(db, monkeypatch, event=definition(kind), result={"status": "BLOCKED"})
+        assert db.state["status"] == "BLOCKED"
+        assert len(db.state["audit"]) == 1
+        notifications = tuple(db.state["notifications"].values())
+        assert len(notifications) == (0 if kind == "REMINDER" else 1)
+        if notifications:
+            assert notifications[0]["type"] == "CHARGE_BLOCKED"
+
+    asyncio.run(check())

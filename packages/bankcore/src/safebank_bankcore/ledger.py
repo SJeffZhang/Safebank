@@ -35,6 +35,8 @@ def post_transfer(
     memo: str | None = None,
     payee_id: str | None = None,
     card_id: str | None = None,
+    merchant_id: str | None = None,
+    category: str | None = None,
 ):
     def reject(code: Code):
         return state, (), (Violation(code=code, step_id=cmd.step_id, message=code.value),)
@@ -117,7 +119,10 @@ def post_transfer(
             counterparty=state.customers[other.customer_id].display_name
             if other.customer_id
             else "外部结算",
-            category="转账" if cmd.code.startswith(("P2P", "SELF")) else "其他",
+            category=category
+            if category is not None
+            else ("转账" if cmd.code.startswith(("P2P", "SELF")) else "其他"),
+            merchant_id=merchant_id if direction == "OUT" else None,
             memo=memo,
             payee_id=payee_id if direction == "OUT" else None,
             card_id=card_id if direction == "OUT" else None,

@@ -11,6 +11,7 @@ from services.agent.app.graph.state import AgentContext, ReadRecord, Understandi
 from services.agent.app.llm.client import make_llm
 from services.agent.app.llm.plan import PlanAdapter
 from tests.agent.llm_mock import ScriptedLLM, tool_response
+from tests.agent.subscription_fixtures import detected_subscription
 
 API_KEY = "test-key"
 
@@ -109,13 +110,9 @@ def _subscription_schedule_state():
                 tool="detect_subscriptions",
                 data={
                     "items": [
-                        {
-                            "instruction_id": "si_zs_gym",
-                            "is_idle": True,
-                            "merchant_name": "阳光健身",
-                            "amount_cents": 19900,
-                            "period": "MONTHLY",
-                        }
+                        detected_subscription(
+                            "si_zs_gym", 19900, is_idle=True, merchant_name="阳光健身"
+                        )
                     ]
                 },
             ),
@@ -321,7 +318,7 @@ def _good_cancel_sub_derived_amount():
                                 {
                                     "kind": "read",
                                     "ref": "src_sub",
-                                    "pointer": "/items/0/amount_cents",
+                                    "pointer": "/items/0/typical_amount_cents",
                                 }
                             ],
                         },

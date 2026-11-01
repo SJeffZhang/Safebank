@@ -103,8 +103,8 @@ class TestFixedTemplatePaths:
 
 
 class TestLLMPaths:
-    def test_executed_calls_llm(self):
-        """EXECUTED → LLM respond with utterance + step summary."""
+    def test_executed_without_bound_plan_is_conservative(self):
+        """Incomplete execution metadata never reaches a model summary."""
         llm = FakeLLM("已向王五转账 800.00 元，余额 5,200.00 元。")
         adapter = RespondAdapter(llm)
         state = _make_state(
@@ -112,8 +112,9 @@ class TestLLMPaths:
             utterances=[type("u", (), {"text": "向王五转账800元"})],
         )
         result = adapter(state, None)
-        assert len(result) > 0
-        assert len(llm.calls) == 1
+        assert "核对" in result
+        assert "800" not in result
+        assert len(llm.calls) == 0
 
     def test_failed_calls_llm(self):
         """FAILED → LLM explains which step failed."""
@@ -187,8 +188,8 @@ class TestLLMPaths:
         )
         result = adapter(state, None)
         assert len(result) > 0  # should use fallback
-        # EXECUTED fallback is "操作已完成。"
-        assert "操作已完成" in result
+        assert "核对" in result
+        assert llm.calls == []
 
     def test_llm_empty_content_fallback(self):
         """LLM returns empty string → fallback."""
@@ -206,7 +207,7 @@ class TestLLMPaths:
         llm = FakeLLM(long_text)
         adapter = RespondAdapter(llm)
         state = _make_state(
-            execution=_fake_execution(status="EXECUTED"),
+            reads=[],
         )
         result = adapter(state, None)
         assert len(result) <= 601  # max + "…"

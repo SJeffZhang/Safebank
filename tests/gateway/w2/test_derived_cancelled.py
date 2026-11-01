@@ -37,8 +37,9 @@ def subscription(**updates):
 
 
 def obligations_for(sub):
+    due = sub.next_due_at
     return ObligationSnapshot(
-        covered_customer_ids=("cus_a",),
+        covered_customer_ids=("cus_a", "cus_b"),
         merchants={sub.merchant_id: raw_merchant(id=sub.merchant_id, name=sub.merchant_name)},
         billings={
             sub.billing_id: raw_billing(
@@ -47,6 +48,11 @@ def obligations_for(sub):
                 account_id=sub.account_id,
                 merchant_id=sub.merchant_id,
                 amount_cents=sub.amount_cents,
+                period=sub.period,
+                anchor_day=due.day if sub.period == "MONTHLY" else None,
+                weekday=due.weekday() if sub.period == "WEEKLY" else None,
+                time_of_day=due.time().replace(tzinfo=None),
+                next_due_at=due,
             )
         },
         standing_instructions={

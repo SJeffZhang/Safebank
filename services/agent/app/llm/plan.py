@@ -18,6 +18,7 @@ from services.agent.app.llm._common import (
     single_tool_call,
     validation_summary,
 )
+from services.agent.app.llm._cross_scene_reads import current_x3_selection
 from services.agent.app.llm.redact import resolve_pointer, strip_wall
 
 _PLAN_TOOL = "submit_action_plan"
@@ -76,9 +77,10 @@ _SYSTEM = (
     "amount_cents 必须用 derived 来源且 template 只能是 cancelled_monthly_fees，"
     "inputs 只能引用订阅读取（read）或取消步骤（step），不得引用原话字面金额；"
     "付款/收款账户仍用 read 来源，first_run_at 按用户说的日期（如每月1号）。"
-    "账单分析类问题（月度/商户账单、分类占比与环比、异常交易、消费报告）是只读任务，"
-    "不要生成任何写计划；需要的数据用 gather 阶段读取，计划节点只负责整理或直接说明"
-    "没有可执行的写操作。"
+    "单独的账单分析类问题（月度/商户账单、分类占比与环比、异常交易、消费报告）是只读任务，"
+    "不要生成写计划。已有SCOPED的分析与写操作混合请求，应先在gather完成真实分析读取，"
+    "再只保留原授权范围内的写步骤；不能因为含账单分析就把混合请求改为NO_WRITE，"
+    "也不能用分析数据扩大写权限，授权和确认仍由L2决定。"
     "理财操作：subscribe_product 的 product_id 必须从已读产品数据（list_products 或 "
     "get_product 的 items/id，以 prd_ 开头）用 read 来源引用，不能自己编造或从原话取值；"
     "account_id 选自己名下唯一活期账户（type=CHECKING，acc_ 开头）并用 read 来源引用，"
@@ -367,6 +369,22 @@ def _wealth_source_problems(draft: PlanDraft, state: AgentState) -> list[str]:
             holdings = [r for r in state.get("reads", []) if r.tool == "get_holdings"]
             if not holdings:
                 problems.append(f"steps[{index}].units: 赎回前必须读取get_holdings")
+    return problems
+
+
+def _selection_problems(draft: PlanDraft, selection: dict | None) -> list[str]:
+    """Reject disagreement with the current choice; never fill model fields."""
+    if selection is None:
+        return []
+    fields = selection["fields"]
+    problems = []
+    for index, step in enumerate(draft.steps):
+        if step.tool != "subscribe_product":
+            continue
+        if step.args.product_id != fields["product_id"]:
+            problems.append(f"steps[{index}].product_id: 与当前G20已选产品不一致，请重新生成")
+        if fields.get("account_id") and step.args.account_id != fields["account_id"]:
+            problems.append(f"steps[{index}].account_id: 与当前G20选择上下文不一致，请重新生成")
     return problems
 
 
@@ -1034,8 +1052,9 @@ class PlanAdapter:
 
     def __call__(self, state: AgentState, context: AgentContext) -> PlanDraft:
         note = ""
+        selection = current_x3_selection(state, context)
         for attempt in range(self._max_retries + 1):
-            message = self._model.invoke(self._messages(state, note))
+            message = self._model.invoke(self._messages(state, note, selection))
             if self._observer is not None:
                 self._observer(message)
             try:
@@ -1059,6 +1078,7 @@ class PlanAdapter:
                 idle_problems = _idle_subscription_problems(draft, state)
                 card_problems = _lost_card_source_problems(draft, state)
                 wealth_problems = _wealth_source_problems(draft, state)
+                selection_problems = _selection_problems(draft, selection)
                 all_problems = (
                     ref_problems
                     + val_problems
@@ -1070,6 +1090,7 @@ class PlanAdapter:
                     + idle_problems
                     + card_problems
                     + wealth_problems
+                    + selection_problems
                 )
                 if all_problems:
                     raise ReferenceError(all_problems)
@@ -1088,6 +1109,7 @@ class PlanAdapter:
                         and not idle_problems
                         and not card_problems
                         and not wealth_problems
+                        and not selection_problems
                     ):
                         fields = _exhausted_clarify_fields(val_problems)
                         if fields is not None:
@@ -1123,7 +1145,7 @@ class PlanAdapter:
         )
 
     @staticmethod
-    def _messages(state: AgentState, note: str) -> list:
+    def _messages(state: AgentState, note: str, selection: dict | None = None) -> list:
         parts = [
             "用户请求（id/kind/text；span 用 0 基半开区间 [start, end)，即 text[start:end]，"
             "end 不包含；每字符下标范围如下）："
@@ -1137,6 +1159,12 @@ class PlanAdapter:
             text = json.dumps(utterance.text, ensure_ascii=False)
             parts.append(f"- id={utterance.id} kind={utterance.kind.value} text={text}")
             parts.append(f"  下标范围: {_index_map(utterance.text)}")
+        if selection is not None:
+            parts.append(
+                "当前G20绑定的结构化产品选择只用于保持用户已选目标；实体仍引用实际读取，"
+                "金额使用已有derived模板并由L2重新计算，不能把scope当作授权或金融数值来源："
+            )
+            parts.append(json.dumps({"current_g20_selection": selection}, ensure_ascii=False))
         reads = state.get("reads", [])
         if reads:
             parts.append("已读数据（source_ref 供 {kind:read, ref:<source_ref>, pointer} 引用）：")
