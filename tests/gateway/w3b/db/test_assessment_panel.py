@@ -8,6 +8,7 @@ import asyncio
 from safebank_contracts.risk_questionnaire import QUESTIONNAIRE
 from sqlalchemy import select
 
+from services.gateway.app import locks
 from services.gateway.app import tables as t
 from tests.gateway.w3b.db.test_form_evaluate import setup_form
 
@@ -15,6 +16,9 @@ from tests.gateway.w3b.db.test_form_evaluate import setup_form
 def test_assessment_form_creates_yellow_authoritative_panel_without_execution(app_config):
     async def run():
         app, db, headers, _ = await setup_form(app_config)
+        # Unlike G4, G19 uses the production customer-lock adapter. This
+        # fixture intentionally has no ASGI lifespan; wire its own DB explicitly.
+        locks.configure(app.client._transport.app.state.db, max_executions=8)
         fields = {
             "questionnaire_id": "rq_v1",
             "answers": [{"question_id": f"q{n:02}", "option_id": "a"} for n in range(1, 7)],
