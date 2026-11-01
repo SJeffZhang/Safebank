@@ -1,0 +1,34 @@
+{
+  "generation": "demo_20261101084917_8e1ed563",
+  "source_commit": "aa7e5d26160ef3be1d7b9341a0398b2f0390d0b1",
+  "audit_state": "PRIMARY_43_AND_SIX_SUPPLEMENTS_COMPLETED_WITH_KNOWN_FAILURES",
+  "active_customer": "cus_zs",
+  "browser_id": "2",
+  "tab_id": "5",
+  "last_verified_url": "http://127.0.0.1:3001/#security?tab=notifications",
+  "browser_connection_at_report": "connection unavailable after interruption; no further UI mutation attempted",
+  "waiting_for": null,
+  "completed_counts": {
+    "PASS": 19,
+    "PARTIAL": 16,
+    "FAIL": 8
+  },
+  "next_canonical_cases": [],
+  "primary_results": "primary-43-results.csv",
+  "supplements": "supplement-results.json",
+  "supplement_count": 6,
+  "simulation_now": "2026-11-01T01:00:00Z",
+  "clock_original_job_ids": [
+    "89da53d198e26b777ed7b8e5e5b30585e9d5c0384ba887ccea44c43cfaffaf1d",
+    "47d8a1ecab6ee2ee870e88821297e5268d2b4a8e29e3048a3bb36b3770a14948"
+  ],
+  "final_verified_balances_cents": {
+    "acc_zs_chk": 575000,
+    "acc_zs_sav": 1969900,
+    "acc_ls_chk": 1218610
+  },
+  "financial_final_confirmation": "No pending handoff from this audit; previous review required user final click, do not bypass via API.",
+  "do_not_reset_current_generation": true,
+  "full_prd_or_freeze_pass": false,
+  "product_code_changed": false
+}

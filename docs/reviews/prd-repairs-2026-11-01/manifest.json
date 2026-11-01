@@ -1,0 +1,102 @@
+[
+  {
+    "file": "clarification-audit.md",
+    "sha256": "60c5f11bebf0b974435345b1f5ee8e9a96149ef6dd9d46724976c6e29bad1715"
+  },
+  {
+    "file": "query-residual-audit.md",
+    "sha256": "e3c7862a1529bcf464839c9e1f4de411576e0bc3e542eddae0f8f6722873371e"
+  },
+  {
+    "file": "read-path-audit.md",
+    "sha256": "8e40774512fb3f926c4d0cdcb3cd4f809d83366b8a8298f09fb1c6887d00ed3f"
+  },
+  {
+    "file": "review-nov1-business-dates.md",
+    "sha256": "99fb4964a00e6e100a2d62dea448f0dd18643f6d885b015d40f1622b7c0d6ab0"
+  },
+  {
+    "file": "review-nov1-canonical-seed.md",
+    "sha256": "9cf72ee024aa59129fc7c7ba75f1095bb471fe17705b7e39743139b6945e2edb"
+  },
+  {
+    "file": "review-nov1-categories.md",
+    "sha256": "8dfbf7593a15e9da0b04218d7c427087831fd7405aa53a296654f12dea2f47e2"
+  },
+  {
+    "file": "review-nov1-ci-gates.md",
+    "sha256": "cb7787fe6e71e9ae0e2d73ba9d0fd9d2dc434d7d60fbce7145272d8aa6872464"
+  },
+  {
+    "file": "review-nov1-errors.md",
+    "sha256": "4338ba1e298dca3490e7c3dbe3874e0d233b7328bf2d2b5d75ab4d04cb8cbefe"
+  },
+  {
+    "file": "review-nov1-final-gates.md",
+    "sha256": "eced74e579b262761af05a5a1bc62e56ceb4cc48b418d9ce03028f398607a617"
+  },
+  {
+    "file": "review-nov1-grants.md",
+    "sha256": "e5d524c812c3a24a549e3fae505d9aa45af4568c0f95bbb5640d4bb8db0c79ae"
+  },
+  {
+    "file": "review-nov1-hints.md",
+    "sha256": "d01abd8cf07de8520584e4d326eb1324df824c84acd062c2d487c81aebe7be82"
+  },
+  {
+    "file": "review-nov1-parser-money-boundary.md",
+    "sha256": "ae15168c53f6e22de11a315c012414517d78419d6c63edc37e54ccbcd4b40ac8"
+  },
+  {
+    "file": "review-nov1-parser.md",
+    "sha256": "21e19d074b4cd543e1be93b3d9576843f5d9ce7365c2096428c2136212d8b686"
+  },
+  {
+    "file": "review-nov1-percent.md",
+    "sha256": "4d6d72984a57525bd249585473b241349e69ec657f6fa82dd3a47e1ac0360d2b"
+  },
+  {
+    "file": "review-nov1-plan-replan.md",
+    "sha256": "d2522c701fee94d525676c53a442e78ad70153cb69c1931908983e2bbe61c1f2"
+  },
+  {
+    "file": "review-nov1-query.md",
+    "sha256": "5bec6b79258518df51f657bcc0d81468bb1c778318b6a4ed87b1dc00543fc928"
+  },
+  {
+    "file": "review-nov1-s1-boundary.md",
+    "sha256": "10968cb35ff9abd68032f4e860db59b465d76e2cbdb31b1bd277961dfe6fafc2"
+  },
+  {
+    "file": "review-nov1-seed-anomaly.md",
+    "sha256": "7336ea39e4f502581bad807dc8b2a52a23e398f9f4cfe918f92b3fdf3d4a2c6a"
+  },
+  {
+    "file": "review-nov1-six-scenes.md",
+    "sha256": "ecbc7c6ba86da35fcda411463b809c4099af3a770dc014d636ae7f8bfb416990"
+  },
+  {
+    "file": "review-nov1-ui.md",
+    "sha256": "c3f7c834f797ba95b6cfefa9862b88269e17eef110cfa349636ca60b109ec567"
+  },
+  {
+    "file": "review-nov1-w1-bound-hints.md",
+    "sha256": "eff1c5e0dd1e7a70ef6208d636c23d839e57610b270cdc3f144cf4be7eb8bc5f"
+  },
+  {
+    "file": "review-nov1-w1-query-isolation.md",
+    "sha256": "294d155fde5ac82c1460f1379bbd5cbc5d93b055476df416d74a763e0aeed608"
+  },
+  {
+    "file": "write-path-audit.md",
+    "sha256": "7b6ed0ea3743de140e1893eb3665e3efaf059f16bb96ab3d6ecb443d38f2bcfb"
+  },
+  {
+    "file": "local-ci-jet.sh.txt",
+    "sha256": "ea34d079200889de14516cd389c69f8ee9b09e8d1543855f9bf6263b0254818c"
+  },
+  {
+    "file": "commit-map.json",
+    "sha256": "d8d40d6bc3e63166d30df982bda5b6fe12e997a61dd39f932a5ed4aa225ab5d3"
+  }
+]

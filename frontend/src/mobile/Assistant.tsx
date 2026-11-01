@@ -13,7 +13,7 @@ import {
 import type { PageProps } from "./Banking";
 import { Icon, Button, Alert, Badge } from "./ui";
 import { AssistantWorkspace, detectTopic, type AssistantTopic } from "./AssistantWorkspace";
-import { billMonth, monthRange } from "./bill-month";
+import { billMonth, billMonths, monthRange } from "./bill-month";
 import { isPlanTerminal, planPresentation } from "./plan-status";
 interface Message {
   id: string;
@@ -21,13 +21,36 @@ interface Message {
   text: string;
   cards?: UICard[];
   business?: {topic: AssistantTopic; month: string | null};
-  requestedMonth?: string | null;
+  requestedMonths?: string[] | null;
 }
 const topics = [
   { icon: "chart", title: "账单分析", description: "消费分类与异常依据" },
   { icon: "transfer", title: "资金安排", description: "转账、定时与 AA 收款" },
   { icon: "repeat", title: "跨场景联动", description: "先分析，再预演整份计划" },
 ];
+const genericFormGuidance = {
+  title: "请在对应业务页面补充操作细节",
+  body: "请在对应业务页面核对并补充操作信息，或发送一条新的明确需求。",
+  links: [] as { href: string; label: string }[],
+};
+// Template IDs come from current G21; destinations and copy never come from L1 text.
+const formGuidance: Record<string, typeof genericFormGuidance> = {
+  risk_assessment_form: {
+    title: "请亲自完成风险测评",
+    body: "风险等级由您亲自完成六题测评后计算，小安不能直接将等级设为 R5。请前往理财页的风险测评，按实际情况作答。",
+    links: [{ href: "#wealth", label: "前往理财页" }],
+  },
+  register_payee_form: {
+    title: "请先核对并登记收款人",
+    body: "该收款目标尚未登记，无法自动新增收款人或转账。请在转账页手工填写并核对收款人信息。",
+    links: [{ href: "#transfer", label: "前往转账页" }],
+  },
+  transfer_consultation: {
+    title: "转账咨询不代表操作授权",
+    body: "这是转账咨询，本次没有发起转账。您可以查看账户余额和卡限额，或重新发送明确的转账指令；是否可办理仍需安全预演。",
+    links: [{ href: "#overview", label: "查看账户余额" }, { href: "#cards", label: "查看卡片限额" }],
+  },
+};
 export function Assistant(
   p: PageProps & {
     openApproval: (id: string) => void;
@@ -43,13 +66,19 @@ export function Assistant(
   const [steps, setSteps] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [pending, setPending] = useState<string>();
-  const [clar, setClar] = useState<Clarification | null>(null);
+  const [clarification, setClar] = useState<{ sid: string; value: Clarification } | null>(null);
+  const clar = clarification?.sid === p.sid ? clarification.value : null;
+  const [answer, setAnswer] = useState("");
+  const [selecting, setSelecting] = useState(false);
+  const selection = useRef<object | null>(null);
+  const currentSession = useRef(p.sid);
+  currentSession.current = p.sid;
   const controller = useRef<AbortController>();
   const refreshedPlans = useRef(new Set<string>());
   const end = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   function openTopic(topic: (typeof topics)[number]) {
-    if (busy || pending) return;
+    if (busy || selecting || pending) return;
     void send(topic.title);
   }
   useEffect(() => () => controller.current?.abort(), []);
@@ -57,6 +86,12 @@ export function Assistant(
     end.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [messages, stage]);
   useEffect(() => {
+    let live = true;
+    controller.current?.abort();
+    selection.current = null;
+    setBusy(false);
+    setSelecting(false);
+    setAnswer("");
     refreshedPlans.current.clear();
     setMessages([]);
     setPending(undefined);
@@ -67,6 +102,7 @@ export function Assistant(
         tasks?: { interrupts: { value: { approval_id?: string } }[] }[];
       }>(`/sessions/${p.sid}/state`)
         .then((s) => {
+          if (!live) return;
           setMessages(
             (s.values.messages ?? [])
               .filter((m) => typeof m.content === "string")
@@ -81,9 +117,10 @@ export function Assistant(
             .find((i) => i.value.approval_id)?.value.approval_id;
           if (id) setPending(id);
         })
-        .catch(() => setError("历史会话暂不可用，新的原话仍需安全登记。"));
+        .catch(() => { if (live) setError("历史会话暂不可用，新的原话仍需安全登记。"); });
+    return () => { live = false; selection.current = null; controller.current?.abort(); };
   }, [p.sid]);
-  function handle(event: StreamEvent, requestedMonth?: string | null) {
+  function handle(event: StreamEvent, requestedMonths?: string[] | null) {
     const data = event.data;
     if (event.event === "error") {
       throw new Error(
@@ -127,7 +164,7 @@ export function Assistant(
           role: "assistant",
           text: "",
           cards: data.cards as UICard[],
-          requestedMonth,
+          requestedMonths,
         },
       ]);
   }
@@ -136,24 +173,26 @@ export function Assistant(
     setBusy(true);
     setSteps([]);
     setError("");
+    const sid = p.sid;
     const current = new AbortController();
     controller.current = current;
-    const active = () => controller.current === current && !current.signal.aborted;
+    const active = () => currentSession.current === sid && controller.current === current && !current.signal.aborted;
     try {
-      await stream(p.sid, body, event => { if (active()) handle(event, typeof body.text === "string" && detectTopic(body.text) === "账单分析" ? billMonth(body.text, p.profile.sim_now) : undefined); }, current.signal, resume);
+      await stream(p.sid, body, event => { if (active()) handle(event, typeof body.text === "string" && detectTopic(body.text) === "账单分析" ? billMonths(body.text, p.profile.sim_now) : undefined); }, current.signal, resume);
       if (!active()) return false;
       const c = await request<{ clarification: Clarification | null }>(
         `/sessions/${p.sid}/clarifications/current`,
       );
       if (!active()) return false;
-      setClar(c.clarification);
+      setClar(c.clarification ? { sid, value: c.clarification } : null);
+      setAnswer("");
       return true;
     } catch (e) {
       if (active())
         setError(e instanceof Error ? e.message : "连接中断，请检查任务状态");
       return false;
     } finally {
-      if (controller.current === current) {
+      if (currentSession.current === sid && controller.current === current) {
         setBusy(false);
         setStage("");
       }
@@ -167,7 +206,7 @@ export function Assistant(
   });
   async function send(selected?: string) {
     const value = (selected ?? text).trim();
-    if (!value || busy || pending) return;
+    if (!value || busy || selecting || pending) return;
     setText("");
     setMessages((m) => [...m, { id: uid(), role: "user", text: value }]);
     const completed = await run({
@@ -176,36 +215,94 @@ export function Assistant(
       text: value,
       hint_id: null,
       action_id: null,
-      clarification_id: clar?.id ?? null,
+      clarification_id: null,
     });
     const topic = detectTopic(value);
     if (completed && topic) setMessages(m => [...m,{id:uid(),role:"assistant",text:"",business:{topic,month:billMonth(value,p.profile.sim_now)}}]);
     input.current?.focus();
   }
+  function slotParent() {
+    if (clar?.kind !== "SLOTS" || !Array.isArray(clar.parent_utterance_ids) ||
+        clar.parent_utterance_ids.length !== 1 || !/^utt_[\w-]+$/.test(clar.parent_utterance_ids[0]) ||
+        clar.required_fields.length !== 1 || !clar.candidates.length) return null;
+    return clar.parent_utterance_ids[0];
+  }
+  async function submitAnswer() {
+    if (busy || selection.current || pending || !answer.trim()) return;
+    if (!slotParent()) { setError("补充信息已失效，请重新发起需求。"); return; }
+    const submission = {};
+    selection.current = submission;
+    setSelecting(true);
+    const value = answer.trim();
+    setMessages(m => [...m, { id: uid(), role: "user", text: value }]);
+    try {
+      await run({ request_id: uid(), kind: "typed", text: value, hint_id: null,
+        action_id: null, clarification_id: clar!.id });
+    } finally {
+      if (selection.current === submission) {
+        selection.current = null;
+        setSelecting(false);
+      }
+    }
+  }
   async function choose(c: Clarification["candidates"][number]) {
+    if (busy || pending || selection.current) return;
+    const parent = slotParent();
+    if (!parent || !clar?.candidates.some(candidate => candidate.field === c.field && candidate.entity_id === c.entity_id) ||
+        clar.required_fields[0] !== c.field) {
+      setError("补充信息已失效，请重新发起需求。");
+      return;
+    }
+    const sid = p.sid;
+    const choice = {};
+    selection.current = choice;
+    setSelecting(true);
+    setError("");
     try {
       const a = await request<{ action_id: string }>(
-        `/sessions/${p.sid}/actions`,
+        `/sessions/${sid}/actions`,
         {
           request_id: uid(),
           kind: "CLARIFICATION",
           action_kind: null,
           fields: [{ field: c.field, entity_id: c.entity_id }],
-          parent_utterance_id: null,
+          parent_utterance_id: parent,
         },
       );
+      if (currentSession.current !== sid || selection.current !== choice) return;
+      if (!/^act_[\w-]+$/.test(a.action_id)) throw new Error("补充信息登记失败，请重新发起需求。");
       await run({
         request_id: uid(),
         kind: "action",
         text: null,
         hint_id: null,
         action_id: a.action_id,
-        clarification_id: clar?.id,
+        clarification_id: null,
       });
     } catch (e) {
-      setError((e as Error).message);
+      if (currentSession.current === sid && selection.current === choice)
+        setError(e instanceof Error ? e.message : "补充信息登记失败，请重试。");
+    } finally {
+      if (selection.current === choice) {
+        selection.current = null;
+        setSelecting(false);
+      }
     }
   }
+  const guidance = clar && Object.prototype.hasOwnProperty.call(formGuidance, clar.prompt_template_id)
+    ? formGuidance[clar.prompt_template_id] : genericFormGuidance;
+  const seenClarifications = new Set(clar ? [clar.id] : []);
+  const displayedMessages = messages.map(message => ({
+    ...message,
+    cards: message.cards?.filter(card => {
+      if (card.type !== "CLARIFICATION" || !card.data || typeof card.data !== "object") return true;
+      const id = (card.data as Fields).id;
+      if (typeof id !== "string") return true;
+      if (seenClarifications.has(id)) return false;
+      seenClarifications.add(id);
+      return true;
+    }),
+  }));
   return (
     <div className="assistant-page">
       <div className="chat-layout">
@@ -222,7 +319,7 @@ export function Assistant(
               <Icon name="shield" size={12} />
               安全网关保护
             </Badge>
-            <Button className="chat-new-session" variant="ghost" disabled={busy || !!pending} onClick={p.onNewSession}>
+            <Button className="chat-new-session" variant="ghost" disabled={busy || selecting || !!pending} onClick={p.onNewSession}>
               <Icon name="plus" size={14}/>新会话
             </Button>
           </div>
@@ -241,7 +338,7 @@ export function Assistant(
                 <div className="capability-list">
                   {topics.map((topic) => (
                     <button type="button" key={topic.title} aria-label={topic.title}
-                      disabled={busy || !!pending} onClick={() => openTopic(topic)}>
+                      disabled={busy || selecting || !!pending} onClick={() => openTopic(topic)}>
                       <Icon name={topic.icon} />
                       <strong>{topic.title}</strong>
                       <small>{topic.description}</small>
@@ -253,7 +350,7 @@ export function Assistant(
                 </small>
               </div>
             ) : (
-              messages.map((m) => (
+              displayedMessages.map((m) => (
                 <div className={`chat-message ${m.role}`} key={m.id}>
                   {m.role === "assistant" && (
                     <span className="chat-avatar">
@@ -266,10 +363,10 @@ export function Assistant(
                     {m.cards?.map((card) => (
                       <SafeCard
                         card={card}
-                        requestedMonth={m.requestedMonth}
+                        requestedMonths={m.requestedMonths}
                         key={card.id}
                         sid={p.sid}
-                        busy={busy}
+                        busy={busy || selecting}
                         revision={p.revision}
                         onStatus={(status) => {
                           if (status !== "PENDING_APPROVAL" && card.actions?.some(a => a.kind === "OPEN_APPROVAL" && a.ref === pending)) setPending(undefined);
@@ -313,20 +410,28 @@ export function Assistant(
                 <Badge>需要补充信息</Badge>
                 <h3>
                   {clar.kind === "FORM_REQUIRED"
-                    ? "请在对应业务页面补充操作细节"
+                    ? guidance.title
                     : "请选择您指的目标"}
                 </h3>
-                {clar.candidates.map((c) => (
+                {clar.kind === "FORM_REQUIRED" && <>
+                  <p>{guidance.body}</p>
+                  <div className="row">{guidance.links.map(link => <a className="button secondary" href={link.href} key={link.href}>{link.label}</a>)}</div>
+                </>}
+                {clar.kind === "SLOTS" && clar.candidates.map((c) => (
                   <Button
                     key={`${c.field}-${c.entity_id}`}
                     variant="secondary"
-                    disabled={busy}
+                    disabled={busy || selecting}
                     onClick={() => choose(c)}
                   >
                     {c.label}
                   </Button>
                 ))}
-                {!clar.candidates.length && (
+                {clar.kind === "SLOTS" && <form onSubmit={e => { e.preventDefault(); void submitAnswer(); }}>
+                  <label>补充本次目标<input value={answer} onChange={e => setAnswer(e.target.value)} disabled={busy || selecting || !!pending} maxLength={2000}/></label>
+                  <Button disabled={busy || selecting || !!pending || !answer.trim()} onClick={() => void submitAnswer()}>提交补充</Button>
+                </form>}
+                {!clar.candidates.length && clar.required_fields.length > 0 && (
                   <p>您可以在下方补充：{clar.required_fields.join("、")}</p>
                 )}
               </div>
@@ -366,7 +471,7 @@ export function Assistant(
               placeholder={
                 pending ? "请先处理待确认计划" : "向小安描述您的需求…"
               }
-              disabled={busy || !!pending}
+              disabled={busy || selecting || !!pending}
               maxLength={2000}
               onKeyDown={(e) => {
                 if (
@@ -399,7 +504,7 @@ export function Assistant(
               <button
                 type="submit"
                 className="send-button"
-                disabled={!text.trim() || !!pending}
+                disabled={selecting || !text.trim() || !!pending}
                 aria-label="发送消息"
               >
                 <Icon name="arrow" />
@@ -430,7 +535,7 @@ const allowedRoutes: Record<string, string> = {
 };
 function SafeCard({
   card,
-  requestedMonth,
+  requestedMonths,
   sid,
   busy,
   revision,
@@ -439,7 +544,7 @@ function SafeCard({
   onHint,
 }: {
   card: UICard;
-  requestedMonth?: string | null;
+  requestedMonths?: string[] | null;
   sid: string;
   busy: boolean;
   revision: number;
@@ -505,7 +610,7 @@ function SafeCard({
     <div className="safe-ui-card">
       <strong>{title[card.type] ?? "业务信息"}</strong>
       {card.source_ref && <small>来源 {card.source_ref}</small>}
-      <CardData card={shownCard} requestedMonth={requestedMonth} />
+      <CardData card={shownCard} requestedMonths={requestedMonths} />
       {planError && <Alert tone="error">{planError}</Alert>}
       <div className="row">
         {(card.actions ?? []).map((a, i) =>
@@ -542,7 +647,7 @@ function SafeCard({
   );
 }
 
-function CardData({ card, requestedMonth }: { card: UICard; requestedMonth?: string | null }) {
+function CardData({ card, requestedMonths }: { card: UICard; requestedMonths?: string[] | null }) {
   const data =
     card.data && typeof card.data === "object" ? (card.data as Fields) : {};
   const objects = (key: string) =>
@@ -571,7 +676,7 @@ function CardData({ card, requestedMonth }: { card: UICard; requestedMonth?: str
   }
   if (card.type === "TRANSACTIONS" && typeof data.month === "string") {
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(data.month) || !Number.isSafeInteger(data.total_cents) ||
-      (requestedMonth !== undefined && data.month !== requestedMonth))
+      (requestedMonths !== undefined && !requestedMonths?.includes(data.month)))
       return <Alert tone="error">月报月份或数据与本次请求不一致，请重新读取。</Alert>;
     return <><p>{data.month} 月度消费</p><div className="card-row"><span>消费合计</span><strong>{cash(data.total_cents)}</strong></div>
       {objects("categories").map((c,i) => <div className="card-row" key={i}><span>{String(c.category ?? "未分类")}</span><strong>{cash(c.amount_cents)}</strong></div>)}</>;
@@ -595,13 +700,13 @@ function CardData({ card, requestedMonth }: { card: UICard; requestedMonth?: str
   if (card.type === "NAVIGATE") return <p>您可以打开对应业务页面继续办理。</p>;
   if (card.type === "ANOMALIES") {
     const anomalies = objects("items");
-    if (requestedMonth !== undefined) {
-      if (!requestedMonth) return <Alert tone="error">请明确所选月份后重新读取异常记录。</Alert>;
-      const range = monthRange(requestedMonth);
+    if (requestedMonths !== undefined) {
+      if (!requestedMonths?.length) return <Alert tone="error">请明确所选月份后重新读取异常记录。</Alert>;
+      const ranges = requestedMonths.map(monthRange);
       if (anomalies.some(item => {
         const tx = item.transaction as Fields | undefined;
         const at = Date.parse(String(tx?.occurred_at ?? ""));
-        return !(at >= Date.parse(range.from_at) && at < Date.parse(range.to_at));
+        return !ranges.some(range => at >= Date.parse(range.from_at) && at < Date.parse(range.to_at));
       })) return <Alert tone="error">异常记录不在所选月份范围内，请重新读取。</Alert>;
     }
     if (!anomalies.length) return <p>所选范围内没有异常记录。</p>;

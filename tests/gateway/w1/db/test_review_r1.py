@@ -4,6 +4,7 @@ import asyncio
 from datetime import timedelta
 
 import pytest
+from safebank_contracts.codes import Code
 from sqlalchemy import select
 
 from services.gateway.app import tables as t
@@ -12,8 +13,13 @@ from services.gateway.app.errors import GatewayError
 from services.gateway.app.schemas.enums import ServiceKind
 from services.gateway.app.schemas.identity import Caller
 from services.gateway.app.utterance.loader import load_for_plan
-from services.gateway.app.utterance.service import new_id
+from services.gateway.app.utterance.parser import is_correction, parse, scope_is_complete
+from services.gateway.app.utterance.service import merge_scope, new_id
 from tests.gateway.w1.db.support import create, harness, headers, login, utter
+from tests.gateway.w1.fixtures import bank_state
+
+# Unknown registered target and an explicit decimal amount: no prefix/name-number ambiguity.
+UNCLEAR_CORRECTION_BODY = "给钱七900"
 
 
 def caller_for(body, public):
@@ -132,6 +138,150 @@ def test_r6_existing_empty_action_cannot_bypass_g3_guard(gateway_db, monkeypatch
 
 @pytest.mark.parametrize("separator", ["，", "。", "；", "\n", " "])
 @pytest.mark.parametrize("replacement", ["改成", "改为", "换成"])
+def test_r7_unclear_correction_fixture_has_no_candidate_authority(separator, replacement):
+    text = f"不对{separator}{replacement}{UNCLEAR_CORRECTION_BODY}"
+    assert is_correction(text)
+    result = parse(text, bank_state(), "cus_zs")
+    assert result.status == "INTENT_UNCLEAR"
+    assert result.scope.action_kinds == ()
+    assert not result.scope.transfers and not scope_is_complete(result.scope)
+    assert result.required_fields == [] and result.candidates == []
+
+
+@pytest.mark.parametrize("separator", ["，", "。", "；", "\n", " "])
+@pytest.mark.parametrize("replacement", ["改成", "改为", "换成"])
+def test_r7_prefix_correction_requires_exact_candidate_selection(separator, replacement):
+    bank = bank_state()
+    text = f"不对{separator}{replacement}给王转900块"
+    assert is_correction(text)
+    result = parse(text, bank, "cus_zs")
+    assert result.status == "CLARIFYING"
+    assert result.required_fields == ["payee_id"]
+    assert {item["entity_id"] for item in result.candidates} == {"pye_ww", "pye_wu"}
+    assert not result.scope.transfers and not scope_is_complete(result.scope)
+    assert result.scope.fields["amount_cents"] == 90000
+    clarification = {
+        "kind": "SLOTS",
+        "status": "OPEN",
+        "required_fields": result.required_fields,
+        "candidate_refs": result.candidates,
+        "partial_scope": result.scope.model_dump(mode="json"),
+    }
+    for chosen in ({}, {"payee_id": "pye_zl"}):
+        with pytest.raises(GatewayError) as exc:
+            merge_scope(clarification, chosen, bank)
+        assert exc.value.code == Code.INTENT_SCOPE_EXCEEDED and exc.value.status == 409
+    selected = merge_scope(clarification, {"payee_id": "pye_ww"}, bank)
+    assert scope_is_complete(selected)
+    assert selected.from_account_id == "acc_zs"
+    assert len(selected.transfers) == 1
+    assert selected.transfers[0].target_fingerprint == "fp_ww"
+    assert selected.transfers[0].amount_cents == 90000
+
+
+def test_r7_prefix_correction_cannot_load_until_explicit_g19_g3_selection(gateway_db, monkeypatch):
+    async def run():
+        async with harness(gateway_db, monkeypatch) as (_, client, db, _, public, _, _):
+            token = await login(client)
+            sid = await create(client, token, new_id("req"))
+            old = (await utter(client, token, sid, "给王五800")).json()
+            response = await utter(client, token, sid, "不对，改成给王转900块", "req_r7_prefix")
+            assert response.status_code == 201, response.text
+            parent = response.json()
+            assert parent["utterance"]["parse_status"] == "CLARIFYING"
+            assert parent["utterance"]["scope"]["transfers"] == []
+            assert parent["utterance"]["scope"]["fields"]["amount_cents"] == 90000
+            current = (
+                await client.get(f"/sessions/{sid}/clarifications/current", headers=headers(token))
+            ).json()["clarification"]
+            assert current["kind"] == "SLOTS" and current["required_fields"] == ["payee_id"]
+            assert {item["entity_id"] for item in current["candidates"]} == {"pye_ww", "pye_wu"}
+            await cannot_load(db, sid, old, public)
+            await cannot_load(db, sid, parent, public)
+            parent_caller = caller_for(parent, public)
+            assert parent_caller.kind is ServiceKind.A and parent_caller.jti
+            assert "assistant" in parent_caller.scopes
+            assert parent["utterance"]["id"] in parent_caller.utts
+            async with db.connect() as conn:
+                with pytest.raises(GatewayError) as exc:
+                    await load_for_plan(
+                        conn,
+                        sid,
+                        [parent["utterance"]["id"]],
+                        parent_caller,
+                    )
+                assert exc.value.code == Code.INTENT_UNCLEAR and exc.value.status == 409
+                assert (
+                    await conn.scalar(
+                        select(t.utterances.c.status).where(
+                            t.utterances.c.id == old["utterance"]["id"]
+                        )
+                    )
+                    == "SUPERSEDED"
+                )
+            for index, fields in enumerate(([], [{"field": "payee_id", "entity_id": "pye_zl"}])):
+                rejected = await client.post(
+                    f"/sessions/{sid}/actions",
+                    headers=headers(token),
+                    json={
+                        "request_id": f"req_r7_prefix_bad_{index}",
+                        "kind": "CLARIFICATION",
+                        "action_kind": None,
+                        "parent_utterance_id": parent["utterance"]["id"],
+                        "fields": fields,
+                    },
+                )
+                assert rejected.status_code == 409, rejected.text
+                assert rejected.json()["error"]["code"] == "INTENT_SCOPE_EXCEEDED"
+            action = await client.post(
+                f"/sessions/{sid}/actions",
+                headers=headers(token),
+                json={
+                    "request_id": "req_r7_prefix_pick",
+                    "kind": "CLARIFICATION",
+                    "action_kind": None,
+                    "parent_utterance_id": parent["utterance"]["id"],
+                    "fields": [{"field": "payee_id", "entity_id": "pye_ww"}],
+                },
+            )
+            assert action.status_code == 200, action.text
+            await cannot_load(db, sid, parent, public)
+            adopted = await client.post(
+                f"/sessions/{sid}/utterances",
+                headers=headers(token),
+                json={
+                    "request_id": "req_r7_prefix_adopt",
+                    "kind": "action",
+                    "action_id": action.json()["action_id"],
+                },
+            )
+            assert adopted.status_code == 201, adopted.text
+            selected = adopted.json()
+            assert selected["utterance"]["parse_status"] == "SCOPED"
+            assert selected["utterance"]["parent_ids"] == [parent["utterance"]["id"]]
+            assert selected["utterance"]["scope"]["transfers"][0]["target_fingerprint"] == "fp_ww"
+            assert selected["utterance"]["scope"]["transfers"][0]["amount_cents"] == 90000
+            caller = caller_for(selected, public)
+            async with db.connect() as conn:
+                auth = await load_for_plan(conn, sid, [selected["utterance"]["id"]], caller)
+                assert auth.scope_ids == (selected["utterance"]["id"],)
+                assert not (await conn.execute(select(t.plans).where(t.plans.c.sid == sid))).first()
+                assert not (
+                    await conn.execute(
+                        select(t.execution_jobs).where(
+                            t.execution_jobs.c.plan_id.in_(
+                                select(t.plans.c.id).where(t.plans.c.sid == sid)
+                            )
+                        )
+                    )
+                ).first()
+            await cannot_load(db, sid, old, public)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("separator", ["，", "。", "；", "\n", " "])
+@pytest.mark.parametrize("replacement", ["改成", "改为", "换成"])
 @pytest.mark.parametrize("unavailable", [False, True])
 def test_r7_unclear_correction_consumes_old_authority_but_preserves_execution(
     gateway_db, monkeypatch, separator, replacement, unavailable
@@ -196,7 +346,11 @@ def test_r7_unclear_correction_consumes_old_authority_but_preserves_execution(
             if unavailable:
                 fake.behaviors["snapshot"] = "timeout"
             corrected = await utter(
-                client, token, sid, f"不对{separator}{replacement}给赵六九百", "req_r7_correction"
+                client,
+                token,
+                sid,
+                f"不对{separator}{replacement}{UNCLEAR_CORRECTION_BODY}",
+                "req_r7_correction",
             )
             assert corrected.status_code == 201, corrected.text
             assert corrected.json()["utterance"]["parse_status"] == "INTENT_UNCLEAR"

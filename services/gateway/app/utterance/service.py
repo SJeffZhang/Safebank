@@ -426,6 +426,9 @@ async def register(
             raise GatewayError(Code.UTTERANCE_EXPIRED, 409)
         expiry = min(expiry, row["expires_at_wall"])
         if body.kind == "hint":
+            from ..hint_sources import validate_hint_source
+
+            await validate_hint_source(conn, session, row, now)
             parsed = Parsed(
                 scope=NormalizedScope.model_validate(row["scope_json"]), status=ParseStatus.SCOPED
             )
@@ -489,7 +492,7 @@ async def register(
                 kind="SLOTS" if parsed.required_fields and parsed.candidates else "FORM_REQUIRED",
                 prompt_template_id="select_missing_slot"
                 if parsed.required_fields and parsed.candidates
-                else "open_structured_form",
+                else parsed.guidance_template or "open_structured_form",
                 parent_utterance_ids=[id_],
                 authorization_epoch=epoch,
                 required_fields=parsed.required_fields,

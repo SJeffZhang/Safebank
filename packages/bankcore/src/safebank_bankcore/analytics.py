@@ -30,6 +30,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from safebank_contracts.state import BankState
 
+from safebank_bankcore.merchant_categories import transaction_category
 from safebank_bankcore.periods import normalize_period
 from safebank_bankcore.reserve import _business_time
 from safebank_bankcore.transaction_facts import is_external_transfer
@@ -104,10 +105,7 @@ def spending_summary(
         local_ts = _business_time(tx.occurred_at)
 
         if tx.kind in _CONSUMPTION_KINDS and tx.direction == "OUT":
-            cat = tx.category or ""
-            # Map to known categories; "其他" is the catch-all.
-            if cat not in CATEGORIES:
-                cat = "其他"
+            cat = transaction_category(state, tx)
 
             if _in_month(local_ts):
                 cat_amt[cat]["cur"] += tx.amount_cents
@@ -179,7 +177,7 @@ def _tx_view(state: BankState, tx) -> dict:
         available_after_cents=tx.available_after_cents,
         counterparty=tx.counterparty,
         memo=tx.memo,
-        category=tx.category,
+        category=transaction_category(state, tx),
         merchant_id=tx.merchant_id,
         merchant_name=None,
         payee_id=tx.payee_id,
@@ -275,10 +273,13 @@ def detect_anomalies(
                 ev["threshold_cents"] = 100_000
 
         # 2d. ANOMALY_CATEGORY_OUTLIER  (≥ 10 prior same-cat in 90 d, amount > μ + 3σ)
-        if tx.category:
+        if tx.category or (state.obligations and tx.merchant_id in state.obligations.merchants):
             cutoff = tx.occurred_at - _days_as_delta(90)
             same_cat_prior = [
-                h for h in prior if h.category == tx.category and h.occurred_at >= cutoff
+                h
+                for h in prior
+                if transaction_category(state, h) == transaction_category(state, tx)
+                and h.occurred_at >= cutoff
             ]
             if len(same_cat_prior) >= 10:
                 amounts_dec = [Decimal(h.amount_cents) for h in same_cat_prior]

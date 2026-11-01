@@ -1,5 +1,5 @@
 /** Display-only month selection. It never grants or changes write authority. */
-export function billMonth(text: string, simNow: string): string | null {
+function singleBillMonth(text: string, simNow: string): string | null {
   const time = new Date(simNow);
   if (!Number.isFinite(time.getTime())) return null;
   const parts = new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit'}).formatToParts(time);
@@ -17,6 +17,19 @@ export function billMonth(text: string, simNow: string): string | null {
   }
   if (month < 1 || month > 12) return null;
   return `${year}-${String(month).padStart(2,'0')}`;
+}
+/** Preserve a requested comparison as separate source months, never a merged total. */
+export function billMonths(text: string, simNow: string): string[] | null {
+  const previousComparison = /(?:和|与)前一个月比/.test(text);
+  const month = singleBillMonth(previousComparison ? text.replace("前一个月", "") : text, simNow);
+  if (!month) return null;
+  if (!previousComparison) return [month];
+  const [year, index] = month.split("-").map(Number);
+  const previous = index === 1 ? `${year - 1}-12` : `${year}-${String(index - 1).padStart(2, "0")}`;
+  return [month, previous];
+}
+export function billMonth(text: string, simNow: string): string | null {
+  return billMonths(text, simNow)?.[0] ?? null;
 }
 export function monthRange(month: string) {
   const [year, index] = month.split('-').map(Number);

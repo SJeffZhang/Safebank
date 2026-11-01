@@ -588,7 +588,90 @@ async def _handle_reminder_event(request: Request, event: dict[str, Any]) -> dic
     )
 
 
-async def _handle_merchant_event(request: Request, grant: dict | None, event: dict) -> dict:
+def _revoked_merchant_matches(
+    grant: dict, event: dict, state: BankState, expected_event_id: str | None
+) -> bool:
+    """A revocation can prove a refusal only; it can never authorize a charge.
+
+    Original consents retain their creation bindings. A marked lazy-grant
+    tombstone instead binds its cancellation source and customer/instruction;
+    the event's original creation terms must still match the fresh bank state.
+    """
+    try:
+        obligations = state.obligations
+        instruction = obligations.standing_instructions.get(event["instruction_id"])
+        billing = obligations.billings.get(event["source_id"])
+        account = state.accounts.get(event["account_id"])
+        due = datetime.fromisoformat(event["due_at"])
+        period = datetime.fromisoformat(event["period_key"])
+        if not (
+            expected_event_id is not None
+            and event["event_id"] == expected_event_id
+            and event["kind"] == "MERCHANT_CHARGE"
+            and grant["status"] == "REVOKED"
+            and grant.get("revoked_at") is not None
+            and instruction is not None
+            and instruction.kind == "MERCHANT_MANDATE"
+            and instruction.status == "DELETED"
+            and billing is not None
+            and billing.active
+            and account is not None
+            and grant["instruction_id"] == instruction.id == event["instruction_id"]
+            and (
+                grant["customer_id"]
+                == instruction.customer_id
+                == billing.customer_id
+                == account.customer_id
+                == event["customer_id"]
+            )
+            and event["customer_id"] in obligations.covered_customer_ids
+            and (instruction.billing_id == billing.id == event["billing_id"] == event["source_id"])
+            and (instruction.merchant_id == billing.merchant_id == event["merchant_id"])
+            and (instruction.from_account_id == billing.account_id == event["account_id"])
+            and instruction.source_plan_id == event["source_plan_id"]
+            and instruction.grant_scope_hash == event["grant_scope_hash"]
+            and _scope_in_state(state, event) == event["grant_scope"]
+            and type(event["amount_cents"]) is int
+            and 0 < billing.amount_cents == event["amount_cents"]
+            and event["payload"] == f"{billing.id}|{billing.amount_cents}|{billing.account_id}"
+            and digest(event["payload"]) == event["payload_hash"]
+            and due.tzinfo is not None
+            and period == due == billing.next_due_at
+            and max(instruction.created_at, billing.created_at) <= due <= state.sim_now
+        ):
+            return False
+        saved = grant["scope_json"]
+        if "revocation" in saved:
+            marker = saved["revocation"]
+            return (
+                set(saved) == {"revocation"}
+                and isinstance(marker, dict)
+                and set(marker) == {"plan_id", "step_id", "tool"}
+                and marker["tool"] == "cancel_subscription"
+                and isinstance(marker["step_id"], str)
+                and bool(marker["step_id"])
+                and isinstance(marker["plan_id"], str)
+                and bool(marker["plan_id"])
+                and marker["plan_id"] == grant["source_plan_id"]
+                and grant["scope_hash"]
+                == digest(["revoked-grant", event["customer_id"], instruction.id])
+                and grant["approved_risk"] == "RED"
+            )
+        seed = saved.get("seed_consent")
+        bound = seed["terms"] if seed else saved.get("instruction_scope")
+        return (
+            grant["scope_hash"] == event["grant_scope_hash"]
+            and grant["source_plan_id"] == event["source_plan_id"]
+            and bound == event["grant_scope"]
+            and (not seed or seed.get("kind") == "SEED_CONSENT")
+        )
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return False
+
+
+async def _handle_merchant_event(
+    request: Request, grant: dict | None, event: dict, *, expected_event_id: str | None = None
+) -> dict:
     """Mandate authorizes a billing, never a fabricated payee transfer.
 
     The exact same pure applier used by L3 checks mandate state/cap and funds.
@@ -601,6 +684,27 @@ async def _handle_merchant_event(request: Request, grant: dict | None, event: di
             {"customer_id": event["customer_id"], "steps": [], "event_id": None}
         )
         state = BankState.model_validate(raw)
+        if grant is not None and grant.get("status") == "REVOKED":
+            code = Code.SCHEDULED_BYPASS.value
+            if _revoked_merchant_matches(grant, event, state, expected_event_id):
+                _, _, run = apply_merchant_charge(
+                    state,
+                    billing_id=event["source_id"],
+                    due_at=datetime.fromisoformat(event["due_at"]),
+                    event_id=event["event_id"],
+                    period_key=event["period_key"],
+                )
+                if (
+                    run is not None
+                    and run.status == "BLOCKED"
+                    and run.code == Code.MANDATE_NOT_ACTIVE.value
+                ):
+                    code = Code.MANDATE_NOT_ACTIVE.value
+            # This branch ends in a pinned refusal, including malformed
+            # tombstones and still-ACTIVE bank instructions. Never execute.
+            return await _block(
+                request, app.db, event, "BLOCKED", code, ctx=EvalContext(snapshot=state)
+            )
         if grant is not None and _scope_in_state(state, event) != event.get("grant_scope"):
             return await _block(
                 request,
@@ -756,7 +860,9 @@ async def _backfill_grant(db, l3, event: dict[str, Any], wall_now) -> dict[str, 
             )
             .on_conflict_do_nothing()
         )
-    return grant
+        # A concurrent committed cancellation may have installed a REVOKED row.
+        # Never return the locally reconstructed ACTIVE candidate after a conflict.
+        return await _load_grant(conn, grant["instruction_id"])
 
 
 async def _block(
@@ -899,6 +1005,9 @@ async def authorize_event(request: Request, body: AuthorizeRequest) -> dict[str,
                     ctx=None,
                 )
 
+        if event_kind == "MERCHANT_CHARGE" and grant.get("status") == "REVOKED":
+            return await _handle_merchant_event(request, grant, event, expected_event_id=event_id)
+
         # Revoked grants and fingerprint mismatches refuse without re-evaluation.
         seed = grant["scope_json"].get("seed_consent")
         bound_scope = seed["terms"] if seed else grant["scope_json"].get("instruction_scope")
@@ -909,6 +1018,7 @@ async def authorize_event(request: Request, body: AuthorizeRequest) -> dict[str,
         )
         if (
             grant["status"] != "ACTIVE"
+            or grant.get("revoked_at") is not None
             or grant["scope_hash"] != event["grant_scope_hash"]
             or grant["customer_id"] != customer_id
             or grant["source_plan_id"] != event["source_plan_id"]

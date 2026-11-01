@@ -1,0 +1,149 @@
+{
+  "generation": "demo_20261101084917_8e1ed563",
+  "source_commit": "aa7e5d26160ef3be1d7b9341a0398b2f0390d0b1",
+  "separate_from_primary_43": true,
+  "results": [
+    {
+      "id": "SUPP-MMF-APP",
+      "status": "PASS",
+      "source": "PRD W4/native App form; parameters from canonical34",
+      "plan_id": "pln_01M6B7S8HPHH24B50ESRRCCKHP",
+      "amount_cents": 100000,
+      "redeemed_units": "1000.0000",
+      "remaining_units": "9000.0000",
+      "remaining_cost_cents": 900000,
+      "checking_posted_cents": 1300000,
+      "checking_pending_cents": 200000,
+      "checking_available_cents": 1100000,
+      "card_status": "LOST",
+      "evidence": [
+        "receipts/SUPP-MMF-APP-before-bank.json",
+        "receipts/SUPP-MMF-APP-preconfirm-before-bank.json",
+        "receipts/SUPP-MMF-APP-after-bank.json",
+        "receipts/SUPP-MMF-APP-after-gateway.json",
+        "screens/SUPP-MMF-APP-result.txt"
+      ],
+      "limitation": "Native form works; canonical assistant34 stays FAIL"
+    },
+    {
+      "id": "SUPP-COMPARE-APP",
+      "status": "PASS",
+      "source": "PRD W2/native App comparison; exact products from canonical32",
+      "products": [
+        "prd_sbond",
+        "prd_stable"
+      ],
+      "risk_levels": [
+        2,
+        3
+      ],
+      "nav_at_2026_10_15": [
+        "1.0520",
+        "1.2310"
+      ],
+      "bank_projection_unchanged": true,
+      "evidence": [
+        "receipts/SUPP-COMPARE-APP-before-bank.json",
+        "receipts/SUPP-COMPARE-APP-after-bank.json",
+        "receipts/SUPP-COMPARE-APP-after-gateway.json",
+        "screens/SUPP-COMPARE-APP-result.txt"
+      ],
+      "limitation": "native compare_products works; assistant canonical32 stays FAIL"
+    },
+    {
+      "id": "SUPP-FUND-CONFIRM",
+      "status": "PASS",
+      "source": "PRD W3/W5 and D3 clock",
+      "order_id": "ord_4b17e326-823f-5ea3-b64b-f99f727ef445",
+      "target_at": "2026-10-16T01:00:00Z",
+      "nav": "1.2311",
+      "units": "1624.5633",
+      "pending_debits_released_cents": 200000,
+      "posted_balance_cents": 1100000,
+      "available_balance_cents": 1100000,
+      "evidence": [
+        "receipts/SUPP-FUND-CONFIRM-before-bank.json",
+        "receipts/SUPP-FUND-CONFIRM-after-bank.json",
+        "receipts/SUPP-FUND-CONFIRM-after-gateway.json",
+        "clock-operator-journal.json",
+        "screens/SUPP-FUND-CONFIRM-result.txt"
+      ],
+      "ui_verification": "PASS_AFTER_NORMAL_PIN_RELOGIN",
+      "ui_note": "Page reload returned login; normal configured PIN login restored page. Cause not established from UI alone."
+    },
+    {
+      "id": "SUPP-NONMMF-RED",
+      "status": "PASS",
+      "submission_verified": true,
+      "source": "PRD W4 non-MMF delayed redemption/native form;1000 units from sole non-MMF holding",
+      "plan_id": "pln_01M6B815PJC773V5CQMF737APA",
+      "order_id": "ord_92290008-fcb0-5077-850a-7853ad321ad7",
+      "units": "1000.0000",
+      "amount_cents": 123110,
+      "settle_at": "2026-10-19T01:00:00+00:00",
+      "reserved_units": "1000.0000",
+      "reserved_cost_cents": 123110,
+      "cash_unchanged_before_settlement": true,
+      "evidence": [
+        "receipts/SUPP-NONMMF-RED-before-bank.json",
+        "receipts/SUPP-NONMMF-RED-preconfirm-before-bank.json",
+        "receipts/SUPP-NONMMF-RED-after-bank.json",
+        "receipts/SUPP-NONMMF-RED-after-gateway.json",
+        "screens/SUPP-NONMMF-RED-submitted.txt",
+        "receipts/SUPP-CLOCK-NOV1-after-bank.json",
+        "receipts/SUPP-CLOCK-NOV1-after-gateway.json",
+        "clock-business-verification.json",
+        "screens/SUPP-NONMMF-RED-settled.txt"
+      ],
+      "settlement_verified": true,
+      "remaining_units": "624.5633",
+      "remaining_cost_cents": 76890,
+      "reserved_units_after_settlement": "0.0000",
+      "checking_balance_after_all_due_charges_cents": 1218610,
+      "ui_verification": "PASS_AFTER_NORMAL_PIN_RELOGIN"
+    },
+    {
+      "id": "SUPP-CLOCK-NOV1",
+      "status": "PASS_OBSERVED_BUSINESS",
+      "source": "PRD T3/S1/S3/S4/W3/W4/W5/X2 and documented D3 operator clock",
+      "oracle_pass_checks": 45,
+      "scheduled_transfers_success": 2,
+      "cancelled_mandates_blocked": 2,
+      "valid_mandate_charges": 4,
+      "scheduled_result_notifications": 2,
+      "blocked_notifications": 2,
+      "fund_result_notifications": 2,
+      "requery_business_unchanged": true,
+      "evidence": [
+        "clock-business-verification.json",
+        "clock-requery-verification.json",
+        "receipts/SUPP-CLOCK-NOV1-after-bank.json",
+        "receipts/SUPP-CLOCK-NOV1-after-gateway.json",
+        "screens/SUPP-CLOCK-NOTIFICATIONS-result-final.txt",
+        "screens/SUPP-FUND-NOTIFICATIONS-result.txt"
+      ],
+      "limitation": "Observed events only; no empty daily scan proof and no full freeze claim.",
+      "upcoming_notifications_total": 4,
+      "upcoming_notifications_new_in_nov1_jump": 3,
+      "known_document_gap": "Cancelled music/gym instructions DELETED and charges blocked, but persistent grants remain ACTIVE instead of PRD-required REVOKED."
+    },
+    {
+      "id": "SUPP-AA-PAYMENT",
+      "status": "PASS",
+      "source": "PRD T4/D4 operator synthetic external payment",
+      "amount_cents": 10000,
+      "received_cents": 10000,
+      "outstanding_cents": 20000,
+      "replay_same_request_calls": 2,
+      "posted_transfers": 1,
+      "checking_balance_cents": 575000,
+      "evidence": [
+        "aa-payment-verification/receipt.json",
+        "aa-payment-verification/request.json",
+        "aa-payment-verification/after-first.json",
+        "aa-payment-verification/after-second.json",
+        "screens/SUPP-AA-PAYMENT-result.txt"
+      ]
+    }
+  ]
+}

@@ -119,7 +119,9 @@ async def resolve_scope(conn, customer_id: str, steps, key: str) -> StateScope:
     return scope_for(customer_id, steps, directory)
 
 
-async def _load_obligations(conn, ids: tuple[str, ...], customer_id: str):
+async def _load_obligations(
+    conn, ids: tuple[str, ...], customer_id: str, *, transaction_merchant_ids=()
+):
     """Load the raw obligation snapshot and the requesting customer's views.
 
     Reads all four obligation tables in the caller's transaction and never opens
@@ -159,9 +161,11 @@ async def _load_obligations(conn, ids: tuple[str, ...], customer_id: str):
             )
         ).mappings()
     ]
-    merchant_ids = {b.merchant_id for b in billings.values()} | {
-        i.merchant_id for i in instructions if isinstance(i, MerchantMandate)
-    }
+    merchant_ids = (
+        set(transaction_merchant_ids)
+        | {b.merchant_id for b in billings.values()}
+        | {i.merchant_id for i in instructions if isinstance(i, MerchantMandate)}
+    )
     merchants = {
         r["id"]: Merchant(**r)
         for r in (
@@ -395,7 +399,7 @@ async def load_bank_state(conn, scope: StateScope, now, *, customer_id: str) -> 
             score=r["score"],
             level=r["level"],
             assessed_at=r["assessed_at"],
-            valid_until=r["valid_until"].date(),
+            valid_until=r["valid_until"].astimezone(BUSINESS_TIMEZONE).date(),
             plan_id=r["plan_id"],
         )
         for r in (
@@ -417,7 +421,17 @@ async def load_bank_state(conn, scope: StateScope, now, *, customer_id: str) -> 
     )
     if customer_id not in versions or not owner_ids:
         raise LookupError("customer not found")
-    obligations, instructions, subscriptions = await _load_obligations(conn, ids, customer_id)
+    history_merchants = {
+        tx.merchant_id
+        for tx in transactions
+        if tx.merchant_id is not None
+        and tx.customer_id == customer_id
+        and tx.account_id in owner_ids
+        and tx.kind in {"CARD_SPEND", "MERCHANT_CHARGE", "MANDATE"}
+    }
+    obligations, instructions, subscriptions = await _load_obligations(
+        conn, ids, customer_id, transaction_merchant_ids=history_merchants
+    )
     # Load split requests and items for the requesting customer only.
     _splits: list[SplitView] = []
     split_request_rows = (
@@ -492,7 +506,7 @@ async def load_bank_state(conn, scope: StateScope, now, *, customer_id: str) -> 
             risk_level=r["risk_level"],
             risk_label=r["risk_label"],
             base_nav=r["base_nav"],
-            base_date=r["base_date"].date(),
+            base_date=r["base_date"].astimezone(BUSINESS_TIMEZONE).date(),
             confirm_days=r["confirm_days"],
             settle_days=r["settle_days"],
             min_amount_cents=r["min_amount_cents"],
@@ -559,7 +573,7 @@ async def load_bank_state(conn, scope: StateScope, now, *, customer_id: str) -> 
             pending_transfer_id=r["pending_transfer_id"],
             plan_id=r["plan_id"],
             step_id=r["step_id"],
-            trade_date=r["trade_date"].date(),
+            trade_date=r["trade_date"].astimezone(BUSINESS_TIMEZONE).date(),
             confirm_at=r["confirm_at"],
             settle_at=r["settle_at"],
             expires_at=r["expires_at"],

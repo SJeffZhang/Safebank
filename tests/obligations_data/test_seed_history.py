@@ -13,7 +13,7 @@ from app.db import engine
 from app.seed import seed_core
 from app.seed_demo import install_demo
 from app.state import load_bank_state, resolve_scope
-from safebank_bankcore.analytics import detect_anomalies, detect_subscriptions
+from safebank_bankcore.analytics import detect_anomalies, detect_subscriptions, spending_summary
 from sqlalchemy import text
 from sqlalchemy.pool import NullPool
 
@@ -83,21 +83,75 @@ def _sep_window():
     )
 
 
-def test_detect_anomalies_exactly_three_on_crd_zs_1(obligations_db):
+def test_detect_anomalies_match_canonical_seed_evidence_on_crd_zs_1(obligations_db):
     state = _install_and_load(obligations_db)
     from_at, sep_end = _sep_window()
 
     sep = detect_anomalies(state, customer_id="cus_zs", from_at=from_at, to_at=sep_end)
     full = detect_anomalies(state, customer_id="cus_zs", from_at=from_at, to_at=NOW)
 
-    assert len(sep["items"]) == 3, [i["transaction"]["id"] for i in sep["items"]]
-    assert len(full["items"]) == 3, [i["transaction"]["id"] for i in full["items"]]
-    for item in full["items"]:
-        assert item["transaction"]["card_id"] == "crd_zs_1"
-    amounts = sorted(i["transaction"]["amount_cents"] for i in full["items"])
-    assert amounts == [26800, 128000, 349900], amounts
-    codes = {c for i in full["items"] for c in i["codes"]}
-    assert {"ANOMALY_NIGHT_LARGE", "ANOMALY_DUPLICATE", "ANOMALY_NEW_MERCHANT_LARGE"} <= codes
+    # 014/016/017 remain the three deliberately embedded anomalies. Canonical
+    # 餐饮 also exposes 015; canonical 购物 exposes original October row 012.
+    assert [i["transaction"]["id"] for i in sep["items"]] == [
+        "txn_zs_014",
+        "txn_zs_015",
+        "txn_zs_016",
+        "txn_zs_017",
+    ]
+    assert [i["transaction"]["id"] for i in full["items"]] == [
+        "txn_zs_014",
+        "txn_zs_015",
+        "txn_zs_016",
+        "txn_zs_017",
+        "txn_zs_012",
+    ]
+    expected = {
+        "txn_zs_014": (
+            128000,
+            ("ANOMALY_NIGHT_LARGE", "ANOMALY_NEW_MERCHANT_LARGE"),
+            (0, None, 100000, None, None),
+        ),
+        # 25 snack rows at800 +24 tea rows at1800 => n49, mean1289.7959,
+        # population sigma499.8959, mean+3sigma2789.4835 cents.
+        "txn_zs_015": (26800, ("ANOMALY_CATEGORY_OUTLIER",), (49, 1290, 2789, None, None)),
+        "txn_zs_016": (
+            26800,
+            ("ANOMALY_DUPLICATE", "ANOMALY_CATEGORY_OUTLIER"),
+            (50, 1800, 12617, "txn_zs_015", 4),
+        ),
+        "txn_zs_017": (
+            349900,
+            ("ANOMALY_NEW_MERCHANT_LARGE",),
+            (0, None, 100000, None, None),
+        ),
+        # All35 earlier canonical shopping rows are fresh groceries at3200.
+        "txn_zs_012": (12800, ("ANOMALY_CATEGORY_OUTLIER",), (35, 3200, 3200, None, None)),
+    }
+    for result in (sep, full):
+        for item in result["items"]:
+            transaction = item["transaction"]
+            amount, codes, evidence = expected[transaction["id"]]
+            assert transaction["card_id"] == "crd_zs_1"
+            assert transaction["account_id"] == "acc_zs_chk"
+            assert transaction["amount_cents"] == amount
+            assert item["codes"] == codes
+            assert item["evidence"] == dict(
+                zip(
+                    (
+                        "baseline_count",
+                        "mean_cents",
+                        "threshold_cents",
+                        "previous_transaction_id",
+                        "window_minutes",
+                    ),
+                    evidence,
+                    strict=True,
+                )
+            )
+    # Category projection changes neither the seed ledger nor monthly spend.
+    for month, total in (("2026-08", 133190), ("2026-09", 644800), ("2026-10", 55050)):
+        assert spending_summary(state, customer_id="cus_zs", month=month)["total_cents"] == total
+    assert state.accounts["acc_zs_chk"].balance_cents == 600000
 
 
 def test_detect_subscriptions_four_with_gym_idle(obligations_db):

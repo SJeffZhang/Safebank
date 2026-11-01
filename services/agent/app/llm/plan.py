@@ -1036,6 +1036,50 @@ def _reference_problems(draft: PlanDraft, state: AgentState) -> list[str]:
     return problems
 
 
+def _strict_shape_feedback(data: dict | None, exc: Exception) -> str:
+    """Describe only known entity-shape failures, without echoing model values.
+
+    A conversion ValueError otherwise loses its actionable field name in the
+    generic validation summary. This supplies the existing one-shot retry with
+    schema examples; it never repairs a target or treats a proposal as authority.
+    """
+    if not isinstance(exc, ValueError) or not isinstance(data, dict):
+        return validation_summary(exc)
+    steps = data.get("steps")
+    if not isinstance(steps, list):
+        return validation_summary(exc)
+    fields: list[str] = []
+    for index, step in enumerate(steps):
+        if not isinstance(step, dict) or step.get("tool") not in ("transfer", "schedule_transfer"):
+            continue
+        args = step.get("args")
+        if not isinstance(args, dict):
+            continue
+        for key in ("payee_id", "to_account_id"):
+            if key not in args:
+                continue
+            value = args[key]
+            if isinstance(value, dict):
+                kind = value.get("kind")
+                if kind == "none" or (kind == "id" and isinstance(value.get("id"), str)):
+                    continue
+                if key == "payee_id" and kind == "ref" and isinstance(value.get("ref"), str):
+                    continue
+            fields.append(f"steps[{index}].{key}")
+            if len(fields) == _MAX_REFERENCE_PROBLEMS:
+                break
+        if len(fields) == _MAX_REFERENCE_PROBLEMS:
+            break
+    if not fields:
+        return validation_summary(exc)
+    return (
+        "、".join(fields) + ' 必须使用实体判别对象：已有目标用 {"kind":"id","id":"<已读实体ID>"}，'
+        '空目标用 {"kind":"none"}，不能用裸字符串或null。'
+        "保持用户原来的目标、金额与步骤，实体ID及read来源必须从本轮已读数据重新核对；"
+        "不能猜测或新增目标。"
+    )
+
+
 class PlanAdapter:
     def __init__(
         self,
@@ -1054,6 +1098,7 @@ class PlanAdapter:
         note = ""
         selection = current_x3_selection(state, context)
         for attempt in range(self._max_retries + 1):
+            args = None
             message = self._model.invoke(self._messages(state, note, selection))
             if self._observer is not None:
                 self._observer(message)
@@ -1125,7 +1170,9 @@ class PlanAdapter:
                             labels = [_PARAM_LABELS[f] for f in fields]
                             raise ExhaustedClarify(fields, labels) from exc
                     raise
-                note = f"上次计划未通过校验（{validation_summary(exc)}），请修正后重新生成。"
+                note = (
+                    f"上次计划未通过校验（{_strict_shape_feedback(args, exc)}），请修正后重新生成。"
+                )
         raise AssertionError("unreachable")
 
     @staticmethod

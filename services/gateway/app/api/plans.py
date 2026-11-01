@@ -29,6 +29,7 @@ from ..audit.chain import append as audit_append
 from ..errors import GatewayError
 from ..evaluation.repo import append_evaluation, latest_revision
 from ..forms import form_draft, load_forms
+from ..hint_sources import publish_replan_hints
 from ..idempotency import request_idempotent
 from ..middleware import digest_hex
 from ..pipeline import evaluate as run_pipeline
@@ -436,6 +437,10 @@ async def evaluate_plan(request: Request) -> JSONResponse:
             created_at_wall=now,
         )
 
+        published_hints = await publish_replan_hints(
+            conn, ctx, session_row, evaluation_id=evaluation_id, revision=revision, now=wall_now()
+        )
+
         # ── Approval (REQUIRE_APPROVAL only) ──────────────────────
         approval_id: str | None = None
         view_hash: str | None = None
@@ -502,7 +507,7 @@ async def evaluate_plan(request: Request) -> JSONResponse:
             "risk": risk_str,
             "approval_id": approval_id,
             "findings": findings_json,
-            "replan_hints": [h.model_dump(mode="json") for h in decision.replan_hints],
+            "replan_hints": [h.model_dump(mode="json") for h in published_hints],
             "preflight": preflight_json,
             "versions": versions_json,
             "clock_version": clock_version_num,

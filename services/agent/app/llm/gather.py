@@ -25,6 +25,7 @@ from services.agent.app.llm._cross_scene_reads import (
     x1_month_match,
     x4_requested,
 )
+from services.agent.app.llm._query_reads import MAX_PAGES, data_text, query, transaction_args
 from services.agent.app.llm.redact import apply_untrusted_wrapping, strip_wall
 from services.agent.app.llm.schema import read_tools
 
@@ -243,6 +244,9 @@ class GatherAdapter:
                     )
                 )
             return records
+        selected_query = query(state) if self.fetch_business_date else None
+        if selected_query is not None:
+            return self._gather_query(selected_query)
         reads: list[ReadRecord] = []
         tools_attempted: set[str] = set()
 
@@ -446,7 +450,7 @@ class GatherAdapter:
                 ("get_holdings", {"account_id": None, "product_id": None}),
             )
             for tool, args in required:
-                if tool not in read_tools | tools_attempted:
+                if tool not in read_tools:
                     result.append(self._execute_supplemental(tool, args, "src_gather_" + tool))
                     read_tools.add(tool)
         if understanding is None or not any(
@@ -467,6 +471,133 @@ class GatherAdapter:
             )
 
         return result
+
+    def _gather_query(self, selected: tuple[str, tuple[str, ...]]) -> list[ReadRecord]:
+        """Complete bounded reads using only identities returned by the gateway."""
+        profile = self._execute_supplemental("get_profile", {}, "src_gather_profile")
+        sim_now = profile.data["sim_now"]
+        self.last_business_date = self._format_date_line(sim_now)
+        records = [profile]
+        kind, values = selected
+        if kind in ("holdings", "scheduled", "upcoming", "card_capacity"):
+            if kind == "card_capacity":
+                records.extend(
+                    [
+                        self._execute_supplemental(
+                            "get_accounts", {"history_days": 0}, "src_gather_accounts"
+                        ),
+                        self._execute_supplemental(
+                            "get_cards", {"account_id": None}, "src_gather_cards"
+                        ),
+                    ]
+                )
+            elif kind == "holdings":
+                records.extend(
+                    [
+                        self._execute_supplemental(
+                            "get_accounts", {"history_days": 0}, "src_gather_accounts"
+                        ),
+                        self._execute_supplemental(
+                            "get_holdings",
+                            {"account_id": None, "product_id": None},
+                            "src_gather_holdings",
+                        ),
+                    ]
+                )
+                records.extend(
+                    self._query_pages(
+                        "list_products",
+                        {
+                            "max_risk_level": None,
+                            "product_type": None,
+                            "cursor": None,
+                            "limit": 100,
+                        },
+                    )
+                )
+            elif kind == "scheduled":
+                records.extend(
+                    self._query_pages(
+                        "list_scheduled", {"status": "ACTIVE", "cursor": None, "limit": 100}
+                    )
+                )
+                records.extend(
+                    self._query_pages("list_payees", {"query": None, "cursor": None, "limit": 100})
+                )
+            else:
+                records.append(
+                    self._execute_supplemental(
+                        "upcoming_charges",
+                        {"days": int(values[0]), "account_id": None},
+                        "src_gather_upcoming",
+                    )
+                )
+            return records
+        if kind == "compare":
+            args = {"max_risk_level": None, "product_type": None, "cursor": None, "limit": 100}
+            catalog = self._query_pages("list_products", args)
+            records.extend(catalog)
+            if catalog[-1].data.get("next_cursor"):
+                return records
+            items = [item for page in catalog for item in page.data.get("items", [])]
+            ids = []
+            for name in values:
+                matches = [item for item in items if data_text(item.get("name")) == name]
+                if len(matches) != 1:
+                    return records
+                ids.append(matches[0]["id"])
+            if len(set(ids)) != 2:
+                return records
+            records.append(
+                self._execute_supplemental(
+                    "compare_products", {"product_ids": ids}, "src_gather_compare"
+                )
+            )
+            return records
+        args = transaction_args(
+            sim_now,
+            **(
+                dict(zip(("year", "month"), values, strict=False)) if kind == "transactions" else {}
+            ),
+        )
+        pages = self._query_pages("get_transactions", args)
+        records.extend(pages)
+        if kind == "transactions":
+            month = args["from_at"][:7]
+            records.append(
+                self._execute_supplemental(
+                    "get_spending_summary",
+                    {"month": month, "account_id": None},
+                    "src_gather_summary",
+                )
+            )
+            return records
+        if pages[-1].data.get("next_cursor"):
+            return records
+        ids = {
+            item.get("merchant_id")
+            for page in pages
+            for item in page.data.get("items", [])
+            if data_text(item.get("merchant_name") or item.get("counterparty")) == values[0]
+        }
+        if len(ids) == 1 and None not in ids:
+            records.extend(
+                self._query_pages("get_transactions", {**args, "merchant_id": ids.pop()})
+            )
+        return records
+
+    def _query_pages(self, tool: str, args: dict) -> list[ReadRecord]:
+        pages = []
+        seen = set()
+        for _ in range(MAX_PAGES):
+            record = self._execute_supplemental(tool, args, "src_gather_query")
+            pages.append(record)
+            cursor = record.data.get("next_cursor")
+            if not cursor or cursor in seen:
+                break
+            seen.add(cursor)
+            args = {**args, "cursor": cursor}
+        return pages
 
     def _execute_supplemental(self, tool: str, args: dict, source_ref: str) -> ReadRecord:
         """Call the read executor for a supplemental read (no LLM ToolMessage)."""

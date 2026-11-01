@@ -1,0 +1,11 @@
+{
+  "REPORT.md": "ba2e9eeed55e24e7c1381ac72b81e5391f74ccd8996c270fc19ab7465ec26c0a",
+  "primary-43-results.csv": "6c0d1ff29a08d0f16d5847b290e83d8938fb5e0482f2254ed492b9681dca5abb",
+  "canonical-cases.json": "c04783838da355f72a85cb108258080e7f3705e860993c8257ca378e5004cc65",
+  "formal-parser-gaps.md": "d6eedace019355ed3efb71bbccef3d7c343c1f5ab6c42220c9105ec746431dbe",
+  "requirements-gaps-final.md": "5e9180e2789174c02889e55139b3d5615d94a86157aa9f8aebfc3878135ff738",
+  "requirements-coverage.json": "64963d74944c2d3c34ab0351ae8d40b691e5793c2c9c4b3e4ba1b622f2f20e63",
+  "supplement-results.json": "3a2306358ecd23fdf896d7d36d8ccba0183bdfed9a6ee5c385e28589adcaebe0",
+  "final-verification-manifest.json": "8a9d5727811881510b384a05193674e31a99b27f11e7076c11c277646645e0ff",
+  "continuation-state.json": "947a437168b42a8d2c5ea5006d325eff2ca7b3903629383ac0af4145d8657229"
+}
