@@ -90,3 +90,8 @@ Files: services/agent/app/llm/understand.py, services/agent/app/main.py及tests�
 - [x] 数字姓名与中文金额唯一合法切分，歧义不授写；独审188纯/23负控，真实G3/PG旧3红新3绿，候选G19/G3正向1过。
 - [x] canonical真实异常Sep4/full5的精确集合/证据与PRD同步，seed字节/生成器执行AST/阈值不变，正式L3 PG334/W2 328过。
 - [ ] 上述修订的完整40位head全部本机CI；旧2b的剩余诊断不代替完整结果。
+
+## 完整代码验证结果
+
+- [x] 5139208740fe9fcd57e7ab2b2e7d695c704e8484全部35步骤本机CI PASSED/exit0；见docs/acceptance/prd-report-ci/5139208。
+- 最终含记录head的全部CI、匹配合并与恢复main只以PR实际回执登记，不将先前失败/诊断或条件skip替代。
