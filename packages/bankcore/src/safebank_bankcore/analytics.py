@@ -30,6 +30,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from safebank_contracts.state import BankState
 
+from safebank_bankcore.periods import normalize_period
 from safebank_bankcore.reserve import _business_time
 
 # The 8 category buckets defined in PRD §5.2.
@@ -499,10 +500,7 @@ def detect_subscriptions(
         is_idle = usage_expected and recent == 0 and previous > 0
 
         # ── Annual cost ─────────────────────────────────────────────
-        if period == "WEEKLY":
-            annual_cost_cents = typical * 52
-        else:
-            annual_cost_cents = typical * 12
+        _, annual_cost_cents = normalize_period(typical, period)
 
         items.append(
             dict(

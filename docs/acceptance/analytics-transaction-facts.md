@@ -14,7 +14,9 @@ No DB/API/Docker/LLM/browser/deployment/push/merge. Producer merchant metadata, 
 
 ## B. Period savings
 
-Pending implementation and red/green evidence.
+Shared `periods.normalize_period` (also exported by analytics through its used import) returns integer monthly/annual cents for only frozen MONTHLY/WEEKLY. Banking cancellation and detected-charge annualization reuse it without an analytics↔banking import cycle. Weekly monthly savings use floor(annual/12); no-op/inactive billing stays zero. No new period/schema is introduced.
+
+New actual cancellation versus production L3 read tests: old code **3 failed, 3 passed** (two wrong weekly amounts plus missing normalization entry). Repaired `.venv/bin/pytest tests/bankcore/test_period_savings.py tests/bankcore/test_analytics.py tests/bankcore/test_standing.py -q --tb=short -p no:cacheprovider`: **123 passed**. Tests compare MONTHLY and two WEEKLY amounts with actual `list_subscriptions` monthly/annual totals and reject float/bool/string/negative/unfrozen-period inputs. Ruff/diff checks pass.
 
 ## C. Producer metadata and fresh counters
 
