@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 
 from services.gateway.app import locks
 from services.gateway.app import tables as t
+from services.gateway.app.auth.tokens import APP_AUDIENCE, sign_jwt
 from tests.gateway.w3b.db import conftest as g4_fixtures
 from tests.gateway.w3b.db.conftest import (
     AGENT_TOKEN,
@@ -117,13 +118,28 @@ def test_g4_hint_is_readable_adoptable_once_and_evaluation_retry_is_idempotent(
                     "Authorization": "Bearer " + adopted.json()["assistant_token"],
                 },
             )
-            assert next_decision.status_code == 200
+            assert next_decision.status_code == 200, (
+                next_decision.json().get("error", {}).get("code")
+            )
             approved_proposal = next_decision.json()
             assert approved_proposal["decision"] == "REQUIRE_APPROVAL"
-            panel = await app.client.get(
-                f"/approvals/{approved_proposal['approval_id']}", headers=headers
-            )
-            assert panel.status_code == 200
+            panel_url = f"/approvals/{approved_proposal['approval_id']}"
+            app_only_panel = await app.client.get(panel_url, headers=headers)
+            assert app_only_panel.status_code == 403
+            assert app_only_panel.json()["error"]["code"] == "FORBIDDEN"
+            approval_headers = {
+                "X-Service-Token": SERVICE_TOKEN,
+                "Authorization": "Bearer "
+                + sign_jwt(
+                    app.private_key_pem,
+                    sub="cus_a",
+                    aud=APP_AUDIENCE,
+                    scope=["app", "approve"],
+                    jti="jti-nov1-hint",
+                ),
+            }
+            panel = await app.client.get(panel_url, headers=approval_headers)
+            assert panel.status_code == 200, panel.json().get("error", {}).get("code")
             assert panel.json()["plan_id"] == approved_proposal["plan_id"]
             fields = {field["key"]: field["value"] for field in panel.json()["steps"][0]["fields"]}
             assert fields["amount"] == f"{maximum // 100:,}.{maximum % 100:02d}"
