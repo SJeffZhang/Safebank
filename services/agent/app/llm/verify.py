@@ -12,7 +12,7 @@ from enum import StrEnum
 
 from services.agent.app.graph.state import AgentContext, AgentState
 from services.agent.app.llm.execution_receipts import execution_receipt
-from services.agent.app.llm.fixed_templates import respond_template
+from services.agent.app.llm.fixed_templates import executed_failed_fallback, respond_template
 
 # ── Extraction patterns ─────────────────────────────────────────────────────
 
@@ -551,8 +551,13 @@ class OutputVerifier:
 
     def __call__(self, state: AgentState, _context: AgentContext) -> str:
         # A free-text draft or repair cannot override committed business facts.
-        if _obj_attr(state.get("execution"), "status") == "EXECUTED":
+        status = _obj_attr(state.get("execution"), "status")
+        if status == "EXECUTED":
             return mask_long_numbers(execution_receipt(state))
+        if status == "UNKNOWN":
+            return mask_long_numbers(respond_template("UNKNOWN"))
+        if status == "FAILED":
+            return mask_long_numbers(executed_failed_fallback())
 
         draft: str = state.get("reply_draft") or ""
         if not draft:

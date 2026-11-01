@@ -574,3 +574,17 @@ def test_wrapped_plain_name_is_only_a_quoted_id_bound_label():
     reply = OutputVerifier()(state, None)
     assert "收款人“王五”" in reply
     assert "untrusted_data" not in reply
+
+
+@pytest.mark.parametrize(
+    "status,draft,repair",
+    [
+        ("FAILED", "转账成功。", "已转账。"),
+        ("UNKNOWN", "已到账。", "已向王五转账。"),
+    ],
+)
+def test_failed_and_unknown_never_accept_synonymous_success_repair(status, draft, repair):
+    llm = WrongLLM(repair)
+    reply = OutputVerifier(llm)({"reply_draft": draft, "execution": {"status": status}}, None)
+    assert "已转账" not in reply and "已向王五转账" not in reply
+    assert llm.calls == 0

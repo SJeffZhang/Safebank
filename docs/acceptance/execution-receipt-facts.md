@@ -39,3 +39,9 @@
 ## 未覆盖
 
 未运行真实 API/LLM、Docker、数据库、浏览器、部署、录制或完整 CI；40条DB测试明确排除。真实浏览器/SQL对账、同计划实际交易唯一性、完整CI与独立安全评审由协调者核验。未编辑共享AGENTS/PRD，待协调者汇总本记录。
+
+## 独审修复（第二提交）
+
+独审负控发现FAILED/UNKNOWN的同义成功措辞不在旧有限词表中，模型repair可输出“已转账”或“已向王五转账”。新增两条回归先出现 **2 failed, 68 passed**。verify现对FAILED/UNKNOWN直接使用既有确定性状态模板，完全不让模型或repair自由解释终态。402/403/429立即中止负控继续使用真实只读repair路径。
+
+复核命令：`.venv/bin/pytest tests/agent -m 'not db' -q` → **828 passed, 40 deselected**；独审外部负控首次因缺PYTHONPATH收集失败，补齐后两条因旧断言要求模型调用1次而失败（实际0次）；已通知独审者按确定性模板规格复核，未记通过；ruff check/format --no-cache和diff --check通过。通知单元骨架保留在工作树，未纳入本提交。
