@@ -40,6 +40,11 @@ def _now(request: Request) -> datetime:
     return now
 
 
+def _demo_result(result: dict[str, Any]) -> dict[str, Any]:
+    """D4's public vocabulary differs from S1's internal terminal statuses."""
+    return {**result, "status": "REJECTED"} if result.get("status") == "BLOCKED" else dict(result)
+
+
 # ── D0 POST /demo/auth/login ──────────────────────────────────────────────────
 
 
@@ -136,7 +141,7 @@ async def demo_event(body: DemoEventRequest, request: Request):
     result = await authorize_event(
         request, AuthorizeRequest(event_id=event_id, request_id=body.request_id)
     )
-    return {"event_id": event_id, "result": result}
+    return {"event_id": event_id, "result": _demo_result(result)}
 
 
 # ── D5 GET /demo/sms ──────────────────────────────────────────────────────────

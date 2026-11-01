@@ -70,6 +70,8 @@ def test_reminder_definition_and_execution_are_current_and_do_not_move_money(obl
             async with db.connect() as conn:
                 event = await EventService().get_event(conn, job["id"], None)
                 before = (await conn.execute(select(m.accounts))).mappings().all()
+                versions_before = (await conn.execute(select(m.state_versions))).mappings().all()
+                ledger_before = (await conn.execute(select(m.transfers))).mappings().all()
             assert event["customer_id"] == job["immutable_payload"]["payload"]["customer_id"]
             assert event["kind"] == "REMINDER"
             result = await _execute(db, job)
@@ -78,6 +80,10 @@ def test_reminder_definition_and_execution_are_current_and_do_not_move_money(obl
             assert replay["replayed"]
             async with db.connect() as conn:
                 assert (await conn.execute(select(m.accounts))).mappings().all() == before
+                assert (
+                    await conn.execute(select(m.state_versions))
+                ).mappings().all() == versions_before
+                assert (await conn.execute(select(m.transfers))).mappings().all() == ledger_before
                 assert (await conn.execute(select(m.event_executions))).mappings().one()[
                     "event_id"
                 ] == job["id"]

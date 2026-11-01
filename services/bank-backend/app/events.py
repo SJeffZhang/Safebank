@@ -26,6 +26,7 @@ from safebank_bankcore import external as bank_external
 from safebank_bankcore import funds as bank_funds
 from safebank_bankcore.banking import Context
 from safebank_bankcore.grants import instruction_scope
+from safebank_bankcore.ids import digest
 from safebank_contracts.codes import Code
 from safebank_contracts.obligations import InstructionRun
 from safebank_contracts.plan import DemoEvidence
@@ -34,6 +35,7 @@ from sqlalchemy import select, text
 
 from . import models as m
 from .errors import BankError
+from .reminders import reminder_is_current
 from .state import load_bank_state, persist
 
 
@@ -154,6 +156,9 @@ class EventService:
                     )
                 )
             ).scalar()
+        elif kind == "REMINDER":
+            billing, _, _ = await self._reminder_sources(conn, row)
+            customer = billing["customer_id"]
         elif kind == "DEMO_EVENT":
             customer = _demo_data(row["immutable_payload"]).get("customer_id")
         elif kind in _FUND_KINDS:
@@ -167,6 +172,133 @@ class EventService:
         if customer is None and kind in ("SCHEDULED_TRANSFER", "MERCHANT_CHARGE"):
             raise BankError(Code.NOT_FOUND, status=404)
         return customer
+
+    async def _reminder_sources(self, conn, row):
+        """Validate immutable identity without treating cancelled/stale terms as live."""
+        payload = _demo_data(row["immutable_payload"])
+        fields = {
+            "billing_id",
+            "customer_id",
+            "account_id",
+            "amount_cents",
+            "charge_due_at",
+            "instruction_id",
+        }
+        if (
+            set(payload) != fields
+            or any(
+                not isinstance(payload[key], str) or not payload[key]
+                for key in fields - {"amount_cents"}
+            )
+            or type(payload["amount_cents"]) is not int
+            or not 0 < payload["amount_cents"] <= 100_000_000
+            or payload["billing_id"] != row["source_id"]
+            or digest(payload) != row["payload_hash"]
+        ):
+            raise BankError(Code.CONTRACT_INVALID, 422)
+        try:
+            charge_due = datetime.fromisoformat(payload["charge_due_at"])
+            if charge_due.tzinfo is None or charge_due.utcoffset() is None:
+                raise ValueError("reminder charge due requires timezone")
+        except (TypeError, ValueError):
+            raise BankError(Code.CONTRACT_INVALID, 422) from None
+        billing = (
+            (
+                await conn.execute(
+                    select(m.merchant_billing).where(m.merchant_billing.c.id == row["source_id"])
+                )
+            )
+            .mappings()
+            .first()
+        )
+        instruction = (
+            (
+                await conn.execute(
+                    select(m.standing_instructions).where(
+                        m.standing_instructions.c.id == payload["instruction_id"]
+                    )
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if (
+            billing is None
+            or instruction is None
+            or billing["customer_id"] != payload["customer_id"]
+            or billing["account_id"] != payload["account_id"]
+            or instruction["kind"] != "MERCHANT_MANDATE"
+            or (
+                instruction["billing_id"],
+                instruction["customer_id"],
+                instruction["from_account_id"],
+                instruction["merchant_id"],
+            )
+            != (
+                billing["id"],
+                billing["customer_id"],
+                billing["account_id"],
+                billing["merchant_id"],
+            )
+        ):
+            raise BankError(Code.NOT_FOUND, 404)
+        return billing, instruction, payload
+
+    async def _execute_reminder_event(
+        self,
+        conn,
+        row,
+        event_id,
+        expected_versions,
+        clock_version,
+        authorization_evidence,
+        *,
+        block_status=None,
+        block_code=None,
+    ) -> dict:
+        billing, instruction, payload = await self._reminder_sources(conn, row)
+        customer_id = billing["customer_id"]
+        await self._check_customer(conn, customer_id)
+        await self._lock_clock_and_version(conn, customer_id, clock_version, expected_versions)
+        sim_now = await conn.scalar(select(m.clock.c.sim_now).where(m.clock.c.id == 1))
+        if row["due_at"] > sim_now:
+            raise BankError(Code.EVENT_NOT_DUE)
+        # Re-read after version locks; cancellation/update transactions use the
+        # same customer fence. Reminder processing itself never bumps it.
+        billing, instruction, payload = await self._reminder_sources(conn, row)
+        if block_status is None:
+            if authorization_evidence != {
+                "type": "SYSTEM_REMINDER",
+                "billing_id": billing["id"],
+                "instruction_id": instruction["id"],
+            }:
+                raise BankError(Code.CONTRACT_INVALID, 422)
+            valid = reminder_is_current(payload, billing, instruction, sim_now)
+            status = "SUCCESS" if valid else "BLOCKED"
+            code = None if valid else Code.MANDATE_NOT_ACTIVE.value
+        else:
+            status, code = block_status, block_code
+        result = {"status": status, "code": code}
+        committed = self._wall_clock()
+        await conn.execute(
+            m.event_executions.insert().values(
+                event_id=event_id,
+                status=status,
+                authorization_evidence=authorization_evidence,
+                result_json=result,
+                committed_at=committed,
+            )
+        )
+        await conn.execute(
+            m.event_jobs.update().where(m.event_jobs.c.id == event_id).values(status="DONE")
+        )
+        return {
+            "event_id": event_id,
+            "customer_id": customer_id,
+            "status": status,
+            "result": result,
+            "committed_at": committed.isoformat(),
+        }
 
     async def _fund_order_ctx(self, conn, order_id: str):
         """Load fund order fields needed to build a bankcore Context."""
@@ -248,12 +380,16 @@ class EventService:
         await persist(conn, effects)
         await self._bump_version(conn, customer_id, version["version"] + 1)
         committed = self._wall_clock()
+        actual_order = next((order for order in state.fund_orders if order.id == order_id), None)
+        if actual_order is None:
+            raise BankError(Code.NOT_FOUND, 404)
         if errors:
             result = {"status": "FAILED", "code": errors[0].code.value}
             exec_status = "FAILED_INSUFFICIENT"
         else:
             result = {"status": "SUCCESS"}
             exec_status = "SUCCESS"
+        result.update(order_status=actual_order.status, no_op=not errors and not effects)
         await conn.execute(
             m.event_executions.insert().values(
                 event_id=event_id,
@@ -378,9 +514,31 @@ class EventService:
                 "billing_id": billing["id"],
                 "merchant_id": billing["merchant_id"],
             }
+        elif row["kind"] == "REMINDER":
+            billing, instruction, reminder = await self._reminder_sources(conn, row)
+            definition = {
+                "account_id": billing["account_id"],
+                "billing_id": billing["id"],
+                "merchant_id": billing["merchant_id"],
+                "amount_cents": reminder["amount_cents"],
+                "charge_due_at": reminder["charge_due_at"],
+            }
+        elif row["kind"] in _FUND_KINDS:
+            order = (
+                (
+                    await conn.execute(
+                        select(m.fund_orders).where(m.fund_orders.c.id == row["source_id"])
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if order is None or order["customer_id"] != owner:
+                raise BankError(Code.NOT_FOUND, 404)
+            definition = {"source_plan_id": order["plan_id"], "account_id": order["account_id"]}
         if instruction is not None:
             definition["grant_scope"] = instruction_scope(
-                instruction, billing if row["kind"] == "MERCHANT_CHARGE" else None
+                instruction, billing if row["kind"] in ("MERCHANT_CHARGE", "REMINDER") else None
             )
             source = (
                 (
@@ -413,7 +571,7 @@ class EventService:
                 ]
                 if len(originals) == 1:
                     definition["source_instruction"] = originals[0]
-        if row["kind"] in ("SCHEDULED_TRANSFER", "MERCHANT_CHARGE"):
+        if row["kind"] in ("SCHEDULED_TRANSFER", "MERCHANT_CHARGE", "REMINDER"):
             definition.update(
                 {
                     "instruction_id": instruction["id"] if instruction else None,
@@ -464,6 +622,10 @@ class EventService:
                 clock_version,
                 expected_payload_hash,
                 authorization_evidence,
+            )
+        if kind == "REMINDER":
+            return await self._execute_reminder_event(
+                conn, row, event_id, expected_versions, clock_version, authorization_evidence
             )
         customer_id = await self._customer_for(conn, row)
         await self._check_customer(conn, customer_id)
@@ -598,6 +760,17 @@ class EventService:
         if expected_payload_hash != row["payload_hash"]:
             raise BankError(Code.CONTRACT_INVALID, status=422)
         kind = row["kind"]
+        if kind == "REMINDER":
+            return await self._execute_reminder_event(
+                conn,
+                row,
+                event_id,
+                expected_versions,
+                clock_version,
+                {},
+                block_status=status,
+                block_code=code,
+            )
         if kind not in ("SCHEDULED_TRANSFER", "MERCHANT_CHARGE"):
             raise BankError(Code.TOOL_NOT_ALLOWED, status=422)
         customer_id = await self._customer_for(conn, row)

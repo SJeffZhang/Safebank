@@ -37,6 +37,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 from safebank_bankcore.events import apply_merchant_charge
 from safebank_bankcore.grants import due_in_consent, instruction_scope
+from safebank_bankcore.ids import digest
 from safebank_contracts.codes import Code
 from safebank_contracts.plan import (
     DemoEvidence,
@@ -52,6 +53,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from .. import tables as t
 from ..audit.chain import append as audit_append
 from ..errors import GatewayError
+from ..event_notifications import notify_event_result
 from ..l3.client import L3Error
 from ..pipeline import contract, decision, entity, preflight, snapshot, workflow
 from ..pipeline import evaluate as run_pipeline
@@ -230,6 +232,8 @@ async def _finalize_claim(
     code: str | None,
     wall_now,
     trace_id: str | None,
+    *,
+    event: dict[str, Any],
 ) -> None:
     """Promote the IN_PROGRESS row to a terminal status with audit in one
     transaction.  Only succeeds if the row is still IN_PROGRESS."""
@@ -257,8 +261,11 @@ async def _finalize_claim(
                 plan_id=None,
                 now_wall=wall_now,
             )
+            await notify_event_result(conn, event=event, status=status)
         except Exception as exc:
-            raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503, "audit write failed") from exc
+            raise GatewayError(
+                Code.DEPENDENCY_UNAVAILABLE, 503, "event audit or notification write failed"
+            ) from exc
 
 
 async def _release_claim(db, event_id: str) -> None:
@@ -274,7 +281,14 @@ async def _release_claim(db, event_id: str) -> None:
 
 
 async def _finalize_system_result(
-    db, app, event_id: str, customer_id: str, result: dict[str, Any], trace_id: str | None
+    db,
+    app,
+    event_id: str,
+    customer_id: str,
+    result: dict[str, Any],
+    trace_id: str | None,
+    *,
+    event: dict[str, Any],
 ) -> dict[str, Any]:
     """Record L3's terminal outcome for a system event.
 
@@ -291,8 +305,14 @@ async def _finalize_system_result(
     if status not in _TERMINAL_STATUSES:
         await _release_claim(db, event_id)
         return _retrying(event_id)
+    if event.get("event_id") != event_id or event.get("customer_id") != customer_id:
+        raise ValueError("event definition identity mismatch")
+    execution = dict(result, status=status)
+    event = dict(event, execution=execution)
     code = (result.get("result") or {}).get("code") or result.get("code")
-    await _finalize_claim(db, event_id, customer_id, status, code, app.wall_now(), trace_id)
+    await _finalize_claim(
+        db, event_id, customer_id, status, code, app.wall_now(), trace_id, event=event
+    )
     return {
         "event_id": event_id,
         "status": status,
@@ -340,7 +360,9 @@ async def _handle_system_event(
         await _release_claim(db, event_id)
         return _retrying(event_id)
 
-    return await _finalize_system_result(db, app, event_id, customer_id, result, trace_id)
+    return await _finalize_system_result(
+        db, app, event_id, customer_id, result, trace_id, event=event
+    )
 
 
 async def _handle_demo_event(
@@ -403,7 +425,9 @@ async def _handle_demo_event(
         await _release_claim(db, event_id)
         return _retrying(event_id)
 
-    return await _finalize_system_result(db, app, event_id, customer_id, result, trace_id)
+    return await _finalize_system_result(
+        db, app, event_id, customer_id, result, trace_id, event=event
+    )
 
 
 async def _re_evaluate(request: Request, event: dict[str, Any]) -> EvalContext:
@@ -442,6 +466,125 @@ def _scope_in_state(state: BankState, event: dict) -> dict | None:
     return instruction_scope(
         instruction.model_dump(mode="python"),
         billing.model_dump(mode="python") if billing else None,
+    )
+
+
+async def _handle_reminder_event(request: Request, event: dict[str, Any]) -> dict[str, Any]:
+    """A read-only reminder still requires its exact live mandate and saved grant."""
+    app = request.app.state
+    try:
+        raw = await app.l3.snapshot(
+            {"customer_id": event["customer_id"], "steps": [], "event_id": None}
+        )
+        state = BankState.model_validate(raw)
+    except (L3Error, ValueError, TypeError):
+        await _release_claim(app.db, event["event_id"])
+        return _retrying(event["event_id"])
+    async with app.db.connect() as conn:
+        grant = await _load_grant(conn, event.get("instruction_id"))
+    obligations = state.obligations
+    billing = obligations.billings.get(event["source_id"]) if obligations else None
+    instruction = (
+        obligations.standing_instructions.get(event.get("instruction_id")) if obligations else None
+    )
+    payload = event.get("payload")
+    valid = False
+    try:
+        fields = {
+            "billing_id",
+            "customer_id",
+            "account_id",
+            "amount_cents",
+            "charge_due_at",
+            "instruction_id",
+        }
+        charge_due = datetime.fromisoformat(payload["charge_due_at"])
+        reminder_due = datetime.fromisoformat(event["due_at"])
+        seed = grant["scope_json"].get("seed_consent") if grant else None
+        bound = (
+            seed["terms"]
+            if seed
+            else grant["scope_json"].get("instruction_scope")
+            if grant
+            else None
+        )
+        valid = (
+            isinstance(payload, dict)
+            and set(payload) == fields
+            and type(payload["amount_cents"]) is int
+            and digest(payload) == event["payload_hash"]
+            and billing is not None
+            and instruction is not None
+            and instruction.kind == "MERCHANT_MANDATE"
+            and instruction.status == "ACTIVE"
+            and billing.active
+            and (
+                payload["billing_id"],
+                payload["customer_id"],
+                payload["account_id"],
+                payload["instruction_id"],
+            )
+            == (billing.id, event["customer_id"], billing.account_id, instruction.id)
+            and (
+                instruction.billing_id,
+                instruction.customer_id,
+                instruction.from_account_id,
+                instruction.merchant_id,
+            )
+            == (billing.id, billing.customer_id, billing.account_id, billing.merchant_id)
+            and billing.customer_id == event["customer_id"]
+            and billing.amount_cents == payload["amount_cents"] == event["amount_cents"]
+            and 0 < billing.amount_cents <= instruction.max_amount_cents
+            and billing.next_due_at == charge_due
+            and reminder_due <= state.sim_now < charge_due <= state.sim_now + timedelta(days=3)
+            and billing.created_at <= state.sim_now
+            and instruction.created_at <= state.sim_now
+            and (instruction.end_at is None or instruction.end_at >= charge_due)
+            and grant is not None
+            and grant["status"] == "ACTIVE"
+            and grant.get("revoked_at") is None
+            and grant["instruction_id"] == instruction.id
+            and grant["customer_id"] == event["customer_id"]
+            and grant["source_plan_id"] == instruction.source_plan_id == event["source_plan_id"]
+            and grant["scope_hash"] == instruction.grant_scope_hash == event["grant_scope_hash"]
+            and bound == event.get("grant_scope") == _scope_in_state(state, event)
+        )
+    except (KeyError, TypeError, ValueError, AttributeError):
+        valid = False
+    if not valid:
+        return await _block(
+            request,
+            app.db,
+            event,
+            "BLOCKED",
+            Code.MANDATE_NOT_ACTIVE.value,
+            ctx=EvalContext(snapshot=state),
+        )
+    try:
+        result = await app.l3.event_execute(
+            event["event_id"],
+            {
+                "expected_versions": dict(state.versions),
+                "clock_version": state.clock_version,
+                "expected_payload_hash": event["payload_hash"],
+                "authorization_evidence": {
+                    "type": "SYSTEM_REMINDER",
+                    "billing_id": billing.id,
+                    "instruction_id": instruction.id,
+                },
+            },
+        )
+    except L3Error:
+        await _release_claim(app.db, event["event_id"])
+        return _retrying(event["event_id"])
+    return await _finalize_system_result(
+        app.db,
+        app,
+        event["event_id"],
+        event["customer_id"],
+        result,
+        getattr(request.state, "trace_id", None),
+        event=event,
     )
 
 
@@ -524,6 +667,7 @@ async def _handle_merchant_event(request: Request, grant: dict | None, event: di
         event["customer_id"],
         result,
         getattr(request.state, "trace_id", None),
+        event=event,
     )
 
 
@@ -660,6 +804,7 @@ async def _block(
         event["customer_id"],
         result,
         getattr(request.state, "trace_id", None),
+        event=event,
     )
 
 
@@ -709,7 +854,7 @@ async def authorize_event(request: Request, body: AuthorizeRequest) -> dict[str,
         customer_id = event["customer_id"]
         if event.get("execution") is not None:
             return await _finalize_system_result(
-                db, app, event_id, customer_id, event["execution"], trace_id
+                db, app, event_id, customer_id, event["execution"], trace_id, event=event
             )
 
         # ── System events (no grant) ────────────────────────────────────────
@@ -719,6 +864,9 @@ async def authorize_event(request: Request, body: AuthorizeRequest) -> dict[str,
             return await _handle_system_event(
                 request, db, app, l3, event, event_id, customer_id, trace_id
             )
+
+        if event_kind == "REMINDER":
+            return await _handle_reminder_event(request, event)
 
         if event_kind == "DEMO_EVENT":
             return await _handle_demo_event(
@@ -846,7 +994,9 @@ async def authorize_event(request: Request, body: AuthorizeRequest) -> dict[str,
             await _release_claim(db, event_id)
             return _retrying(event_id)
 
-        return await _finalize_system_result(db, app, event_id, customer_id, result, trace_id)
+        return await _finalize_system_result(
+            db, app, event_id, customer_id, result, trace_id, event=event
+        )
 
     except Exception:
         # On any unhandled error, release the claim so the event isn't
