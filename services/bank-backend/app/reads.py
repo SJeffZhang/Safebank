@@ -8,6 +8,7 @@ from safebank_bankcore.analytics import detect_anomalies, detect_subscriptions, 
 from safebank_bankcore.banking import card_view
 from safebank_bankcore.funds import holdings_view
 from safebank_bankcore.ids import digest
+from safebank_bankcore.merchant_categories import transaction_category
 from safebank_bankcore.reserve import _business_time, upcoming_window
 from safebank_bankcore.risk import risk_valid_until_date
 from safebank_contracts.codes import Code
@@ -203,7 +204,7 @@ def read(state, tool, args, customer_id):
             for t in state.transactions
             if args.from_at <= t.occurred_at < args.to_at
             and (args.account_id is None or args.account_id == t.account_id)
-            and (args.category is None or args.category == t.category)
+            and (args.category is None or args.category == transaction_category(state, t))
             and (args.merchant_id is None or args.merchant_id == t.merchant_id)
             and (args.kind is None or args.kind == t.kind)
         ]
@@ -227,8 +228,16 @@ def read(state, tool, args, customer_id):
             items=[
                 dict(
                     **t.model_dump(
-                        exclude={"customer_id", "transfer_id", "sequence", "phase", "channel"}
+                        exclude={
+                            "customer_id",
+                            "transfer_id",
+                            "sequence",
+                            "phase",
+                            "channel",
+                            "category",
+                        }
                     ),
+                    category=transaction_category(state, t),
                     merchant_name=None,
                 )
                 for t in transactions

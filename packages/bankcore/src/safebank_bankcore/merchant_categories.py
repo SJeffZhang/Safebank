@@ -27,3 +27,20 @@ _CATEGORY = {
 
 def merchant_category(mcc: str | None, category: str | None) -> str:
     return _MCC.get(mcc, _CATEGORY.get(category, "其他"))
+
+
+def transaction_category(state, transaction) -> str:
+    """Read projection for historical consumption; never classify free text.
+
+    Prefer the same authoritative merchant catalogue as new charge producers.
+    Missing merchant records fall back to the saved category through the same
+    eight-bucket map. Transfer categories retain their original semantics.
+    """
+    if transaction.kind not in {"CARD_SPEND", "MERCHANT_CHARGE", "MANDATE"}:
+        return transaction.category
+    merchant = (
+        state.obligations.merchants.get(transaction.merchant_id) if state.obligations else None
+    )
+    if merchant is not None:
+        return merchant_category(merchant.mcc, merchant.category)
+    return merchant_category(None, transaction.category)
