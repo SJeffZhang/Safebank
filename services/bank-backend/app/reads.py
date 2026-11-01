@@ -372,9 +372,19 @@ def read(state, tool, args, customer_id):
             elif obl.rank == 3:
                 # Scheduled transfer
                 target = targets_map.get(obl.id)
-                target_display = ""
-                if target:
-                    target_display = target.target_account_id or target.target_customer_id or ""
+                instruction = snapshot.standing_instructions.get(obl.id) if snapshot else None
+                payee = state.payees.get(getattr(instruction, "payee_id", None))
+                target_display = "待核对收款目标"
+                if payee is not None and payee.customer_id == customer_id:
+                    target_display = payee.name
+                elif target is not None:
+                    account = state.accounts.get(target.target_account_id)
+                    if target.ownership == "OWN" and account and account.customer_id == customer_id:
+                        target_display = account.display_name or "本人账户"
+                    else:
+                        target_display = (
+                            "他行收款人" if target.ownership == "EXTERNAL" else "本行收款人"
+                        )
                 scheduled.append(
                     dict(
                         instruction_id=obl.id,

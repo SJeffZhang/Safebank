@@ -399,7 +399,7 @@ async def load_bank_state(conn, scope: StateScope, now, *, customer_id: str) -> 
             score=r["score"],
             level=r["level"],
             assessed_at=r["assessed_at"],
-            valid_until=r["valid_until"].date(),
+            valid_until=r["valid_until"].astimezone(BUSINESS_TIMEZONE).date(),
             plan_id=r["plan_id"],
         )
         for r in (
@@ -506,7 +506,7 @@ async def load_bank_state(conn, scope: StateScope, now, *, customer_id: str) -> 
             risk_level=r["risk_level"],
             risk_label=r["risk_label"],
             base_nav=r["base_nav"],
-            base_date=r["base_date"].date(),
+            base_date=r["base_date"].astimezone(BUSINESS_TIMEZONE).date(),
             confirm_days=r["confirm_days"],
             settle_days=r["settle_days"],
             min_amount_cents=r["min_amount_cents"],
