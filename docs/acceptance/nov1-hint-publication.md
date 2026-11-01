@@ -1,5 +1,9 @@
 # Nov 1 T5: bound REPLAN hint publication checkpoint
 
+协调者集成回执：bee711d、测试接线6d18/2743/876128及service/legacy窄补丁已集成；C对精确bee+两补丁独审74pure APPROVE，原补丁hash/边界见review-nov1-hints。root实际网关PG15通过/9.59s（新8项完整G4→G22a→G3→新G4→G9，旧W1 7项含legacy拒绝），无execution_jobs，未执行资金。原仅app token读取G9仍403，正常app+approve读取面板通过，assistant未获approve。
+
+三次新fixture纠正不计产品红：首次w3b harness未接locks.configure致G3 503；第二次旧2026-10-24墙钟签发G3 token被真实JWT过期检查401；第三次next G4已成功，失败实际在G9 app-only token缺approve导致403（root初误定位nextG4已纠正）。仅修锁资源/真实墙钟/合法测试凭证，生产签验/权限零放宽。日志/private/tmp/sbg-nov1-hints-pg-{green,green2,green3,green4}.log。原缺持久化的产品红仍是独立旧d6精确归档hints=0，不把harness错误混入。完整W3b与最终head CI另核。
+
 2026-11-01. Base: d6a5df11d67baaa41c47862c11ab7c24e767f1cf. This is a development checkpoint; real PG and the coordinator-owned G3 hook remain required.
 
 ## Evidence and behavior

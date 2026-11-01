@@ -426,6 +426,9 @@ async def register(
             raise GatewayError(Code.UTTERANCE_EXPIRED, 409)
         expiry = min(expiry, row["expires_at_wall"])
         if body.kind == "hint":
+            from ..hint_sources import validate_hint_source
+
+            await validate_hint_source(conn, session, row, now)
             parsed = Parsed(
                 scope=NormalizedScope.model_validate(row["scope_json"]), status=ParseStatus.SCOPED
             )
