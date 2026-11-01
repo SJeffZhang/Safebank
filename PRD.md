@@ -1865,3 +1865,6 @@ G9状态消费约定（2026-10-31）：`GET /approvals/{id}` 的当前响应stat
 `--observe-only`始终只生成OBSERVED/business_verified=false；外部`--proofs`及`--verify-run`只接受完整批次且精确匹配元数据与trace哈希的可信SQL收据。非默认固定用例无内置verified支持时须明确拒绝或使用观察/外部收据，不推断43条通过。快照私有保存，秘密字段拒绝而不篡改金融事实；OTP已验证布尔/authorization_epoch整数等非秘密元数据保留。quota/超时/未知或不完整trace、SQL/来源/seed错误立即停止批次；持久化失败亦清除全局与case绿色标志，保留故障文件不覆盖旧partial。
 
 上述是已开发接口与自动化测试约束。本对话按用户最新指令不执行演示、生产录制、彩排或实际断网验收，相关发布冻结门禁仍待单独完成，未全过不tag。
+
+
+D4开发补充（2026-10-31）：请求严格整数分和按kind字段约束；可选counterparty仅作不可信交易文本。due_at由L2从L3模拟快照读取，console_session_id由已验证控制台JWT派生，不接受客户端伪造。按(customer_id,request_id)保留首次不可变事件，语义字段改变返回409 IDEMPOTENCY_CONFLICT，时钟变化/重新登录后的同请求重试复用原事件与证据。注册后通过与S1相同的L2事件引擎执行，返回{event_id,result}，RETRYING不等于成功。L3验证event/kind/console证据与到期时钟，AA付款账本和付款进度同事务，事件重放不重复入账，错误金额/已付项为终态拒绝。卡刷卡校验卡归属/当前卡/渠道与限额，不带卡ID的外部扣款使用独立EXTERNAL_DEBIT类型。

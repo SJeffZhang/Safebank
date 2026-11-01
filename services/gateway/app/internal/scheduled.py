@@ -370,11 +370,24 @@ async def _handle_demo_event(
         await _release_claim(db, event_id)
         return _retrying(event_id)
 
+    import json
+
+    payload = event.get("payload")
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    payload = payload if isinstance(payload, dict) else {}
+    kind = payload.get("kind")
+    kind = {"credit": "EXTERNAL_CREDIT", "debit": "EXTERNAL_DEBIT", "split": "SPLIT_PAYMENT"}.get(
+        kind, kind
+    )
+    if kind not in ("EXTERNAL_CREDIT", "EXTERNAL_DEBIT", "SPLIT_PAYMENT"):
+        await _release_claim(db, event_id)
+        return _retrying(event_id)
     evidence = DemoEvidence(
         type="DEMO_EVENT",
         event_id=event_id,
-        console_session_id="scheduler",
-        kind="EXTERNAL_CREDIT",
+        console_session_id=payload.get("console_session_id") or "scheduler",
+        kind=kind,
     )
     try:
         result = await l3.event_execute(
@@ -665,6 +678,11 @@ async def scheduled_authorize(request: Request, body: AuthorizeRequest) -> dict[
     if caller is None or caller.kind is not ServiceKind.S:
         raise GatewayError(Code.UNAUTHENTICATED, 401)
 
+    return await authorize_event(request, body)
+
+
+async def authorize_event(request: Request, body: AuthorizeRequest) -> dict[str, Any]:
+    """Shared event engine; called only after S1 or D4 credential checks."""
     app = request.app.state
     db = app.db
     l3 = app.l3

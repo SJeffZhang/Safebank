@@ -49,6 +49,9 @@ class ExternalDebit:
     counterparty: str | None = None
     memo: str | None = None
     kind: str = "CARD_SPEND"
+    card_id: str | None = None
+    channel: str | None = None
+    merchant_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -94,6 +97,7 @@ def _post_simple(
     memo: str | None,
     card_id: str | None,
     tag: str,
+    merchant_id: str | None = None,
 ):
     """Post a POSTED transfer to/from the external clearing account.
 
@@ -161,6 +165,7 @@ def _post_simple(
             category=category,
             memo=memo,
             card_id=card_id if direction == "OUT" else None,
+            merchant_id=merchant_id,
             occurred_at=now,
         )
         transactions.append(tx)
@@ -212,6 +217,20 @@ def apply_external_debit(state: BankState, args: ExternalDebit, now: datetime, c
     if account is None or account.customer_id != ctx.customer_id:
         return _reject(state, ctx, Code.NOT_FOUND)
     card = state.cards.get(account.current_card_id) if account.current_card_id else None
+    if args.card_id is not None:
+        if card is None or card.id != args.card_id or card.account_id != account.id:
+            return _reject(state, ctx, Code.OWNERSHIP_MISMATCH)
+        channel = args.channel or "POS"
+        control = {
+            "ONLINE": "online",
+            "OVERSEAS": "overseas",
+            "ATM": "atm",
+            "QUICKPASS": "quickpass",
+        }
+        if channel != "POS" and (
+            channel not in control or not getattr(card.controls, control[channel])
+        ):
+            return _reject(state, ctx, Code.CARD_STATE_CONFLICT)
     if card:
         if card.status != CardStatus.ACTIVE:
             return _reject(state, ctx, Code.CARD_STATE_CONFLICT)
@@ -235,6 +254,7 @@ def apply_external_debit(state: BankState, args: ExternalDebit, now: datetime, c
         memo=args.memo,
         card_id=card.id if card else None,
         tag="exdb",
+        merchant_id=args.merchant_id,
     )
     if errors or not effects:
         return after, effects, errors

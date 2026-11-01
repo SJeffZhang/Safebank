@@ -170,6 +170,11 @@ class L3Client:
             timeout=self.timeouts["default"],
         )
 
+    async def demo_event(self, body: dict[str, Any]) -> dict[str, Any]:
+        return await self._request(
+            "POST", "/internal/demo/events", json=body, timeout=self.timeouts["default"]
+        )
+
     async def clock_advance(self, body: dict[str, Any]) -> dict[str, Any]:
         return await self._request(
             "POST", "/internal/clock/advance", json=body, timeout=self.timeouts["default"]

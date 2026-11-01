@@ -20,7 +20,7 @@ import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from safebank_bankcore import events as bank_events
 from safebank_bankcore import external as bank_external
 from safebank_bankcore import funds as bank_funds
@@ -28,6 +28,7 @@ from safebank_bankcore.banking import Context
 from safebank_bankcore.grants import instruction_scope
 from safebank_contracts.codes import Code
 from safebank_contracts.obligations import InstructionRun
+from safebank_contracts.plan import DemoEvidence
 from safebank_contracts.state import StateScope
 from sqlalchemy import select, text
 
@@ -64,12 +65,14 @@ def _iso(value: datetime | None) -> str | None:
 
 
 def _demo_data(immutable_payload: object) -> dict:
-    raw = (
-        immutable_payload.get("payload")
-        if isinstance(immutable_payload, dict)
-        else immutable_payload
-    )
-    return json.loads(raw) if isinstance(raw, str) else raw
+    raw = immutable_payload
+    if isinstance(raw, dict) and "payload" in raw:
+        raw = raw["payload"]
+    if isinstance(raw, str):
+        raw = json.loads(raw)
+    if not isinstance(raw, dict):
+        raise BankError(Code.CONTRACT_INVALID, 422)
+    return raw
 
 
 def _execution_dict(row) -> dict:
@@ -424,7 +427,7 @@ class EventService:
             "kind": row["kind"],
             "customer_id": owner,
             "due_at": _iso(row["due_at"]),
-            "payload": payload.get("payload") if isinstance(payload, dict) else payload,
+            "payload": payload.get("payload", payload) if isinstance(payload, dict) else payload,
             "payload_hash": row["payload_hash"],
             "source_id": row["source_id"],
             "period_key": row["period_key"],
@@ -467,6 +470,29 @@ class EventService:
         version = await self._lock_clock_and_version(
             conn, customer_id, clock_version, expected_versions
         )
+        if kind == "DEMO_EVENT":
+            data = _demo_data(row["immutable_payload"])
+            expected_kind = {
+                "credit": "EXTERNAL_CREDIT",
+                "debit": "EXTERNAL_DEBIT",
+                "split": "SPLIT_PAYMENT",
+            }.get(data.get("kind"), data.get("kind"))
+            try:
+                evidence = DemoEvidence.model_validate(authorization_evidence)
+            except ValidationError:
+                raise BankError(Code.CONTRACT_INVALID, 422) from None
+            if (
+                evidence.event_id != event_id
+                or evidence.kind != expected_kind
+                or (
+                    data.get("console_session_id") is not None
+                    and evidence.console_session_id != data["console_session_id"]
+                )
+            ):
+                raise BankError(Code.CONTRACT_INVALID, 422)
+            sim_now = await conn.scalar(select(m.clock.c.sim_now).where(m.clock.c.id == 1))
+            if row["due_at"] > sim_now:
+                raise BankError(Code.EVENT_NOT_DUE)
         state = await load_bank_state(
             conn,
             StateScope(customer_ids=(customer_id,)),
@@ -490,9 +516,26 @@ class EventService:
                 period_key=row["period_key"],
             )
         else:  # DEMO_EVENT
-            state, effects, run = self._apply_demo(state, row)
+            state, effects, errors = self._apply_demo(state, row)
+            run = None
         await persist(conn, effects)
         await self._persist_period_cursor(conn, state, run)
+        if kind == "DEMO_EVENT" and not errors:
+            data = _demo_data(row["immutable_payload"])
+            if data.get("kind") in ("split", "SPLIT_PAYMENT"):
+                item_id = data.get("split_item_id") or data.get("item_id")
+                changed = await conn.execute(
+                    m.split_items.update()
+                    .where(
+                        m.split_items.c.id == item_id,
+                        m.split_items.c.customer_id == customer_id,
+                        m.split_items.c.account_id == data["account_id"],
+                        m.split_items.c.status == "UNPAID",
+                    )
+                    .values(status="PAID", paid_at=row["due_at"], payment_event_id=event_id)
+                )
+                if changed.rowcount != 1:
+                    raise BankError(Code.SPLIT_INVALID)
         await self._bump_version(conn, customer_id, version["version"] + 1)
         if isinstance(run, InstructionRun):
             await conn.execute(m.instruction_runs.insert().values(**run.model_dump(mode="python")))
@@ -503,8 +546,14 @@ class EventService:
                 "amount_cents": run.amount_cents,
             }
         else:
-            result = {}
-        event_status = run.status if isinstance(run, InstructionRun) else "SUCCESS"
+            result = (
+                {"status": "REJECTED", "code": errors[0].code.value}
+                if errors
+                else {"status": "SUCCESS"}
+            )
+        event_status = (
+            run.status if isinstance(run, InstructionRun) else ("BLOCKED" if errors else "SUCCESS")
+        )
         committed = self._wall_clock()
         await conn.execute(
             m.event_executions.insert().values(
@@ -621,11 +670,11 @@ class EventService:
         kind = data.get("kind")
         ctx = Context(
             customer_id=data.get("customer_id"),
-            plan_id="system",
+            plan_id=f"system:{row['id']}",
             step_id="event",
         )
         now = row["due_at"]
-        if kind == "credit":
+        if kind in ("credit", "EXTERNAL_CREDIT"):
             args = bank_external.ExternalCredit(
                 account_id=data["account_id"],
                 amount_cents=data["amount_cents"],
@@ -634,19 +683,40 @@ class EventService:
                 kind=data.get("tx_kind", "SALARY"),
             )
             return bank_external.apply_external_credit(state, args, now, ctx)
-        if kind == "debit":
+        if kind in ("debit", "EXTERNAL_DEBIT"):
             args = bank_external.ExternalDebit(
                 account_id=data["account_id"],
                 amount_cents=data["amount_cents"],
                 counterparty=data.get("counterparty"),
                 memo=data.get("memo"),
-                kind=data.get("tx_kind", "CARD_SPEND"),
+                kind=data.get(
+                    "tx_kind",
+                    "CARD_SPEND" if data.get("card_id") or kind == "debit" else "EXTERNAL_DEBIT",
+                ),
+                card_id=data.get("card_id"),
+                channel=data.get("channel"),
+                merchant_id=data.get("merchant_id"),
             )
             return bank_external.apply_external_debit(state, args, now, ctx)
-        if kind == "split":
+        if kind in ("split", "SPLIT_PAYMENT"):
+            item_id = data.get("split_item_id") or data.get("item_id")
+            splits = [
+                split
+                for split in state.splits
+                if split.account_id == data["account_id"]
+                and any(item.id == item_id for item in split.items)
+            ]
+            if len(splits) != 1:
+                from safebank_contracts.plan import Violation
+
+                return (
+                    state,
+                    (),
+                    (Violation(code=Code.SPLIT_INVALID, message=Code.SPLIT_INVALID.value),),
+                )
             args = bank_external.SplitPayment(
-                split_id=data["split_id"],
-                item_id=data["item_id"],
+                split_id=splits[0].id,
+                item_id=item_id,
                 amount_cents=data["amount_cents"],
             )
             return bank_external.apply_split_payment(state, args, now, ctx)

@@ -10,6 +10,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from safebank_contracts.codes import Code
+from safebank_contracts.demo import DemoEventPayload
 from sqlalchemy import select
 
 from .. import tables as t
@@ -21,6 +22,7 @@ from ..auth.matrix import CONSOLE_AUD
 from ..auth.tokens import sign_jwt
 from ..errors import GatewayError
 from ..l3.client import L3BusinessError, L3Error
+from ..schemas.enums import ServiceKind
 from ..utterance.service import new_id
 from . import stub
 
@@ -83,7 +85,58 @@ async def console_login(body: ConsoleLoginRequest, request: Request):
 
 router.post("/demo/reset")(stub("D1 reset lands in W5"))
 router.post("/demo/scene/prepare")(stub("D2 scene prepare lands in W5"))
-router.post("/demo/events")(stub("D4 inject event lands in W5"))
+
+
+class DemoEventRequest(DemoEventPayload):
+    request_id: str = Field(min_length=1, max_length=128)
+
+
+@router.post("/demo/events")
+async def demo_event(body: DemoEventRequest, request: Request):
+    from ..internal.scheduled import AuthorizeRequest, authorize_event
+
+    caller = getattr(request.state, "caller", None)
+    if caller is None or caller.kind is not ServiceKind.D or "console" not in caller.scopes:
+        raise GatewayError(Code.UNAUTHENTICATED, 401)
+    if not (request.app.state.settings.demo_mode or request.app.state.settings.eval_mode):
+        raise GatewayError(Code.NOT_FOUND, 404)
+    try:
+        bank = await request.app.state.l3.snapshot(
+            {"customer_id": body.customer_id, "steps": [], "event_id": None}
+        )
+        due_at = datetime.fromisoformat(bank["sim_now"])
+        if due_at.tzinfo is None or due_at.utcoffset() is None:
+            raise ValueError("simulation clock requires timezone")
+        registered = await request.app.state.l3.demo_event(
+            {
+                **body.model_dump(mode="json"),
+                "due_at": due_at.isoformat(),
+                "console_session_id": caller.jti,
+            }
+        )
+        event_id = registered["event_id"]
+        if not isinstance(event_id, str) or not event_id:
+            raise ValueError("event id missing")
+    except L3BusinessError as exc:
+        try:
+            code = Code(exc.code)
+        except ValueError:
+            code = Code.DEPENDENCY_UNAVAILABLE
+        raise GatewayError(code, exc.status if exc.status < 500 else 503) from None
+    except (L3Error, ValueError, KeyError, TypeError):
+        raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503) from None
+    await append_tx(
+        request.app.state.db,
+        customer_id=body.customer_id,
+        event_type="DEMO_EVENT_REGISTERED",
+        event_id=new_id("evt"),
+        payload={"event_id": event_id, "kind": body.kind, "request_id": body.request_id},
+        now_wall=_now(request),
+    )
+    result = await authorize_event(
+        request, AuthorizeRequest(event_id=event_id, request_id=body.request_id)
+    )
+    return {"event_id": event_id, "result": result}
 
 
 # ── D5 GET /demo/sms ──────────────────────────────────────────────────────────

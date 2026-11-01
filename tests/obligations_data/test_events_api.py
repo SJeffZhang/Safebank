@@ -663,6 +663,7 @@ def test_demo_event_external_credit(obligations_db):
 
         admin = _admin_conn(obligations_db)
         async with admin.begin() as conn:
+            await conn.execute(m.clock.update().where(m.clock.c.id == 1).values(sim_now=demo_due))
             await _seed_event(
                 conn,
                 event_id=evt_id,
@@ -687,7 +688,12 @@ def test_demo_event_external_credit(obligations_db):
                 expected_versions={"cus_zs": cust_ver},
                 clock_version=clock_ver,
                 expected_payload_hash=payload_hash,
-                authorization_evidence={"by": "test"},
+                authorization_evidence={
+                    "type": "DEMO_EVENT",
+                    "event_id": evt_id,
+                    "console_session_id": "scheduler",
+                    "kind": "EXTERNAL_CREDIT",
+                },
             )
         assert result["event_id"] == evt_id
         assert result["customer_id"] == "cus_zs"
