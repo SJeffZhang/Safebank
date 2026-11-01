@@ -28,3 +28,7 @@ OWN/EXTERNAL继续原单客户屏障，REMINDER/fund/D4分支保持原实现；�
 新增SQL AST内存边界配合真实bankcore：旧实现4 failed / 1 passed；新实现11项通过，覆盖双scope/排序锁/两版本+1、缺旧source/peer、旧clock、锁后目标变化、重放、BLOCKED/余额不足不增peer、callback额外版本键不扩大scope、他人payee不能提供目标。
 
 实际运行：`.venv/bin/pytest -q tests/bankcore tests/obligations_data/test_scheduled_peer_runtime_unit.py tests/obligations_data/test_reminder_runtime_unit.py tests/obligations_data/test_reminders.py` → **526 passed**（1.07秒）；相关ruff check/format及diff检查通过。PG新增文件再次collect：6 tests collected（0.23秒），**修复后真实PG尚待协调者亲跑，不记为通过**。需在最终集成head上复验双方账本/版本和stale回滚，并由未实现者独审；本单元不推送、不合并、不更新共享AGENTS/PRD。
+
+## 协调者集成绿验
+
+root8d0ac42实际tmpfs PG运行六条全部通过/3.77s（旧3fail3pass）；双方金额/版本、stale/missing-peer完整回滚、重放及OWN/EXTERNAL对照均通过。独立作者外B已复核526纯测+8自写边界并APPROVE；最终完整head CI另核。

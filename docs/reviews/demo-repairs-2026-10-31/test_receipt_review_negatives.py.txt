@@ -1,0 +1,15 @@
+"""Independent, offline review regressions; source worktree is untouched."""
+import pytest
+from services.agent.app.llm.verify import OutputVerifier
+from tests.agent.test_execution_receipt_facts import WrongLLM
+
+
+@pytest.mark.parametrize('status,draft,repaired', [
+    ('FAILED', '转账成功。', '已转账。'),
+    ('UNKNOWN', '已到账。', '已向王五转账。'),
+])
+def test_nonterminal_or_failed_execution_repair_cannot_claim_a_transfer(status, draft, repaired):
+    llm = WrongLLM(repaired)
+    output = OutputVerifier(llm)({'reply_draft': draft, 'execution': {'status': status}}, None)
+    assert llm.calls == 0
+    assert output != repaired

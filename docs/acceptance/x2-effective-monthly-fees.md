@@ -17,3 +17,7 @@
 - 新回归使用生产纯`_derive_views`，不手填正节省；invalid/valid都断言原计划金额保持不变。四个修改Python的ruff check/format与diff check通过。
 
 本人未运行DB/API/provider/Docker/浏览器/部署。协调者已独占扩展`tests/gateway/w3b/db/test_current_authorization.py`的cap/end × NO_WRITE/SCOPED真实G4回归；集成本单元后在其隔离PG环境串行重跑该文件并保留2有效正控，再独审/最终完整CI。不得以本纯测代替这些门禁。
+
+## 协调者集成与独审
+
+root e14c7dd独立只读APPROVE/18相关纯测通过。真实G4旧4红/2正控→新6pass/3.13s；cap/expired两种历史原话上下文均REPLAN/noapproval，valid保持黄级审批；没有execution。初轮6个503源于共享fixture覆盖两个纯测客户但G4实际单客户，按实际versions校准测试覆盖后绿；生产完整覆盖要求保持。实际取消结果9PG通过。最终完整head CI另核。

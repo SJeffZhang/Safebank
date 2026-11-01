@@ -20,3 +20,7 @@ The old branch is replaced with an authoritative snapshot lookup by split ID and
 No actual API/network, database, Docker, LLM, browser, deployment, push or merge was run. Test L3 is an in-process contract double. Independent review and full/fresh real-PG producer/read acceptance belong to the coordinator; this candidate is not claimed as already passing those gates.
 
 Suggested coordinator real-PG regression: own AA created and paid through D4 → G2/F app `get_split_status(request_id=<actual own ID>)` returns updated received/outstanding; another customer's ID and nonexistent ID return 404; null/list/pagination unchanged. Existing L3 by-ID PG coverage is `tests/obligations_data/test_split_exec.py::test_get_split_status_by_id_pagination_and_404` and must not be confused with the G2 branch fixed here. Shared AGENTS/PRD intentionally left to the coordinator.
+
+## 协调者独立核验
+
+`3439a63`差异只移除旧无条件404，按实际split.account_id和当前客户owned校验，保留双快照versions/clock fence及L3客户参数。独立实际PG经原生产prepare/execute创建AA并注册受控付款、S1等价L3执行后，G2 fetch_read按ID返回真实received/outstanding，cus_ls同ID404；1 passed/3.18s。此项验证真实银行数据库与G2读取逻辑；HTTP JWT/ledger仍由既有test_read_ledger另验，不冒充本测走过公开BFF。

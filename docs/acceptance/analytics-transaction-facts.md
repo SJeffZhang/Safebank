@@ -33,3 +33,5 @@ Merchant events now pass authoritative merchant ID and deterministic category th
 ### Coordinator PG green-attempt fixture correction
 
 On the first repaired-code PG attempt the coordinator reported **3 passed / 2 failed**: current external/SELF and merchant-metadata cases passed; only historical-case setup attempted UPDATE of append-only ledger/transaction rows and was correctly rejected by the database guard. This is a fixture error, not evidence that the repaired P1 remains broken. The fixture now substitutes only the old scheduled producer's command code before its first real post_transfer/persist, preserving real customer/account identities, amount, ledger arithmetic, transaction effects and all append-only guards. It never UPDATEs historical money records or disables triggers. No PG rerun was performed by this subagent; coordinator must rerun the same five cases on the fixture-corrected commit. Original old-code **3 failed/2 passed** remains a valid independent red result.
+
+最终legacy fixture修正47267a2集成6e8f327后，协调者真实tmpfs PG五条全绿，同组命令12例中本组5通过；其他单元4红/3正控不记本单元失败。日志/private/tmp/sbg-reserve-peer-reload-pg.log，完整CI与独立数学/账本评审另记。

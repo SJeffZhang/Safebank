@@ -1,11 +1,13 @@
 """Real gateway PG G4 X2 with prior live session context; L3 is a snapshot fake."""
 
 import asyncio
+from datetime import datetime, timedelta
 
 import pytest
 from safebank_contracts.state import BankState
 from sqlalchemy import select
 
+from services.gateway.app import locks
 from services.gateway.app import tables as t
 from services.gateway.app.utterance.parser import parse
 from tests.gateway.w2.test_derived_cancelled import obligations_for, subscription
@@ -37,6 +39,7 @@ def _state():
     sub = subscription()
     state["subscriptions"] = [sub.model_dump(mode="json")]
     state["obligations"] = obligations_for(sub).model_dump(mode="json")
+    state["obligations"]["covered_customer_ids"] = list(state["versions"])
     return state
 
 
@@ -65,10 +68,22 @@ def _source(param, kind, **source):
 
 
 @pytest.mark.parametrize("previous_status", ["NO_WRITE", "SCOPED"])
-def test_g4_x2_uses_current_declared_jwt_bound_root_only(app_config, previous_status):
+@pytest.mark.parametrize("mandate_condition", ["valid", "cap", "expired"])
+def test_g4_x2_uses_current_declared_jwt_bound_root_only(
+    app_config, previous_status, mandate_condition
+):
     async def run():
-        app = await build_app(app_config, bank_state_fn=_state)
+        state = _state()
+        mandate = state["obligations"]["standing_instructions"]["si_a"]
+        if mandate_condition == "cap":
+            mandate["max_amount_cents"] = 100
+            state["subscriptions"][0]["max_amount_cents"] = 100
+        elif mandate_condition == "expired":
+            due = datetime.fromisoformat(state["obligations"]["billings"]["bil_a"]["next_due_at"])
+            mandate["end_at"] = (due - timedelta(seconds=1)).isoformat()
+        app = await build_app(app_config, bank_state_fn=lambda: state)
         db = _runtime_db(app)
+        locks.configure(app.client._transport.app.state.db, max_executions=8)
 
         # Exercise the real fetch_read contract at the predicate stage while
         # retaining the existing snapshot fake; no real bank backend is used.
@@ -79,7 +94,7 @@ def test_g4_x2_uses_current_declared_jwt_bound_root_only(app_config, previous_st
         app.client._transport.app.state.l3.read = read
         scope = parse(
             TEXT,
-            BankState.model_validate(_state()),
+            BankState.model_validate(state),
             "cus_a",
             predicates={"idle_subscriptions": ["si_a"]},
         )
@@ -177,8 +192,12 @@ def test_g4_x2_uses_current_declared_jwt_bound_root_only(app_config, previous_st
         )
         assert response.status_code == 200, response.text
         decision = response.json()
-        assert decision["decision"] == "REQUIRE_APPROVAL", decision
-        assert decision["risk"] == "YELLOW" and decision["approval_id"], decision
+        if mandate_condition == "valid":
+            assert decision["decision"] == "REQUIRE_APPROVAL", decision
+            assert decision["risk"] == "YELLOW" and decision["approval_id"], decision
+        else:
+            assert decision["decision"] == "REPLAN" and decision["approval_id"] is None, decision
+            assert any(f["code"] == "UNKNOWN_SENSITIVE_ARG" for f in decision["findings"])
         async with db.connect() as conn:
             plan = (
                 (await conn.execute(select(t.plans).where(t.plans.c.id == decision["plan_id"])))

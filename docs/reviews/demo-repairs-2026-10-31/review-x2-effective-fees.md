@@ -1,0 +1,11 @@
+# X2有效月费：协调者独立只读复核
+
+作者B，复核root；精确源9583c387f141307c1735e5a1d58ca57688df2436，集成e14c7dd4749e14450a353cfbd4edd3253e08fe0a。结论APPROVE，无未修P0/P1/P2。
+
+原模板的完整取消步骤集合、read来源、当前原话权限、MONTHLY、同源账户、本人储蓄等检查全部保留。只以共用纯subscription_savings确认每个实际原始授权/账单为有效正月费，再逐项核raw与view的账单ID/账户/merchant/amount和raw MONTHLY，不接受weekly归一冒充monthly，不部分求和，不改变金额或作用域。helper None/0始终不能证明正金额来源；lookup在helper已证明相应身份后且无await执行，无新IO/写权限。缺数据不借任意scope值放行。
+
+协调者实际运行18相关纯测/0.37s。作者最终同13条在旧03435源码10fail3正控，修复21通过及2007广回归见acceptance。独立真实PG G4负控由协调者先于产品补丁编写：cap/expired × NO_WRITE/SCOPED旧4fail/原valid2pass；新6pass/3.13s，四无效场景REPLAN/noapproval，两个有效场景YELLOW/REQUIRE_APPROVAL，无execution。真实取消代扣执行另9PG通过。
+
+首轮绿验6个503是共享纯夹具覆盖cus_a/cus_b而G4快照仅cus_a造成的完整性拒绝，不是授权放宽：G4 fixture将covered_customer_ids设置为其实际versions，raw日历与view日期同步；生产coverage门禁未改。新PG文件显式接线locks资源，不依赖别的测试全局初始化。测试的L3快照/检测结果为合成fake，真实的是网关PG/auth/来源/审批持久化；不称完整L3现场链路。
+
+全套最终40位head本机CI/实际发布回执单独核，不把纯测或fixture更正记演示通过。
