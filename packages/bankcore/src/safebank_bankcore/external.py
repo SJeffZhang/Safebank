@@ -29,6 +29,7 @@ from safebank_contracts.state import (
 
 from .ids import derive
 from .ledger import account_deltas, replace_state
+from .merchant_categories import merchant_category
 
 EXTERNAL_CLEARING_ACCOUNT = "acc_external_clearing"
 
@@ -145,7 +146,12 @@ def _post_simple(
     transfers = dict(state.transfers) | {cmd.id: cmd}
     effects = [PostTransfer(transfer=cmd)]
     transactions = []
-    category = "消费" if kind == "CARD_SPEND" else "其他"
+    merchant = state.obligations.merchants.get(merchant_id) if state.obligations else None
+    category = (
+        merchant_category(merchant.mcc, merchant.category)
+        if kind == "CARD_SPEND" and merchant is not None
+        else "其他"
+    )
     for before, after, direction in ((debit, new_debit, "OUT"), (credit, new_credit, "IN")):
         if before.customer_id is None:
             continue
