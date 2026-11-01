@@ -9,6 +9,7 @@ from app import models as m
 from app.db import engine
 from app.events import EventService
 from app.state import load_bank_state
+from safebank_bankcore import events as bank_events
 from safebank_bankcore.banking import transfer_control_violation
 from safebank_contracts.codes import Code
 from safebank_contracts.state import StateScope
@@ -22,8 +23,19 @@ from tests.obligations_data.test_events_api import clean_database  # noqa: F401
 @pytest.mark.parametrize("self_transfer", [False, True])
 @pytest.mark.parametrize("legacy", [False, True])
 def test_scheduled_actual_commit_fresh_counters_and_limits_remain_identical(
-    obligations_db, self_transfer, legacy
+    obligations_db, self_transfer, legacy, monkeypatch
 ):
+    if legacy:
+        original_post = bank_events.post_transfer
+
+        def historical_producer(state, cmd, now, **kwargs):
+            # The old producer's initial append used one generic code. Keep the
+            # real account identities, amount, posting and immutable SQL guards.
+            old_command = cmd.model_copy(update={"code": "SCHEDULED_TRANSFER"})
+            return original_post(state, old_command, now, **kwargs)
+
+        monkeypatch.setattr(bank_events, "post_transfer", historical_producer)
+
     async def run():
         admin = engine(obligations_db.admin_url, poolclass=NullPool)
         runtime = engine(obligations_db.runtime_url, poolclass=NullPool)
@@ -90,20 +102,6 @@ def test_scheduled_actual_commit_fresh_counters_and_limits_remain_identical(
                     },
                 )
                 assert result["status"] == "SUCCESS"
-            if legacy:
-                # Reproduce the historical persisted representation, without
-                # changing the real ledger debit/credit identities or amount.
-                async with admin.begin() as conn:
-                    await conn.execute(
-                        m.transactions.update()
-                        .where(m.transactions.c.kind.in_(["P2P_EXTERNAL", "SELF_TRANSFER"]))
-                        .values(kind="SCHEDULED_TRANSFER")
-                    )
-                    await conn.execute(
-                        m.transfers.update()
-                        .where(m.transfers.c.code.in_(["P2P_EXTERNAL", "SELF_TRANSFER"]))
-                        .values(code="SCHEDULED_TRANSFER")
-                    )
             async with runtime.connect() as conn:
                 fresh = await load_bank_state(
                     conn,
