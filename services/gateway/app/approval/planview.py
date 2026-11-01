@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from safebank_bankcore.funds import fund_event_at
 from safebank_bankcore.ids import canonical, derive
-from safebank_bankcore.periods import normalize_period
+from safebank_bankcore.subscription_savings import subscription_savings
 from safebank_contracts import risk_questionnaire
 from safebank_contracts.enums import Risk
 from safebank_contracts.state import BankState
@@ -267,10 +267,13 @@ def _fields_for(ctx: EvalContext, state: BankState | None, step: ResolvedStep):
                 or instruction.customer_id != billing.customer_id
                 or instruction.from_account_id != billing.account_id
                 or instruction.merchant_id != billing.merchant_id
+                or subscription.account_id != billing.account_id
+                or subscription.merchant_id != billing.merchant_id
             ):
                 raise ValueError("subscription is absent from the authoritative billing snapshot")
-            active = active and instruction.status == "ACTIVE" and billing.active
-            monthly = normalize_period(billing.amount_cents, billing.period)[0] if active else 0
+            savings = subscription_savings(state, args["instruction_id"], ctx.customer_id)
+            if active:
+                monthly = savings[0] if savings is not None else None
         fields.append(
             PlanViewField(
                 key="monthly_saving",

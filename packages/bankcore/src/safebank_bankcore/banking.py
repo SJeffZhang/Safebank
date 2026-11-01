@@ -27,10 +27,10 @@ from safebank_contracts.views import WRITE_RESULTS, CardView, ChannelFlags
 from .funds import apply_redeem, apply_subscribe, order_view
 from .ids import derive
 from .ledger import post_transfer, replace_state
-from .periods import normalize_period
 from .risk import apply_risk_assessment as score_risk
 from .split import apply_create_split_request
 from .standing import apply_cancel_scheduled, apply_cancel_subscription, apply_schedule_transfer
+from .subscription_savings import subscription_savings
 
 
 @dataclass(frozen=True)
@@ -469,12 +469,10 @@ def step_result(before, after, step, ctx, effects):
     elif step.tool == "cancel_scheduled":
         result = dict(instruction_id=args.instruction_id, status="DELETED", no_op=not bool(effects))
     elif step.tool == "cancel_subscription":
-        inst = after.obligations.standing_instructions[args.instruction_id]
-        billing = after.obligations.billings.get(inst.billing_id)
         no_op = not bool(effects)
         monthly, annual = (
-            normalize_period(billing.amount_cents, billing.period)
-            if not no_op and billing is not None and billing.active
+            subscription_savings(before, args.instruction_id, ctx.customer_id) or (0, 0)
+            if not no_op
             else (0, 0)
         )
         result = dict(

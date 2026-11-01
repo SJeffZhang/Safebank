@@ -1,6 +1,6 @@
 """G9 material disclosures bind fees/calendar facts to the visible view hash."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 from safebank_bankcore.banking import Context
@@ -28,7 +28,7 @@ def cancel_ctx(*, amount=19900, period="MONTHLY", status="ACTIVE"):
     )
     from safebank_contracts.obligations import ObligationSnapshot
 
-    from tests.bankcore.obligations_fixtures import raw_billing, raw_mandate
+    from tests.bankcore.obligations_fixtures import raw_billing, raw_mandate, raw_merchant
 
     billing = raw_billing(
         id="bil_gym",
@@ -47,7 +47,7 @@ def cancel_ctx(*, amount=19900, period="MONTHLY", status="ACTIVE"):
     )
     obligations = ObligationSnapshot(
         covered_customer_ids=("cus_a",),
-        merchants={},
+        merchants={"mer_gym": raw_merchant(id="mer_gym")},
         billings={billing.id: billing},
         standing_instructions={mandate.id: mandate},
         runs=(),
@@ -210,7 +210,7 @@ def test_daily_used_before_after_are_already_bound_by_semantic_hash():
 def test_inactive_authoritative_billing_cannot_promise_savings_from_active_view():
     from safebank_contracts.obligations import ObligationSnapshot
 
-    from tests.bankcore.obligations_fixtures import raw_billing, raw_mandate
+    from tests.bankcore.obligations_fixtures import raw_billing, raw_mandate, raw_merchant
 
     ctx = cancel_ctx()
     billing = raw_billing(id="bil_gym", merchant_id="mer_gym", amount_cents=19900, active=False)
@@ -219,7 +219,7 @@ def test_inactive_authoritative_billing_cannot_promise_savings_from_active_view(
     )
     obligations = ObligationSnapshot(
         covered_customer_ids=("cus_a",),
-        merchants={},
+        merchants={"mer_gym": raw_merchant(id="mer_gym")},
         billings={billing.id: billing},
         standing_instructions={mandate.id: mandate},
         runs=(),
@@ -262,3 +262,90 @@ def test_mismatched_raw_billing_identity_fails_closed_instead_of_borrowing_fee()
     )
     with pytest.raises(ValueError):
         build_view(ctx)
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    ["cap", "end_before_due", "expired", "future_mandate", "future_billing", "past_due"],
+)
+def test_ineligible_next_charge_never_promises_monthly_saving(invalid):
+    ctx = cancel_ctx()
+    state = ctx.snapshot
+    snap = state.obligations
+    mandate = snap.standing_instructions["si_gym"]
+    billing = snap.billings["bil_gym"]
+    if invalid == "cap":
+        mandate = mandate.model_copy(update={"max_amount_cents": 100})
+    elif invalid == "end_before_due":
+        mandate = mandate.model_copy(update={"end_at": billing.next_due_at - timedelta(seconds=1)})
+    elif invalid == "expired":
+        mandate = mandate.model_copy(update={"end_at": state.sim_now - timedelta(seconds=1)})
+    elif invalid == "future_mandate":
+        mandate = mandate.model_copy(update={"created_at": state.sim_now + timedelta(seconds=1)})
+    elif invalid == "future_billing":
+        billing = billing.model_copy(update={"created_at": state.sim_now + timedelta(seconds=1)})
+    else:
+        state = state.model_copy(update={"sim_now": billing.next_due_at + timedelta(seconds=1)})
+    snap = snap.model_copy(
+        update={"standing_instructions": {mandate.id: mandate}, "billings": {billing.id: billing}}
+    )
+    ctx.snapshot = state.model_copy(update={"obligations": snap})
+    saving = field(build_view(ctx)[0], "monthly_saving")
+    assert saving.value == "0.00" and saving.unit == "元"
+
+
+@pytest.mark.parametrize("missing", ["coverage", "merchant", "account", "duplicate_mandate"])
+def test_unverified_raw_sources_never_promise_monthly_saving(missing):
+    ctx = cancel_ctx()
+    state, snap = ctx.snapshot, ctx.snapshot.obligations
+    if missing == "coverage":
+        snap = snap.model_copy(update={"covered_customer_ids": ("cus_other",)})
+    elif missing == "merchant":
+        snap = snap.model_copy(update={"merchants": {}})
+    elif missing == "account":
+        state = state.model_copy(update={"accounts": {}})
+    else:
+        mandate = snap.standing_instructions["si_gym"].model_copy(update={"id": "si_other"})
+        snap = snap.model_copy(
+            update={"standing_instructions": {**snap.standing_instructions, mandate.id: mandate}}
+        )
+    ctx.snapshot = state.model_copy(update={"obligations": snap})
+    saving = field(build_view(ctx)[0], "monthly_saving")
+    assert saving.value == "暂无法确定" and saving.unit is None
+
+
+def test_next_charge_at_exact_mandate_end_keeps_valid_saving():
+    ctx = cancel_ctx()
+    snap = ctx.snapshot.obligations
+    mandate = snap.standing_instructions["si_gym"].model_copy(
+        update={"end_at": snap.billings["bil_gym"].next_due_at}
+    )
+    ctx.snapshot = ctx.snapshot.model_copy(
+        update={
+            "obligations": snap.model_copy(update={"standing_instructions": {mandate.id: mandate}})
+        }
+    )
+    assert field(build_view(ctx)[0], "monthly_saving").value == "199.00"
+
+
+def test_cap_block_is_real_bankcore_outcome_and_changing_eligibility_changes_hash():
+    from safebank_bankcore.events import apply_merchant_charge
+
+    ctx = cancel_ctx()
+    original_hash = build_view(ctx)[1]
+    snap = ctx.snapshot.obligations
+    mandate = snap.standing_instructions["si_gym"].model_copy(update={"max_amount_cents": 100})
+    ctx.snapshot = ctx.snapshot.model_copy(
+        update={
+            "obligations": snap.model_copy(update={"standing_instructions": {mandate.id: mandate}})
+        }
+    )
+    _, effects, run = apply_merchant_charge(
+        ctx.snapshot,
+        billing_id="bil_gym",
+        due_at=snap.billings["bil_gym"].next_due_at,
+        event_id="evt_cap_negative",
+    )
+    assert run.status == "BLOCKED" and run.code == "MANDATE_AMOUNT_EXCEEDED" and not effects
+    assert field(build_view(ctx)[0], "monthly_saving").value == "0.00"
+    assert build_view(ctx)[1] != original_hash
