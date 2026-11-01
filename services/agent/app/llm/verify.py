@@ -8,6 +8,7 @@ single repair attempt, and always masks ≥8-digit numbers at the end.
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import UTC, datetime
 from enum import StrEnum
 
@@ -24,7 +25,7 @@ _AMOUNT_CNY_RE = re.compile(r"(¥|￥)\s*([\d,]+(?:\.\d{1,2})?)")
 _AMOUNT_YUAN_RE = re.compile(r"([\d,]+(?:\.\d{1,2})?)\s*(元|块)")
 
 # Percentage
-_PCT_RE = re.compile(r"(?<![\d.+\-−＋－])((?:[+\-−＋－][ \t]*)?\d+(?:\.\d+)?)\s*%")
+_PCT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 
 # Card tail: 尾号 followed by an optional copula (为/是) and an ASCII word
 # token.  Valid tails are exactly 4 digits; anything else (card IDs, 5+
@@ -190,6 +191,47 @@ def extract_amounts(text: str) -> list[dict]:
     return results
 
 
+def _percentage_prefix(text: str, start: int) -> tuple[int, int | None]:
+    """Find one sign across at most32 Unicode whitespace characters.
+
+    Normalize one scalar only, so raw spans always refer to the original text.
+    Unknown dash/minus and repeated signs remain invalid tokens rather than
+    disappearing and exposing an apparently unsigned positive percentage.
+    """
+
+    def before_gap(index: int) -> tuple[int, bool]:
+        for _ in range(32):
+            if not index or not text[index - 1].isspace():
+                return index, True
+            index -= 1
+        return index, not (index and text[index - 1].isspace())
+
+    def sign_like(char: str) -> bool:
+        normalized = unicodedata.normalize("NFKC", char)
+        return (
+            normalized in {"+", "-", "−"}
+            or unicodedata.category(char) == "Pd"
+            or "MINUS" in unicodedata.name(char, "")
+        )
+
+    index, bounded = before_gap(start)
+    if not bounded:
+        return index, None
+    if index:
+        symbol = text[index - 1]
+        normalized = unicodedata.normalize("NFKC", symbol)
+        if normalized in {"+", "-", "−"}:
+            previous, bounded = before_gap(index - 1)
+            if not bounded or (previous and sign_like(text[previous - 1])):
+                return index - 1, None
+            return index - 1, 1 if normalized == "+" else -1
+        if sign_like(symbol):
+            return index - 1, None
+    if start and (text[start - 1].isdigit() or text[start - 1] == "."):
+        return start - 1, None
+    return start, 1
+
+
 def extract_percentages(text: str) -> list[dict]:
     """Extract percentage values from *text*.
 
@@ -197,14 +239,19 @@ def extract_percentages(text: str) -> list[dict]:
     """
     results: list[dict] = []
     for m in _PCT_RE.finditer(text):
-        raw = m.group(0)
+        start, direction = _percentage_prefix(text, m.start())
         try:
-            number = m.group(1).replace("−", "-").replace("－", "-").replace("＋", "+")
-            value = float(number.replace(" ", "").replace("\t", ""))
+            number = float(m.group(1))
         except ValueError:
             continue
+        value = direction * number if direction is not None else None
         results.append(
-            {"span": m.span(), "raw": raw, "value": value, "kind": ExtractedKind.PERCENTAGE}
+            {
+                "span": (start, m.end()),
+                "raw": text[start : m.end()],
+                "value": value,
+                "kind": ExtractedKind.PERCENTAGE,
+            }
         )
     return results
 
@@ -542,12 +589,13 @@ def _amount_in_facts(cents: int, facts: list[int]) -> bool:
     return False
 
 
-def _pct_in_facts(value: float, facts: list[float]) -> bool:
-    """Check if *value* matches any fact (±0.1% tolerance)."""
-    if not facts:
+def _pct_in_facts(value: float | None, facts: list[float]) -> bool:
+    """Keep negative/zero/positive direction before the same-sign tolerance."""
+    if value is None or not facts:
         return False
     for f in facts:
-        if abs(value - f) <= 0.1:
+        same_direction = (value < 0) == (f < 0) and (value > 0) == (f > 0)
+        if same_direction and abs(value - f) <= 0.1:
             return True
     return False
 
