@@ -12,6 +12,7 @@ from services.gateway.app import tables as t
 from services.gateway.app.errors import GatewayError
 from services.gateway.app.utterance.loader import load_for_plan
 from services.gateway.app.utterance.service import new_id
+from tests.gateway.w1.db.bound_hint_fixture import bound_transfer_hint
 from tests.gateway.w1.db.support import create, harness, headers, login, utter
 from tests.gateway.w1.db.test_review_r1 import caller_for
 
@@ -371,19 +372,8 @@ def test_hint_replacement_retains_the_newly_adopted_source(gateway_db, monkeypat
             sid = await create(client, token, new_id("req"))
             old = (await utter(client, token, sid, "给王五800")).json()
             plan, _, _ = await seed_job(db, sid, old, clock[0], "CONFIRMED", "PAUSED")
-            hint_id = new_id("hnt")
-            expiry = clock[0] + timedelta(minutes=5)
-            async with db.begin() as conn:
-                await conn.execute(
-                    t.hints.insert().values(
-                        id=hint_id,
-                        sid=sid,
-                        scope_json=old["utterance"]["scope"],
-                        label="只转王五800",
-                        created_at_wall=clock[0],
-                        expires_at_wall=expiry,
-                    )
-                )
+            source = await bound_transfer_hint(db, sid, clock[0], root_id=old["utterance"]["id"])
+            hint_id, expiry = source.id, source.expires_at_wall
             response = await client.post(
                 f"/sessions/{sid}/utterances",
                 headers=headers(token),
@@ -394,7 +384,24 @@ def test_hint_replacement_retains_the_newly_adopted_source(gateway_db, monkeypat
                 },
             )
             assert response.status_code == 201, response.text
+            assert response.json()["utterance"]["scope"]["transfers"][0]["amount_cents"] == 30000
             async with db.connect() as conn:
+                assert (
+                    await conn.scalar(
+                        select(t.utterances.c.status).where(
+                            t.utterances.c.id == old["utterance"]["id"]
+                        )
+                    )
+                    == "SUPERSEDED"
+                )
+                assert (
+                    await conn.scalar(
+                        select(t.authorization_claims.c.status).where(
+                            t.authorization_claims.c.plan_id == plan
+                        )
+                    )
+                    == "CLAIMED"
+                )
                 hint = (
                     (await conn.execute(select(t.hints).where(t.hints.c.id == hint_id)))
                     .mappings()

@@ -12,6 +12,7 @@ from services.gateway.app import tables as t
 from services.gateway.app.audit.chain import verify_chain
 from services.gateway.app.auth.tokens import ASSISTANT_AUDIENCE, verify_jwt
 from services.gateway.app.utterance.service import new_id
+from tests.gateway.w1.db.bound_hint_fixture import bound_transfer_hint
 from tests.gateway.w1.db.support import create, harness, headers, login, utter
 from tests.gateway.w1.db.test_live_job_revocation import revoke, seed_job
 from tests.gateway.w1.db.test_revocation_cas_races import remove_test_plan
@@ -187,19 +188,20 @@ def test_stable_conflict_commits_only_revocation_and_one_atomic_error_audit(
     asyncio.run(run())
 
 
-async def ui_sources(db, sid, scope, now):
-    hint, action = new_id("hnt"), new_id("act")
+async def ui_sources(db, sid, scope, now, *, existing_hint=None):
+    hint, action = existing_hint or new_id("hnt"), new_id("act")
     async with db.begin() as conn:
-        await conn.execute(
-            t.hints.insert().values(
-                id=hint,
-                sid=sid,
-                scope_json=scope,
-                label="transfer",
-                created_at_wall=now,
-                expires_at_wall=now + timedelta(minutes=5),
+        if existing_hint is None:
+            await conn.execute(
+                t.hints.insert().values(
+                    id=hint,
+                    sid=sid,
+                    scope_json=scope,
+                    label="transfer",
+                    created_at_wall=now,
+                    expires_at_wall=now + timedelta(minutes=5),
+                )
             )
-        )
         await conn.execute(
             t.form_actions.insert().values(
                 id=action,
@@ -230,20 +232,20 @@ def test_new_request_cannot_skip_unresolved_job_or_publish_replacement(
             try:
                 async with db.begin() as conn:
                     await corrupt(conn, plan, parent["utterance"]["id"], "missing")
-                hint, action = await ui_sources(db, sid, parent["utterance"]["scope"], clock[0])
-                # Hint must contain a complete write scope, as a real source would.
-                if source == "hint":
-                    async with db.begin() as conn:
-                        await conn.execute(
-                            update(t.hints)
-                            .where(t.hints.c.id == hint)
-                            .values(
-                                scope_json={
-                                    "action_kinds": ["CARD_FREEZE"],
-                                    "fields": {"card_id": "card_zs_1"},
-                                }
-                            )
-                        )
+                    original_submission = await submission(conn, plan)
+                # The old CLARIFYING root cannot issue a hint. A separate,
+                # explicit test root supplies valid input to the job barrier.
+                bound = await bound_transfer_hint(db, sid, clock[0]) if source == "hint" else None
+                expected_roots = {parent["utterance"]["id"]}
+                if bound is not None:
+                    expected_roots.add(bound.root_id)
+                hint, action = await ui_sources(
+                    db,
+                    sid,
+                    parent["utterance"]["scope"],
+                    clock[0],
+                    existing_hint=bound.id if bound is not None else None,
+                )
                 payload = {
                     "request_id": new_id("req"),
                     "kind": source if source in {"hint", "action"} else "typed",
@@ -259,7 +261,21 @@ def test_new_request_cannot_skip_unresolved_job_or_publish_replacement(
                 )
                 deferred(response)
                 async with db.connect() as conn:
-                    assert await count(conn, t.utterances, t.utterances.c.sid == sid) == 1
+                    if source == "hint":
+                        rows = (
+                            (
+                                await conn.execute(
+                                    select(t.utterances).where(t.utterances.c.sid == sid)
+                                )
+                            )
+                            .mappings()
+                            .all()
+                        )
+                        assert {row["id"] for row in rows} == expected_roots
+                        assert all(row["status"] == "SUPERSEDED" for row in rows)
+                        assert await submission(conn, plan) == original_submission
+                    else:
+                        assert await count(conn, t.utterances, t.utterances.c.sid == sid) == 1
                     assert (
                         await conn.scalar(
                             select(t.pending_clarifications.c.status).where(
@@ -278,11 +294,18 @@ def test_new_request_cannot_skip_unresolved_job_or_publish_replacement(
                 # After the previous root is no longer replaceable, every kind
                 # of newly issued source must still scan the unresolved job.
                 if source in {"hint", "action"}:
+                    fresh_bound = (
+                        await bound_transfer_hint(db, sid, clock[0]) if source == "hint" else None
+                    )
+                    if fresh_bound is not None:
+                        assert fresh_bound.root_id not in expected_roots
+                        expected_roots.add(fresh_bound.root_id)
                     new_hint, new_action = await ui_sources(
                         db,
                         sid,
                         {"action_kinds": ["CARD_FREEZE"], "fields": {"card_id": "card_zs_1"}},
                         clock[0],
+                        existing_hint=fresh_bound.id if fresh_bound is not None else None,
                     )
                     again = await client.post(
                         f"/sessions/{sid}/utterances",
@@ -296,6 +319,27 @@ def test_new_request_cannot_skip_unresolved_job_or_publish_replacement(
                 else:
                     again = await utter(client, token, sid, "给赵六900", new_id("req"))
                 deferred(again)
+                if source == "hint":
+                    async with db.connect() as conn:
+                        rows = (
+                            (
+                                await conn.execute(
+                                    select(t.utterances).where(t.utterances.c.sid == sid)
+                                )
+                            )
+                            .mappings()
+                            .all()
+                        )
+                        assert {row["id"] for row in rows} == expected_roots
+                        assert all(row["status"] == "SUPERSEDED" for row in rows)
+                        assert await submission(conn, plan) == original_submission
+                        for table, id_ in ((t.hints, new_hint), (t.form_actions, new_action)):
+                            row = (
+                                (await conn.execute(select(table).where(table.c.id == id_)))
+                                .mappings()
+                                .one()
+                            )
+                            assert row["used_by"] is None and row["expires_at_wall"] == clock[0]
                 renewed = await client.post(
                     f"/sessions/{sid}/assistant-token",
                     headers=headers(token),
