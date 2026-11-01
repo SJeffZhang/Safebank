@@ -12,6 +12,7 @@ from typing import Any, Literal
 from safebank_contracts.base import Contract
 
 from services.agent.app.graph.state import AgentState
+from services.agent.app.llm._cross_scene_reads import x1_analysis_records
 
 # ── CardAction / UICard L1-local models ─────────────────────────────────────
 
@@ -344,6 +345,12 @@ def generate_cards(state: AgentState) -> tuple[UICard, ...]:
         )
         if not needs_write:
             _cards_from_reads(state, cards)
+
+    # Scoped X1 retains its write/approval status, while its complete current
+    # analysis evidence remains visible with the real source refs.
+    analysis = x1_analysis_records(state)
+    if analysis:
+        _cards_from_reads({"reads": list(analysis)}, cards)
 
     return tuple(cards[:5])
 
