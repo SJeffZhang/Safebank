@@ -22,3 +22,9 @@ These extra roots deliberately supply valid inputs to the unresolved-job barrier
 - Exact affected PG selectors: **5 tests collected** (0.61s), including all four source variants. Collect only; actual execution belongs to root. The worker ran no database, API, model/provider, Docker or browser.
 - Ruff check/format and `git diff --check`: passed.
 - Root must run the two exact PG selectors (including the four source variants of the deferred test), then full W1 and final exact-head CI. No PG pass claim is made by this checkpoint.
+
+## Same-source W2 integration fixture follow-up
+
+Root's remaining-target diagnostic found one matching stale positive source in `tests/gateway/w2/db/test_real_w1_integration.py::test_adopted_hint_used_by_resolves_and_unadopted_is_rejected` (`/private/tmp/sbg-nov1-diagnostic-test-w2.log`). Only that positive 800→300 hint seed now uses the same production publisher helper and existing real typed root. The test still goes through real G3 adoption/JWT, `load_for_plan`, entity/provenance/intent stages, and now explicitly checks saved `used_by`/expiry. Its separate never-adopted hint remains a manual untrusted source and must have unknown trust/UNKNOWN_SENSITIVE_ARG; the separate wrong-used-by negative test is unchanged. This is not a generic trust exception.
+
+Worker validation: 37 related pure checks passed; the positive W2 and separate wrong-used-by PG tests collected (2), not executed. Ruff/diff checks passed. Root owns actual W2 PG and final full-head gates.

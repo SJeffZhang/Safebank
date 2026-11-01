@@ -28,6 +28,7 @@ from services.gateway.app.schemas.identity import Caller
 from services.gateway.app.utterance.loader import load_for_plan
 from services.gateway.app.utterance.service import new_id
 from tests.contracts.samples import step
+from tests.gateway.w1.db.bound_hint_fixture import bound_transfer_hint
 from tests.gateway.w1.db.support import create, harness, headers, login, utter
 from tests.gateway.w2.test_provenance import source
 
@@ -183,29 +184,21 @@ def test_adopted_hint_used_by_resolves_and_unadopted_is_rejected(gateway_db, mon
                     {**typed["utterance"]["scope"]["transfers"][0], "amount_cents": 30000}
                 ],
             }
-            hint_id = new_id("hnt")
-            async with db.begin() as conn:
-                await conn.execute(
-                    t.hints.insert().values(
-                        id=hint_id,
-                        sid=sid,
-                        scope_json=scope,
-                        label="王五只转300元",
-                        created_at_wall=clock[0],
-                        expires_at_wall=clock[0] + timedelta(minutes=5),
-                    )
+            bound = await bound_transfer_hint(db, sid, clock[0], root_id=typed["utterance"]["id"])
+            hint_id = bound.id
+            response = await utter(
+                client, token, sid, None, "req_hint_adopt", kind="hint", hint_id=hint_id
+            )
+            assert response.status_code == 201, response.json().get("error", {}).get("code")
+            adopted = response.json()
+            async with db.connect() as conn:
+                stored = (
+                    (await conn.execute(select(t.hints).where(t.hints.c.id == hint_id)))
+                    .mappings()
+                    .one()
                 )
-            adopted = (
-                await utter(
-                    client,
-                    token,
-                    sid,
-                    None,
-                    "req_hint_adopt",
-                    kind="hint",
-                    hint_id=hint_id,
-                )
-            ).json()
+                assert stored["used_by"] == adopted["utterance"]["id"]
+                assert stored["expires_at_wall"] == bound.expires_at_wall
             assert adopted["utterance"]["scope"]["transfers"][0]["amount_cents"] == 30000
             caller, auth = await authorization_for(db, public, adopted["assistant_token"], sid)
             step_ = transfer_step(
