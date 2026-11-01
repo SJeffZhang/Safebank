@@ -1,8 +1,8 @@
 """Pure-function analytics: spending summary (R4), anomaly detection (R5),
 and subscription detection (R9).
 
-Consumption = CARD_SPEND / MANDATE, POSTED only.
-Transfer out = TRANSFER_EXTERNAL with direction OUT.
+Consumption = CARD_SPEND / MERCHANT_CHARGE (legacy MANDATE), POSTED OUT only.
+Transfer out = P2P_INTERNAL / P2P_EXTERNAL (legacy TRANSFER_EXTERNAL), OUT only.
 Self-transfers, fund operations, deposits are excluded entirely.
 
 Anomaly detection (R5) only examines CARD_SPEND transactions, using only
@@ -36,10 +36,11 @@ from safebank_bankcore.reserve import _business_time
 CATEGORIES = ("", "餐饮", "交通", "购物", "娱乐", "生活服务", "数码", "健身", "其他")
 
 # Transaction kinds that count as consumption.
-_CONSUMPTION_KINDS = {"CARD_SPEND", "MANDATE"}
+_CHARGE_KINDS = frozenset({"MERCHANT_CHARGE", "MANDATE"})
+_CONSUMPTION_KINDS = _CHARGE_KINDS | {"CARD_SPEND"}
 
 # Transaction kinds that count as external transfer out.
-_TRANSFER_OUT_KINDS = {"TRANSFER_EXTERNAL"}
+_TRANSFER_OUT_KINDS = frozenset({"P2P_INTERNAL", "P2P_EXTERNAL", "TRANSFER_EXTERNAL"})
 
 
 def spending_summary(
@@ -102,7 +103,7 @@ def spending_summary(
 
         local_ts = _business_time(tx.occurred_at)
 
-        if tx.kind in _CONSUMPTION_KINDS:
+        if tx.kind in _CONSUMPTION_KINDS and tx.direction == "OUT":
             cat = tx.category or ""
             # Map to known categories; "其他" is the catch-all.
             if cat not in CATEGORIES:
@@ -387,7 +388,7 @@ def detect_subscriptions(
     for tx in state.transactions:
         if tx.merchant_id is None:
             continue
-        if tx.kind != "MANDATE":  # charges = merchant mandate deductions only
+        if tx.kind not in _CHARGE_KINDS or tx.direction != "OUT":
             continue
         if tx.status != "POSTED":
             continue
@@ -483,8 +484,8 @@ def detect_subscriptions(
         recent = 0
         previous = 0
         for tx in all_by_merchant.get(merchant_id, []):
-            if tx.kind == "MANDATE":
-                continue  # exclude charge transactions
+            if tx.kind in _CHARGE_KINDS:
+                continue  # canonical and historical charges are never usage
             bt = _business_time(tx.occurred_at)
             if bt > sim_now:
                 continue
