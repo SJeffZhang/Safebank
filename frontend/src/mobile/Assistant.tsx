@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { getPlan, request, stream, isPreview } from "./api";
 import {
   uid,
+  productTypeLabel,
   type UICard,
   type StreamEvent,
   type Clarification,
@@ -12,7 +13,7 @@ import {
 import type { PageProps } from "./Banking";
 import { Icon, Button, Alert, Badge } from "./ui";
 import { AssistantWorkspace, detectTopic, type AssistantTopic } from "./AssistantWorkspace";
-import { billMonth } from "./bill-month";
+import { billMonth, monthRange } from "./bill-month";
 import { isPlanTerminal, planPresentation } from "./plan-status";
 interface Message {
   id: string;
@@ -139,7 +140,7 @@ export function Assistant(
     controller.current = current;
     const active = () => controller.current === current && !current.signal.aborted;
     try {
-      await stream(p.sid, body, event => { if (active()) handle(event, typeof body.text === "string" ? billMonth(body.text, p.profile.sim_now) : undefined); }, current.signal, resume);
+      await stream(p.sid, body, event => { if (active()) handle(event, typeof body.text === "string" && detectTopic(body.text) === "账单分析" ? billMonth(body.text, p.profile.sim_now) : undefined); }, current.signal, resume);
       if (!active()) return false;
       const c = await request<{ clarification: Clarification | null }>(
         `/sessions/${p.sid}/clarifications/current`,
@@ -446,6 +447,8 @@ function SafeCard({
   onApproval: (id: string) => void;
   onHint: (id: string) => void;
 }) {
+  const statusHandler = useRef(onStatus);
+  statusHandler.current = onStatus;
   const [labels, setLabels] = useState<Record<string, string>>({});
   const [plan, setPlan] = useState<PlanStatus>();
   const [planError, setPlanError] = useState("");
@@ -460,7 +463,7 @@ function SafeCard({
         const current = await getPlan(planId);
         if (!live) return;
         if (current.plan_id !== planId) throw new Error("计划身份不一致，请重新查询。");
-        setPlan(current); onStatus(current.status);
+        setPlan(current); statusHandler.current(current.status);
         if (!isPlanTerminal(current.status)) timer = setTimeout(load,1800);
       } catch (e) {
         if (live) setPlanError(e instanceof Error ? e.message : "计划状态读取失败");
@@ -590,12 +593,37 @@ function CardData({ card, requestedMonth }: { card: UICard; requestedMonth?: str
   if (card.type === "CLARIFICATION")
     return <p>请通过下方的补充信息区选择目标或补充需求。</p>;
   if (card.type === "NAVIGATE") return <p>您可以打开对应业务页面继续办理。</p>;
+  if (card.type === "ANOMALIES") {
+    const anomalies = objects("items");
+    if (requestedMonth !== undefined) {
+      if (!requestedMonth) return <Alert tone="error">请明确所选月份后重新读取异常记录。</Alert>;
+      const range = monthRange(requestedMonth);
+      if (anomalies.some(item => {
+        const tx = item.transaction as Fields | undefined;
+        const at = Date.parse(String(tx?.occurred_at ?? ""));
+        return !(at >= Date.parse(range.from_at) && at < Date.parse(range.to_at));
+      })) return <Alert tone="error">异常记录不在所选月份范围内，请重新读取。</Alert>;
+    }
+    if (!anomalies.length) return <p>所选范围内没有异常记录。</p>;
+    return <>{anomalies.slice(0,5).map((item,i) => {
+      const tx = item.transaction && typeof item.transaction === "object" ? item.transaction as Fields : {};
+      return <div key={i}><div className="card-row"><span>{String(tx.counterparty ?? tx.id ?? "异常交易")}</span><strong>{cash(tx.amount_cents)}</strong></div>
+        <small>{String(tx.occurred_at ?? "")} · {Array.isArray(item.codes) ? item.codes.map(code=>explainCode(String(code))).join("、") : "异常依据暂不可用"}</small></div>;
+    })}{anomalies.length > 5 && <p>另有 {anomalies.length-5} 条，请到业务页面查看。</p>}</>;
+  }
+  if (card.type === "HOLDINGS") {
+    const holdings = objects("holdings"), orders = objects("orders");
+    const orderLabels: Record<string,string> = {PENDING_CONFIRM:"待确认",PENDING_SETTLEMENT:"待结算",SETTLED:"已结算",FAILED:"失败",EXPIRED:"已过期"};
+    return <>{holdings.length ? holdings.slice(0,5).map((h,i)=><div className="card-row" key={i}><span>持仓 · {String(h.product_id ?? "")}</span><strong>{String(h.available_units ?? "—")} 份</strong></div>) : <p>暂无持仓</p>}
+      {orders.length > 0 && <><p>在途与近期订单 · 待结算款不计入可用余额</p>{orders.slice(0,5).map((o,i)=><div className="card-row" key={i}><span>{String(o.product_id ?? "")} · {orderLabels[String(o.status)] ?? "未知订单状态"}</span><strong>{cash(o.amount_cents)}</strong></div>)}</>}
+      {holdings.length > 5 || orders.length > 5 ? <p>请到业务页面查看完整持仓与订单。</p> : null}</>;
+  }
   const entries =
     card.type === "ACCOUNT"
       ? objects("accounts")
-      : card.type === "HOLDINGS"
-        ? objects("holdings")
-        : objects("items");
+      : card.type === "PRODUCTS" && typeof data.id === "string"
+        ? [data]
+        : card.type === "SUBSCRIPTIONS" ? [...objects("items"),...objects("scheduled_items")] : objects("items");
   if (!entries.length) return <p>当前没有可展示的记录。</p>;
   return (
     <>
@@ -604,13 +632,14 @@ function CardData({ card, requestedMonth }: { card: UICard; requestedMonth?: str
           item.display_name ??
             item.counterparty ??
             item.merchant_name ??
+            item.target_display ??
             item.name ??
             (card.type === "CARD"
               ? `银行卡 · ${item.last4 ?? "—"}`
               : card.type === "PRODUCTS"
                 ? `产品 · ${item.id ?? ""}`
-                : card.type === "HOLDINGS"
-                  ? `持仓 · ${item.product_id ?? ""}`
+                : card.type === "SUBSCRIPTIONS"
+                  ? `订阅 · ${item.instruction_id ?? item.merchant_id ?? ""}`
                   : "业务记录"),
         );
         const value =
@@ -619,10 +648,8 @@ function CardData({ card, requestedMonth }: { card: UICard; requestedMonth?: str
             : card.type === "CARD"
               ? String(item.status ?? "")
               : card.type === "PRODUCTS"
-                ? `R${item.risk_level ?? "—"}`
-                : card.type === "HOLDINGS"
-                  ? String(item.available_units ?? "—") + " 份"
-                  : cash(item.amount_cents);
+                ? `R${item.risk_level ?? "—"} · ${productTypeLabel(item.product_type)}`
+                : item.typical_amount_cents !== undefined ? `典型扣费 ${cash(item.typical_amount_cents)}` : cash(item.amount_cents);
         return (
           <div className="card-row" key={i}>
             <span>{name}</span>

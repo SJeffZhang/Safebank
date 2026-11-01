@@ -5,7 +5,8 @@ export function billMonth(text: string, simNow: string): string | null {
   const parts = new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit'}).formatToParts(time);
   let year = Number(parts.find(p => p.type === 'year')?.value);
   let month = Number(parts.find(p => p.type === 'month')?.value);
-  const explicit = text.match(/(?:(\d{4})\s*年\s*)?(\d{1,2}|十一|十二|十|[一二三四五六七八九])\s*月/);
+  if (/去年|前年|明年|季度|年度|年报|中秋|春节|前[一二两三四五六七八九十\d]+个?月/.test(text)) return null;
+  const explicit = text.match(/(?:(\d{4})\s*年\s*)?(\d+|[零一二三四五六七八九十百]+)\s*月/);
   const iso = text.match(/(\d{4})-(\d{2})(?!\d)/);
   if (iso) { year = Number(iso[1]); month = Number(iso[2]); }
   else if (explicit) {
@@ -13,7 +14,7 @@ export function billMonth(text: string, simNow: string): string | null {
     month = /^\d+$/.test(explicit[2]) ? Number(explicit[2]) : ['','一','二','三','四','五','六','七','八','九','十','十一','十二'].indexOf(explicit[2]);
   } else if (/上个?月/.test(text)) {
     if (--month === 0) { month = 12; year--; }
-  } else if (/去年|前年|明年|季度|年度|年报|中秋|春节/.test(text)) return null;
+  }
   if (month < 1 || month > 12) return null;
   return `${year}-${String(month).padStart(2,'0')}`;
 }

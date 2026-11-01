@@ -135,3 +135,27 @@ it('uses Shanghai simulated calendar boundaries for relative months and rejects 
   await waitFor(()=>expect(read).toHaveBeenCalledWith('ses_topics','get_spending_summary',{month:'2026-10',account_id:null}));
   expect(screen.getByText('来源 src_stale').closest('.safe-ui-card')).toHaveTextContent('月份');expect(screen.queryByText('550.50')).toBeNull();
 });
+
+it('keeps a cross-scene X1 request bound to the actual prior-month summary and anomaly details', async () => {
+ vi.mocked(read).mockImplementation(async (_sid,tool,args)=>tool==='get_spending_summary'
+  ? {month:args?.month,total_cents:644800,categories:[]}
+  : tool==='detect_anomalies' ? {items:[{transaction:{id:'tx_sep',occurred_at:'2026-09-12T02:00:00+08:00',amount_cents:9900},codes:['ANOMALY_NIGHT_LARGE'],evidence:{baseline_count:3}}]} : {accounts:[]});
+ const user=userEvent.setup();render(<Assistant {...props}/>);
+ await user.type(screen.getByRole('textbox'),'跨场景联动：分析上月账单，冻结可疑交易对应的卡');await user.click(screen.getByRole('button',{name:'发送消息'}));
+ expect(await screen.findByText('6,448.00')).toBeInTheDocument();expect(await screen.findByText('99.00')).toBeInTheDocument();expect(screen.getByText(/深夜大额/)).toBeInTheDocument();
+ expect(read).toHaveBeenCalledWith('ses_topics','get_spending_summary',{month:'2026-09',account_id:null});expect(props.onPropose).not.toHaveBeenCalled();
+});
+
+it('does not silently turn an unsupported monthly period into the current month', async () => {
+ const user=userEvent.setup();render(<Assistant {...props}/>);
+ await user.type(screen.getByRole('textbox'),'生成十三月月报');await user.click(screen.getByRole('button',{name:'发送消息'}));
+ expect(await screen.findByRole('alert')).toHaveTextContent('月份');expect(read).not.toHaveBeenCalled();
+});
+
+it('does not display a structured anomaly from outside the requested report month', async () => {
+ vi.mocked(stream).mockImplementation(async(_sid,_body,handle)=>handle({event:'custom',data:{type:'cards',cards:[{id:'wrong_anomaly',type:'ANOMALIES',source_ref:'src_wrong_anomaly',data:{items:[{transaction:{id:'tx_wrong_month',occurred_at:'2026-10-12T02:00:00+08:00',amount_cents:9900},codes:['ANOMALY_NIGHT_LARGE']}]},actions:[]}]}}));
+ const user=userEvent.setup();render(<Assistant {...props}/>);
+ await user.type(screen.getByRole('textbox'),'生成9月月报');await user.click(screen.getByRole('button',{name:'发送消息'}));
+ const card=screen.getByText('来源 src_wrong_anomaly').closest('.safe-ui-card')!;
+ expect(card).toHaveTextContent('所选月份');expect(card).not.toHaveTextContent('99.00');
+});

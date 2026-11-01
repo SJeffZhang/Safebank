@@ -1,3 +1,4 @@
+import { productTypeLabel } from "./types";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { read, getCardNumber, isPreview } from "./api";
 import { useLoad } from "./hooks";
@@ -934,7 +935,7 @@ export function Wealth(p: PageProps) {
                 <article className="product-row" key={product.id}>
                   <div className="product-main">
                     <span className="product-type">
-                      {({ MMF: "货币基金", BOND: "债券产品", MIXED: "混合产品", EQUITY: "股票产品" } as Record<string, string>)[product.product_type] ?? "未知类型"}
+                      {productTypeLabel(product.product_type)}
                     </span>
                     <button
                       className="product-title"

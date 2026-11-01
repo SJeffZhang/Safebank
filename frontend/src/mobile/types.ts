@@ -58,6 +58,10 @@ export interface Subscription {
   status: string;
 }
 export type ProductType = "MMF" | "BOND" | "MIXED" | "EQUITY";
+export function productTypeLabel(value: unknown): string {
+  const labels: Record<ProductType, string> = {MMF:"货币基金",BOND:"债券产品",MIXED:"混合产品",EQUITY:"股票产品"};
+  return typeof value === "string" && Object.prototype.hasOwnProperty.call(labels,value) ? labels[value as ProductType] : "未知类型";
+}
 export interface Product {
   id: string;
   name: string;
