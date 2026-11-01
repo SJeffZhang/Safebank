@@ -2,7 +2,7 @@
 
 - 基线：`1c601881590256af1b8d1251915f9dd52b66375c`。
 - 分支：`fix/retest-ci-preflight-fixture`；从已有干净 worktree 创建，原分支保留。
-- 范围：仅三个测试文件与本记录；未修改生产代码、PRD、AGENTS、Schema、哈希或严格相等校验。
+- 范围：仅四个测试文件与本记录；未修改生产代码、PRD、AGENTS、Schema、哈希或严格相等校验。
 
 ## 根因与修改
 
@@ -37,3 +37,9 @@ GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/w3b tests/gateway/w4b1 tests/g
 ```
 
 等价正式逐套入口：`make test-w3b`、`make test-w4b1`、`make test-w4b2b`、`make test-w4b2c`。实际原红/新绿与最终精确 head 完整 CI 回执由协调者另行记录，本记录不声明数据库测试通过。
+
+## 追加：HTTP 锁回归测试传播已完成任务异常
+
+协调者发现 `test_lock_order_endpoint.py::_test_no_deadlock` 同样只收集 `pending`，未读取 `done` 的异常，因此并发 `create_for_evaluation` 的契约错误会被忽略。追加 `await asyncio.gather(*done)`，使完成任务中的异常直接导致测试失败；保留 pending 取消与非空失败检查、endpoint 业务状态 transition 核验及全部等待数值。该追加仅为测试修改，实际 PostgreSQL 验证仍待协调者执行。
+
+追加修改后重新对四个测试文件执行 Ruff check 与 format --check，均通过（4 files already formatted）；重新 collect-only 收集四套测试仍为 322 项，exit 0；git diff --check 通过。未执行 PostgreSQL。
