@@ -1,6 +1,7 @@
 """REPLAN amounts remain attached to the current gateway hint, never global facts."""
 
 from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from langchain_core.messages import AIMessage
@@ -67,7 +68,7 @@ def replan_state():
                 {
                     "id": "hnt_current",
                     "label": "最多 1,000.00 元",
-                    "expires_at_wall": "2026-11-01T09:40:00Z",
+                    "expires_at_wall": (datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
                     "scope": {
                         "action_kinds": ["TRANSFER_EXTERNAL"],
                         "from_account_id": "acc_checking",
@@ -139,6 +140,9 @@ def test_multi_step_hint_amounts_stay_with_their_original_step_even_if_label_is_
     state = replan_state()
     second = transfer_step(step_id="step_two", amount=7000000, payee="pye_zhao")
     state["plan_draft"]["steps"].append(second)
+    state["decision"]["findings"].append(
+        {"code": "CARD_SINGLE_LIMIT", "effect": "REPLAN", "resolver": "user", "step_id": "step_two"}
+    )
     state["reads"][1].data["items"].append({"id": "pye_zhao", "target_fingerprint": "fp_zhao"})
     hint = state["decision"]["replan_hints"][0]
     hint["label"] = "第一笔300元，第二笔1000元"
@@ -273,4 +277,70 @@ def test_malformed_self_destination_field_cannot_crash_or_create_a_maximum():
     llm = RepairToDailyLimit()
     reply = verify(state, llm)
     assert "最多" not in reply
+    assert llm.calls == 0
+
+
+@pytest.mark.parametrize("step_id", [None, "not_in_this_plan"])
+def test_replan_maximum_requires_a_finding_for_an_actual_transfer_step(step_id):
+    current = replan_state()
+    current["decision"]["findings"][0]["step_id"] = step_id
+    llm = RepairToDailyLimit()
+    assert "最多" not in verify(current, llm)
+    assert llm.calls == 0
+
+
+def test_hint_cannot_shrink_an_unfailed_step_instead_of_the_actual_failed_step():
+    current = replan_state()
+    current["plan_draft"]["steps"].append(
+        transfer_step(step_id="step_two", amount=7000000, payee="pye_zhao")
+    )
+    current["reads"][1].data["items"].append({"id": "pye_zhao", "target_fingerprint": "fp_zhao"})
+    scope = current["decision"]["replan_hints"][0]["scope"]
+    scope["transfers"][0]["amount_cents"] = 5000000
+    scope["transfers"].append({"target_fingerprint": "fp_zhao", "amount_cents": 30000})
+    before = deepcopy(current)
+    assert "最多" not in verify(current, RepairToDailyLimit())
+    assert {key: value for key, value in current.items() if key != "reply_draft"} == before
+
+
+@pytest.mark.parametrize(
+    "expires", ["2000-01-01T00:00:00Z", "2099-01-01T00:00:00", "invalid-date", None]
+)
+def test_missing_invalid_naive_or_expired_wall_ttl_never_yields_a_current_maximum(expires):
+    current = replan_state()
+    current["reads"].append(
+        ReadRecord(
+            tool="get_profile", source_ref="src_sim_clock", data={"sim_now": "1999-01-01T00:00:00Z"}
+        )
+    )
+    hint = current["decision"]["replan_hints"][0]
+    if expires is None:
+        hint.pop("expires_at_wall")
+    else:
+        hint["expires_at_wall"] = expires
+    llm = RepairToDailyLimit()
+    assert "最多" not in verify(current, llm)
+    assert llm.calls == 0
+
+
+def test_valid_nullable_source_self_hint_keeps_only_the_matching_failed_step_maximum():
+    current = replan_state()
+    current["plan_draft"]["steps"][0]["args"].update(payee_id=None, to_account_id="acc_savings")
+    current["decision"]["findings"][0]["code"] = "INSUFFICIENT_FUNDS"
+    scope = current["decision"]["replan_hints"][0]["scope"]
+    scope.update(
+        action_kinds=["TRANSFER_SELF"],
+        from_account_id=None,
+        fields={"to_account_id": "acc_savings"},
+    )
+    scope["transfers"][0].update(target_fingerprint="int:acc_savings", from_account_id=None)
+    current["reads"].append(
+        ReadRecord(
+            tool="get_profile",
+            source_ref="src_future_sim_clock",
+            data={"sim_now": "2100-01-01T00:00:00Z"},
+        )
+    )
+    llm = RepairToDailyLimit()
+    assert "1000.00元" in verify(current, llm)
     assert llm.calls == 0

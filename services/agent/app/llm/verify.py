@@ -8,6 +8,7 @@ single repair attempt, and always masks ≥8-digit numbers at the end.
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime
 from enum import StrEnum
 
 from services.agent.app.graph.state import AgentContext, AgentState
@@ -313,8 +314,22 @@ def _replan_receipt(state: AgentState) -> str:
         original.append((index, kind, args.from_account_id, target, args.amount_cents))
     if not original:
         return base
+    step_indices = {step.step_id: index for index, step in enumerate(plan.steps)}
+    failed_indices = set()
+    for finding in replans:
+        index = step_indices.get(finding.step_id)
+        if index is None or plan.steps[index].tool != "transfer":
+            return base
+        failed_indices.add(index)
+    now_wall = datetime.now(UTC)
     seen = set()
     for hint in decision.replan_hints:
+        try:
+            expires = datetime.fromisoformat(hint.expires_at_wall)
+        except ValueError:
+            continue
+        if expires.tzinfo is None or expires.utcoffset() is None or expires <= now_wall:
+            continue
         scope = hint.scope
         if (
             set(scope.action_kinds) != {item[1] for item in original}
@@ -350,7 +365,7 @@ def _replan_receipt(state: AgentState) -> str:
             if transfer.amount_cents < item[4]:
                 changes.append((item[0], transfer.amount_cents))
         else:
-            if not remaining and changes:
+            if not remaining and {index for index, _ in changes} == failed_indices:
                 for index, amount in changes:
                     if (index, amount) in seen:
                         continue
