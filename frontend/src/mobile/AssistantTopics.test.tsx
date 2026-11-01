@@ -120,7 +120,7 @@ it('renders the actual structured monthly summary instead of an empty transactio
   const user=userEvent.setup();render(<Assistant {...props}/>);
   await user.type(screen.getByRole('textbox'),'生成9月月报');
   await user.click(screen.getByRole('button',{name:'发送消息'}));
-  const card=screen.getByText('来源 src_summary').closest('.safe-ui-card')!;
+  const card=screen.getByRole('group',{name:'交易记录'});
   expect(card).toHaveTextContent('2026-09');
   expect(card).toHaveTextContent('432.10');
   expect(card).toHaveTextContent('餐饮');
@@ -133,7 +133,7 @@ it('uses Shanghai simulated calendar boundaries for relative months and rejects 
   const user=userEvent.setup();render(<Assistant {...props} profile={{...props.profile,sim_now:'2026-10-31T16:30:00Z'}}/>);
   await user.type(screen.getByRole('textbox'),'生成上月月报');await user.click(screen.getByRole('button',{name:'发送消息'}));
   await waitFor(()=>expect(read).toHaveBeenCalledWith('ses_topics','get_spending_summary',{month:'2026-10',account_id:null}));
-  expect(screen.getByText('来源 src_stale').closest('.safe-ui-card')).toHaveTextContent('月份');expect(screen.queryByText('550.50')).toBeNull();
+  expect(screen.getByRole('group',{name:'交易记录'})).toHaveTextContent('月份');expect(screen.queryByText('550.50')).toBeNull();
 });
 
 it('keeps a cross-scene X1 request bound to the actual prior-month summary and anomaly details', async () => {
@@ -156,6 +156,6 @@ it('does not display a structured anomaly from outside the requested report mont
  vi.mocked(stream).mockImplementation(async(_sid,_body,handle)=>handle({event:'custom',data:{type:'cards',cards:[{id:'wrong_anomaly',type:'ANOMALIES',source_ref:'src_wrong_anomaly',data:{items:[{transaction:{id:'tx_wrong_month',occurred_at:'2026-10-12T02:00:00+08:00',amount_cents:9900},codes:['ANOMALY_NIGHT_LARGE']}]},actions:[]}]}}));
  const user=userEvent.setup();render(<Assistant {...props}/>);
  await user.type(screen.getByRole('textbox'),'生成9月月报');await user.click(screen.getByRole('button',{name:'发送消息'}));
- const card=screen.getByText('来源 src_wrong_anomaly').closest('.safe-ui-card')!;
+ const card=screen.getByRole('group',{name:'异常提醒'});
  expect(card).toHaveTextContent('所选月份');expect(card).not.toHaveTextContent('99.00');
 });

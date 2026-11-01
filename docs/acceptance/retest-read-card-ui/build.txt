@@ -1,0 +1,13 @@
+
+> safebank-app@0.1.0 build
+> tsc --noEmit && vite build
+
+vite v5.4.21 building for production...
+transforming...
+✓ 57 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.47 kB │ gzip:   0.33 kB
+dist/assets/index-CD4DXX3Y.css   98.65 kB │ gzip:  19.49 kB
+dist/assets/index-CxJMHMi8.js   295.47 kB │ gzip: 100.01 kB
+✓ built in 392ms

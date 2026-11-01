@@ -186,10 +186,9 @@ it("deduplicates the same clarification id across stream and current G21 while r
     { id: "account", type: "ACCOUNT", source_ref: "src_account", data: { accounts: [{ id: "acc_ls_chk", display_name: "活期", available_cents: 1000000 }] }, actions: [] },
   ];
   await begin();
-  expect(screen.queryByText("来源 src_current")).toBeNull();
-  expect(screen.getByText("来源 src_history")).toBeInTheDocument();
-  expect(screen.queryByText("来源 src_duplicate")).toBeNull();
-  expect(screen.getByText("来源 src_account")).toBeInTheDocument();
+  expect(screen.getAllByRole("group", { name: "请补充信息" })).toHaveLength(1);
+  expect(screen.getByRole("group", { name: "账户信息" })).toHaveTextContent("活期");
+  expect(screen.queryByText(/^来源 src_/)).toBeNull();
   expect(screen.getByText("已读取本次请求。")).toBeInTheDocument();
   expect(screen.getAllByRole("button", { name: "稳盈短债" })).toHaveLength(1);
 });

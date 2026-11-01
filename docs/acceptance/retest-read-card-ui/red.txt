@@ -1,0 +1,424 @@
+
+> safebank-app@0.1.0 test
+> vitest run src/mobile/AssistantReadPresentation.test.tsx
+
+
+ RUN  v2.1.9 /Users/jet/.codex/worktrees/safebank-nov1-w1-query-isolation/WeBank/frontend
+
+ ❯ src/mobile/AssistantReadPresentation.test.tsx (12 tests | 10 failed) 546ms
+   × renders source-matched transaction labels as text with Shanghai time and keeps the wire evidence intact 93ms
+     → Unable to find an element with the text: 云盘. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<div[39m
+  [33mclass[39m=[32m"safe-ui-card"[39m
+[36m>[39m
+  [36m<strong>[39m
+    [0m交易记录[0m
+  [36m</strong>[39m
+  [36m<small>[39m
+    [0m来源 [0m
+    [0msrc_verified[0m
+  [36m</small>[39m
+  [36m<div[39m
+    [33mclass[39m=[32m"card-row"[39m
+  [36m>[39m
+    [36m<span>[39m
+      [0m&lt;untrusted_data source="src_verified"&gt;云盘&lt;/untrusted_data&gt;[0m
+    [36m</span>[39m
+    [36m<strong>[39m
+      [0m¥ 21.00[0m
+    [36m</strong>[39m
+  [36m</div>[39m
+  [36m<div[39m
+    [33mclass[39m=[32m"row"[39m
+  [36m/>[39m
+[36m</div>[39m
+   × does not interpret HTML inside a source-matched display label 36ms
+     → expect(element).not.toHaveTextContent()
+
+Expected element not to have text content:
+  untrusted_data
+Received:
+  交易记录来源 src_verified<untrusted_data source="src_verified"><img src=x onerror="alert(1)">云盘</untrusted_data>¥ 21.00
+   × distinguishes book balance, available funds and pending debits on the actual AccountView 35ms
+     → expect(element).toHaveTextContent()
+
+Expected element to have text content:
+  账面余额¥ 13,000.00
+Received:
+  账户信息来源 src_verified<untrusted_data source="src_verified">活期账户</untrusted_data>¥ 11,000.00
+   × does not replace a missing subscription name with an internal instruction ID or mislabel its last charge as its next charge 35ms
+     → expect(element).toHaveTextContent()
+
+Expected element to have text content:
+  周期性扣费（名称暂不可用）
+Received:
+  订阅安排来源 src_verified订阅 · si_zs_gym典型扣费 ¥ 199.00
+   × shows restored merchant names and the actual next due date as text 34ms
+     → expect(element).toHaveTextContent()
+
+Expected element to have text content:
+  下次扣费：2026年10月20日 06:00（北京时间）
+Received:
+  订阅安排来源 src_verified音乐会员¥ 15.00
+   × keeps scheduled targets, merchant charges and reserved totals separate 33ms
+     → expect(element).toHaveTextContent()
+
+Expected element to have text content:
+  商户扣费合计¥ 45.00
+Received:
+  订阅安排来源 src_verified<untrusted_data source="src_verified">储蓄账户</untrusted_data>¥ 100.00
+   × renders the nested anomaly wire time in Shanghai and retains deterministic risk explanations 48ms
+     → expect(element).toHaveTextContent()
+
+Expected element to have text content:
+  2026年10月15日 02:13（北京时间）
+Received:
+  异常提醒来源 src_verified<untrusted_data source="src_verified">云盘</untrusted_data>¥ 21.002026-10-14T18:13:00Z · 深夜大额交易
+   × shows product facts with a human placeholder when the old projection has removed its name 36ms
+     → expect(element).toHaveTextContent()
+
+Expected element to have text content:
+  理财产品（名称暂不可用）
+Received:
+  产品信息来源 src_verified产品 · prd_bondR2 · 债券产品
+   × does not treat pending orders as owned units or spendable cash and preserves a date-only Shanghai trade day 36ms
+     → expect(element).toHaveTextContent()
+
+Expected element to have text content:
+  可用份额8900.0000 份
+Received:
+  持仓信息来源 src_verified持仓 · prd_mmf8900.0000 份在途与近期订单 · 待结算款不计入可用余额prd_bond · 待确认¥ 2,000.00
+   × renders assistant Markdown tables as safe semantic tables without creating links or HTML 51ms
+     → Unable to find an accessible element with the role "table"
+
+Here are the accessible roles:
+
+  region:
+
+  Name "小安对话":
+  [36m<section[39m
+    [33maria-label[39m=[32m"小安对话"[39m
+    [33mclass[39m=[32m"chat-panel"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  strong:
+
+  Name "":
+  [36m<strong />[39m
+
+  --------------------------------------------------
+  button:
+
+  Name "新会话":
+  [36m<button[39m
+    [33mclass[39m=[32m"button ghost chat-new-session"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "发送消息":
+  [36m<button[39m
+    [33maria-label[39m=[32m"发送消息"[39m
+    [33mclass[39m=[32m"send-button"[39m
+    [33mdisabled[39m=[32m""[39m
+    [33mtype[39m=[32m"submit"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  paragraph:
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  --------------------------------------------------
+  textbox:
+
+  Name "向小安描述您的需求":
+  [36m<textarea[39m
+    [33mid[39m=[32m"chat-input"[39m
+    [33mmaxlength[39m=[32m"2000"[39m
+    [33mplaceholder[39m=[32m"向小安描述您的需求…"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"assistant-page"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"chat-layout"[39m
+      [36m>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"小安对话"[39m
+          [33mclass[39m=[32m"chat-panel"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"chat-top"[39m
+          [36m>[39m
+            [36m<span[39m
+              [33mclass[39m=[32m"assistant-orb"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33maria-hidden[39m=[32m"true"[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mheight[39m=[32m"20"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"1.65"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [33mwidth[39m=[32m"20"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M12 2.5 20 5.7v5.5c0 4.5-3.2 7.8-8 1...
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 10 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/mobile/AssistantReadPresentation.test.tsx > renders source-matched transaction labels as text with Shanghai time and keeps the wire evidence intact
+TestingLibraryElementError: Unable to find an element with the text: 云盘. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<div[39m
+  [33mclass[39m=[32m"safe-ui-card"[39m
+[36m>[39m
+  [36m<strong>[39m
+    [0m交易记录[0m
+  [36m</strong>[39m
+  [36m<small>[39m
+    [0m来源 [0m
+    [0msrc_verified[0m
+  [36m</small>[39m
+  [36m<div[39m
+    [33mclass[39m=[32m"card-row"[39m
+  [36m>[39m
+    [36m<span>[39m
+      [0m&lt;untrusted_data source="src_verified"&gt;云盘&lt;/untrusted_data&gt;[0m
+    [36m</span>[39m
+    [36m<strong>[39m
+      [0m¥ 21.00[0m
+    [36m</strong>[39m
+  [36m</div>[39m
+  [36m<div[39m
+    [33mclass[39m=[32m"row"[39m
+  [36m/>[39m
+[36m</div>[39m
+ ❯ Object.getElementError ../../../safebank-bill-analysis/WeBank/frontend/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ ../../../safebank-bill-analysis/WeBank/frontend/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ ../../../safebank-bill-analysis/WeBank/frontend/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../../safebank-bill-analysis/WeBank/frontend/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ src/mobile/AssistantReadPresentation.test.tsx:27:23
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/10]⎯
+
+ FAIL  src/mobile/AssistantReadPresentation.test.tsx > does not interpret HTML inside a source-matched display label
+Error: expect(element).not.toHaveTextContent()
+
+Expected element not to have text content:
+  untrusted_data
+Received:
+  交易记录来源 src_verified<untrusted_data source="src_verified"><img src=x onerror="alert(1)">云盘</untrusted_data>¥ 21.00
+ ❯ src/mobile/AssistantReadPresentation.test.tsx:33:114
+     31| it("does not interpret HTML inside a source-matched display label", as…
+     32|   const label = '<img src=x onerror="alert(1)">云盘'; const { card } =…
+     33|   expect(card).toHaveTextContent(label); expect(card.querySelector("im…
+       |                                                                                                                  ^
+     34| });
+     35| it("preserves ordinary user text containing markup-like fragments rath…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/10]⎯
+
+ FAIL  src/mobile/AssistantReadPresentation.test.tsx > distinguishes book balance, available funds and pending debits on the actual AccountView
+Error: expect(element).toHaveTextContent()
+
+Expected element to have text content:
+  账面余额¥ 13,000.00
+Received:
+  账户信息来源 src_verified<untrusted_data source="src_verified">活期账户</untrusted_data>¥ 11,000.00
+ ❯ src/mobile/AssistantReadPresentation.test.tsx:42:56
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/10]⎯
+
+ FAIL  src/mobile/AssistantReadPresentation.test.tsx > does not replace a missing subscription name with an internal instruction ID or mislabel its last charge as its next charge
+Error: expect(element).toHaveTextContent()
+
+Expected element to have text content:
+  周期性扣费（名称暂不可用）
+Received:
+  订阅安排来源 src_verified订阅 · si_zs_gym典型扣费 ¥ 199.00
+ ❯ src/mobile/AssistantReadPresentation.test.tsx:46:16
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/10]⎯
+
+ FAIL  src/mobile/AssistantReadPresentation.test.tsx > shows restored merchant names and the actual next due date as text
+Error: expect(element).toHaveTextContent()
+
+Expected element to have text content:
+  下次扣费：2026年10月20日 06:00（北京时间）
+Received:
+  订阅安排来源 src_verified音乐会员¥ 15.00
+ ❯ src/mobile/AssistantReadPresentation.test.tsx:50:56
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/10]⎯
+
+ FAIL  src/mobile/AssistantReadPresentation.test.tsx > keeps scheduled targets, merchant charges and reserved totals separate
+Error: expect(element).toHaveTextContent()
+
+Expected element to have text content:
+  商户扣费合计¥ 45.00
+Received:
+  订阅安排来源 src_verified<untrusted_data source="src_verified">储蓄账户</untrusted_data>¥ 100.00
+ ❯ src/mobile/AssistantReadPresentation.test.tsx:54:56
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/10]⎯
+
+ FAIL  src/mobile/AssistantReadPresentation.test.tsx > renders the nested anomaly wire time in Shanghai and retains deterministic risk explanations
+Error: expect(element).toHaveTextContent()
+
+Expected element to have text content:
+  2026年10月15日 02:13（北京时间）
+Received:
+  异常提醒来源 src_verified<untrusted_data source="src_verified">云盘</untrusted_data>¥ 21.002026-10-14T18:13:00Z · 深夜大额交易
+ ❯ src/mobile/AssistantReadPresentation.test.tsx:58:54
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/10]⎯
+
+ FAIL  src/mobile/AssistantReadPresentation.test.tsx > shows product facts with a human placeholder when the old projection has removed its name
+Error: expect(element).toHaveTextContent()
+
+Expected element to have text content:
+  理财产品（名称暂不可用）
+Received:
+  产品信息来源 src_verified产品 · prd_bondR2 · 债券产品
+ ❯ src/mobile/AssistantReadPresentation.test.tsx:62:16
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/10]⎯
+
+ FAIL  src/mobile/AssistantReadPresentation.test.tsx > does not treat pending orders as owned units or spendable cash and preserves a date-only Shanghai trade day
+Error: expect(element).toHaveTextContent()
+
+Expected element to have text content:
+  可用份额8900.0000 份
+Received:
+  持仓信息来源 src_verified持仓 · prd_mmf8900.0000 份在途与近期订单 · 待结算款不计入可用余额prd_bond · 待确认¥ 2,000.00
+ ❯ src/mobile/AssistantReadPresentation.test.tsx:66:16
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/10]⎯
+
+ FAIL  src/mobile/AssistantReadPresentation.test.tsx > renders assistant Markdown tables as safe semantic tables without creating links or HTML
+TestingLibraryElementError: Unable to find an accessible element with the role "table"
+
+Here are the accessible roles:
+
+  region:
+
+  Name "小安对话":
+  [36m<section[39m
+    [33maria-label[39m=[32m"小安对话"[39m
+    [33mclass[39m=[32m"chat-panel"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  strong:
+
+  Name "":
+  [36m<strong />[39m
+
+  --------------------------------------------------
+  button:
+
+  Name "新会话":
+  [36m<button[39m
+    [33mclass[39m=[32m"button ghost chat-new-session"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "发送消息":
+  [36m<button[39m
+    [33maria-label[39m=[32m"发送消息"[39m
+    [33mclass[39m=[32m"send-button"[39m
+    [33mdisabled[39m=[32m""[39m
+    [33mtype[39m=[32m"submit"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  paragraph:
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  --------------------------------------------------
+  textbox:
+
+  Name "向小安描述您的需求":
+  [36m<textarea[39m
+    [33mid[39m=[32m"chat-input"[39m
+    [33mmaxlength[39m=[32m"2000"[39m
+    [33mplaceholder[39m=[32m"向小安描述您的需求…"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"assistant-page"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"chat-layout"[39m
+      [36m>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"小安对话"[39m
+          [33mclass[39m=[32m"chat-panel"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"chat-top"[39m
+          [36m>[39m
+            [36m<span[39m
+              [33mclass[39m=[32m"assistant-orb"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33maria-hidden[39m=[32m"true"[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mheight[39m=[32m"20"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"1.65"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [33mwidth[39m=[32m"20"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M12 2.5 20 5.7v5.5c0 4.5-3.2 7.8-8 1...
+ ❯ Object.getElementError ../../../safebank-bill-analysis/WeBank/frontend/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ ../../../safebank-bill-analysis/WeBank/frontend/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ ../../../safebank-bill-analysis/WeBank/frontend/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../../safebank-bill-analysis/WeBank/frontend/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ src/mobile/AssistantReadPresentation.test.tsx:72:24
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/10]⎯
+
+ Test Files  1 failed (1)
+      Tests  10 failed | 2 passed (12)
+   Start at  06:16:39
+   Duration  1.33s (transform 157ms, setup 99ms, collect 214ms, tests 546ms, environment 292ms, prepare 35ms)

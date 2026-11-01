@@ -1,0 +1,39 @@
+
+> safebank-app@0.1.0 test
+> vitest run src/mobile/AssistantReadPresentation.test.tsx
+
+
+ RUN  v2.1.9 /Users/jet/.codex/worktrees/safebank-nov1-w1-query-isolation/WeBank/frontend
+
+ ❯ src/mobile/AssistantReadPresentation.test.tsx (15 tests | 1 failed) 547ms
+   × does not normalize an invalid timestamp into an invented bank day 34ms
+     → expect(element).toHaveTextContent()
+
+Expected element to have text content:
+  日期暂不可用
+Received:
+  异常提醒云盘¥ 21.00交易时间：2026年03月03日 02:13（北京时间）
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/mobile/AssistantReadPresentation.test.tsx > does not normalize an invalid timestamp into an invented bank day
+Error: expect(element).toHaveTextContent()
+
+Expected element to have text content:
+  日期暂不可用
+Received:
+  异常提醒云盘¥ 21.00交易时间：2026年03月03日 02:13（北京时间）
+ ❯ src/mobile/AssistantReadPresentation.test.tsx:83:16
+     81| it("does not normalize an invalid timestamp into an invented bank day"…
+     82|   const { card } = await show("ANOMALIES", { items: [{ transaction: { …
+     83|   expect(card).toHaveTextContent("日期暂不可用"); expect(card).not.toH…
+       |                ^
+     84| });
+     85| it("retains real read-linked fund names and Decimal precision while mi…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 14 passed (15)
+   Start at  06:20:41
+   Duration  1.35s (transform 144ms, setup 96ms, collect 214ms, tests 547ms, environment 300ms, prepare 43ms)

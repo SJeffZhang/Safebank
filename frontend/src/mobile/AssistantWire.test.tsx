@@ -13,11 +13,11 @@ async function show(type:string,data:unknown){
  vi.mocked(stream).mockImplementation(async(_sid,_body,handle)=>handle({event:'custom',data:{type:'cards',cards:[card]}}));
  const user=userEvent.setup();render(<Assistant {...props}/>);
  await user.type(screen.getByRole('textbox'),'查询业务详情');await user.click(screen.getByRole('button',{name:'发送消息'}));
- return screen.getByText('来源 src_wire').closest<HTMLElement>('.safe-ui-card')!;
+ return document.querySelector<HTMLElement>('.safe-ui-card')!;
 }
 it('renders a get_product direct ProductView without inventing an items wrapper',async()=>{
  const card=await show('PRODUCTS',{id:'prd_mmf',product_type:'MMF',risk_level:1,risk_label:'保守',nav:'1.0000',nav_date:'2026-10-15',recent_return_bp:12,confirm_days:0,settle_days:0,min_amount_cents:100,risk_disclosure:'不保证本金及收益',disclosure_version:'v1',nav_history:[]});
- expect(card).toHaveTextContent('prd_mmf');expect(card).toHaveTextContent('R1');expect(card).not.toHaveTextContent('当前没有可展示的记录');
+ expect(card).toHaveTextContent('理财产品（名称暂不可用）');expect(card).not.toHaveTextContent('prd_mmf');expect(card).toHaveTextContent('R1');expect(card).not.toHaveTextContent('当前没有可展示的记录');
 });
 it('renders nested anomaly transaction amounts and rule codes from the actual wire shape',async()=>{
  const card=await show('ANOMALIES',{items:[{transaction:{id:'tx_suspicious',account_id:'acc_a',direction:'OUT',kind:'CARD_PAYMENT',status:'POSTED',amount_cents:99000,counterparty:'可疑商户',memo:null,category:'购物',occurred_at:'2026-09-12T02:00:00+08:00',card_id:'crd_a'},codes:['ANOMALY_NIGHT_LARGE'],evidence:{baseline_count:5,mean_cents:1000,threshold_cents:10000,previous_transaction_id:null,window_minutes:null}}]});

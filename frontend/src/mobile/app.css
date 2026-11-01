@@ -5195,3 +5195,21 @@ button.mode-indicator {
   background: var(--sb-copper-soft);
   color: var(--sb-gold-ink);
 }
+
+/* Read cards keep their source IDs in the payload; customer copy shows facts. */
+.safe-ui-card .read-card-entry { padding: 12px 0; border-bottom: 1px solid var(--sb-line); min-width: 0; }
+.safe-ui-card .read-card-entry:last-child { border-bottom: 0; }
+.safe-ui-card .read-card-name { display: block; font-size: 12px; margin-bottom: 8px; overflow-wrap: anywhere; }
+.safe-ui-card .read-card-detail { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 5px 0; font-size: 11px; }
+.safe-ui-card .read-card-detail > span { color: var(--sb-muted); min-width: 0; overflow-wrap: anywhere; }
+.safe-ui-card .read-card-detail > strong { font-size: 12px; text-align: right; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.safe-ui-card .read-card-entry > small { display: block; font-size: 10px; color: var(--sb-muted); margin-top: 5px; overflow-wrap: anywhere; }
+.safe-ui-card .read-card-totals { padding: 10px 0; border-bottom: 1px solid var(--sb-line); }
+.assistant-reply { min-width: 0; }
+.assistant-reply > p + p { margin-top: 8px; }
+.assistant-table-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; border: 1px solid var(--sb-line); border-radius: 10px; background: var(--sb-surface); margin: 8px 0; }
+.assistant-table-scroll:focus-visible { outline: 2px solid var(--sb-gold-ink); outline-offset: 2px; }
+.assistant-table-scroll table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.assistant-table-scroll th, .assistant-table-scroll td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--sb-line); white-space: nowrap; }
+.assistant-table-scroll th { background: var(--sb-surface-raised); font-weight: 600; }
+.assistant-table-scroll tr:last-child td { border-bottom: 0; }
