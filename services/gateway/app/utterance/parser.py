@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -247,33 +248,70 @@ def _verbs(tool: str) -> str:
     )
 
 
-def _transfer_clause(clause: str) -> Command | None:
+def _transfer_clause(clause: str, target_labels: tuple[str, ...] | None = None) -> Command | None:
     source = None
     if clause.startswith("从"):
         prefix = re.fullmatch(r"从(?P<source>.+?)(?P<body>(?:给|向|转).+)", clause)
         if prefix is None:
             return None
         source, clause = prefix["source"].strip(), prefix["body"]
-    patterns = [
-        (rf"把\s*(?P<money>{MONEY})\s*(?:转给|转账给)\s*(?P<target>.+)", False),
-        (rf"(?:给|向)(?P<target>.+?)(?:转账?|转入)?\s*(?P<money>{MONEY})", False),
-        (rf"(?:转账?给|转给|转到|转入)(?P<target>.+?)\s*(?P<money>{MONEY})", False),
-        (rf"转(?:账)?\s*(?P<money>{MONEY})(?:到|给)(?P<target>.+?)(?:应急)?", False),
-        (rf"(?P<target>.+?)\s*(?P<money>{MONEY})", True),
-    ]
-    for pattern, bare in patterns:
-        match = re.fullmatch(pattern, clause)
-        if match:
+
+    def matches(target: str) -> Iterator[tuple[re.Match[str], bool]]:
+        patterns = [
+            (rf"把\s*(?P<money>{MONEY})\s*(?:转给|转账给)(?P<target>{target})", False),
+            (rf"(?:给|向)(?P<target>{target})(?:转账?|转入)?\s*(?P<money>{MONEY})", False),
+            (rf"(?:转账?给|转给|转到|转入)(?P<target>{target})\s*(?P<money>{MONEY})", False),
+            (rf"转(?:账)?\s*(?P<money>{MONEY})(?:到|给)(?P<target>{target})(?:应急)?", False),
+            (rf"(?P<target>{target})\s*(?P<money>{MONEY})", True),
+        ]
+        for pattern, bare in patterns:
+            if match := re.fullmatch(pattern, clause):
+                yield match, bare
+
+    def command(match: re.Match[str], bare: bool, amount: int) -> Command:
+        return Command(
+            "transfer",
+            target=match["target"].strip(),
+            amount_cents=amount,
+            source=source,
+            bare=bare,
+        )
+
+    # Match every complete saved label against the complete grammar before a
+    # lazy target capture can consume a name's trailing numeral as money.
+    # Multiple legal target/amount splits fail closed; order/length never votes.
+    def joined_digits(money: str) -> bool:
+        value = re.fullmatch(_MONEY_PATTERN, money)["value"]
+        return len(value) > 1 and value[0] in _CN_DIGIT_V and value[1] in _CN_DIGIT_V
+
+    exact: dict[tuple[str, int], tuple[Command, str]] = {}
+    for label in target_labels or ():
+        for match, bare in matches(re.escape(label)):
             amount = money_cents(match["money"])
-            if amount is None:
-                return None
-            return Command(
-                "transfer",
-                target=match["target"].strip(),
-                amount_cents=amount,
-                source=source,
-                bare=bare,
-            )
+            if amount is not None:
+                exact.setdefault((label, amount), (command(match, bare, amount), match["money"]))
+    if exact:
+        if len(exact) != 1:
+            return None
+        selected, money = next(iter(exact.values()))
+        # Even a registered short name cannot turn an unknown longer name's
+        # digit into a malformed amount such as 六九百. Keep this conservative
+        # transfer boundary local; other tools' money parsing is unchanged.
+        return None if joined_digits(money) else selected
+
+    for match, bare in matches(".+?"):
+        amount = money_cents(match["money"])
+        if amount is None or joined_digits(match["money"]):
+            return None
+        if (
+            target_labels is not None
+            and match["money"][0] in _CN_DIGIT_V
+            and match.end("target") == match.start("money")
+        ):
+            # An unresolved adjacent Chinese numeral might still belong to the
+            # name. Never feed that guessed amount into prefix/near candidates.
+            return None
+        return command(match, bare, amount)
     return None
 
 
@@ -313,7 +351,7 @@ def _query_clause(clause: str) -> bool:
     )
 
 
-def _clause(clause: str) -> Command | None:
+def _clause(clause: str, target_labels: tuple[str, ...] | None = None) -> Command | None:
     """Each alternative consumes its entire clause, including direction and units."""
     clause = re.sub(r"^(?:然后|并|再)\s*", "", clause, count=1)
     clause = re.sub(r"^(?:请帮我|帮我|替我|请)\s*", "", clause, count=1)
@@ -485,7 +523,7 @@ def _clause(clause: str) -> Command | None:
     )
     if future or monthly or weekly:
         match = future or monthly or weekly
-        transfer = _transfer_clause(match["body"])
+        transfer = _transfer_clause(match["body"], target_labels)
         if transfer is not None:
             if monthly:
                 if not 1 <= int(monthly["day"]) <= 31:
@@ -509,7 +547,7 @@ def _clause(clause: str) -> Command | None:
             "_split_participants",
             fields={"participants": names, "include_self": bool(split["self"])},
         )
-    return _transfer_clause(clause)
+    return _transfer_clause(clause, target_labels)
 
 
 def _accounts(label: str | None, owned: list) -> list:
@@ -673,6 +711,28 @@ def scope_is_complete(scope: NormalizedScope) -> bool:
     return True
 
 
+def _transfer_target_labels(state: BankState, customer_id: str) -> tuple[str, ...]:
+    """Only current-customer identities already accepted by target resolution."""
+    labels: set[str] = set()
+    for payee in state.payees.values():
+        if payee.customer_id != customer_id:
+            continue
+        for value in (payee.name, payee.alias):
+            if value and _exact_payee(value, payee):
+                labels.add(normalize(value))
+        if number := phone_number(payee.phone):
+            labels.update((number, "手机号" + number, "手机号码" + number))
+    for account in state.accounts.values():
+        if account.customer_id == customer_id:
+            labels.update((normalize(account.id), normalize(account.display_name)))
+            if account.type in ("CHECKING", "SAVINGS"):
+                kind = "活期" if account.type == "CHECKING" else "储蓄"
+                labels.update(
+                    prefix + kind + suffix for prefix in ("", "我的") for suffix in ("", "账户")
+                )
+    return tuple(sorted(label for label in labels if label))
+
+
 def parse(
     text: str, state: BankState, customer_id: str, predicates: dict[str, list[str]] | None = None
 ) -> Parsed:
@@ -694,7 +754,8 @@ def parse(
         r"(?:请帮我|帮我|替我|请)?把?风险测评(?:改成|改为|设为|调到)R[1-5][?？]?", clean
     ):
         return Parsed(guidance_template="risk_assessment_form")
-    commands = [_clause(clause) for clause in clauses]
+    target_labels = _transfer_target_labels(state, customer_id)
+    commands = [_clause(clause, target_labels) for clause in clauses]
     if any(command is None for command in commands):
         if len(clauses) == 1:
             consultation = re.fullmatch(r"我?能不能(?P<body>(?:给|向).+?)[?？]?", clean)
