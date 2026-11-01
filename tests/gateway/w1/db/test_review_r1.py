@@ -264,7 +264,11 @@ def test_r7_prefix_correction_cannot_load_until_explicit_g19_g3_selection(gatewa
                 assert not (await conn.execute(select(t.plans).where(t.plans.c.sid == sid))).first()
                 assert not (
                     await conn.execute(
-                        select(t.execution_jobs).where(t.execution_jobs.c.sid == sid)
+                        select(t.execution_jobs).where(
+                            t.execution_jobs.c.plan_id.in_(
+                                select(t.plans.c.id).where(t.plans.c.sid == sid)
+                            )
+                        )
                     )
                 ).first()
             await cannot_load(db, sid, old, public)

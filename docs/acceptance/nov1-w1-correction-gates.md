@@ -34,3 +34,7 @@ Interpreter used: `/Users/jet/.codex/worktrees/safebank-bill-analysis/WeBank/.ve
 ## Unrun and ownership
 
 No real PostgreSQL, provider, API, Docker, browser, model, deployment or demonstration was run. Root must run the 44 PG cases serially, especially the original 30 R7 cases and new explicit-selection loader regression. Pure/compiled tests are not live financial acceptance. Independent safety review is required for the production parser change; B has accepted that review assignment and is waiting for a stable complete SHA.
+
+## Independent review correction
+
+B found the new PG-only zero-job assertion referenced nonexistent `execution_jobs.sid`. An isolated column-access repro raises `AttributeError: sid`; this was a new test expression defect, not a production parser finding. It now filters `execution_jobs.plan_id` through the current session's `plans.id` subquery, retaining both zero-plan and zero-job assertions. The corrected SQL expression compiles, the affected test module collects (74), and all W1 pure tests remain green. Real PG remains unrun by this agent; root must execute it. No production file changed in this follow-up.
