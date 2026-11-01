@@ -76,3 +76,36 @@ it('the payee picker offers adding a recipient even when there is no saved payee
  await user.click(screen.getByRole('button',{name:'返回转账'}));
  expect(screen.queryByRole('dialog')).toBeNull();
 });
+it.each(['13800000088','１３８００００００８８'])('saves a manually entered optional phone on a new payee: %s',async(phone)=>{
+ const user=userEvent.setup();render(<Transfers {...props}/>);
+ await user.click(screen.getByRole('button',{name:'添加新收款人'}));
+ await user.type(screen.getByRole('textbox',{name:'收款人姓名'}),'新客户');
+ await user.type(screen.getByRole('textbox',{name:'银行卡号'}),'6222000000000001234');
+ await user.type(screen.getByRole('textbox',{name:'开户行'}),'中国工商银行');
+ await user.type(screen.getByRole('textbox',{name:'手机号（选填）'}),phone);
+ await user.click(screen.getByRole('button',{name:'预演并确认添加'}));
+ expect(props.onPropose).toHaveBeenCalledWith('PAYEE_ADD',expect.objectContaining({phone:'13800000088'}));
+ expect(props.onPropose).toHaveBeenCalledTimes(1);
+});
+it('rejects a partial optional phone without proposing a payee',async()=>{
+ const user=userEvent.setup();render(<Transfers {...props}/>);
+ await user.click(screen.getByRole('button',{name:'添加新收款人'}));
+ await user.type(screen.getByRole('textbox',{name:'收款人姓名'}),'新客户');
+ await user.type(screen.getByRole('textbox',{name:'银行卡号'}),'6222000000000001234');
+ await user.type(screen.getByRole('textbox',{name:'开户行'}),'中国工商银行');
+ await user.type(screen.getByRole('textbox',{name:'手机号（选填）'}),'1380000');
+ await user.click(screen.getByRole('button',{name:'预演并确认添加'}));
+ expect(screen.getByText('手机号请填写完整的11位数字，或留空。')).toBeVisible();
+ expect(props.onPropose).not.toHaveBeenCalled();
+});
+it('uses the same manually entered phone in recipient management without preselecting a transfer',async()=>{
+ const user=userEvent.setup();render(<Transfers {...props}/>);
+ await user.click(screen.getByRole('tab',{name:'收款人'}));
+ await user.type(screen.getByRole('textbox',{name:'收款人姓名'}),'新客户');
+ await user.type(screen.getByRole('textbox',{name:'银行卡号'}),'6222000000000001234');
+ await user.type(screen.getByRole('textbox',{name:'开户行'}),'中国工商银行');
+ await user.type(screen.getByRole('textbox',{name:'手机号（选填）'}),'13800000088');
+ await user.click(screen.getByRole('button',{name:'查看预演'}));
+ expect(props.onPropose).toHaveBeenCalledWith('PAYEE_ADD',expect.objectContaining({phone:'13800000088'}));
+ expect(props.onPropose).not.toHaveBeenCalledWith('TRANSFER_EXTERNAL',expect.anything());
+});
