@@ -1,17 +1,19 @@
 import { explainCode } from "./copy";
 import { useEffect, useRef, useState } from "react";
-import { request, stream, isPreview } from "./api";
+import { getPlan, request, stream, isPreview } from "./api";
 import {
   uid,
   type UICard,
   type StreamEvent,
   type Clarification,
   type Fields,
+  type PlanStatus,
 } from "./types";
 import type { PageProps } from "./Banking";
 import { Icon, Button, Alert, Badge } from "./ui";
 import { AssistantWorkspace, detectTopic, type AssistantTopic } from "./AssistantWorkspace";
 import { billMonth } from "./bill-month";
+import { isPlanTerminal, planPresentation } from "./plan-status";
 interface Message {
   id: string;
   role: "user" | "assistant";
@@ -30,6 +32,7 @@ export function Assistant(
     openApproval: (id: string) => void;
     onNewSession: () => void;
     onResumeRegister: (handler: (id: string) => Promise<void>) => void;
+    onExecuted?: () => void;
   },
 ) {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -41,6 +44,7 @@ export function Assistant(
   const [pending, setPending] = useState<string>();
   const [clar, setClar] = useState<Clarification | null>(null);
   const controller = useRef<AbortController>();
+  const refreshedPlans = useRef(new Set<string>());
   const end = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   function openTopic(topic: (typeof topics)[number]) {
@@ -52,6 +56,7 @@ export function Assistant(
     end.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [messages, stage]);
   useEffect(() => {
+    refreshedPlans.current.clear();
     setMessages([]);
     setPending(undefined);
     setClar(null);
@@ -264,6 +269,15 @@ export function Assistant(
                         key={card.id}
                         sid={p.sid}
                         busy={busy}
+                        revision={p.revision}
+                        onStatus={(status) => {
+                          if (status !== "PENDING_APPROVAL" && card.actions?.some(a => a.kind === "OPEN_APPROVAL" && a.ref === pending)) setPending(undefined);
+                          const planId = String((card.data as Fields)?.plan_id ?? "");
+                          if (status === "EXECUTED" && !refreshedPlans.current.has(planId)) {
+                            refreshedPlans.current.add(planId);
+                            p.onExecuted?.();
+                          }
+                        }}
                         onApproval={p.openApproval}
                         onHint={(id) =>
                           run({
@@ -418,6 +432,8 @@ function SafeCard({
   requestedMonth,
   sid,
   busy,
+  revision,
+  onStatus,
   onApproval,
   onHint,
 }: {
@@ -425,10 +441,36 @@ function SafeCard({
   requestedMonth?: string | null;
   sid: string;
   busy: boolean;
+  revision: number;
+  onStatus: (status: string) => void;
   onApproval: (id: string) => void;
   onHint: (id: string) => void;
 }) {
   const [labels, setLabels] = useState<Record<string, string>>({});
+  const [plan, setPlan] = useState<PlanStatus>();
+  const [planError, setPlanError] = useState("");
+  const planId = card.type === "PLAN_STATUS" && card.data && typeof card.data === "object" ? String((card.data as Fields).plan_id ?? "") : "";
+  useEffect(() => {
+    if (!planId || !/^pln_[\w-]+$/.test(planId)) return;
+    let live = true;
+    let timer: ReturnType<typeof setTimeout>;
+    setPlan(undefined); setPlanError("");
+    const load = async () => {
+      try {
+        const current = await getPlan(planId);
+        if (!live) return;
+        if (current.plan_id !== planId) throw new Error("计划身份不一致，请重新查询。");
+        setPlan(current); onStatus(current.status);
+        if (!isPlanTerminal(current.status)) timer = setTimeout(load,1800);
+      } catch (e) {
+        if (live) setPlanError(e instanceof Error ? e.message : "计划状态读取失败");
+      }
+    };
+    void load();
+    return () => {live=false;clearTimeout(timer);};
+  }, [sid,planId,revision]);
+  const shownStatus = planError ? "UNAVAILABLE" : plan?.status ?? "CHECKING";
+  const shownCard = planId ? {...card,data:{...(card.data as Fields),status:shownStatus}} : card;
   useEffect(() => {
     let live = true;
     for (const a of card.actions ?? [])
@@ -460,17 +502,18 @@ function SafeCard({
     <div className="safe-ui-card">
       <strong>{title[card.type] ?? "业务信息"}</strong>
       {card.source_ref && <small>来源 {card.source_ref}</small>}
-      <CardData card={card} requestedMonth={requestedMonth} />
+      <CardData card={shownCard} requestedMonth={requestedMonth} />
+      {planError && <Alert tone="error">{planError}</Alert>}
       <div className="row">
         {(card.actions ?? []).map((a, i) =>
-          a.kind === "OPEN_APPROVAL" && /^apv_/.test(a.ref) ? (
+          a.kind === "OPEN_APPROVAL" && /^apv_/.test(a.ref) && (!planId || !isPlanTerminal(shownStatus)) ? (
             <Button
               variant="secondary"
               key={i}
-              disabled={busy}
-              onClick={() => onApproval(a.ref)}
+              disabled={busy || (!!planId && ["CHECKING","UNAVAILABLE"].includes(shownStatus))}
+              onClick={() => onApproval(plan?.decision?.approval_id ?? a.ref)}
             >
-              查看确认面板
+              {!planId || shownStatus === "PENDING_APPROVAL" ? "查看确认面板" : "查看计划状态"}
             </Button>
           ) : a.kind === "HINT" && labels[a.ref] ? (
             <Button
@@ -508,17 +551,12 @@ function CardData({ card, requestedMonth }: { card: UICard; requestedMonth?: str
   const cash = (v: unknown) =>
     typeof v === "number" && Number.isSafeInteger(v) ? `¥ ${money(v)}` : "—";
   if (card.type === "PLAN_STATUS") {
-    const states: Record<string, string> = {
-      EXECUTED: "操作已完成",
-      UNKNOWN: "结果确认中",
-      PENDING_APPROVAL: "等待您确认",
-      FAILED: "执行失败",
-    };
+    const presentation = planPresentation(String(data.status));
     return (
       <>
         <div className="card-status">
-          <Badge tone={data.status === "EXECUTED" ? "success" : "amber"}>
-            {states[String(data.status)] ?? "请查询计划状态"}
+          <Badge tone={presentation.tone}>
+            {presentation.label}
           </Badge>
         </div>
         {data.status === "UNKNOWN" && (

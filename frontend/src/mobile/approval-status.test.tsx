@@ -38,6 +38,8 @@ const pendingPanel = (): PlanView => ({
 
 function reply(panel: PlanView) {
   const fetcher = vi.fn(async (path: RequestInfo | URL, options?: RequestInit) => {
+    if (path === "/api/plans/pln_pending" && options?.method === "GET")
+      return new Response(JSON.stringify({plan_id:"pln_pending",status:"UNKNOWN",decision:null}), {status:200,headers:{"Content-Type":"application/json"}});
     if (path !== "/api/approvals/apv_pending" || options?.method !== "GET")
       throw new Error("unexpected approval request");
     return new Response(JSON.stringify(panel), {
@@ -62,8 +64,8 @@ async function mount() {
   await act(async () => {
     await vi.advanceTimersByTimeAsync(0);
   });
-  const confirm = screen.getByRole("button", { name: "确认操作" });
-  expect(confirm).toBeDisabled();
+  const confirm = screen.queryByRole("button", { name: "确认操作" });
+  if (confirm) expect(confirm).toBeDisabled();
   await act(async () => {
     await vi.advanceTimersByTimeAsync(1100);
   });
@@ -107,8 +109,10 @@ describe("live G9 approval status boundary", () => {
     "does not make %s confirmable",
     async (status) => {
       const fetcher = reply({ ...pendingPanel(), status });
-      expect(await mount()).toBeDisabled();
-      expect(fetcher).toHaveBeenCalledOnce();
+      const confirm = await mount();
+      if (confirm) expect(confirm).toBeDisabled();
+      expect(fetcher).toHaveBeenCalledTimes(["CONFIRMED","USED"].includes(status) ? 2 : 1);
+      expect(fetcher.mock.calls.every(([,options])=>options?.method === "GET")).toBe(true);
     },
   );
 

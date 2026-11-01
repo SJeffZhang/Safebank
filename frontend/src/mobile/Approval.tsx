@@ -1,5 +1,5 @@
 import { explainCode } from "./copy";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getView, getPlan, request, isPreview, demoSms, BankError } from "./api";
 import { uid, type PlanView, type PlanStatus, type Decision } from "./types";
 import {
@@ -13,6 +13,7 @@ import {
   dateTime,
   Badge,
 } from "./ui";
+import { isPlanTerminal, planPresentation } from "./plan-status";
 export function Approval({
   id,
   onClose,
@@ -26,6 +27,7 @@ export function Approval({
   onDecision: (d: Decision) => void;
   onResume: (v: PlanView) => Promise<void>;
 }) {
+  const completed = useRef(false);
   const [view, setView] = useState<PlanView>();
   const [error, setError] = useState("");
   const [ready, setReady] = useState(false);
@@ -39,6 +41,7 @@ export function Approval({
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     let active = true;
+    completed.current = false;
     setView(undefined);
     setStatus(undefined);
     setSent(false);
@@ -49,12 +52,18 @@ export function Approval({
     setAck(false);
     setOtp("");
     getView(id)
-      .then((v) => {
+      .then(async (v) => {
         if (active) {
           setView(v);
           setTimeout(() => {
             if (active) setReady(true);
           }, 1000);
+          if (["USED", "CONFIRMED"].includes(v.status)) {
+            const current = await getPlan(v.plan_id);
+            if (!active) return;
+            if (current.plan_id !== v.plan_id) throw new Error("计划身份不一致，请重新查询。");
+            setStatus(current);
+          }
         }
       })
       .catch((e) => {
@@ -74,7 +83,7 @@ export function Approval({
   useEffect(() => {
     if (
       !status ||
-      ["EXECUTED", "FAILED", "DENIED", "REJECTED"].includes(status.status)
+      isPlanTerminal(status.status)
     )
       return;
     const controller = new AbortController();
@@ -83,13 +92,9 @@ export function Approval({
       try {
         const p = await getPlan(status.plan_id);
         if (controller.signal.aborted) return;
+        if (p.plan_id !== status.plan_id) throw new Error("计划身份不一致，请重新查询。");
         setStatus(p);
-        if (p.status === "EXECUTED") {
-          onComplete();
-          return;
-        }
-        if (["UNKNOWN", "EXECUTING", "RECONCILING"].includes(p.status))
-          timer = setTimeout(poll, 1800);
+        if (!isPlanTerminal(p.status)) timer = setTimeout(poll, 1800);
       } catch (e) {
         if (!controller.signal.aborted)
           setError(
@@ -103,7 +108,16 @@ export function Approval({
       clearTimeout(timer);
     };
   }, [status?.plan_id, status?.status]);
+  useEffect(() => {
+    if (status?.status === "EXECUTED" && !completed.current) {
+      completed.current = true;
+      onComplete();
+    }
+  }, [status?.status]);
   const expired = !!view && now >= Date.parse(view.expires_at_wall);
+  const currentStatus = status?.status ?? (expired && view?.status === "PENDING_APPROVAL" ? "EXPIRED" : view?.status ?? "CHECKING");
+  const presentation = planPresentation(currentStatus);
+  const awaiting = currentStatus === "PENDING_APPROVAL";
   async function submit(reject = false) {
     if (!view) return;
     setBusy(true);
@@ -126,9 +140,9 @@ export function Approval({
         await request(`/plans/${view.plan_id}/execute`, { request_id: uid() });
       }
       const p = await getPlan(view.plan_id);
+      if (p.plan_id !== view.plan_id) throw new Error("计划身份不一致，请重新查询。");
       setStatus(p);
-      if (p.status === "EXECUTED") onComplete();
-      if (p.decision.approval_id && p.decision.approval_id !== id)
+      if (p.decision?.approval_id && p.decision.approval_id !== id)
         onDecision(p.decision);
     } catch (e) {
       if (e && typeof e === "object" && "details" in e) {
@@ -160,14 +174,12 @@ export function Approval({
               <Icon name="shield" size={27} />
             </span>
             <div>
-              <Badge tone={view.risk === "RED" ? "danger" : "amber"}>
-                {view.risk === "RED" ? "高风险 · 需短信验证" : "待您确认"}
+              <Badge tone={awaiting ? (view.risk === "RED" ? "danger" : "amber") : presentation.tone}>
+                {awaiting ? (view.risk === "RED" ? "高风险 · 需短信验证" : "待您确认") : presentation.label}
               </Badge>
-              <h3>请确认这份操作计划</h3>
+              <h3>{awaiting ? "请确认这份操作计划" : presentation.label}</h3>
               <p>
-                {isPreview
-                  ? "合成数据演示 · 不涉及真实资金"
-                  : "预演已完成，确认后才会提交执行"}
+                {awaiting ? (isPreview ? "合成数据演示 · 不涉及真实资金" : "预演已完成，确认后才会提交执行") : presentation.message}
               </p>
             </div>
           </div>
@@ -238,21 +250,9 @@ export function Approval({
                 size={30}
               />
               <h3>
-                {status.status === "EXECUTED"
-                  ? isPreview
-                    ? "演示操作已完成"
-                    : "操作已完成"
-                  : status.status === "FAILED"
-                    ? "执行失败"
-                    : "结果确认中"}
+                {presentation.label}
               </h3>
-              <p>
-                {status.status === "EXECUTED"
-                  ? "账户与业务状态已刷新。"
-                  : status.status === "FAILED"
-                    ? "请查看计划详情，确认实际执行结果。"
-                    : "请勿重复发起。系统正在查询原计划的实际状态。"}
-              </p>
+              <p>{presentation.message}</p>
               <code>{status.plan_id}</code>
               <Button onClick={onClose}>完成</Button>
             </div>

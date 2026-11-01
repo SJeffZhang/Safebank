@@ -135,7 +135,7 @@ export interface PlanView {
 export interface PlanStatus {
   plan_id: string;
   status: string;
-  decision: Decision;
+  decision?: Decision | null;
   execution?: {
     status: string;
     committed_at?: string;
