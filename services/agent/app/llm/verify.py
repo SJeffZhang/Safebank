@@ -24,7 +24,7 @@ _AMOUNT_CNY_RE = re.compile(r"(¥|￥)\s*([\d,]+(?:\.\d{1,2})?)")
 _AMOUNT_YUAN_RE = re.compile(r"([\d,]+(?:\.\d{1,2})?)\s*(元|块)")
 
 # Percentage
-_PCT_RE = re.compile(r"([\d]+(?:\.[\d]+)?)\s*%")
+_PCT_RE = re.compile(r"(?<![\d.+\-−＋－])([+\-−＋－]?\d+(?:\.\d+)?)\s*%")
 
 # Card tail: 尾号 followed by an optional copula (为/是) and an ASCII word
 # token.  Valid tails are exactly 4 digits; anything else (card IDs, 5+
@@ -199,7 +199,8 @@ def extract_percentages(text: str) -> list[dict]:
     for m in _PCT_RE.finditer(text):
         raw = m.group(0)
         try:
-            value = float(m.group(1))
+            number = m.group(1).replace("−", "-").replace("－", "-").replace("＋", "+")
+            value = float(number)
         except ValueError:
             continue
         results.append(
