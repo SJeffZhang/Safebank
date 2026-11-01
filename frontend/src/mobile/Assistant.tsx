@@ -13,7 +13,7 @@ import {
 import type { PageProps } from "./Banking";
 import { Icon, Button, Alert, Badge } from "./ui";
 import { AssistantWorkspace, detectTopic, type AssistantTopic } from "./AssistantWorkspace";
-import { billMonth, monthRange } from "./bill-month";
+import { billMonth, billMonths, monthRange } from "./bill-month";
 import { isPlanTerminal, planPresentation } from "./plan-status";
 interface Message {
   id: string;
@@ -21,7 +21,7 @@ interface Message {
   text: string;
   cards?: UICard[];
   business?: {topic: AssistantTopic; month: string | null};
-  requestedMonth?: string | null;
+  requestedMonths?: string[] | null;
 }
 const topics = [
   { icon: "chart", title: "账单分析", description: "消费分类与异常依据" },
@@ -97,7 +97,7 @@ export function Assistant(
         .catch(() => { if (live) setError("历史会话暂不可用，新的原话仍需安全登记。"); });
     return () => { live = false; controller.current?.abort(); };
   }, [p.sid]);
-  function handle(event: StreamEvent, requestedMonth?: string | null) {
+  function handle(event: StreamEvent, requestedMonths?: string[] | null) {
     const data = event.data;
     if (event.event === "error") {
       throw new Error(
@@ -141,7 +141,7 @@ export function Assistant(
           role: "assistant",
           text: "",
           cards: data.cards as UICard[],
-          requestedMonth,
+          requestedMonths,
         },
       ]);
   }
@@ -155,7 +155,7 @@ export function Assistant(
     controller.current = current;
     const active = () => currentSession.current === sid && controller.current === current && !current.signal.aborted;
     try {
-      await stream(p.sid, body, event => { if (active()) handle(event, typeof body.text === "string" && detectTopic(body.text) === "账单分析" ? billMonth(body.text, p.profile.sim_now) : undefined); }, current.signal, resume);
+      await stream(p.sid, body, event => { if (active()) handle(event, typeof body.text === "string" && detectTopic(body.text) === "账单分析" ? billMonths(body.text, p.profile.sim_now) : undefined); }, current.signal, resume);
       if (!active()) return false;
       const c = await request<{ clarification: Clarification | null }>(
         `/sessions/${p.sid}/clarifications/current`,
@@ -316,7 +316,7 @@ export function Assistant(
                     {m.cards?.map((card) => (
                       <SafeCard
                         card={card}
-                        requestedMonth={m.requestedMonth}
+                        requestedMonths={m.requestedMonths}
                         key={card.id}
                         sid={p.sid}
                         busy={busy || selecting}
@@ -484,7 +484,7 @@ const allowedRoutes: Record<string, string> = {
 };
 function SafeCard({
   card,
-  requestedMonth,
+  requestedMonths,
   sid,
   busy,
   revision,
@@ -493,7 +493,7 @@ function SafeCard({
   onHint,
 }: {
   card: UICard;
-  requestedMonth?: string | null;
+  requestedMonths?: string[] | null;
   sid: string;
   busy: boolean;
   revision: number;
@@ -559,7 +559,7 @@ function SafeCard({
     <div className="safe-ui-card">
       <strong>{title[card.type] ?? "业务信息"}</strong>
       {card.source_ref && <small>来源 {card.source_ref}</small>}
-      <CardData card={shownCard} requestedMonth={requestedMonth} />
+      <CardData card={shownCard} requestedMonths={requestedMonths} />
       {planError && <Alert tone="error">{planError}</Alert>}
       <div className="row">
         {(card.actions ?? []).map((a, i) =>
@@ -596,7 +596,7 @@ function SafeCard({
   );
 }
 
-function CardData({ card, requestedMonth }: { card: UICard; requestedMonth?: string | null }) {
+function CardData({ card, requestedMonths }: { card: UICard; requestedMonths?: string[] | null }) {
   const data =
     card.data && typeof card.data === "object" ? (card.data as Fields) : {};
   const objects = (key: string) =>
@@ -625,7 +625,7 @@ function CardData({ card, requestedMonth }: { card: UICard; requestedMonth?: str
   }
   if (card.type === "TRANSACTIONS" && typeof data.month === "string") {
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(data.month) || !Number.isSafeInteger(data.total_cents) ||
-      (requestedMonth !== undefined && data.month !== requestedMonth))
+      (requestedMonths !== undefined && !requestedMonths?.includes(data.month)))
       return <Alert tone="error">月报月份或数据与本次请求不一致，请重新读取。</Alert>;
     return <><p>{data.month} 月度消费</p><div className="card-row"><span>消费合计</span><strong>{cash(data.total_cents)}</strong></div>
       {objects("categories").map((c,i) => <div className="card-row" key={i}><span>{String(c.category ?? "未分类")}</span><strong>{cash(c.amount_cents)}</strong></div>)}</>;
@@ -649,13 +649,13 @@ function CardData({ card, requestedMonth }: { card: UICard; requestedMonth?: str
   if (card.type === "NAVIGATE") return <p>您可以打开对应业务页面继续办理。</p>;
   if (card.type === "ANOMALIES") {
     const anomalies = objects("items");
-    if (requestedMonth !== undefined) {
-      if (!requestedMonth) return <Alert tone="error">请明确所选月份后重新读取异常记录。</Alert>;
-      const range = monthRange(requestedMonth);
+    if (requestedMonths !== undefined) {
+      if (!requestedMonths?.length) return <Alert tone="error">请明确所选月份后重新读取异常记录。</Alert>;
+      const ranges = requestedMonths.map(monthRange);
       if (anomalies.some(item => {
         const tx = item.transaction as Fields | undefined;
         const at = Date.parse(String(tx?.occurred_at ?? ""));
-        return !(at >= Date.parse(range.from_at) && at < Date.parse(range.to_at));
+        return !ranges.some(range => at >= Date.parse(range.from_at) && at < Date.parse(range.to_at));
       })) return <Alert tone="error">异常记录不在所选月份范围内，请重新读取。</Alert>;
     }
     if (!anomalies.length) return <p>所选范围内没有异常记录。</p>;
