@@ -2,9 +2,11 @@
 
 import asyncio
 
+import pytest
 from sqlalchemy import select
 
 from services.gateway.app import tables as t
+from services.gateway.app.utterance.service import new_id
 from tests.gateway.w1.db.support import create, harness, headers, login, utter
 from tests.gateway.w1.fixtures import bank_state
 from tests.gateway.w1.test_nov1_query_cancel_parser import QUERIES, scheduled
@@ -32,6 +34,41 @@ async def _assert_no_financial_writes(db, before, session_ids, fake):
     # Also catch accidental rows created for a different sid, or old rows removed.
     assert await _financial_rows(db) == before
     assert all(call["op"] in {"snapshot", "read"} for call in fake.calls)
+
+
+@pytest.mark.parametrize(
+    "text,fingerprint,account",
+    [
+        ("给赵六九百", "fp_zl", "acc_zs"),
+        ("给王五九百", "fp_ww", "acc_zs"),
+        ("从储蓄给赵六九百", "fp_zl", "acc_save"),
+    ],
+)
+def test_numeral_name_amount_survives_real_g3_and_pg_without_execution(
+    gateway_db, monkeypatch, text, fingerprint, account
+):
+    async def run():
+        async with harness(gateway_db, monkeypatch) as (_, client, db, _, _, _, fake):
+            before = await _financial_rows(db)
+            token = await login(client)
+            sid = await create(client, token, new_id("req"))
+            response = await utter(client, token, sid, text, new_id("req"))
+            assert response.status_code == 201
+            value = response.json()["utterance"]
+            assert value["parse_status"] == "SCOPED"
+            transfer = value["scope"]["transfers"][0]
+            assert len(value["scope"]["transfers"]) == 1
+            assert transfer["amount_cents"] == 90000
+            assert transfer["target_fingerprint"] == fingerprint
+            assert (value["scope"]["from_account_id"] or transfer["from_account_id"]) == account
+            async with db.connect() as conn:
+                saved = await conn.scalar(
+                    select(t.utterances.c.normalized_scope).where(t.utterances.c.id == value["id"])
+                )
+                assert saved == value["scope"]
+            await _assert_no_financial_writes(db, before, [sid], fake)
+
+    asyncio.run(run())
 
 
 def test_formal_queries_never_create_empty_form_or_financial_plan(gateway_db, monkeypatch):
