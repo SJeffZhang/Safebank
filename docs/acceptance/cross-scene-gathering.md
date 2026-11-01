@@ -49,3 +49,13 @@ X2已有test_x2_sources/test_idle_subscription_plan/test_subs_bills_prompt、L2 
 `.venv/bin/pytest -q tests/agent/test_selection_context.py tests/agent/test_aa_understanding.py tests/agent/test_llm_adapters.py tests/agent/test_funds_prompt.py tests/agent/test_x2_sources.py tests/agent/test_idle_subscription_plan.py`
 
 包含402/403/429单次调用止步、scope金额99999999被忽略且金额仍来自原derived计划的负控。ruff通过。该单元只闭合结构化上下文；X3必要读取已另有2项红测，留下一独立单元补足，不把X3生产整体标完成。
+
+## X3-B：选后实际读取与派生计划
+
+先用真实G20选择后形状和早停模型复现两项失败：没有账户/7天待扣/有效测评/选定产品读证据，合法派生申购计划的账户与产品read ref不存在。修复只在X3-A绑定上下文成立、既有understanding.needs_write=true时，通过实际读取保留fresh get_profile、get_accounts、upcoming_charges(days=7)、get_risk_profile与G3已选择的get_product；不选产品、不计算金额、不把无效测评改成有效、不更改understanding、JWT或授权。错产品响应直接失败，不读取其他产品替代。
+
+原2红转绿；追加原clarification/NO_WRITE/只读理解、五个依赖失败点、402/403/429单次止步、失效测评原样保留、错产品与任意scope金额不入金融值负控，18项通过。补编译后的build_gateway_graph实际G20 ingest→UnderstandAdapter→GatherAdapter→PlanAdapter→红级REQUIRE_APPROVAL中断用例；首轮仅测试误把decision字典当对象造成1 failed / 18 passed，按真实状态形状修正后断言原ACTION/parent链、5份实际读取、只当前utterance入计划、正确产品和等待审批，绝无执行。
+
+最终在当前全部L1源码上运行：`.venv/bin/pytest -q tests/agent -m 'not db'`，**859 passed / 40 deselected**（8.45秒）。40项为明确排除的数据库测试，不算通过。相关G3/W2派生/测评纯测试另联合127 passed（是重叠子集，不相加）。本轮全部修改的Python文件ruff check/format及git diff --check通过。
+
+上述是实际编译图和假上游/假模型纯测试，未调用生产模型、真实服务API、PG、Docker或浏览器；不能据此宣称X3生产演示、真实适当性授权与资金预留/结算已验收。

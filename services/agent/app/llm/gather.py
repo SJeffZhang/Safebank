@@ -19,6 +19,7 @@ from services.agent.app.gateway.errors import GatewayResponseError
 from services.agent.app.graph.state import AgentContext, AgentState, ReadRecord, UtteranceKind
 from services.agent.app.llm._common import LlmToolError, validation_summary
 from services.agent.app.llm._cross_scene_reads import (
+    current_x3_selection,
     natural_month_period,
     suspicious_card_period,
     x1_month_match,
@@ -160,6 +161,36 @@ class GatherAdapter:
         return new
 
     def __call__(self, state: AgentState, context: AgentContext) -> list[ReadRecord]:
+        selection = current_x3_selection(state, context)
+        understanding = state.get("understanding")
+        if (
+            self.fetch_business_date
+            and selection is not None
+            and understanding is not None
+            and understanding.needs_write
+        ):
+            # The product was explicitly chosen through G3, not selected by L1.
+            # Read all financial prerequisites; no amount is calculated here.
+            profile = self._execute_supplemental("get_profile", {}, "src_gather_profile")
+            self.last_business_date = self._format_date_line(profile.data["sim_now"])
+            records = [
+                profile,
+                self._execute_supplemental(
+                    "get_accounts", {"history_days": 0}, "src_gather_accounts"
+                ),
+                self._execute_supplemental(
+                    "upcoming_charges", {"days": 7, "account_id": None}, "src_gather_upcoming"
+                ),
+                self._execute_supplemental("get_risk_profile", {}, "src_gather_risk"),
+                self._execute_supplemental(
+                    "get_product",
+                    {"product_id": selection["fields"]["product_id"]},
+                    "src_gather_product",
+                ),
+            ]
+            if records[-1].data.get("id") != selection["fields"]["product_id"]:
+                raise LlmToolError("product read disagrees with the current G20 selection")
+            return records
         if self.fetch_business_date and x4_requested(state):
             # Preserve the G3 suspicious-card predicate interval and all owned
             # entity reads. This only provides sources; L2 still owns targets.
