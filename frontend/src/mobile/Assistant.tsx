@@ -11,12 +11,14 @@ import {
 import type { PageProps } from "./Banking";
 import { Icon, Button, Alert, Badge } from "./ui";
 import { AssistantWorkspace, detectTopic, type AssistantTopic } from "./AssistantWorkspace";
+import { billMonth } from "./bill-month";
 interface Message {
   id: string;
   role: "user" | "assistant";
   text: string;
   cards?: UICard[];
-  business?: AssistantTopic;
+  business?: {topic: AssistantTopic; month: string | null};
+  requestedMonth?: string | null;
 }
 const topics = [
   { icon: "chart", title: "账单分析", description: "消费分类与异常依据" },
@@ -75,7 +77,7 @@ export function Assistant(
         })
         .catch(() => setError("历史会话暂不可用，新的原话仍需安全登记。"));
   }, [p.sid]);
-  function handle(event: StreamEvent) {
+  function handle(event: StreamEvent, requestedMonth?: string | null) {
     const data = event.data;
     if (event.event === "error") {
       throw new Error(
@@ -119,6 +121,7 @@ export function Assistant(
           role: "assistant",
           text: "",
           cards: data.cards as UICard[],
+          requestedMonth,
         },
       ]);
   }
@@ -131,7 +134,7 @@ export function Assistant(
     controller.current = current;
     const active = () => controller.current === current && !current.signal.aborted;
     try {
-      await stream(p.sid, body, event => { if (active()) handle(event); }, current.signal, resume);
+      await stream(p.sid, body, event => { if (active()) handle(event, typeof body.text === "string" ? billMonth(body.text, p.profile.sim_now) : undefined); }, current.signal, resume);
       if (!active()) return false;
       const c = await request<{ clarification: Clarification | null }>(
         `/sessions/${p.sid}/clarifications/current`,
@@ -170,7 +173,7 @@ export function Assistant(
       clarification_id: clar?.id ?? null,
     });
     const topic = detectTopic(value);
-    if (completed && topic) setMessages(m => [...m,{id:uid(),role:"assistant",text:"",business:topic}]);
+    if (completed && topic) setMessages(m => [...m,{id:uid(),role:"assistant",text:"",business:{topic,month:billMonth(value,p.profile.sim_now)}}]);
     input.current?.focus();
   }
   async function choose(c: Clarification["candidates"][number]) {
@@ -253,10 +256,11 @@ export function Assistant(
                   )}
                   <div>
                     {m.text && <p>{m.text}</p>}
-                    {m.business && <AssistantWorkspace {...p} topic={m.business}/>}
+                    {m.business && <AssistantWorkspace {...p} topic={m.business.topic} requestedMonth={m.business.month}/>}
                     {m.cards?.map((card) => (
                       <SafeCard
                         card={card}
+                        requestedMonth={m.requestedMonth}
                         key={card.id}
                         sid={p.sid}
                         busy={busy}
@@ -411,12 +415,14 @@ const allowedRoutes: Record<string, string> = {
 };
 function SafeCard({
   card,
+  requestedMonth,
   sid,
   busy,
   onApproval,
   onHint,
 }: {
   card: UICard;
+  requestedMonth?: string | null;
   sid: string;
   busy: boolean;
   onApproval: (id: string) => void;
@@ -454,7 +460,7 @@ function SafeCard({
     <div className="safe-ui-card">
       <strong>{title[card.type] ?? "业务信息"}</strong>
       {card.source_ref && <small>来源 {card.source_ref}</small>}
-      <CardData card={card} />
+      <CardData card={card} requestedMonth={requestedMonth} />
       <div className="row">
         {(card.actions ?? []).map((a, i) =>
           a.kind === "OPEN_APPROVAL" && /^apv_/.test(a.ref) ? (
@@ -490,7 +496,7 @@ function SafeCard({
   );
 }
 
-function CardData({ card }: { card: UICard }) {
+function CardData({ card, requestedMonth }: { card: UICard; requestedMonth?: string | null }) {
   const data =
     card.data && typeof card.data === "object" ? (card.data as Fields) : {};
   const objects = (key: string) =>
@@ -521,6 +527,13 @@ function CardData({ card }: { card: UICard }) {
         <code>{String(data.plan_id ?? "")}</code>
       </>
     );
+  }
+  if (card.type === "TRANSACTIONS" && typeof data.month === "string") {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(data.month) || !Number.isSafeInteger(data.total_cents) ||
+      (requestedMonth !== undefined && data.month !== requestedMonth))
+      return <Alert tone="error">月报月份或数据与本次请求不一致，请重新读取。</Alert>;
+    return <><p>{data.month} 月度消费</p><div className="card-row"><span>消费合计</span><strong>{cash(data.total_cents)}</strong></div>
+      {objects("categories").map((c,i) => <div className="card-row" key={i}><span>{String(c.category ?? "未分类")}</span><strong>{cash(c.amount_cents)}</strong></div>)}</>;
   }
   if (card.type === "BLOCKED")
     return (

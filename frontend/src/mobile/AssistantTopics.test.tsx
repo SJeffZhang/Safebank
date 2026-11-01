@@ -15,7 +15,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   Element.prototype.scrollIntoView = vi.fn();
   vi.mocked(request).mockResolvedValue({ clarification: null });
-  vi.mocked(read).mockImplementation(async (_sid,tool)=>tool === "get_spending_summary" ? {total_cents:12345,categories:[{category:"餐饮",amount_cents:12345,share_bp:10000}]} : tool === "get_accounts" ? {accounts:[]} : {items:[],reserve_total_cents:4500});
+  vi.mocked(read).mockImplementation(async (_sid,tool,args)=>tool === "get_spending_summary" ? {month:args?.month,total_cents:12345,categories:[{category:"餐饮",amount_cents:12345,share_bp:10000}]} : tool === "get_accounts" ? {accounts:[]} : {items:[],reserve_total_cents:4500});
   vi.mocked(stream).mockResolvedValue(undefined);
 });
 
@@ -83,4 +83,55 @@ it("ignores a stopped request that finishes after a newer request starts", async
   expect(screen.getByRole("button",{name:"停止接收回复"})).toBeInTheDocument();
   complete[1]();
   expect(await screen.findByRole("region",{name:"资金安排内容"})).toBeInTheDocument();
+});
+
+it.each([
+  ['分析9月账单', '2026-09'],
+  ['生成上月月报', '2026-09'],
+  ['分析上月账单，冻结可疑交易对应的卡', '2026-09'],
+  ['生成2026年8月月报', '2026-08'],
+])('binds %s to actual summary and anomaly reads for %s', async (text, month) => {
+  vi.mocked(read).mockImplementation(async (_sid, tool, args) => tool === 'get_spending_summary'
+    ? {month: args?.month, total_cents: 12345, categories: []}
+    : {items: []});
+  const user = userEvent.setup(); render(<Assistant {...props}/>);
+  await user.type(screen.getByRole('textbox'), text);
+  await user.click(screen.getByRole('button', {name:'发送消息'}));
+  await waitFor(() => expect(read).toHaveBeenCalledWith('ses_topics', 'get_spending_summary', {month,account_id:null}));
+  expect(await screen.findByText('123.45')).toBeInTheDocument();
+  expect(read).toHaveBeenCalledWith('ses_topics', 'detect_anomalies', {
+    from_at:`${month}-01T00:00:00+08:00`, to_at: `${month === '2026-09' ? '2026-10' : '2026-09'}-01T00:00:00+08:00`,account_id:null,
+  });
+});
+
+it('rejects a summary for a different month rather than displaying its amount', async () => {
+  vi.mocked(read).mockResolvedValue({month:'2026-10',total_cents:55050,categories:[]});
+  const user=userEvent.setup();render(<Assistant {...props}/>);
+  await user.type(screen.getByRole('textbox'),'分析9月账单');
+  await user.click(screen.getByRole('button',{name:'发送消息'}));
+  expect(await screen.findByRole('alert')).toHaveTextContent('月份');
+  expect(screen.queryByText('550.50')).toBeNull();
+});
+
+it('renders the actual structured monthly summary instead of an empty transaction list', async () => {
+  vi.mocked(stream).mockImplementation(async (_sid,_body,handle) => {
+    handle({event:'custom',data:{type:'cards',cards:[{id:'card_month',type:'TRANSACTIONS',source_ref:'src_summary',data:{month:'2026-09',total_cents:43210,categories:[{category:'餐饮',amount_cents:43210,share_bp:10000}]},actions:[]}]}});
+  });
+  const user=userEvent.setup();render(<Assistant {...props}/>);
+  await user.type(screen.getByRole('textbox'),'生成9月月报');
+  await user.click(screen.getByRole('button',{name:'发送消息'}));
+  const card=screen.getByText('来源 src_summary').closest('.safe-ui-card')!;
+  expect(card).toHaveTextContent('2026-09');
+  expect(card).toHaveTextContent('432.10');
+  expect(card).toHaveTextContent('餐饮');
+  expect(card).not.toHaveTextContent('当前没有可展示的记录');
+});
+
+it('uses Shanghai simulated calendar boundaries for relative months and rejects stale structured data', async () => {
+  vi.mocked(read).mockImplementation(async (_sid,tool,args)=>tool==='get_spending_summary'?{month:args?.month,total_cents:10000,categories:[]}:{items:[]});
+  vi.mocked(stream).mockImplementation(async(_sid,_body,handle)=>handle({event:'custom',data:{type:'cards',cards:[{id:'stale',type:'TRANSACTIONS',source_ref:'src_stale',data:{month:'2026-09',total_cents:55050,categories:[]},actions:[]}]}}));
+  const user=userEvent.setup();render(<Assistant {...props} profile={{...props.profile,sim_now:'2026-10-31T16:30:00Z'}}/>);
+  await user.type(screen.getByRole('textbox'),'生成上月月报');await user.click(screen.getByRole('button',{name:'发送消息'}));
+  await waitFor(()=>expect(read).toHaveBeenCalledWith('ses_topics','get_spending_summary',{month:'2026-10',account_id:null}));
+  expect(screen.getByText('来源 src_stale').closest('.safe-ui-card')).toHaveTextContent('月份');expect(screen.queryByText('550.50')).toBeNull();
 });

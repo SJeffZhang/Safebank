@@ -922,8 +922,8 @@ export function Transfers(p: PageProps) {
     </>
   );
 }
-export function Bills(p: PageProps) {
-  const [month, setMonth] = useState(p.profile.sim_now.slice(0, 7));
+export function Bills(p: PageProps & {initialMonth?: string}) {
+  const [month, setMonth] = useState(p.initialMonth ?? p.profile.sim_now.slice(0, 7));
   const [reportPeriod, setReportPeriod] = useState<"month" | "year">();
   const [category, setCategory] = useState("");
   const [search, setSearch] = useState("");
