@@ -373,7 +373,11 @@ def apply_merchant_charge(
     )
 
     block_code = None
-    if mandate is None or mandate.status != "ACTIVE":
+    if (
+        mandate is None
+        or mandate.status != "ACTIVE"
+        or (mandate.end_at is not None and due > _business_time(mandate.end_at))
+    ):
         block_code = Code.MANDATE_NOT_ACTIVE
     elif billing.amount_cents > mandate.max_amount_cents:
         block_code = Code.MANDATE_AMOUNT_EXCEEDED

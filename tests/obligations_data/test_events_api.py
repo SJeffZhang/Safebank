@@ -253,7 +253,7 @@ def test_execute_scheduled_transfer_and_replay(obligations_db):
             txn = (
                 await conn.execute(
                     select(m.transactions).where(
-                        m.transactions.c.kind == "SCHEDULED_TRANSFER",
+                        m.transactions.c.transfer_id == result["result"]["transfer_id"],
                         m.transactions.c.account_id == "acc_zs_chk",
                         m.transactions.c.direction == "OUT",
                     )
@@ -261,6 +261,7 @@ def test_execute_scheduled_transfer_and_replay(obligations_db):
             ).first()
             assert txn is not None
             assert txn.amount_cents == 100000
+            assert txn.kind == "P2P_EXTERNAL"
 
             # Instruction run recorded
             run = (
@@ -524,7 +525,11 @@ def test_execute_insufficient_funds(obligations_db):
         async with runtime.connect() as conn:
             txn = (
                 await conn.execute(
-                    select(m.transactions).where(m.transactions.c.kind == "SCHEDULED_TRANSFER")
+                    select(m.transactions).where(
+                        m.transactions.c.kind.in_(
+                            ("P2P_INTERNAL", "P2P_EXTERNAL", "SCHEDULED_TRANSFER")
+                        )
+                    )
                 )
             ).first()
             assert txn is None  # no transfer posted
