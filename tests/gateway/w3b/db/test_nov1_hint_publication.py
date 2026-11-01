@@ -9,6 +9,7 @@ import asyncio
 import pytest
 from sqlalchemy import func, select
 
+from services.gateway.app import locks
 from services.gateway.app import tables as t
 from tests.gateway.w3b.db.conftest import (
     AGENT_TOKEN,
@@ -29,6 +30,8 @@ from tests.gateway.w3b.db.test_g4_evaluate import (
 async def prepared(app_config):
     app = await build_app(app_config, bank_state_fn=_low_balance_bank_state)
     db = _runtime_db(app)
+    # ASGITransport does not run lifespan; G3 requires this runtime-owned lock engine.
+    locks.configure(db, max_executions=8)
     sid, jti = "ses_nov1_hint", "jti-nov1-hint"
     async with db.begin() as conn:
         await _seed_full(conn, sid=sid, jti_auth=jti)
