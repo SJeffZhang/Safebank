@@ -10,6 +10,8 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import func, select
 
+from services.agent.app.gateway.wire import GatewayDecision
+from services.agent.app.llm.cards import generate_cards
 from services.gateway.app import locks
 from services.gateway.app import tables as t
 from services.gateway.app.auth.tokens import APP_AUDIENCE, sign_jwt
@@ -66,9 +68,16 @@ def test_g4_hint_is_readable_adoptable_once_and_evaluation_retry_is_idempotent(
         app, db, sid, decision, headers, body, agent = await prepared(app_config, monkeypatch)
         try:
             hint = decision["replan_hints"][0]
+            # Consume the actual G4 wire as L1 does; the customer action must
+            # come from the card, never from a test-built `ref` alias.
+            wire = GatewayDecision.model_validate(decision)
+            (card,) = generate_cards({"decision": wire.model_dump(mode="json")})
+            assert card.type == "REPLAN_HINTS"
+            (action,) = card.actions
+            assert action.kind == "HINT" and action.ref == hint["id"]
             replay = await app.client.post("/plans/evaluate", json=body, headers=agent)
             assert replay.status_code == 200 and replay.json() == decision
-            view = await app.client.get(f"/sessions/{sid}/hints/{hint['id']}", headers=headers)
+            view = await app.client.get(f"/sessions/{sid}/hints/{action.ref}", headers=headers)
             assert view.status_code == 200 and view.json() == hint
             assert "view_hash" not in view.json()
             async with db.connect() as conn:
@@ -79,7 +88,7 @@ def test_g4_hint_is_readable_adoptable_once_and_evaluation_retry_is_idempotent(
                     and stored["parent_plan_id"] == decision["plan_id"]
                 )
                 assert stored["expires_at_wall"] > g4_fixtures.WALL and stored["used_by"] is None
-            request = {"request_id": "req_adopt_hint", "kind": "hint", "hint_id": hint["id"]}
+            request = {"request_id": "req_adopt_hint", "kind": "hint", "hint_id": action.ref}
             adopted = await app.client.post(
                 f"/sessions/{sid}/utterances", headers=headers, json=request
             )

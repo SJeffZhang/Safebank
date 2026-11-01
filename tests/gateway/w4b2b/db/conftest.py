@@ -32,7 +32,7 @@ from services.gateway.app.db import engine
 from services.gateway.app.l3.client import L3Client
 from services.gateway.app.main import build_public_app
 from services.gateway.app.runtime import GatewayRuntime, _key_pair, _validate_approval_keys
-from services.gateway.app.schemas.decision import DecisionValue
+from services.gateway.app.schemas.decision import DecisionValue, PreflightView
 from tests.gateway.db.conftest import gateway_db  # noqa: F401
 
 # ── Test constants ────────────────────────────────────────────────────────────
@@ -44,13 +44,7 @@ SERVICE_TOKEN = "test-frontend-service-token-32b"
 AGENT_TOKEN = "test-agent-service-token-32bytes"
 SCHEDULER_TOKEN = "test-scheduler-token-32bytes-xxx"
 
-_PREFLIGHT_JSON = {
-    "executable": True,
-    "steps": [],
-    "balances": [],
-    "holdings": [],
-    "scheduled_reserve_cents": 0,
-}
+_PREFLIGHT_JSON = PreflightView(executable=True).model_dump(mode="json")
 _FINDINGS_JSON: list = []
 _RESOLVED_STEPS: list = []
 _UTTERANCE_IDS: list = ["utt_1"]

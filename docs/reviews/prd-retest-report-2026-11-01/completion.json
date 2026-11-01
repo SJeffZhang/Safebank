@@ -1,0 +1,28 @@
+{
+  "status": "DEMO_RETEST_COMPLETE_WITH_REMAINING_ISSUES",
+  "scope": "original8FAIL+16PARTIAL plus necessary06/09/33 setups and28 grant supplement; not full43 rerun",
+  "counts": {
+    "FAIL": 2,
+    "PASS": 8,
+    "PARTIAL": 14
+  },
+  "core_restored_original_fail_ids": [
+    "08",
+    "12",
+    "13",
+    "25",
+    "37",
+    "32",
+    "34"
+  ],
+  "original_fail_still_blocked": [
+    "38"
+  ],
+  "new_retested_choice_failure": "02",
+  "other_incomplete_interaction": "40 persistent hint has no adoption button",
+  "product_code_changed": false,
+  "clock_advanced_this_round": false,
+  "full_PRD_or_freeze_pass": false,
+  "previous43_csv_sha256": "6c0d1ff29a08d0f16d5847b290e83d8938fb5e0482f2254ed492b9681dca5abb",
+  "results_sha256": "50c8fad6565cc08f5b3cb9ac936a086c727834216f5a740a8d8c9e598e927da3"
+}

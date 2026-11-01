@@ -238,10 +238,10 @@ export function Approval({
                 ))}
                 <div className="reserve-note">
                   <Icon name="clock" size={16} />
-                  未来 7 天预留{" "}
-                  <strong>
-                    ¥ {money(view.preflight.scheduled_reserve_cents)}
-                  </strong>
+                  {view.preflight.reserve_projection_available === true ? <>
+                    计划前未来 7 天预留{" "}
+                    <strong>¥ {money(view.preflight.scheduled_reserve_cents)}</strong>
+                  </> : "未来 7 天预留未计算"}
                 </div>
               </section>
             )}

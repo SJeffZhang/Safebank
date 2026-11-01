@@ -22,7 +22,7 @@ function view(): PlanView {
     preflight: { executable: true, balances: [{ account_id: "acc_material", balance_before_cents: 600000,
       balance_after_cents: 520000, available_before_cents: 600000, available_after_cents: 520000,
       daily_used_before_cents: 10000, daily_used_after_cents: 90000 }],
-      scheduled_reserve_cents: 4500, steps: [], holdings: [] },
+      scheduled_reserve_cents: 4500, reserve_projection_available: true, steps: [], holdings: [] },
     findings: [], disclosures: [], risk_ack_required: false, otp_required: false,
     expires_at_wall: new Date(Date.now() + 300000).toISOString(), view_hash: "material-bound-hash",
   };
@@ -44,7 +44,7 @@ it("shows daily limit usage before/after separately from available balance and r
   expect(within(row).getByText("100.00")).toBeInTheDocument();
   expect(within(row).getByText("900.00")).toBeInTheDocument();
   expect(screen.getByText("可用余额")).toBeInTheDocument();
-  expect(screen.getByText("未来 7 天预留")).toBeInTheDocument();
+  expect(screen.getByText("计划前未来 7 天预留")).toBeInTheDocument();
 });
 
 it("renders hashed monthly saving and expected fund datetimes in Shanghai time", async () => {

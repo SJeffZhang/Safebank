@@ -5,6 +5,7 @@ No real LLM, no PG — card generation from fake state.
 
 from __future__ import annotations
 
+from services.agent.app.gateway.wire import GatewayDecision, GatewayReplanHint
 from services.agent.app.graph.state import ReadRecord
 from services.agent.app.llm.cards import (
     _filter_untrusted,
@@ -104,20 +105,31 @@ class TestGenerateCards:
         assert cards[0].type == "PLAN_STATUS"
 
     def test_replan_user_generates_hints(self):
-        state = {
-            "decision": {
-                "decision": "REPLAN",
-                "plan_id": "pln_1",
-                "findings": [{"code": "AMBIGUOUS", "resolver": "user"}],
-                "replan_hints": [
-                    {"ref": "hnt_abc", "label": "请选择收款人"},
-                ],
-            }
-        }
+        decision = GatewayDecision(
+            plan_id="pln_1",
+            evaluation_id="evl_1",
+            revision=1,
+            decision="REPLAN",
+            risk="RED",
+            findings=[{"code": "CARD_SINGLE_LIMIT", "effect": "REPLAN", "resolver": "user"}],
+            replan_hints=[
+                GatewayReplanHint(
+                    id="hnt_abc",
+                    label="最多 5000.00 元",
+                    scope={
+                        "action_kinds": ["TRANSFER_EXTERNAL"],
+                        "from_account_id": "acc_a",
+                        "transfers": [{"target_fingerprint": "fp_wang", "amount_cents": 500000}],
+                    },
+                    expires_at_wall="2026-11-01T14:00:00Z",
+                )
+            ],
+        )
+        state = {"decision": decision.model_dump(mode="json")}
         cards = generate_cards(state)
         assert len(cards) == 1
         assert cards[0].type == "REPLAN_HINTS"
-        assert cards[0].data["hints"] == ["请选择收款人"]
+        assert cards[0].data["hints"] == ["最多 5000.00 元"]
         assert len(cards[0].actions) == 1
         assert cards[0].actions[0].kind == "HINT"
         assert cards[0].actions[0].ref == "hnt_abc"
@@ -210,8 +222,8 @@ class TestGenerateCards:
         # ALLOW + needs_write=True → no read cards (write flow, not analysis)
         assert all(c.type != "ACCOUNT" for c in cards)
 
-    def test_name_stripped_from_read_cards(self):
-        """Untrusted name fields must NOT appear in card data."""
+    def test_read_name_is_plain_data_and_never_an_action(self):
+        """Names are display strings; sensitive alias stays out of the card."""
         state = {
             "reads": [
                 ReadRecord(
@@ -235,7 +247,8 @@ class TestGenerateCards:
         assert len(cards) >= 1
         card = cards[0]
         raw = str(card.data)
-        assert "张三" not in raw
+        assert card.data["accounts"][0]["name"] == "张三活期"
+        assert card.actions == ()
         assert "日常" not in raw
 
     def test_card_ids_unique(self):

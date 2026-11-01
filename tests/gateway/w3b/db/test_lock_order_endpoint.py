@@ -226,6 +226,7 @@ async def _test_no_deadlock(
     for t in pending:
         t.cancel()
     await asyncio.gather(*pending, return_exceptions=True)
+    await asyncio.gather(*done)
 
     assert len(pending) == 0, f"TIMEOUT: deadlocked={endpoint_deadlocked}"
     assert not endpoint_deadlocked, "Endpoint returned 5xx or exception (possible deadlock)"

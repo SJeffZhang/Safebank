@@ -43,9 +43,9 @@ async function ask(text = formal14, simNow = props.profile.sim_now) {
 }
 it("shows each formal14 source month independently and still rejects an unrequested month", async () => {
   await ask();
-  const sep = screen.getByText("来源 src_sep").closest(".safe-ui-card")!;
-  const aug = screen.getByText("来源 src_aug").closest(".safe-ui-card")!;
-  const oct = screen.getByText("来源 src_oct").closest(".safe-ui-card")!;
+  const sep = screen.getByText("2026-09 月度消费").closest(".safe-ui-card")!;
+  const aug = screen.getByText("2026-08 月度消费").closest(".safe-ui-card")!;
+  const oct = screen.getByText("月报月份或数据与本次请求不一致，请重新读取。").closest(".safe-ui-card")!;
   expect(sep).toHaveTextContent("2026-09"); expect(sep).toHaveTextContent("6,448.00");
   expect(aug).toHaveTextContent("2026-08"); expect(aug).toHaveTextContent("1,331.90");
   expect(within(sep as HTMLElement).queryByRole("alert")).toBeNull();

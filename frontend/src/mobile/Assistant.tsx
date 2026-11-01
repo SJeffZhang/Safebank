@@ -3,7 +3,6 @@ import { useEffect, useRef, useState } from "react";
 import { getPlan, request, stream, isPreview } from "./api";
 import {
   uid,
-  productTypeLabel,
   type UICard,
   type StreamEvent,
   type Clarification,
@@ -13,7 +12,9 @@ import {
 import type { PageProps } from "./Banking";
 import { Icon, Button, Alert, Badge } from "./ui";
 import { AssistantWorkspace, detectTopic, type AssistantTopic } from "./AssistantWorkspace";
-import { billMonth, billMonths, monthRange } from "./bill-month";
+import { billMonth, billMonths } from "./bill-month";
+import { AssistantReadData } from "./AssistantReadData";
+import { AssistantReply } from "./AssistantReply";
 import { isPlanTerminal, planPresentation } from "./plan-status";
 interface Message {
   id: string;
@@ -358,7 +359,7 @@ export function Assistant(
                     </span>
                   )}
                   <div>
-                    {m.text && <p>{m.text}</p>}
+                    {m.text && (m.role === "assistant" ? <AssistantReply text={m.text} /> : <p>{m.text}</p>)}
                     {m.business && <AssistantWorkspace {...p} topic={m.business.topic} requestedMonth={m.business.month}/>}
                     {m.cards?.map((card) => (
                       <SafeCard
@@ -520,7 +521,6 @@ export function Assistant(
     </div>
   );
 }
-import { money } from "./ui";
 const allowedRoutes: Record<string, string> = {
   "/": "overview",
   "/home": "overview",
@@ -607,9 +607,8 @@ function SafeCard({
     NAVIGATE: "继续办理",
   };
   return (
-    <div className="safe-ui-card">
+    <div className="safe-ui-card" role="group" aria-label={title[card.type] ?? "业务信息"}>
       <strong>{title[card.type] ?? "业务信息"}</strong>
-      {card.source_ref && <small>来源 {card.source_ref}</small>}
       <CardData card={shownCard} requestedMonths={requestedMonths} />
       {planError && <Alert tone="error">{planError}</Alert>}
       <div className="row">
@@ -656,8 +655,6 @@ function CardData({ card, requestedMonths }: { card: UICard; requestedMonths?: s
           (v): v is Fields => !!v && typeof v === "object",
         )
       : [];
-  const cash = (v: unknown) =>
-    typeof v === "number" && Number.isSafeInteger(v) ? `¥ ${money(v)}` : "—";
   if (card.type === "PLAN_STATUS") {
     const presentation = planPresentation(String(data.status));
     return (
@@ -673,13 +670,6 @@ function CardData({ card, requestedMonths }: { card: UICard; requestedMonths?: s
         <code>{String(data.plan_id ?? "")}</code>
       </>
     );
-  }
-  if (card.type === "TRANSACTIONS" && typeof data.month === "string") {
-    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(data.month) || !Number.isSafeInteger(data.total_cents) ||
-      (requestedMonths !== undefined && !requestedMonths?.includes(data.month)))
-      return <Alert tone="error">月报月份或数据与本次请求不一致，请重新读取。</Alert>;
-    return <><p>{data.month} 月度消费</p><div className="card-row"><span>消费合计</span><strong>{cash(data.total_cents)}</strong></div>
-      {objects("categories").map((c,i) => <div className="card-row" key={i}><span>{String(c.category ?? "未分类")}</span><strong>{cash(c.amount_cents)}</strong></div>)}</>;
   }
   if (card.type === "BLOCKED")
     return (
@@ -698,73 +688,5 @@ function CardData({ card, requestedMonths }: { card: UICard; requestedMonths?: s
   if (card.type === "CLARIFICATION")
     return <p>请通过下方的补充信息区选择目标或补充需求。</p>;
   if (card.type === "NAVIGATE") return <p>您可以打开对应业务页面继续办理。</p>;
-  if (card.type === "ANOMALIES") {
-    const anomalies = objects("items");
-    if (requestedMonths !== undefined) {
-      if (!requestedMonths?.length) return <Alert tone="error">请明确所选月份后重新读取异常记录。</Alert>;
-      const ranges = requestedMonths.map(monthRange);
-      if (anomalies.some(item => {
-        const tx = item.transaction as Fields | undefined;
-        const at = Date.parse(String(tx?.occurred_at ?? ""));
-        return !ranges.some(range => at >= Date.parse(range.from_at) && at < Date.parse(range.to_at));
-      })) return <Alert tone="error">异常记录不在所选月份范围内，请重新读取。</Alert>;
-    }
-    if (!anomalies.length) return <p>所选范围内没有异常记录。</p>;
-    return <>{anomalies.slice(0,5).map((item,i) => {
-      const tx = item.transaction && typeof item.transaction === "object" ? item.transaction as Fields : {};
-      return <div key={i}><div className="card-row"><span>{String(tx.counterparty ?? tx.id ?? "异常交易")}</span><strong>{cash(tx.amount_cents)}</strong></div>
-        <small>{String(tx.occurred_at ?? "")} · {Array.isArray(item.codes) ? item.codes.map(code=>explainCode(String(code))).join("、") : "异常依据暂不可用"}</small></div>;
-    })}{anomalies.length > 5 && <p>另有 {anomalies.length-5} 条，请到业务页面查看。</p>}</>;
-  }
-  if (card.type === "HOLDINGS") {
-    const holdings = objects("holdings"), orders = objects("orders");
-    const orderLabels: Record<string,string> = {PENDING_CONFIRM:"待确认",PENDING_SETTLEMENT:"待结算",SETTLED:"已结算",FAILED:"失败",EXPIRED:"已过期"};
-    return <>{holdings.length ? holdings.slice(0,5).map((h,i)=><div className="card-row" key={i}><span>持仓 · {String(h.product_id ?? "")}</span><strong>{String(h.available_units ?? "—")} 份</strong></div>) : <p>暂无持仓</p>}
-      {orders.length > 0 && <><p>在途与近期订单 · 待结算款不计入可用余额</p>{orders.slice(0,5).map((o,i)=><div className="card-row" key={i}><span>{String(o.product_id ?? "")} · {orderLabels[String(o.status)] ?? "未知订单状态"}</span><strong>{cash(o.amount_cents)}</strong></div>)}</>}
-      {holdings.length > 5 || orders.length > 5 ? <p>请到业务页面查看完整持仓与订单。</p> : null}</>;
-  }
-  const entries =
-    card.type === "ACCOUNT"
-      ? objects("accounts")
-      : card.type === "PRODUCTS" && typeof data.id === "string"
-        ? [data]
-        : card.type === "SUBSCRIPTIONS" ? [...objects("items"),...objects("scheduled_items")] : objects("items");
-  if (!entries.length) return <p>当前没有可展示的记录。</p>;
-  return (
-    <>
-      {entries.slice(0, 5).map((item, i) => {
-        const name = String(
-          item.display_name ??
-            item.counterparty ??
-            item.merchant_name ??
-            item.target_display ??
-            item.name ??
-            (card.type === "CARD"
-              ? `银行卡 · ${item.last4 ?? "—"}`
-              : card.type === "PRODUCTS"
-                ? `产品 · ${item.id ?? ""}`
-                : card.type === "SUBSCRIPTIONS"
-                  ? `订阅 · ${item.instruction_id ?? item.merchant_id ?? ""}`
-                  : "业务记录"),
-        );
-        const value =
-          card.type === "ACCOUNT"
-            ? cash(item.available_cents)
-            : card.type === "CARD"
-              ? String(item.status ?? "")
-              : card.type === "PRODUCTS"
-                ? `R${item.risk_level ?? "—"} · ${productTypeLabel(item.product_type)}`
-                : item.typical_amount_cents !== undefined ? `典型扣费 ${cash(item.typical_amount_cents)}` : cash(item.amount_cents);
-        return (
-          <div className="card-row" key={i}>
-            <span>{name}</span>
-            <strong>{value}</strong>
-          </div>
-        );
-      })}
-      {entries.length > 5 && (
-        <p>另有 {entries.length - 5} 条，可到业务页面查看完整记录。</p>
-      )}
-    </>
-  );
+  return <AssistantReadData card={card} requestedMonths={requestedMonths} />;
 }

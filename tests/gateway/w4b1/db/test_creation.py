@@ -40,13 +40,7 @@ def _runtime(gateway_db):
 # The evaluation row must carry the same decision facts the view was built from
 # (not an empty ``{}`` placeholder): risk/decision/findings/preflight all come
 # from ``ctx.decision`` and are persisted by append_evaluation (W3b).
-_PREFLIGHT_JSON = {
-    "executable": True,
-    "steps": [],
-    "balances": [],
-    "holdings": [],
-    "scheduled_reserve_cents": 0,
-}
+_PREFLIGHT_JSON = PreflightView(executable=True).model_dump(mode="json")
 _FINDINGS_JSON = []
 
 

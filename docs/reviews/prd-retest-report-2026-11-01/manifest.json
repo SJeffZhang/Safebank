@@ -1,0 +1,18 @@
+{
+  "source_commit": "8e2810e6764e3fd3e37406b31e694605751e0356",
+  "source_path": "/Users/jet/Downloads/WeBank/output/prd-retest-2026-11-01",
+  "generation": "demo_20261101131315_aca4156a",
+  "scope": "Immutable retest report, not a new pass claim; full receipt files remain in original output.",
+  "files_sha256": {
+    "REPORT.md": "c2fadfdd57981bf13383f65993c770b229da5e78582f2bc173e9f884121b6e22",
+    "results.csv": "50c8fad6565cc08f5b3cb9ac936a086c727834216f5a740a8d8c9e598e927da3",
+    "completion.json": "afa09ebe7658a8b4a7f78a5dc3dd6e43c051907d989b44724b5b25ca79675a82",
+    "observed-issues.json": "3f2d39d7d26c5cf034c634e998ba9392b1e4aaa0f2e8496806a12ff5c2d2850e",
+    "02-choice-error-review.md": "de49379c7a8182e32c1ee3ea67325ee0ee93382fef3b8c7608ce4a211d9238a9",
+    "38-choice-error-review.md": "037543f7cca9664e040deed19b1e1739d8580f80642df8dc5291e1c762d7c4df",
+    "40-hint-ui-review.md": "fc2d976b2ed2d490e8216d39f04ee7ed07ecf3e5acd1a78c397199aac341c03e",
+    "residual-ui-findings.md": "5950746cf687c9f84b5d708bfb28acc47865b5f9e08144ae8fd77168bc5c8334",
+    "28-grant-evidence-review.md": "795127d1ba536bd1189dc06cce34241f72a2b6be2978973c98ab1d083728d9b4",
+    "34-evidence-review.md": "a6cb63124faead7c6577f29ec07c122ea51b697821d065a2945ce6de59851956"
+  }
+}

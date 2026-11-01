@@ -32,10 +32,10 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 from pydantic import BaseModel, ValidationError
 
+from services.agent.app.gateway.adapters import utterance_ref_from_fields
 from services.agent.app.graph import (
     AgentContext,
     Ports,
-    UtteranceRef,
     build_gateway_graph,
     build_graph,
 )
@@ -497,7 +497,7 @@ def app_factory(
                 if has_input:
                     raw_utts = body["input"]["utterances"]
                     utterances = [
-                        UtteranceRef(
+                        utterance_ref_from_fields(
                             id=u.get("id", f"utt_{i}"),
                             kind=u.get("kind", "typed"),
                             text=u.get("text", ""),

@@ -172,6 +172,7 @@ class GatewayPreflight(Contract):
     balances: tuple[GatewayBalance, ...] = ()
     holdings: tuple[GatewayHolding, ...] = ()
     scheduled_reserve_cents: Cents = 0
+    reserve_projection_available: StrictBool = False
 
 
 class GatewayDecision(Contract):

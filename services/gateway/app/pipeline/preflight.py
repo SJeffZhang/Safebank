@@ -102,12 +102,17 @@ class PreflightStage(Stage):
         sim = self._simulate(state, steps, ctx.customer_id, ctx.plan_id, cumulative)
         if sim.error is not None:
             await self._record_hard(ctx, sim, cumulative)
-            if cumulative and affects_reserve:
+            if cumulative:
                 self._display_reserve(ctx, state)
         else:
             self._record_success(ctx, state, sim)
             if cumulative and affects_reserve:
                 await self._reserve(ctx, state, sim.state)
+            elif cumulative:
+                # Protective/non-outflow plans keep their existing policy path.
+                # Show the same pre-plan reserve as outflow plans when known,
+                # without turning unavailable display data into a new denial.
+                self._display_reserve(ctx, state)
         self._irreversible(ctx)
 
     # ---- per-step single thresholds (B1 and B2) ---------------------------
@@ -195,13 +200,14 @@ class PreflightStage(Stage):
         """Best-effort display reserve for a plan that already failed.
 
         The failure finding (INSUFFICIENT_FUNDS etc.) must never be masked by a
-        reserve dependency 503, so an unavailable projection just leaves the
-        display fields at zero.
+        reserve dependency 503. Unavailable display data keeps the explicit
+        availability flag false; a default zero must not claim zero obligations.
         """
         report = self._project_optional(ctx, before)
         if report is None:
             return
         ctx.preflight.scheduled_reserve_cents = report.total_reserve_cents
+        ctx.preflight.reserve_projection_available = True
         ctx.preflight.shortfall_before_cents = report.total_shortfall_cents
 
     async def _reserve(self, ctx: EvalContext, before, after) -> None:
@@ -210,6 +216,7 @@ class PreflightStage(Stage):
         if report_before is None or report_after is None:
             return
         ctx.preflight.scheduled_reserve_cents = report_before.total_reserve_cents
+        ctx.preflight.reserve_projection_available = True
         ctx.preflight.shortfall_before_cents = report_before.total_shortfall_cents
         ctx.preflight.shortfall_after_cents = report_after.total_shortfall_cents
         if report_after.total_shortfall_cents > report_before.total_shortfall_cents:

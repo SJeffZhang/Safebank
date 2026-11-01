@@ -150,6 +150,7 @@ class DecisionStage(Stage):
             balances=tuple(pre.balances),
             holdings=tuple(pre.holdings),
             scheduled_reserve_cents=pre.scheduled_reserve_cents,
+            reserve_projection_available=pre.reserve_projection_available,
         )
 
     # ---- replan hints ------------------------------------------------------

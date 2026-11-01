@@ -1,0 +1,234 @@
+{
+  "head": "9545148a12fff197beea350dbadbd2abb89fe4d7",
+  "tree": "05357d69ec0c9c9322cbc3de35b35e615f7d727d",
+  "status": "PASSED",
+  "recorded_at": "2026-11-01T14:48:19.350709+00:00",
+  "aggregate_sha256": "9a6ee5500b272790a56bfd4df58ac6805527e0c77f454ca93e984d4ec84b3c97",
+  "runner_sha256": "ea34d079200889de14516cd389c69f8ee9b09e8d1543855f9bf6263b0254818c",
+  "project": "safebank",
+  "deploy_checkout": "/Users/jet/.codex/worktrees/safebank-freeze-ci/WeBank",
+  "real_provider_requests": false,
+  "original_43_retested": false,
+  "conditional_skips_are_not_success": true,
+  "steps": [
+    {
+      "step": "fe-build",
+      "raw_log_sha256": "f67a37cf912aadfa40b0d36c0000c1956e7de4fbfb95f56927846d8eeac58125",
+      "pytest_summary": null,
+      "frontend_summary": null
+    },
+    {
+      "step": "fe-npm-ci",
+      "raw_log_sha256": "294a1ce0bd78e99d72596ee12df7a9d93131fb3933b3608f434d73b40cff65dd",
+      "pytest_summary": null,
+      "frontend_summary": null
+    },
+    {
+      "step": "fe-test-bff",
+      "raw_log_sha256": "9f8494b3d583435c5693f7a34fd99449b549f981f1f3da50f127d5a3647c0140",
+      "pytest_summary": null,
+      "frontend_summary": null
+    },
+    {
+      "step": "fe-test",
+      "raw_log_sha256": "e8773dd2e001a89e53ad1eeee1b6af8488b5defa27ca0abba8913696ce94be06",
+      "pytest_summary": null,
+      "frontend_summary": "Tests  494 passed (494)"
+    },
+    {
+      "step": "p1-contracts-check",
+      "raw_log_sha256": "0bc54b26f149b341e2f407b0c76ef92aa9d89a98760f38eaf822052876bba7ba",
+      "pytest_summary": null,
+      "frontend_summary": null
+    },
+    {
+      "step": "p1-setup",
+      "raw_log_sha256": "4fcaa28b629839168dd2cf57f505a6629a9df7444bb6440393ad2576fa75e11b",
+      "pytest_summary": null,
+      "frontend_summary": null
+    },
+    {
+      "step": "p1-test-agent-db",
+      "raw_log_sha256": "e7e05d408597f32ee3814289d9e902c46e0f17bed28028664710790a5e2bb019",
+      "pytest_summary": "42 passed, 1124 deselected in 3.69s",
+      "frontend_summary": null
+    },
+    {
+      "step": "p1-test-customer-locks",
+      "raw_log_sha256": "4e6dbd8358af6761e92cfccb791b851927031ddf3d0fa2c225924c18985d3af7",
+      "pytest_summary": "63 passed in 8.69s",
+      "frontend_summary": null
+    },
+    {
+      "step": "p1-test-e0b",
+      "raw_log_sha256": "0b7887d4c30bef26134118b949ee319266248035ca936f7b510537d0fcf8ae75",
+      "pytest_summary": "119 passed in 23.47s",
+      "frontend_summary": null
+    },
+    {
+      "step": "p1-test-gateway-db",
+      "raw_log_sha256": "863e8a3e7e7f704847664eac4184e9affee402aa3f836409310b57e52ec905ad",
+      "pytest_summary": "17 passed in 2.47s",
+      "frontend_summary": null
+    },
+    {
+      "step": "p1-test-integration",
+      "raw_log_sha256": "8b15df294520666bb04776bce3e081fc04b9f6c2aaeb2031a2f8acd22ed13458",
+      "pytest_summary": null,
+      "frontend_summary": null
+    },
+    {
+      "step": "p1-test-obligations",
+      "raw_log_sha256": "1067a98a0d8a290ef32d01b4f6db01df1c31bf8cc9b9259e363356144c498f8e",
+      "pytest_summary": "334 passed, 1 warning in 67.17s (0:01:07)",
+      "frontend_summary": null
+    },
+    {
+      "step": "p1-test-p1-concurrency",
+      "raw_log_sha256": "ebc66b0d572ab8745f37c985ed385d3280adf8838e07294414cce7eee0d970db",
+      "pytest_summary": "5 passed, 28 deselected in 6.95s",
+      "frontend_summary": null
+    },
+    {
+      "step": "p1-test-p1-consistency",
+      "raw_log_sha256": "6fd5a0e24e4bc764a61daa79b4016afe123154206ad7b0963333428dd386e7d0",
+      "pytest_summary": "17 passed, 16 deselected in 3.60s",
+      "frontend_summary": null
+    },
+    {
+      "step": "p1-test-p1",
+      "raw_log_sha256": "d4254a4d45c5fc6a3702b3cac18f9e57b76fa8617e29db4a81923f9ecbeea7ba",
+      "pytest_summary": "33 passed in 16.34s",
+      "frontend_summary": null
+    },
+    {
+      "step": "p1-test-postgres-bootstrap",
+      "raw_log_sha256": "b9d1a13306e49bcaac9dad4b551acfa91e58b6ec154a62cb87d4cdfbb396a69c",
+      "pytest_summary": null,
+      "frontend_summary": null
+    },
+    {
+      "step": "p1-test-s1",
+      "raw_log_sha256": "be6b77947726fd402fa382057979c1ced197ece8b1b1c720608f76fb5a38bcee",
+      "pytest_summary": "113 passed in 9.58s",
+      "frontend_summary": null
+    },
+    {
+      "step": "p1-test-shared-runtime",
+      "raw_log_sha256": "df8cce978b7ed3753818f5acead5e409047b40fdcdcc460282a3804ad11f6a06",
+      "pytest_summary": "79 passed in 9.25s",
+      "frontend_summary": null
+    },
+    {
+      "step": "p1-test-w1",
+      "raw_log_sha256": "79aedaa52a9293754eec91b47d81aa702f38af29c7518241b1436de75e706ce1",
+      "pytest_summary": "2042 passed in 78.54s (0:01:18)",
+      "frontend_summary": null
+    },
+    {
+      "step": "p1-test-w2",
+      "raw_log_sha256": "35f988ff7a06b0f2d42a6e24bec3eab5e9bd0b0bab43c6972d9aaf492c2d9673",
+      "pytest_summary": "328 passed in 30.01s",
+      "frontend_summary": null
+    },
+    {
+      "step": "p1-test-w3a",
+      "raw_log_sha256": "876e841a7ae6035ec5cb2d0f4300919b1d745f2717049f70ccd306f00e08edcc",
+      "pytest_summary": "64 passed in 5.18s",
+      "frontend_summary": null
+    },
+    {
+      "step": "p1-test-w3b",
+      "raw_log_sha256": "1afb6875f22ccde5e05e6afc00a5f46e71f0c9a347bd9238f98d81a59da3fe85",
+      "pytest_summary": "88 passed in 17.87s",
+      "frontend_summary": null
+    },
+    {
+      "step": "p1-test-w4b1",
+      "raw_log_sha256": "6e031a776797f0ec5fa13cb2b3da928e2235258502e6261bbb20f18353c47178",
+      "pytest_summary": "120 passed in 4.46s",
+      "frontend_summary": null
+    },
+    {
+      "step": "p1-test-w4b2b",
+      "raw_log_sha256": "d3a0302c3a27c1881d0ce9b44c52a5c0ccef80ab5240471089949eb9499a876c",
+      "pytest_summary": "58 passed in 8.63s",
+      "frontend_summary": null
+    },
+    {
+      "step": "p1-test-w4b2c",
+      "raw_log_sha256": "128fc27b9e3b8ba075ac0b2586d6c9fd9700eff4a4ef9838814d4f4360731d0c",
+      "pytest_summary": "56 passed in 4.10s",
+      "frontend_summary": null
+    },
+    {
+      "step": "p1-test-w4c",
+      "raw_log_sha256": "1668c9b2d6280be695cf0f99255eb73b9736f646657897c449e0a4a931afa5ac",
+      "pytest_summary": "48 passed in 30.66s",
+      "frontend_summary": null
+    },
+    {
+      "step": "p1-test-w5-clock",
+      "raw_log_sha256": "2aa23c9a0a49e205c3f4df993f993962955b40ac72511efd0f660090036af35d",
+      "pytest_summary": "6 passed in 2.77s",
+      "frontend_summary": null
+    },
+    {
+      "step": "p1-test-w5-notify",
+      "raw_log_sha256": "af9e4a6abf662edcf3f2d23776535fffabde113c5dc2c6dc8aabddfdecf1560b",
+      "pytest_summary": "52 passed in 5.34s",
+      "frontend_summary": null
+    },
+    {
+      "step": "p1-test-w5-sms",
+      "raw_log_sha256": "167b54cd02d7c872090b893891649036859de5cdf1df0b130178ae0a24942686",
+      "pytest_summary": "8 passed in 2.22s",
+      "frontend_summary": null
+    },
+    {
+      "step": "p1-test-wave1-state",
+      "raw_log_sha256": "1fcdde9a62c08d7cde73a799ee609828d6a0869c31d002d378e60a536724b32e",
+      "pytest_summary": "252 passed in 17.38s",
+      "frontend_summary": null
+    },
+    {
+      "step": "p1-up",
+      "raw_log_sha256": "53eece56c563de255eadecd7c816a58f96af760e2360237961a0b54e4fc3b029",
+      "pytest_summary": null,
+      "frontend_summary": null
+    },
+    {
+      "step": "unit-pytest",
+      "raw_log_sha256": "19500e795f28818da9518f04cf4bc5c83444a9cb52bf2a840e60b5820c5f5d22",
+      "pytest_summary": "4977 passed, 1169 skipped in 38.83s",
+      "frontend_summary": null
+    },
+    {
+      "step": "unit-ruff-check",
+      "raw_log_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+      "pytest_summary": null,
+      "frontend_summary": null
+    },
+    {
+      "step": "unit-ruff-format",
+      "raw_log_sha256": "7e3eebd6926353f6307f6c4a468f7db505b83bad5e47428f94a211522756dc38",
+      "pytest_summary": null,
+      "frontend_summary": null
+    },
+    {
+      "step": "unit-sync",
+      "raw_log_sha256": "1b402201c278381460eb4a52553d5d2889ec7a86cd95b529415cd56d6af80d7c",
+      "pytest_summary": null,
+      "frontend_summary": null
+    }
+  ],
+  "before_ci_bootstrap_precheck": {
+    "head": "9545148a12fff197beea350dbadbd2abb89fe4d7",
+    "previous_attempt": "aborted during unit after failed preservation precheck; no PG stage",
+    "bootstrap_new_test_db_tables": 0,
+    "preserved_prd06_oid": 94369,
+    "preserved_prd07_oid": 101382,
+    "bank_p1_test_absent": true,
+    "rechecked_before_restart": true
+  }
+}

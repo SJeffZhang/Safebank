@@ -116,6 +116,7 @@ class PreflightResult:
     balances: tuple[dict[str, Any], ...] = ()
     holdings: tuple[dict[str, Any], ...] = ()
     scheduled_reserve_cents: int = 0
+    reserve_projection_available: bool = False
     shortfall_before_cents: int = 0
     shortfall_after_cents: int = 0
     hint_max_outflow: dict[str, int] = field(default_factory=dict)

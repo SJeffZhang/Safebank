@@ -1,0 +1,106 @@
+{
+  "report_mode": "summary_of_saved_evidence_no_new_tests",
+  "source_commit": "8e2810e6764e3fd3e37406b31e694605751e0356",
+  "generation": "demo_20261101131315_aca4156a",
+  "counts": {
+    "FAIL": 2,
+    "PASS": 8,
+    "PARTIAL": 14
+  },
+  "issue_group_count": 6,
+  "blocked_interaction_cases": [
+    "02",
+    "38",
+    "40"
+  ],
+  "issues": [
+    {
+      "id": "R1",
+      "priority": "high",
+      "kind": "functional wiring",
+      "cases": [
+        "02",
+        "38"
+      ],
+      "summary": "Candidate action succeeds at registration but reply fails before planning; static null-text compatibility conflict.",
+      "evidence_limit": "Complete runtime exception not retained for both cases; unique root cause not asserted.",
+      "requirement_class": "explicit_prd_function",
+      "requirement_refs": "§5.1 T-1; §5.6 X-3; §7.4; §9.5",
+      "aligned_judgment": "functional_path_defect",
+      "counts_as_functional_defect": true,
+      "priority_basis": "report author assessment, not a PRD priority"
+    },
+    {
+      "id": "R2",
+      "priority": "high",
+      "kind": "functional wiring",
+      "cases": [
+        "40"
+      ],
+      "summary": "Persisted id-shaped replan hint has no adoption button; card builder reads ref.",
+      "evidence_limit": "DOM and source verified; raw SSE/label network trace not captured.",
+      "requirement_class": "explicit_prd_function",
+      "requirement_refs": "§3.4; §6.1; §7.9; §9.5",
+      "aligned_judgment": "supplemental_prd_hint_path_defect_original_rejection_correct",
+      "counts_as_functional_defect": true,
+      "priority_basis": "report author assessment, not a PRD priority"
+    },
+    {
+      "id": "R3",
+      "priority": "medium",
+      "kind": "presentation",
+      "summary": "Read cards expose untrusted_data/source wrappers.",
+      "requirement_class": "presentation_implementation",
+      "requirement_refs": "§6.1 gather wrapper; Nov1 repair plan (later scope)",
+      "aligned_judgment": "presentation_quality_not_banking_failure",
+      "counts_as_functional_defect": false,
+      "priority_basis": "report author assessment, not a PRD priority"
+    },
+    {
+      "id": "R4",
+      "priority": "advisory",
+      "kind": "presentation",
+      "summary": "Internal src/si/prd identifiers and raw Markdown/UTC formatting remain.",
+      "requirement_class": "experience_suggestion",
+      "requirement_refs": "§9.10 does not lock layout/format",
+      "aligned_judgment": "advisory_not_explicit_id_or_format_requirement",
+      "counts_as_functional_defect": false,
+      "priority_basis": "report author assessment, not a PRD priority"
+    },
+    {
+      "id": "R5",
+      "priority": "medium",
+      "kind": "preflight display semantics",
+      "cases": [
+        "28",
+        "34"
+      ],
+      "summary": "Non-outflow preflight shows default reserve0; PRD does not specify full-reserve applicability or before/after semantics for these operations.",
+      "evidence_limit": "Actual obligations were observed, but 30/45 yuan is not a prescribed UI acceptance value; no observed funding or authorization failure.",
+      "requirement_class": "semantics_unresolved",
+      "requirement_refs": "§7.7 reserve; §9.5 preflight field",
+      "aligned_judgment": "non_outflow_applicability_not_specified",
+      "counts_as_functional_defect": false,
+      "priority_basis": "report author assessment, not a PRD priority"
+    },
+    {
+      "id": "R6",
+      "priority": "low",
+      "kind": "documentation consistency",
+      "summary": "PRD contains conflicting old3/new4-or5 window-specific anomaly expectations; no testing-side choice of canonical behavior.",
+      "requirement_class": "document_conflict",
+      "requirement_refs": "live §2.2 versus §8.2",
+      "aligned_judgment": "requirement_conflict_no_algorithm_pass_fail_inferred",
+      "counts_as_functional_defect": false,
+      "priority_basis": "report author assessment, not a PRD priority"
+    }
+  ],
+  "requirement_alignment": {
+    "baseline_prd_commit": "ffcfe23cdec8d5567240951f3423a9872c734d07",
+    "review": "../requirement-provenance-2026-11-01/REPORT.md",
+    "counts_basis": "Historical mixed functional/presentation observation labels; not a PRD functionality pass rate.",
+    "only_explicit_prd_failures_are_functional_blockers": true,
+    "supplemental_hint_path_case": "40",
+    "new_runtime_tests": false
+  }
+}

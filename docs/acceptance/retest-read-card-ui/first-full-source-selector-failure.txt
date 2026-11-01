@@ -1,0 +1,292 @@
+
+> safebank-app@0.1.0 test
+> vitest run
+
+
+ RUN  v2.1.9 /Users/jet/.codex/worktrees/safebank-nov1-w1-query-isolation/WeBank/frontend
+
+stderr | src/test/assistant.test.tsx > 小安 · 对话与计划 > 空输入禁止发送并给出反馈
+⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+stderr | src/test/wealth.page.test.tsx > 理财页 /wealth 持仓视图 > 持仓与发现互斥，并可用键盘切换
+⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+stderr | src/test/auth-home.test.tsx > 欢迎页 > 两个入口都只标记已访问并进入登录，不建立会话
+⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+stderr | src/test/routing.test.tsx > cold start > does not flash welcome/login/home while resolving
+⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ ✓ src/test/auth-home.test.tsx (31 tests) 1356ms
+   ✓ 登录页 > 连续 5 次错误锁定并显示倒计时，键盘不可用 474ms
+ ✓ src/test/routing.test.tsx (22 tests) 2237ms
+   ✓ navigation > demo login lands on / 730ms
+   ✓ navigation > CLARIFICATION does not create a new URL 349ms
+   ✓ logout cleanup > after re-login wealth defaults to holdings with empty search 694ms
+stderr | src/test/transfer.flow.test.tsx > transfer form basics > starts empty: amount, account and recipient unset
+⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ ❯ src/mobile/AssistantClarification.test.tsx (19 tests | 1 failed) 1427ms
+   × deduplicates the same clarification id across stream and current G21 while retaining other history 69ms
+     → Unable to find an element with the text: 来源 src_history. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"assistant-page"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"chat-layout"[39m
+      [36m>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"小安对话"[39m
+          [33mclass[39m=[32m"chat-panel"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"chat-top"[39m
+          [36m>[39m
+            [36m<span[39m
+              [33mclass[39m=[32m"assistant-orb"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33maria-hidden[39m=[32m"true"[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mheight[39m=[32m"20"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"1.65"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [33mwidth[39m=[32m"20"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M12 2.5 20 5.7v5.5c0 4.5-3.2 7.8-8 10.3-4.8-2.5-8-5.8-8-10.3V5.7L12 2.5Z"[39m
+                  [33mstroke-width[39m=[32m"1.6"[39m
+                [36m/>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"m7.8 14.7 3.25-6.2a1.05 1.05 0 0 1 1.9 0l3.25 6.2M9.3 12.2h5.4"[39m
+                  [33mstroke-widt...
+stderr | src/test/cards.test.tsx > CardsPage > renders cards and their statuses without full card number
+⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+stderr | src/test/subscriptions.test.tsx > SubscriptionsPage > renders summary and subscription list
+⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ ✓ src/mobile/AssistantReadPresentation.test.tsx (15 tests) 567ms
+ ✓ src/test/wealth.page.test.tsx (27 tests) 4827ms
+   ✓ 理财申购与红级确认 > 红级申购：未勾选或 OTP 不完整不可确认，且无重发入口 890ms
+   ✓ 理财申购与红级确认 > UNKNOWN 保存 pending，卸载后重新挂载可查询恢复 1014ms
+   ✓ 理财申购与红级确认 > 操作成功但资产刷新失败时分别表达两种事实 701ms
+   ✓ 全部持仓页 /wealth/holdings > 赎回：份额校验、预演与成功刷新 696ms
+ ✓ src/test/assistant.test.tsx (28 tests) 5133ms
+   ✓ 小安 · 安全交接 > 确认执行进入既有 ApprovalSheet（黄级） 683ms
+   ✓ 小安 · 安全交接 > UNKNOWN 保存转账 pending，并可在小安页恢复 1001ms
+   ✓ 小安 · 澄清候选与转账权威目录一致 > 王武候选 → PlanView → 黄级确认成功，姓名与尾号不串换 607ms
+   ✓ 小安 · 澄清候选与转账权威目录一致 > 王伍候选 → PlanView → 黄级确认成功，姓名与尾号不串换 605ms
+   ✓ 小安 · 澄清候选与转账权威目录一致 > 页面内选择王伍后确认执行，面板显示王伍 8873 并成功 691ms
+stderr | src/test/bills.page.test.tsx > bills page > initial loading shows skeleton, not 0 yuan or empty state
+⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ ✓ src/test/cards.test.tsx (22 tests) 5298ms
+   ✓ MockCardsService > lock success changes card state after confirm; failed does not 606ms
+   ✓ MockCardsService > failed confirm leaves card unchanged 605ms
+   ✓ MockCardsService > expired confirm rejects with APPROVAL_EXPIRED 603ms
+   ✓ MockCardsService > refresh: new instance restores record and id does not collide 1205ms
+   ✓ MockCardsService > clearMockCardsRecords wipes records and state 607ms
+   ✓ CardsPage > lock → confirm success → card becomes locked (refetch) 695ms
+   ✓ CardsPage > failed does not switch card state and does not claim "unchanged" by default 635ms
+stderr | src/test/profile.test.tsx > 个人中心 · 账户摘要 > 显示用户摘要、L2、风险等级与统计，金额隐私覆盖资产
+⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ ✓ src/mobile/CardNumber.test.tsx (10 tests) 964ms
+stderr | src/test/transfer.security.test.tsx > security: stale preview invalidation > editing amount during preview: old response does not open panel; new preview accepted
+⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ ✓ src/test/profile.test.tsx (14 tests) 372ms
+ ✓ src/test/transfer.security.test.tsx (6 tests) 338ms
+ ✓ src/test/subscriptions.test.tsx (23 tests) 6124ms
+   ✓ MockSubscriptionsService > cancelled subscription is excluded from upcoming 603ms
+   ✓ MockSubscriptionsService > cancel success marks subscription cancelled after confirm 603ms
+   ✓ MockSubscriptionsService > failed cancel leaves subscription active 604ms
+   ✓ MockSubscriptionsService > reminder change stores before/after and applies on success 606ms
+   ✓ MockSubscriptionsService > expired confirm rejects 603ms
+   ✓ MockSubscriptionsService > clearMockSubscriptionsRecords resets state 603ms
+   ✓ SubscriptionsPage > cancel → success removes subscription after refetch 692ms
+   ✓ SubscriptionsPage > failed cancel keeps subscription 641ms
+   ✓ SubscriptionsPage > reminder change success refetches and updates time 688ms
+ ✓ src/mobile/AssistantTopics.test.tsx (17 tests) 894ms
+ ✓ src/test/bills.page.test.tsx (19 tests) 1808ms
+   ✓ bills page > stale month response is discarded on rapid switch 1318ms
+ ✓ src/test/bills.test.ts (12 tests) 26ms
+ ✓ src/mobile/TransferAccounts.test.tsx (8 tests) 1117ms
+ ✓ src/mobile/AssistantComparison.test.tsx (4 tests) 396ms
+ ✓ src/mobile/PlanLifecycle.test.tsx (12 tests) 347ms
+ ✓ src/mobile/WealthActions.test.tsx (5 tests) 267ms
+ ✓ src/test/transfer.flow.test.tsx (17 tests) 5501ms
+   ✓ transfer preview → approval > yellow confirm leads to success from service 682ms
+   ✓ transfer preview → approval > red OTP: incomplete cannot confirm, no resend entry, success on 6-digit 698ms
+   ✓ transfer preview → approval > failed uncertain does not claim no funds moved, offers 返回修改 693ms
+   ✓ transfer preview → approval > failed with noFundsMoved shows the service-confirmed claim 706ms
+   ✓ transfer preview → approval > unknown shows 结果待确认 and 查看状态, never success, no re-transfer default 803ms
+   ✓ transfer preview → approval > unknown → getApprovalStatus returns success updates to success 710ms
+   ✓ transfer preview → approval > persistent unknown keeps 查看状态 exit 698ms
+ ✓ src/mobile/approval-status.test.tsx (13 tests) 136ms
+ ✓ src/mobile/Assessment.test.tsx (4 tests) 230ms
+ ✓ src/mobile/AssistantWire.test.tsx (5 tests) 228ms
+ ✓ src/test/approval.test.tsx (6 tests) 116ms
+stderr | src/test/scrollRestore.test.tsx > useScrollRestore navigation behavior > restores home position after home -> assistant -> home
+⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ ✓ src/test/scrollRestore.test.tsx (4 tests) 118ms
+ ✓ src/mobile/Approval.material.test.tsx (8 tests) 76ms
+ ✓ src/mobile/ThemeTransition.test.ts (4 tests) 8ms
+ ✓ src/mobile/AnimatedMoney.test.tsx (4 tests) 36ms
+stderr | src/test/search.test.tsx > product search > starts by showing all four products
+⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ ✓ src/test/search.test.tsx (6 tests) 328ms
+ ✓ src/mobile/ChoiceSelect.test.tsx (3 tests) 113ms
+ ✓ src/mobile/contracts.test.ts (9 tests) 1217ms
+   ✓ new App wire contracts > preview cannot execute an unconfirmed plan, and repeated execution does not debit twice 1213ms
+ ✓ src/mobile/MyPage.test.tsx (2 tests) 176ms
+stderr | src/test/theme.test.tsx > Theme and navigation > toggles between light and dark and persists the choice
+⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ ✓ src/test/theme.test.tsx (3 tests) 178ms
+ ✓ src/mobile/Approval.test.tsx (5 tests) 3336ms
+   ✓ L2 sourced approval sheet > uses actual PlanStatus PENDING_APPROVAL, delays confirm and renders untrusted text safely 1034ms
+   ✓ L2 sourced approval sheet > red plan requires both explicit risk acknowledgement and six digit OTP 1164ms
+   ✓ L2 sourced approval sheet > expired approvals remain disabled 1112ms
+ ✓ src/mobile/DemoConsole.test.tsx (3 tests) 89ms
+ ✓ src/test/button.test.tsx (5 tests) 77ms
+ ✓ src/test/sheet.test.tsx (3 tests) 92ms
+ ✓ src/test/wealth.service.test.ts (24 tests) 12724ms
+   ✓ MockWealthService 申购与赎回 > 申购成功（资金整数分相加）后持仓与总览反映 service 结果，且资金守恒 607ms
+   ✓ MockWealthService 申购与赎回 > 赎回成功减少份额与市值，总览同步 608ms
+   ✓ MockWealthService 申购与赎回 > OTP 错误返回剩余次数（来自 service） 1204ms
+   ✓ MockWealthService 审批记录持久化 > 已过期审批不能确认 602ms
+   ✓ MockWealthService 审批记录持久化 > 已处理审批不能重复执行 1204ms
+   ✓ MockWealthService 审批记录持久化 > 刷新后：UNKNOWN 后续结果不丢、ID 不冲突 1205ms
+   ✓ MockWealthService 审批记录持久化 > clearMockWealthRecords 清除记录与已应用操作 605ms
+   ✓ MockWealthService 权威授权校验 > 红级申购传 yellow 授权被拒绝，资产不变，且记录未被消费 1210ms
+   ✓ MockWealthService 权威授权校验 > 红级赎回传 yellow 授权被拒绝，份额与余额不变 1208ms
+   ✓ MockWealthService 权威授权校验 > 红级 OTP 非 6 位或错误被拒绝，记录未提交未处理，之后正确 OTP 仍可成功 1805ms
+   ✓ MockWealthService 权威授权校验 > 错误授权被拒后不会把记录标记为已提交 603ms
+   ✓ MockWealthService 权威授权校验 > 黄级申购与黄级赎回的现有成功路径不受影响 1208ms
+   ✓ MockWealthService 权威授权校验 > 黄级审批也接受完整红级授权 604ms
+ ✓ src/mobile/BillsCategories.test.tsx (2 tests) 67ms
+ ✓ src/test/money.test.ts (10 tests) 2ms
+ ✓ src/test/stateview.test.tsx (6 tests) 64ms
+ ✓ src/test/tabs.test.tsx (2 tests) 83ms
+ ✓ src/test/amount.test.tsx (3 tests) 60ms
+ ✓ src/mobile/BillReport.test.tsx (3 tests) 8ms
+ ✓ src/test/viewState.test.ts (3 tests) 1ms
+ ✓ src/mobile/LineChartMotion.test.tsx (2 tests) 39ms
+ ✓ src/test/textfield.test.tsx (3 tests) 40ms
+ ✓ src/test/scrollMemory.test.ts (3 tests) 1ms
+ ✓ src/test/transfer-balance.test.tsx (9 tests) 9095ms
+   ✓ 转账成功后权威扣减余额 > 张三活期 600,000 分，成功转账 300,000 分后为 300,000 分 607ms
+   ✓ 转账成功后权威扣减余额 > 首页总资产 2,600,000 → 2,300,000，个人中心与首页一致 622ms
+   ✓ 转账成功后权威扣减余额 > 重复 confirm 不重复扣款 1205ms
+   ✓ 转账成功后权威扣减余额 > FAILED、UNKNOWN 未定、过期与取消均不扣款 1813ms
+   ✓ 转账成功后权威扣减余额 > UNKNOWN 查询得到 SUCCESS 时只扣一次 612ms
+   ✓ 转账成功后权威扣减余额 > UNKNOWN 查询得到 FAILED 时不扣款 605ms
+   ✓ 转账成功后权威扣减余额 > 新实例恢复余额与审批状态，且不会再次扣款 1208ms
+   ✓ 转账成功后权威扣减余额 > 第二笔转账基于第一笔后的余额校验 1813ms
+   ✓ 转账成功后权威扣减余额 > 退出登录清理后回到干净演示状态 609ms
+ ✓ src/mobile/preview.test.ts (11 tests) 9359ms
+   ✓ scheduling creates an arrangement without debiting available funds 975ms
+   ✓ AA allocates integer remainders to initiator and excludes self share from receivable 485ms
+   ✓ cancelled subscriptions disappear from future reserves and active totals 848ms
+   ✓ immediate money market purchase creates four decimal units and debits once 848ms
+   ✓ pending bond purchase reserves funds without reducing booked balance 848ms
+   ✓ lost card replacement preserves limits and resets channel defaults 847ms
+   ✓ full synthetic numbers are explicit and separate from the assistant card read 366ms
+   ✓ card number PIN rejects missing/wrong PIN and locks even correct PIN until cooldown 853ms
+   ✓ multi-card preview has separate accounts, full-number fixtures and controls 1093ms
+   ✓ expanded synthetic catalogue covers R1 to R5 and seeded redemption reserves receivables 1096ms
+   ✓ a confirmed synthetic card application creates an independent zero-balance account and a new card 1098ms
+ ✓ src/test/mockService.test.ts (12 tests) 8748ms
+   ✓ MockTransferService authoritative checks > confirmApproval rejects an unknown approval_id 602ms
+   ✓ MockTransferService authoritative checks > confirmApproval throws APPROVAL_EXPIRED once time advances past expiry 603ms
+   ✓ MockTransferService authoritative checks > confirmApproval throws APPROVAL_ALREADY_PROCESSED on a second confirm 1203ms
+   ✓ MockTransferService refresh persistence > UNKNOWN → success survives a refresh with DEFAULT scenario 904ms
+   ✓ MockTransferService refresh persistence > UNKNOWN → failed survives a refresh with DEFAULT scenario 904ms
+   ✓ MockTransferService refresh persistence > persistent UNKNOWN stays unknown after refresh 904ms
+   ✓ MockTransferService refresh persistence > processed (success) approval stays already-processed after refresh 1506ms
+   ✓ MockTransferService refresh persistence > UNKNOWN approval cannot be re-confirmed; query finalizes it 2109ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/mobile/AssistantClarification.test.tsx > deduplicates the same clarification id across stream and current G21 while retaining other history
+TestingLibraryElementError: Unable to find an element with the text: 来源 src_history. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"assistant-page"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"chat-layout"[39m
+      [36m>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"小安对话"[39m
+          [33mclass[39m=[32m"chat-panel"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"chat-top"[39m
+          [36m>[39m
+            [36m<span[39m
+              [33mclass[39m=[32m"assistant-orb"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33maria-hidden[39m=[32m"true"[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mheight[39m=[32m"20"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"1.65"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [33mwidth[39m=[32m"20"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M12 2.5 20 5.7v5.5c0 4.5-3.2 7.8-8 10.3-4.8-2.5-8-5.8-8-10.3V5.7L12 2.5Z"[39m
+                  [33mstroke-width[39m=[32m"1.6"[39m
+                [36m/>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"m7.8 14.7 3.25-6.2a1.05 1.05 0 0 1 1.9 0l3.25 6.2M9.3 12.2h5.4"[39m
+                  [33mstroke-widt...
+ ❯ Object.getElementError ../../../safebank-bill-analysis/WeBank/frontend/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ ../../../safebank-bill-analysis/WeBank/frontend/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ ../../../safebank-bill-analysis/WeBank/frontend/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../../safebank-bill-analysis/WeBank/frontend/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ src/mobile/AssistantClarification.test.tsx:190:17
+    188|   await begin();
+    189|   expect(screen.queryByText("来源 src_current")).toBeNull();
+    190|   expect(screen.getByText("来源 src_history")).toBeInTheDocument();
+       |                 ^
+    191|   expect(screen.queryByText("来源 src_duplicate")).toBeNull();
+    192|   expect(screen.getByText("来源 src_account")).toBeInTheDocument();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed | 49 passed (50)
+      Tests  1 failed | 490 passed (491)
+   Start at  06:21:09
+   Duration  17.94s (transform 1.80s, setup 2.83s, collect 4.96s, tests 85.84s, environment 9.39s, prepare 1.43s)
