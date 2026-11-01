@@ -33,3 +33,9 @@ Pending.
 - Monthly consumption reads an authoritative get_spending_summary and separates transfers; verifier-inclusive 550.50/400.00 and filtered merchant45.50 pure chains pass unchanged OutputVerifier. This closes the demonstrated missing-source/analysis-output failure mechanisms; original case12's precise production fallback stage is still unconfirmed without its prior intermediate checkpoint/provider trace.
 - Failed validation/NOT_FOUND redemption holdings calls no longer count as successful prerequisite reads; dependency/provider errors still propagate. Success is deduplicated.
 - Final pure agent suite: 947 passed,39 skipped; focused gather/redemption/format suite:23 passed. Ruff check/format pass. Continuous required-read failure at402/403/429 stops after one call in boundary tests. No real services/provider/DB.
+
+### T3 L3 business-date and catalog projection
+
+- Two new REDs reproduced through actual load_bank_state/read boundaries with only SQL execute replaced: UTC10/14 16:00 storage incorrectly yielded10/14 trade_date instead of Shanghai10/15, and list_products included history. Both pass with business timezone restoration and history-free catalog projection; detail history and in-memory source remain unchanged.
+- Focused pure domain/loader/read suite: see latest command output; real PG opt-in tests remain skipped. Root must run actual PostgreSQL persistence/reload plus concurrency/consistency gates before publishing. No DB or migration/state rewrite performed here.
+- Production change is exactly trade_date restoration in state.py and list-only nav_history projection in reads.py, separate from L1 changes.

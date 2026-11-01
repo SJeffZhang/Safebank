@@ -442,7 +442,7 @@ def read(state, tool, args, customer_id):
             items = [p for p in items if p.product_type == args.product_type]
         page, cursor = paginate(items, args, customer_id, lambda p: (p.id,), "list_products")
         data = dict(
-            items=[p.model_dump(mode="json") for p in page],
+            items=[{**p.model_dump(mode="json"), "nav_history": []} for p in page],
             next_cursor=cursor,
         )
     elif tool == "compare_products":

@@ -559,7 +559,7 @@ async def load_bank_state(conn, scope: StateScope, now, *, customer_id: str) -> 
             pending_transfer_id=r["pending_transfer_id"],
             plan_id=r["plan_id"],
             step_id=r["step_id"],
-            trade_date=r["trade_date"].date(),
+            trade_date=r["trade_date"].astimezone(BUSINESS_TIMEZONE).date(),
             confirm_at=r["confirm_at"],
             settle_at=r["settle_at"],
             expires_at=r["expires_at"],
