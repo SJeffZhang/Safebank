@@ -32,13 +32,14 @@ let messages: { sid: string; body: Body }[];
 let rejected: string[];
 let actionReply: (() => Promise<Response>) | undefined;
 let streamCards: Record<string, unknown>[];
+let rejectTypedAnswerOnce: boolean;
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 const failure = (code: string, status = 422) => json({ error: { code, message: code, details: {} } }, status);
 const sse = () => new Response(`${streamCards.length ? `event: custom\ndata: ${JSON.stringify({ type: "cards", cards: streamCards })}\n\n` : ""}event: updates\ndata: {"reply":{"id":"reply_${messages.length}","content":"已读取本次请求。"}}\n\n`, { headers: { "Content-Type": "text/event-stream" } });
 beforeEach(() => {
   vi.clearAllMocks();
   Element.prototype.scrollIntoView = vi.fn();
-  current = slots(); actions = []; messages = []; rejected = []; actionReply = undefined; streamCards = [];
+  current = slots(); actions = []; messages = []; rejected = []; actionReply = undefined; streamCards = []; rejectTypedAnswerOnce = false;
   vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) => {
     const b: Body = init?.body ? JSON.parse(String(init.body)) : {};
     if (path.endsWith("/state")) return json({ values: { messages: [] }, tasks: [] });
@@ -58,6 +59,10 @@ beforeEach(() => {
       // G3 Registration.exclusive: clarification_id belongs only to explicit typed answers.
       if (b.kind === "action" && (b.action_id !== "act_selected" || b.clarification_id != null || b.text != null || b.hint_id != null)) {
         rejected.push("G3"); return failure("CONTRACT_INVALID");
+      }
+      if (b.kind === "typed" && b.clarification_id === "clr_product" && rejectTypedAnswerOnce) {
+        rejectTypedAnswerOnce = false;
+        return failure("SLOT_ANSWER_REJECTED", 409);
       }
       if (b.kind === "action" || (b.kind === "typed" && b.clarification_id === "clr_product")) current = null;
       return sse();
@@ -187,4 +192,28 @@ it("deduplicates the same clarification id across stream and current G21 while r
   expect(screen.getByText("来源 src_account")).toBeInTheDocument();
   expect(screen.getByText("已读取本次请求。")).toBeInTheDocument();
   expect(screen.getAllByRole("button", { name: "稳盈短债" })).toHaveLength(1);
+});
+it("admits one explicit typed SLOTS answer for two clicks in the same event batch", async () => {
+  const { user } = await begin();
+  await user.type(screen.getByRole("textbox", { name: "补充本次目标" }), "稳盈短债");
+  const button = screen.getByRole("button", { name: "提交补充" });
+  await act(async () => { fireEvent.click(button); fireEvent.click(button); });
+  await waitFor(() => expect(screen.queryByText("需要补充信息")).toBeNull());
+  expect(messages).toHaveLength(2);
+  expect(messages.filter(message => message.body.clarification_id === "clr_product")).toHaveLength(1);
+  expect(actions).toEqual([]); expect(props.onPropose).not.toHaveBeenCalled();
+});
+it("releases the explicit typed SLOTS lock after a failed request for a deliberate retry", async () => {
+  rejectTypedAnswerOnce = true;
+  const { user } = await begin();
+  await user.type(screen.getByRole("textbox", { name: "补充本次目标" }), "稳盈短债");
+  await user.click(screen.getByRole("button", { name: "提交补充" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("SLOT_ANSWER_REJECTED");
+  const retry = screen.getByRole("button", { name: "提交补充" });
+  await waitFor(() => expect(retry).not.toBeDisabled());
+  await user.click(retry);
+  await waitFor(() => expect(screen.queryByText("需要补充信息")).toBeNull());
+  expect(messages).toHaveLength(3);
+  expect(messages.slice(1).every(message => message.body.kind === "typed" && message.body.clarification_id === "clr_product")).toBe(true);
+  expect(actions).toEqual([]); expect(props.onPropose).not.toHaveBeenCalled();
 });

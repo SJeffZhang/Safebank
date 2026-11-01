@@ -228,12 +228,22 @@ export function Assistant(
     return clar.parent_utterance_ids[0];
   }
   async function submitAnswer() {
-    if (busy || selecting || pending || !answer.trim()) return;
+    if (busy || selection.current || pending || !answer.trim()) return;
     if (!slotParent()) { setError("补充信息已失效，请重新发起需求。"); return; }
+    const submission = {};
+    selection.current = submission;
+    setSelecting(true);
     const value = answer.trim();
     setMessages(m => [...m, { id: uid(), role: "user", text: value }]);
-    await run({ request_id: uid(), kind: "typed", text: value, hint_id: null,
-      action_id: null, clarification_id: clar!.id });
+    try {
+      await run({ request_id: uid(), kind: "typed", text: value, hint_id: null,
+        action_id: null, clarification_id: clar!.id });
+    } finally {
+      if (selection.current === submission) {
+        selection.current = null;
+        setSelecting(false);
+      }
+    }
   }
   async function choose(c: Clarification["candidates"][number]) {
     if (busy || pending || selection.current) return;
