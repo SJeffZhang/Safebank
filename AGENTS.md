@@ -1037,6 +1037,8 @@
 
 | 2026-11-01 | Codex（最终组件集成） | 完整W3b真实PG88绿；百分比最终c4b217经B精确复审APPROVE（原45/作者177/额外10绿），原符号/Unicode空格及近零反向红已闭合，只在同向后走既有容差，不动金额/来源/权限。root集成仅import冲突保留UTC/datetime及unicodedata，交叉专项64及Unicode39绿，ruff586文件过。日期5bb独审508纯/11独立绿；各原REQUEST_CHANGES保留，汇总与29矩阵归档，最终40位全CI待。 |
 
+| 2026-11-01 | Codex（完整CI旧断言纠正） | b913932全CI的unit4748/1164条件skip、FE/BFF/build、引导/GW17/客户锁63/状态252/共享79通过，Agent PG停于旧SSE.type=TypeError断言（1失败/41通过），不称完整PASSED。改为公共AgentError/code/无内部细节，仍强检服务端exc_info真实TypeError，完整Agent PG42过。新head将从头全CI；旧bank_p1_test已无损改名prd01(OID73326)，最初OID字符串/整数校验误报导致unit阶段主动中止，已核保留且无数据重建/丢失，不计产品红。 |
+
 ## 5. 下一步待办（按顺序）
 
 ### 11-01 正式PRD复验后的开发修复
