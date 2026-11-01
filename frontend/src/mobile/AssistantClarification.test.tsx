@@ -138,3 +138,15 @@ it.each(["network", "expired"])("does not continue or execute after a G19 %s fai
   expect(actions).toHaveLength(1); expect(messages).toHaveLength(1);
   expect(props.onPropose).not.toHaveBeenCalled(); expect(props.openApproval).not.toHaveBeenCalled();
 });
+it("does not register an action utterance after the choosing Assistant has unmounted", async () => {
+  let complete!: (value: Response) => void;
+  actionReply = () => new Promise(resolve => { complete = resolve; });
+  const { user, unmount } = await begin();
+  await user.click(screen.getByRole("button", { name: "稳盈短债" }));
+  await waitFor(() => expect(typeof complete).toBe("function"));
+  unmount();
+  await act(async () => complete(json({ action_id: "act_selected", normalized_fields: [{ field: "product_id", entity_id: "prd_sbond" }], expires_at_wall: "2099-01-01T00:00:00Z" })));
+  expect(messages).toHaveLength(1);
+  expect(actions).toHaveLength(1);
+  expect(props.onPropose).not.toHaveBeenCalled();
+});

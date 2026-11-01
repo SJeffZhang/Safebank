@@ -95,7 +95,7 @@ export function Assistant(
           if (id) setPending(id);
         })
         .catch(() => { if (live) setError("历史会话暂不可用，新的原话仍需安全登记。"); });
-    return () => { live = false; controller.current?.abort(); };
+    return () => { live = false; selection.current = null; controller.current?.abort(); };
   }, [p.sid]);
   function handle(event: StreamEvent, requestedMonths?: string[] | null) {
     const data = event.data;

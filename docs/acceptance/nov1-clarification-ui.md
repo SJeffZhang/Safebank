@@ -46,3 +46,7 @@ All commands were run locally in the assigned independent worktree without a bro
 - `git diff --check`: exit 0.
 
 No API/model/DB/Docker/browser/demo-generation operations were performed. Repository-wide Python/PG, independent review, exact-head full CI, and live case 38 / 14 acceptance remain root-owned gates. The original saved formal results are unchanged. Generic FORM_REQUIRED emission and raw-name/error presentation outside these two units remain separate root-coordinated work.
+
+## Unit 3a — unmounted candidate submission safety stop
+
+Added a deferred-G19 test that unmounts Assistant before the response arrives. RED on Unit 2 HEAD: **1 failed / 9 passed**, because the old component emitted a second, action-kind message to G3 after unmount. Cleanup now invalidates the pending choice marker before aborting any stream, so the delayed response cannot enter G3. GREEN: **10/10 clarification tests passed**; TypeScript and diff-check exit 0. Logs: `/private/tmp/sbg-nov1-repairs/unmount-{red,green}.log`. This test proves no stale G3 attempt occurs; it does not rely on backend ownership rejection. No full-suite repeat was run for this isolated safety stop.
