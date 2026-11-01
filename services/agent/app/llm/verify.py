@@ -238,6 +238,130 @@ def _yuan_str_to_cents(raw: str) -> int | None:
         return None
 
 
+def _replan_receipt(state: AgentState) -> str:
+    """Bind suggested amounts to this decision's original transfer steps.
+
+    Hint labels and unrelated read amounts are never financial evidence for a
+    maximum. This is display-only: selecting a hint and authorizing a new plan
+    remain gateway operations.
+    """
+    from pydantic import ValidationError
+    from safebank_contracts.plan import PlanDraft
+
+    from services.agent.app.gateway.wire import GatewayDecision
+    from services.agent.app.llm.respond import _replan_user_items
+
+    raw = state.get("decision")
+    if not isinstance(raw, dict):
+        if not hasattr(raw, "model_dump"):
+            return respond_template("REPLAN_USER")
+        raw = raw.model_dump(mode="json")
+    lines = [respond_template("REPLAN_USER")]
+    # Reuse only deterministic finding labels; discard every unbound hint label.
+    lines.extend("- " + item for item in _replan_user_items({"findings": raw.get("findings", [])}))
+    base = "\n".join(lines)
+    try:
+        decision = GatewayDecision.model_validate(raw)
+        plan = PlanDraft.model_validate(state.get("plan_draft"))
+    except (ValidationError, TypeError):
+        return base
+    if (
+        decision.plan_id != state.get("plan_id")
+        or plan.session_id != state.get("session_id")
+        or any(f.effect == "DENY" for f in decision.findings)
+    ):
+        return base
+
+    shrinkable = {
+        "INSUFFICIENT_FUNDS",
+        "CARD_SINGLE_LIMIT",
+        "CARD_DAILY_LIMIT",
+        "SCHEDULED_SHORTFALL",
+        "HOLDING_INSUFFICIENT",
+        "MIN_PURCHASE_NOT_MET",
+    }
+    replans = [finding for finding in decision.findings if finding.effect == "REPLAN"]
+    if not replans or any(
+        finding.resolver != "user" or finding.code not in shrinkable for finding in replans
+    ):
+        return base
+
+    payees: dict[str, set[str]] = {}
+    for read in state.get("reads") or ():
+        if _obj_attr(read, "tool") != "list_payees":
+            continue
+        data = _obj_attr(read, "data")
+        items = (data.get("items") if isinstance(data, dict) else _obj_attr(data, "items")) or ()
+        if not isinstance(items, (list, tuple)):
+            continue
+        for item in items:
+            payee_id, fingerprint = _obj_attr(item, "id"), _obj_attr(item, "target_fingerprint")
+            if isinstance(payee_id, str) and isinstance(fingerprint, str):
+                payees.setdefault(payee_id, set()).add(fingerprint)
+
+    original = []
+    for index, step in enumerate(plan.steps):
+        if step.tool != "transfer":
+            continue
+        args = step.args
+        if args.to_account_id:
+            target, kind = "int:" + args.to_account_id, "TRANSFER_SELF"
+        elif isinstance(args.payee_id, str) and len(payees.get(args.payee_id, ())) == 1:
+            target, kind = next(iter(payees[args.payee_id])), "TRANSFER_EXTERNAL"
+        else:
+            return base
+        original.append((index, kind, args.from_account_id, target, args.amount_cents))
+    if not original:
+        return base
+    seen = set()
+    for hint in decision.replan_hints:
+        scope = hint.scope
+        if (
+            set(scope.action_kinds) != {item[1] for item in original}
+            or scope.period is not None
+            or scope.channel is not None
+            or len(scope.transfers) != len(original)
+        ):
+            continue
+        if scope.fields:
+            own_targets = {item[3][4:] for item in original if item[1] == "TRANSFER_SELF"}
+            if (
+                set(scope.fields) != {"to_account_id"}
+                or len(own_targets) != 1
+                or not isinstance(scope.fields["to_account_id"], str)
+                or scope.fields["to_account_id"] not in own_targets
+            ):
+                continue
+        remaining = list(original)
+        changes = []
+        for transfer in scope.transfers:
+            matches = [
+                item
+                for item in remaining
+                if item[3] == transfer.target_fingerprint
+                and scope.from_account_id in (None, item[2])
+                and transfer.from_account_id in (None, item[2])
+                and 0 < transfer.amount_cents <= item[4]
+            ]
+            if len(matches) != 1:
+                break
+            item = matches[0]
+            remaining.remove(item)
+            if transfer.amount_cents < item[4]:
+                changes.append((item[0], transfer.amount_cents))
+        else:
+            if not remaining and changes:
+                for index, amount in changes:
+                    if (index, amount) in seen:
+                        continue
+                    seen.add((index, amount))
+                    lines.append(
+                        f"- 原计划第{index + 1}步转账建议最多{amount // 100}.{amount % 100:02d}元，"
+                        "调整金额后仍需您重新确认，本次未执行。"
+                    )
+    return "\n".join(lines)
+
+
 # ── Fact set builder ────────────────────────────────────────────────────────
 
 
@@ -558,6 +682,9 @@ class OutputVerifier:
             return mask_long_numbers(respond_template("UNKNOWN"))
         if status == "FAILED":
             return mask_long_numbers(executed_failed_fallback())
+
+        if _obj_attr(state.get("decision"), "decision") == "REPLAN":
+            return mask_long_numbers(_replan_receipt(state))
 
         draft: str = state.get("reply_draft") or ""
         if not draft:
