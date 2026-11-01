@@ -1890,3 +1890,5 @@ G9在原审批hash内展示当日限额占用前后值、取消的预计每月�
 ### 11-01 正式查询与取消解析修订
 
 正式只读的定时/AA/流水/商户/双月/异常/卡余限/订阅年费/扣费/风险/产品/持仓问句明确NO_WRITE，不生成空FORM_REQUIRED；完整分句匹配，不将未知写后缀吞为查询。近名只提供当前已登记候选，不自动当精确授权。取消定时以当前客户自有源账户及实际payee_id对应姓名/别名解析，多条仍选择确切instruction_id；对方展示“他行收款人”或自由文本不证明取消目标。G21可返回固定prompt_template_id risk_assessment_form、register_payee_form、transfer_consultation用于安全页面引导，scope仍为空，不能直接设风险、登记或转账。G19/G3父链/单次使用/epoch/OTP契约保持。
+
+理解输出的span严格使用原文0起始[start,end)，不允许[0,0]占位；既有一次结构修复只反馈固定Schema字段与约束，不带原输入或异常正文。SSE公共错误使用MODEL_OUTPUT_INVALID、AGENT_REQUEST_FAILED；provider 402/403/429保留PROVIDER_LIMIT_REACHED及status_code并立即停止，不增加请求或换模型。页面只获固定说明，服务端保留诊断；回复错误不证明L3未执行，应先查询实际业务状态。

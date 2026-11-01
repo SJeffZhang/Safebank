@@ -18,6 +18,8 @@ _SYSTEM = (
     "你是银行助手，只把用户请求解析为结构化理解，不执行、不授权任何操作。"
     "intents 是意图列表；slots 是槽位数组（intent_index/name/value/span）；"
     "needs_write 表示该请求是否需要写操作。不要在这里估算或决定金额。"
+    "span使用原文从0开始的字符区间[start,end)，必须满足0<=start<end；"
+    "不要用[0,0]占位，不需要或无法定位的槽位应省略。"
     "明确的聚餐AA收款指令需要创建create_split_request，needs_write=true；"
     "仅询问每人多少钱、计算分摊或查看已有AA进度是只读，不能因此创建收款请求。"
 )
@@ -49,6 +51,41 @@ class _SelectionWriteMismatch(LlmToolError):
 
 class _AAWriteMismatch(LlmToolError):
     """An explicit scoped AA command was incorrectly classified as read-only."""
+
+
+def _structure_retry_note(exc: Exception) -> str:
+    # Error locations may contain arbitrary extra-key names. Only emit fields
+    # from our schema, never exception text, input values or validator context.
+    locations = []
+    if isinstance(exc, ValidationError):
+        fields = {
+            "intents",
+            "needs_write",
+            "unclear",
+            "slots",
+            "intent_index",
+            "name",
+            "value",
+            "span",
+        }
+        for error in exc.errors(include_input=False, include_url=False)[:5]:
+            path = [
+                str(part)
+                for part in error["loc"]
+                if (type(part) is int and 0 <= part < 1000)
+                or (isinstance(part, str) and part in fields)
+            ]
+            # Slot's after-validator checks its span rather than the text value.
+            if len(path) == 2 and path[0] == "slots" and error["type"] == "value_error":
+                path.append("span")
+            if path:
+                locations.append(".".join(path))
+    details = "；".join(locations) or "report_understanding结构"
+    return (
+        f"上次输出未通过结构校验：{details}。请按Schema重新生成；"
+        "span是原文0起始字符区间[start,end)，0<=start<end，不得用[0,0]占位；"
+        "无法定位或不必要的槽位请省略，不得编造原文或改写用户意图。"
+    )
 
 
 def _scoped_aa_collection(state: AgentState) -> bool:
@@ -100,7 +137,7 @@ class UnderstandAdapter:
                     if isinstance(exc, _AAWriteMismatch)
                     else _SELECTION_RETRY_NOTE
                     if isinstance(exc, _SelectionWriteMismatch)
-                    else f"上次输出未通过校验（{type(exc).__name__}），请重新生成合法结构。"
+                    else _structure_retry_note(exc)
                 )
         raise AssertionError("unreachable")
 
