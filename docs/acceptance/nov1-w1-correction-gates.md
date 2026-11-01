@@ -38,3 +38,9 @@ No real PostgreSQL, provider, API, Docker, browser, model, deployment or demonst
 ## Independent review correction
 
 B found the new PG-only zero-job assertion referenced nonexistent `execution_jobs.sid`. An isolated column-access repro raises `AttributeError: sid`; this was a new test expression defect, not a production parser finding. It now filters `execution_jobs.plan_id` through the current session's `plans.id` subquery, retaining both zero-plan and zero-job assertions. The corrected SQL expression compiles, the affected test module collects (74), and all W1 pure tests remain green. Real PG remains unrun by this agent; root must execute it. No production file changed in this follow-up.
+
+## Root actual-PG authentication fixture correction
+
+Root's full W1 actual PostgreSQL run reported **2038 passed / 1 failed** (`/private/tmp/sbg-nov1-w1-final-pg.log`). The sole failure was this new test's manually constructed F caller without `jti`/credentials: the real loader correctly returned UNAUTHENTICATED before the test expected INTENT_UNCLEAR. Both preceding old-root and new-unselected-root `cannot_load` checks had passed; the later G19→G3 assertions had not yet executed because of this mismatch.
+
+This test-only follow-up replaces that manual caller with `caller_for(parent, public)`, obtained by verifying the actual G3-returned assistant token, and explicitly checks A kind, nonempty `jti`, assistant scope and inclusion of the exact parent ID before asserting loader INTENT_UNCLEAR/409. The source is authenticated but still incomplete. No loader/parser/production code changes; the prior cannot-load checks and every subsequent G19→G3, amount, fingerprint and zero-plan/job assertion remain. W1 pure verification/collection is repeated locally with PG disabled. Root must rerun the new single PG test, then the full W1 gate; no new actual-PG pass is claimed here.

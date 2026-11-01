@@ -198,13 +198,17 @@ def test_r7_prefix_correction_cannot_load_until_explicit_g19_g3_selection(gatewa
             assert {item["entity_id"] for item in current["candidates"]} == {"pye_ww", "pye_wu"}
             await cannot_load(db, sid, old, public)
             await cannot_load(db, sid, parent, public)
+            parent_caller = caller_for(parent, public)
+            assert parent_caller.kind is ServiceKind.A and parent_caller.jti
+            assert "assistant" in parent_caller.scopes
+            assert parent["utterance"]["id"] in parent_caller.utts
             async with db.connect() as conn:
                 with pytest.raises(GatewayError) as exc:
                     await load_for_plan(
                         conn,
                         sid,
                         [parent["utterance"]["id"]],
-                        Caller(kind=ServiceKind.F, customer_id="cus_zs"),
+                        parent_caller,
                     )
                 assert exc.value.code == Code.INTENT_UNCLEAR and exc.value.status == 409
                 assert (
