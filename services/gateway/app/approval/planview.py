@@ -21,8 +21,10 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from safebank_bankcore.ids import canonical, derive
+from safebank_contracts import risk_questionnaire
 from safebank_contracts.enums import Risk
 from safebank_contracts.state import BankState
+from safebank_contracts.tools import Assessment
 
 from ..policy.registry import policy
 from ..schemas.enums import PlanStatus
@@ -101,6 +103,38 @@ def _transfer_fields(ctx: EvalContext, state: BankState | None, args: dict[str, 
             key="target_account", label="本人账户", value=f"本行 尾号{_last4(account.account_no)}"
         )
     return [target_field, account_field]
+
+
+def _assessment_fields(ctx: EvalContext, args: dict[str, Any]) -> list[PlanViewField]:
+    if ctx.origin != "app_form":
+        raise ValueError("risk assessment requires app_form")
+    assessment = Assessment.model_validate(args)
+    questions = risk_questionnaire.QUESTIONNAIRE.get(assessment.questionnaire_id)
+    answers = {answer.question_id: answer.option_id for answer in assessment.answers}
+    if questions is None or len(questions) != 6 or set(answers) != set(questions):
+        raise ValueError("assessment requires complete authoritative questionnaire metadata")
+    fields = [
+        PlanViewField(key="questionnaire_id", label="问卷版本", value=assessment.questionnaire_id)
+    ]
+    # The versioned contract supplies both order and text. Never display caller
+    # labels or bare IDs; these fields already participate in the semantic hash.
+    for question_id, question in questions.items():
+        options = {option.id: option for option in question.options}
+        selected = options.get(answers[question_id])
+        if (
+            question.id != question_id
+            or not isinstance(question.prompt, str)
+            or not question.prompt.strip()
+            or len(options) != len(question.options)
+            or selected is None
+            or not isinstance(selected.label, str)
+            or not selected.label.strip()
+        ):
+            raise ValueError("assessment requires authoritative question and answer text")
+        fields.append(
+            PlanViewField(key=f"answer:{question_id}", label=question.prompt, value=selected.label)
+        )
+    return fields
 
 
 def _fields_for(ctx: EvalContext, state: BankState | None, step: ResolvedStep):
@@ -219,10 +253,7 @@ def _fields_for(ctx: EvalContext, state: BankState | None, step: ResolvedStep):
         )
         fields.append(PlanViewField(key="merchant", label="商户", value=subscription.merchant_name))
     elif tool == "submit_risk_assessment":
-        # BankState carries no authoritative questionnaire metadata, so this
-        # tool cannot safely build an approval panel; fail closed (PRD §9.5
-        # "不能仅显示裸 ID"; authoritative questionnaire display is deferred).
-        raise ValueError("submit_risk_assessment panel requires questionnaire metadata")
+        fields.extend(_assessment_fields(ctx, args))
     elif tool in _FUND_TOOLS:
         product_id = args["product_id"]
         if state is None:

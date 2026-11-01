@@ -340,17 +340,83 @@ def test_cancel_subscription_shows_merchant_and_missing_fails_closed():
         _view([missing])
 
 
-def test_submit_risk_assessment_fails_closed():
+def _assessment_ctx(*, questionnaire_id="rq_v1", answers=None):
+    if answers is None:
+        answers = [{"question_id": f"q{n:02}", "option_id": "a"} for n in range(1, 7)]
     step = ResolvedStep(
         "s1",
         "submit_risk_assessment",
-        {"questionnaire_id": "rq_v1", "answers": []},
+        {"questionnaire_id": questionnaire_id, "answers": answers},
         "ASSESSMENT_SUBMIT",
         "YELLOW",
         False,
     )
+    ctx = make_ctx((step,))
+    ctx.origin = "app_form"
+    return ctx
+
+
+def test_assessment_panel_shows_version_full_questions_and_selected_answers():
+    from safebank_contracts.risk_questionnaire import QUESTIONNAIRE
+
+    view, view_hash = build_view(_assessment_ctx())
+    assert _field(view, "s1", "questionnaire_id").value == "rq_v1"
+    assert len(view.steps[0].fields) == 7
+    for question in QUESTIONNAIRE["rq_v1"].values():
+        answer = _field(view, "s1", f"answer:{question.id}")
+        assert answer.label == question.prompt
+        assert answer.value == question.options[0].label
+    assert view.risk is Risk.YELLOW and view.risk_ack_required
+    assert not view.otp_required
+    assert content_hash(view) == view_hash
+
+
+def test_assessment_hash_binds_selected_answer_and_authoritative_question_text(monkeypatch):
+    from safebank_contracts import risk_questionnaire as rq
+
+    base = build_view(_assessment_ctx())[1]
+    answers = [{"question_id": f"q{n:02}", "option_id": "a"} for n in range(1, 7)]
+    answers[0]["option_id"] = "b"
+    assert build_view(_assessment_ctx(answers=answers))[1] != base
+    questions = dict(rq.QUESTIONNAIRE["rq_v1"])
+    q = questions["q01"]
+    questions["q01"] = rq.RqQuestion(q.id, q.prompt + "（修订）", q.options)
+    monkeypatch.setattr(rq, "QUESTIONNAIRE", {"rq_v1": questions})
+    prompt_hash = build_view(_assessment_ctx())[1]
+    assert prompt_hash != base
+    q = questions["q02"]
+    options = (rq.RqOption("a", "修订后的所选答案", 1), *q.options[1:])
+    questions["q02"] = rq.RqQuestion(q.id, q.prompt, options)
+    changed, changed_hash = build_view(_assessment_ctx())
+    assert _field(changed, "s1", "answer:q02").value == "修订后的所选答案"
+    assert changed_hash != prompt_hash
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["unknown_version", "missing", "duplicate", "unknown_question", "option", "agent", "metadata"],
+)
+def test_assessment_panel_rejects_invalid_or_missing_authority(mutation, monkeypatch):
+    from safebank_contracts import risk_questionnaire as rq
+
+    ctx = _assessment_ctx()
+    args = ctx.steps[0].args
+    if mutation == "unknown_version":
+        args["questionnaire_id"] = "rq_unknown"
+    elif mutation == "missing":
+        args["answers"].pop()
+    elif mutation == "duplicate":
+        args["answers"][1] = args["answers"][0]
+    elif mutation == "unknown_question":
+        args["answers"][0]["question_id"] = "q99"
+    elif mutation == "option":
+        args["answers"][0]["option_id"] = "evil"
+    elif mutation == "agent":
+        ctx.origin = "agent"
+    else:
+        monkeypatch.setattr(rq, "QUESTIONNAIRE", {})
     with pytest.raises(ValueError):
-        _view([step])
+        build_view(ctx)
 
 
 def test_redeem_units_rendered_as_plain_decimal_string():
