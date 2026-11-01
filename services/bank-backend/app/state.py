@@ -11,6 +11,7 @@ from safebank_bankcore.ledger import account_deltas
 from safebank_bankcore.products import ProductDef, get_product
 from safebank_bankcore.reserve import BUSINESS_TIMEZONE
 from safebank_bankcore.scope import scope_for
+from safebank_bankcore.transaction_facts import is_external_transfer
 from safebank_contracts.obligations import (
     InstructionRun,
     InstructionTarget,
@@ -359,10 +360,11 @@ async def load_bank_state(conn, scope: StateScope, now, *, customer_id: str) -> 
         ).mappings()
     ]
     daily_outflow, rolling_outflow, daily_used = {}, {}, {}
+    transfer_index = {item.id: item for item in transfers}
     for tx in transactions:
         posted = tx.phase in ("POSTED", "POST_PENDING")
         day = tx.occurred_at.astimezone(now.tzinfo).date() == now.date()
-        external = posted and tx.direction == "OUT" and tx.kind in ("P2P_INTERNAL", "P2P_EXTERNAL")
+        external = posted and is_external_transfer(tx, transfer_index, owner_ids)
         if external and now - timedelta(hours=24) <= tx.occurred_at <= now:
             rolling_outflow[tx.customer_id] = (
                 rolling_outflow.get(tx.customer_id, 0) + tx.amount_cents

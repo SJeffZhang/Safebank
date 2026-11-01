@@ -32,6 +32,7 @@ from safebank_contracts.state import BankState
 
 from safebank_bankcore.periods import normalize_period
 from safebank_bankcore.reserve import _business_time
+from safebank_bankcore.transaction_facts import is_external_transfer
 
 # The 8 category buckets defined in PRD §5.2.
 CATEGORIES = ("", "餐饮", "交通", "购物", "娱乐", "生活服务", "数码", "健身", "其他")
@@ -39,9 +40,6 @@ CATEGORIES = ("", "餐饮", "交通", "购物", "娱乐", "生活服务", "数�
 # Transaction kinds that count as consumption.
 _CHARGE_KINDS = frozenset({"MERCHANT_CHARGE", "MANDATE"})
 _CONSUMPTION_KINDS = _CHARGE_KINDS | {"CARD_SPEND"}
-
-# Transaction kinds that count as external transfer out.
-_TRANSFER_OUT_KINDS = frozenset({"P2P_INTERNAL", "P2P_EXTERNAL", "TRANSFER_EXTERNAL"})
 
 
 def spending_summary(
@@ -90,6 +88,7 @@ def spending_summary(
     total_cents = 0
     prev_total_cents = 0
     transfer_out_cents = 0
+    owned_account_ids = {a.id for a in state.accounts.values() if a.customer_id == customer_id}
 
     for tx in state.transactions:
         # Only owned accounts.
@@ -120,7 +119,7 @@ def spending_summary(
             ):
                 cat_amt[cat]["prev"] += tx.amount_cents
                 prev_total_cents += tx.amount_cents
-        elif tx.kind in _TRANSFER_OUT_KINDS and tx.direction == "OUT":
+        elif is_external_transfer(tx, state.transfers, owned_account_ids):
             if _in_month(local_ts):
                 transfer_out_cents += tx.amount_cents
 
