@@ -23,11 +23,8 @@ def test_provider_stop_response_is_not_hidden_by_fallback(status, node):
     else:
         adapter = OutputVerifier(llm)
         state = {
-            "reply_draft": "已转账900.00元。",
-            "execution": {
-                "status": "EXECUTED",
-                "steps": [{"result": {"balance_cents": 80000}}],
-            },
+            "reply_draft": "余额900.00元。",
+            "reads": [{"data": {"balance_cents": 80000}}],
         }
     with pytest.raises(APIStatusError) as error:
         adapter(state, None)

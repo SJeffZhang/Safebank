@@ -3,7 +3,7 @@
 Replaces the old pass-through ``_make_production_respond`` with a state-aware
 adapter that:
 - Returns pre-set ``reply_draft`` for fixed-template paths (DENY, UNKNOWN, …)
-- Calls the LLM for EXECUTED successes, REPLAN_USER hints, and analysis replies
+- Builds deterministic EXECUTED receipts; calls the LLM for analysis replies
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from services.agent.app.graph.state import AgentContext, AgentState
+from services.agent.app.llm.execution_receipts import execution_receipt
 from services.agent.app.llm.fixed_templates import (
     executed_failed_fallback,
     executed_fallback,
@@ -140,18 +141,8 @@ class RespondAdapter:
             return ""
 
     def _respond_executed(self, state: AgentState, execution: object) -> str:
-        """LLM success response: utterance + step summary."""
-        utterance_text = _utterance_text(state)
-        steps_text = _execution_steps_summary(execution)
-
-        user_prompt = _build_executed_user_prompt(state, execution)
-
-        text = self._call_llm(_EXECUTED_SYSTEM, user_prompt)
-        return text or _build_fallback(
-            "EXECUTED",
-            utterance_text=utterance_text,
-            steps=steps_text.split("\n"),
-        )
+        """Use only facts bound to the current committed plan and step."""
+        return mask_long_numbers(execution_receipt(state))
 
     def _respond_executed_failed(self, state: AgentState, execution: object) -> str:
         """LLM failure explanation: which step failed, what to suggest."""
