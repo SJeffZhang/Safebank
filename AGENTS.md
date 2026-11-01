@@ -1023,6 +1023,8 @@
 
 | 2026-11-01 | Codex（年度订阅结构与安全错误） | 25非法span旧纯测6红/1正控及真实Agent PG/SSE两红已闭合；严格span与一次重试保持，固定Schema路径反馈不带任意extra-key/输入/异常正文。相关纯68及PG2绿，402/403/429单次调用立即停止。SSE只返回稳定公共错误且不把执行后回复失败说成未执行；独审/最终CI另核，未请求生产模型。见nov1-understanding-errors.md。 |
 
+| 2026-11-01 | Codex（取消授权归档） | S4/X2持久化grant状态不一致旧12红/1正控→21真实PG绿，COMMITTED取消在同一归档事务REVOKED，覆盖普通/UNKNOWN/orphan、回滚及恢复、错客户/目标/result负控与no_op幂等时间。缺失lazy grant写显式deny-only REVOKED墓碑，不伪造创建授权；已有scope/source/risk保留。S1懒回填和商户拒扣码独立单元继续，独审/完整CI待。见nov1-cancellation-grants.md。 |
+
 ## 5. 下一步待办（按顺序）
 
 ### 演示报告后六场景开发修复（2026-10-31）

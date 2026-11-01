@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from . import tables as t
 from .errors import GatewayError
+from .grant_revocation import revoke_committed_grants
 from .notify import notify
 from .schemas.enums import (
     ApprovalStatus,
@@ -734,6 +735,8 @@ async def archive_execution_terminal(
         result=result.model_dump(mode="json") if result else None,
     )
     await _finish_terminal(conn, plan, terminal)
+    if terminal == ExecutionJobStatus.EXECUTED:
+        await revoke_committed_grants(conn, plan, result)
     await notify(
         conn,
         customer_id=expected.customer_id,
@@ -975,3 +978,5 @@ async def archive_orphan_execution_terminal(
         result=result.model_dump(mode="json") if result else None,
     )
     await _finish_terminal(conn, plan, terminal)
+    if terminal == ExecutionJobStatus.EXECUTED:
+        await revoke_committed_grants(conn, plan, result)
