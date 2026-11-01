@@ -14,6 +14,8 @@ from safebank_contracts.base import Contract
 
 from services.agent.app.graph.state import AgentState
 from services.agent.app.llm._cross_scene_reads import x1_analysis_records
+from services.agent.app.llm._query_reads import query
+from services.agent.app.llm.redact import wrap_untrusted
 
 # ── CardAction / UICard L1-local models ─────────────────────────────────────
 
@@ -34,7 +36,7 @@ _CardType = Literal[
     "NAVIGATE",
 ]
 
-# Untrusted field names — must never appear in card data
+# Fields omitted from generic control data; read cards allow selected display strings.
 _UNTRUSTED_FIELDS: frozenset[str] = frozenset(
     {
         "name",
@@ -134,6 +136,147 @@ def _filter_untrusted(data: dict[str, Any]) -> dict[str, Any]:
         else:
             clean[k] = v
     return clean
+
+
+# Read cards render names as plain text, while prompt records retain their taint.
+_READ_DISPLAY_FIELDS = frozenset(
+    {"name", "merchant_name", "display_name", "counterparty", "target_display"}
+)
+
+
+def _read_card_data(record: object) -> dict[str, Any]:
+    """Copy a read for display; unwrap only exact source-bound marked values."""
+    raw = _attr_or_get(record, "data", {})
+    if hasattr(raw, "model_dump"):
+        raw = raw.model_dump(mode="json")
+    if not isinstance(raw, dict):
+        return {}
+    paths = _attr_or_get(record, "untrusted_paths", ()) or ()
+    source = _attr_or_get(record, "source_ref", "")
+    closing = "</untrusted_data>"
+    opening = wrap_untrusted("", source).removesuffix(closing)
+
+    def project(value: Any, pointer: str) -> Any:
+        if isinstance(value, dict):
+            result = {}
+            for key, item in value.items():
+                if key in _UNTRUSTED_FIELDS and key not in _READ_DISPLAY_FIELDS:
+                    continue
+                if key in _READ_DISPLAY_FIELDS and item is not None and not isinstance(item, str):
+                    continue
+                token = key.replace("~", "~0").replace("/", "~1")
+                result[key] = project(item, pointer + "/" + token)
+            return result
+        if isinstance(value, list):
+            return [project(item, pointer + "/" + str(index)) for index, item in enumerate(value)]
+        if (
+            isinstance(value, str)
+            and pointer in paths
+            and value.startswith(opening)
+            and value.endswith(closing)
+        ):
+            return value[len(opening) : -len(closing)]
+        return value
+
+    return project(raw, "")
+
+
+def _card_reads(state: AgentState) -> list[object]:
+    """Hide lookup pages only after the precise requested result is complete."""
+    reads = list(state.get("reads") or [])
+    selected = query(state)
+    if selected is None:
+        return reads
+    kind, values = selected
+    if kind == "compare":
+        catalogs = [r for r in reads if _attr_or_get(r, "tool") == "list_products"]
+        comparisons = [r for r in reads if _attr_or_get(r, "tool") == "compare_products"]
+        if not catalogs or not comparisons or _read_card_data(catalogs[-1]).get("next_cursor"):
+            return reads
+        compared = comparisons[-1]
+        rows = [item for r in catalogs for item in _read_card_data(r).get("items", [])]
+        ids = [{item.get("id") for item in rows if item.get("name") == name} for name in values]
+        if any(len(matches) != 1 or None in matches for matches in ids):
+            return reads
+        expected = set.union(*ids)
+        result = _read_card_data(compared)
+        args = _attr_or_get(compared, "args", {})
+        items = result.get("items", [])
+        if (
+            len(expected) != 2
+            or set(args.get("product_ids", [])) != expected
+            or len(items) != 2
+            or {item.get("id") for item in items} != expected
+            or result.get("next_cursor")
+        ):
+            return reads
+        return [
+            r
+            for r in reads
+            if _attr_or_get(r, "tool") != "list_products"
+            and (_attr_or_get(r, "tool") != "compare_products" or r is compared)
+        ]
+    if kind != "merchant":
+        return reads
+    transactions = [r for r in reads if _attr_or_get(r, "tool") == "get_transactions"]
+    scans = [r for r in transactions if not _attr_or_get(r, "args", {}).get("merchant_id")]
+    if not scans or _read_card_data(scans[-1]).get("next_cursor"):
+        return reads
+    ids = {
+        item.get("merchant_id")
+        for r in scans
+        for item in _read_card_data(r).get("items", [])
+        if (item.get("merchant_name") or item.get("counterparty")) == values[0]
+    }
+    if len(ids) != 1 or None in ids:
+        return reads
+
+    def window(record: object) -> dict:
+        return {
+            key: value
+            for key, value in _attr_or_get(record, "args", {}).items()
+            if key not in {"cursor", "merchant_id"}
+        }
+
+    scope = window(scans[0])
+    if any(window(r) != scope for r in scans):
+        return reads
+    results = [
+        r
+        for r in transactions
+        if _attr_or_get(r, "args", {}).get("merchant_id") in ids and window(r) == scope
+    ]
+    if (
+        not results
+        or _read_card_data(results[-1]).get("next_cursor")
+        or any(
+            _read_card_data(r).get("totals_scope") != "filtered_all"
+            or type(_read_card_data(r).get("expense_cents")) is not int
+            for r in results
+        )
+    ):
+        return reads
+    return [r for r in reads if _attr_or_get(r, "tool") != "get_transactions" or r in results]
+
+
+def _product_names(reads: list[object]) -> dict[str, tuple[str, str]]:
+    """Join a name only when successful product reads agree on its actual ID."""
+    names: dict[str, list[tuple[str, str]]] = {}
+    for read in reads:
+        tool = _attr_or_get(read, "tool")
+        if tool not in {"list_products", "get_product", "compare_products"}:
+            continue
+        data = _read_card_data(read)
+        items = [data] if tool == "get_product" else data.get("items", [])
+        for item in items:
+            id_, name = item.get("id"), item.get("name")
+            if isinstance(id_, str) and isinstance(name, str) and name:
+                names.setdefault(id_, []).append((name, _attr_or_get(read, "source_ref", "")))
+    return {
+        id_: candidates[-1]
+        for id_, candidates in names.items()
+        if len({name for name, _source in candidates}) == 1
+    }
 
 
 # ── Card generators (one per card type) ─────────────────────────────────────
@@ -258,15 +401,21 @@ def _card_clarification(state: AgentState, cards: list[UICard]) -> None:
 
 def _cards_from_reads(state: AgentState, cards: list[UICard]) -> None:
     """Generate ACCOUNT/CARD/SUBSCRIPTIONS/etc. cards from reads data."""
-    reads = state.get("reads") or []
+    reads = _card_reads(state)
+    names = _product_names(list(state.get("reads") or []))
     for r in reads:
         tool = _attr_or_get(r, "tool", "") or ""
         card_type = _READ_TOOL_CARD_TYPE.get(tool)
         if card_type is None:
             continue
         source_ref = _attr_or_get(r, "source_ref", "")
-        data = _attr_or_get(r, "data", None)
-        safe = _safe_data(data) if data is not None else {}
+        safe = _read_card_data(r)
+        if tool == "get_holdings":
+            for key in ("holdings", "orders"):
+                for item in safe.get(key, []):
+                    matched = names.get(item.get("product_id"))
+                    if matched is not None:
+                        item["product_name"], item["product_name_source_ref"] = matched
         if not safe:
             continue
         cards.append(

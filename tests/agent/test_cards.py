@@ -222,8 +222,8 @@ class TestGenerateCards:
         # ALLOW + needs_write=True → no read cards (write flow, not analysis)
         assert all(c.type != "ACCOUNT" for c in cards)
 
-    def test_name_stripped_from_read_cards(self):
-        """Untrusted name fields must NOT appear in card data."""
+    def test_read_name_is_plain_data_and_never_an_action(self):
+        """Names are display strings; sensitive alias stays out of the card."""
         state = {
             "reads": [
                 ReadRecord(
@@ -247,7 +247,8 @@ class TestGenerateCards:
         assert len(cards) >= 1
         card = cards[0]
         raw = str(card.data)
-        assert "张三" not in raw
+        assert card.data["accounts"][0]["name"] == "张三活期"
+        assert card.actions == ()
         assert "日常" not in raw
 
     def test_card_ids_unique(self):
