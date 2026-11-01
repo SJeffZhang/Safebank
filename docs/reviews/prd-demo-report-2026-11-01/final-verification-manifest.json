@@ -1,0 +1,29 @@
+{
+  "audit_status": "COMPLETED_WITH_OPEN_FAILURES",
+  "generation": "demo_20261101084917_8e1ed563",
+  "source_commit": "aa7e5d26160ef3be1d7b9341a0398b2f0390d0b1",
+  "primary_counts": {
+    "PASS": 19,
+    "PARTIAL": 16,
+    "FAIL": 8
+  },
+  "full_prd_or_freeze_pass": false,
+  "all_report_links_exist": true,
+  "coverage_input_hashes_match": true,
+  "files_sha256": {
+    "REPORT.md": "ba2e9eeed55e24e7c1381ac72b81e5391f74ccd8996c270fc19ab7465ec26c0a",
+    "report.html": "75309925cd2f1a7931aa58f6bd7b45dae06a3e60f10021d4223de93e93317a9f",
+    "primary-43-results.csv": "6c0d1ff29a08d0f16d5847b290e83d8938fb5e0482f2254ed492b9681dca5abb",
+    "primary-43-completion.json": "12a6099105a12a4e1f382ebd71f14d3b4e11bd7ea70630155b86430fa687afe2",
+    "supplement-results.json": "3a2306358ecd23fdf896d7d36d8ccba0183bdfed9a6ee5c385e28589adcaebe0",
+    "requirements-coverage.json": "64963d74944c2d3c34ab0351ae8d40b691e5793c2c9c4b3e4ba1b622f2f20e63",
+    "requirements-gaps-final.md": "5e9180e2789174c02889e55139b3d5615d94a86157aa9f8aebfc3878135ff738",
+    "clock-business-verification.json": "8d783b73b624b8de49c5abab3972421875d109e10092584d6d7d500919267752",
+    "clock-requery-verification.json": "e69762b9f041eac09f0a0661bf220f89e2656f0f804186b9e02a55013b388e78",
+    "aa-payment-verification/receipt.json": "6d4486917ad569eba7862b2671e213497a693bd06d13065f8f309ac9ed65d8c5",
+    "clock-supplement-audit.md": "f2375dd60279fa3c2368eb7b45f0225712bb70f598491f3c4213d3c0e555f8cd",
+    "evidence-review-supplements.md": "38516e4ef207c0221d8f925efb2034e7e93487d2e9564371658f9659408b90fc",
+    "continuation-state.json": "947a437168b42a8d2c5ea5006d325eff2ca7b3903629383ac0af4145d8657229",
+    "evidence-quality-notes.json": "9ee25483b36f2c71ea70eadbf2139ac5586b014e771c3303ea9ad7fcdcce4b13"
+  }
+}
