@@ -10,6 +10,7 @@ from pathlib import Path
 import yaml
 from safebank_bankcore import projected_shortfall
 from safebank_bankcore.reserve import BUSINESS_TIMEZONE
+from safebank_bankcore.subscription_savings import subscription_savings
 from safebank_contracts.codes import Code
 from safebank_contracts.tools import READ_ARGS
 
@@ -379,7 +380,29 @@ class ProvenanceStage(Stage):
                 resolver=Resolver.USER,
             )
             return "unknown"
-        expected = sum(s.amount_cents for s in subscriptions)
+        fees = []
+        for subscription in subscriptions:
+            savings = subscription_savings(state, subscription.instruction_id, ctx.customer_id)
+            if savings is None or savings[0] <= 0:
+                return "unknown"
+            # The reporting helper also normalizes weekly bills. X2 permits
+            # only real monthly fees on the same account, with matching views.
+            mandate = state.obligations.standing_instructions[subscription.instruction_id]
+            billing = state.obligations.billings[mandate.billing_id]
+            if billing.period != "MONTHLY" or (
+                billing.id,
+                billing.account_id,
+                billing.merchant_id,
+                billing.amount_cents,
+            ) != (
+                subscription.billing_id,
+                subscription.account_id,
+                subscription.merchant_id,
+                subscription.amount_cents,
+            ):
+                return "unknown"
+            fees.append(savings[0])
+        expected = sum(fees)
         return "derived" if type(value) is int and value == expected else "unknown"
 
     def _reserve_max_outflow(self, state, account_id):
