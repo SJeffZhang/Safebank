@@ -94,17 +94,19 @@ class PreflightStage(Stage):
         state = await ctx.bank_state()
         steps = ctx.plan_draft.steps
         cumulative = not ctx.profile.startswith("B1")
-        has_transfer = any(s.tool == "transfer" for s in ctx.steps)
+        affects_reserve = any(
+            s.tool in {"transfer", "subscribe_product", "schedule_transfer"} for s in ctx.steps
+        )
 
         self._single_thresholds(ctx)
         sim = self._simulate(state, steps, ctx.customer_id, ctx.plan_id, cumulative)
         if sim.error is not None:
             await self._record_hard(ctx, sim, cumulative)
-            if cumulative and has_transfer:
+            if cumulative and affects_reserve:
                 self._display_reserve(ctx, state)
         else:
             self._record_success(ctx, state, sim)
-            if cumulative and has_transfer:
+            if cumulative and affects_reserve:
                 await self._reserve(ctx, state, sim.state)
         self._irreversible(ctx)
 
@@ -283,7 +285,7 @@ class PreflightStage(Stage):
         report = self._project_optional(ctx, shadow)
         if report is None:
             return None
-        account = report.accounts.get(args["from_account_id"])
+        account = report.accounts.get(args.get("from_account_id", args.get("account_id")))
         if account is None:
             return None
         return account.max_outflow_cents

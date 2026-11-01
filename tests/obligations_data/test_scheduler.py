@@ -230,8 +230,14 @@ class TestRunOnce:
             until = _tomorrow_6am() + timedelta(days=1)
 
             async with admin.begin() as conn:
+                # NOW is exactly the new legitimate 09:00 reminder scan. Keep
+                # this no-due-job fixture before that boundary instead.
+                await conn.execute(
+                    update(m.clock)
+                    .where(m.clock.c.id == 1)
+                    .values(sim_now=NOW - timedelta(minutes=1))
+                )
                 await sched.scan_due(conn, until)
-            # Clock still at NOW (before any job is due).
             result = await sched.run_once()
             assert result is None
 
@@ -442,13 +448,10 @@ class TestClockAdvance:
             job_id = advancer.advance(target, "req-1")
             assert job_id is not None
 
-            # Let the background task finish.
-            await asyncio.sleep(2)
-
-            status = advancer.status(job_id)
+            status = await _wait_advance(advancer, job_id)
             assert status is not None
             assert status["status"] == "DONE"
-            assert status["sim_now"] is not None
+            assert status["sim_now"] == target
             assert status["processed"] >= 1
 
             # Clock must have moved forward.
@@ -523,12 +526,16 @@ class TestClockAdvance:
 
 
 async def _wait_advance(advancer, job):
-    for _ in range(100):
+    # Daily 09:00 scans add real round trips to multi-week advances. Wait for
+    # the observable terminal/retry state, with a bounded deadline, rather
+    # than assuming a background transaction finishes within two seconds.
+    deadline = asyncio.get_running_loop().time() + 30
+    while asyncio.get_running_loop().time() < deadline:
         result = advancer.status(job)
         if result["status"] in {"DONE", "FAILED", "RETRYING"}:
             return result
         await asyncio.sleep(0.02)
-    raise AssertionError("advance never reached a bounded outcome")
+    raise AssertionError(f"advance never reached a bounded outcome: {result}")
 
 
 def test_clock_reaches_target_with_no_events(obligations_db):
