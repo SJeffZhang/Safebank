@@ -5,16 +5,17 @@ L3 is the existing snapshot fake; this is not real-bank financial execution.
 """
 
 import asyncio
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import func, select
 
 from services.gateway.app import locks
 from services.gateway.app import tables as t
+from tests.gateway.w3b.db import conftest as g4_fixtures
 from tests.gateway.w3b.db.conftest import (
     AGENT_TOKEN,
     SERVICE_TOKEN,
-    WALL,
     _low_balance_bank_state,
     _seed_full,
     build_app,
@@ -27,7 +28,10 @@ from tests.gateway.w3b.db.test_g4_evaluate import (
 )
 
 
-async def prepared(app_config):
+async def prepared(app_config, monkeypatch):
+    # Real G3 tokens must share the verifier's current wall-clock domain.
+    # Keep signature/exp/nbf verification intact; avoid the older G4-only fixture date.
+    monkeypatch.setattr(g4_fixtures, "WALL", datetime.now(UTC).replace(microsecond=0))
     app = await build_app(app_config, bank_state_fn=_low_balance_bank_state)
     db = _runtime_db(app)
     # ASGITransport does not run lifespan; G3 requires this runtime-owned lock engine.
@@ -54,9 +58,11 @@ async def prepared(app_config):
     return app, db, sid, decision, frontend, body, agent_headers
 
 
-def test_g4_hint_is_readable_adoptable_once_and_evaluation_retry_is_idempotent(app_config):
+def test_g4_hint_is_readable_adoptable_once_and_evaluation_retry_is_idempotent(
+    app_config, monkeypatch
+):
     async def run():
-        app, db, sid, decision, headers, body, agent = await prepared(app_config)
+        app, db, sid, decision, headers, body, agent = await prepared(app_config, monkeypatch)
         try:
             hint = decision["replan_hints"][0]
             replay = await app.client.post("/plans/evaluate", json=body, headers=agent)
@@ -71,7 +77,7 @@ def test_g4_hint_is_readable_adoptable_once_and_evaluation_retry_is_idempotent(a
                     len(stored["view_hash"]) == 64
                     and stored["parent_plan_id"] == decision["plan_id"]
                 )
-                assert stored["expires_at_wall"] > WALL and stored["used_by"] is None
+                assert stored["expires_at_wall"] > g4_fixtures.WALL and stored["used_by"] is None
             request = {"request_id": "req_adopt_hint", "kind": "hint", "hint_id": hint["id"]}
             adopted = await app.client.post(
                 f"/sessions/{sid}/utterances", headers=headers, json=request
@@ -133,9 +139,9 @@ def test_g4_hint_is_readable_adoptable_once_and_evaluation_retry_is_idempotent(a
 
 
 @pytest.mark.parametrize("fault", ["epoch", "root_status", "scope", "parent", "evaluation", "ttl"])
-def test_hint_read_and_adoption_reject_stale_or_tampered_binding(app_config, fault):
+def test_hint_read_and_adoption_reject_stale_or_tampered_binding(app_config, monkeypatch, fault):
     async def run():
-        app, db, sid, decision, headers, _, _ = await prepared(app_config)
+        app, db, sid, decision, headers, _, _ = await prepared(app_config, monkeypatch)
         try:
             hint = decision["replan_hints"][0]
             async with db.begin() as conn:
@@ -175,7 +181,7 @@ def test_hint_read_and_adoption_reject_stale_or_tampered_binding(app_config, fau
                     await conn.execute(
                         t.hints.update()
                         .where(t.hints.c.id == hint["id"])
-                        .values(expires_at_wall=WALL)
+                        .values(expires_at_wall=g4_fixtures.WALL)
                     )
                 before = await conn.scalar(select(func.count()).select_from(t.utterances))
             assert (
@@ -198,9 +204,9 @@ def test_hint_read_and_adoption_reject_stale_or_tampered_binding(app_config, fau
     asyncio.run(run())
 
 
-def test_concurrent_adoption_of_one_published_hint_has_one_winner(app_config):
+def test_concurrent_adoption_of_one_published_hint_has_one_winner(app_config, monkeypatch):
     async def run():
-        app, db, sid, decision, headers, _, _ = await prepared(app_config)
+        app, db, sid, decision, headers, _, _ = await prepared(app_config, monkeypatch)
         try:
             hint = decision["replan_hints"][0]
             replies = await asyncio.gather(
