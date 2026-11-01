@@ -18,7 +18,12 @@ from safebank_contracts.tools import READ_ARGS
 from services.agent.app.gateway.errors import GatewayResponseError
 from services.agent.app.graph.state import AgentContext, AgentState, ReadRecord, UtteranceKind
 from services.agent.app.llm._common import LlmToolError, validation_summary
-from services.agent.app.llm._cross_scene_reads import natural_month_period, x1_month_match
+from services.agent.app.llm._cross_scene_reads import (
+    natural_month_period,
+    suspicious_card_period,
+    x1_month_match,
+    x4_requested,
+)
 from services.agent.app.llm.redact import apply_untrusted_wrapping, strip_wall
 from services.agent.app.llm.schema import read_tools
 
@@ -155,6 +160,25 @@ class GatherAdapter:
         return new
 
     def __call__(self, state: AgentState, context: AgentContext) -> list[ReadRecord]:
+        if self.fetch_business_date and x4_requested(state):
+            # Preserve the G3 suspicious-card predicate interval and all owned
+            # entity reads. This only provides sources; L2 still owns targets.
+            profile = self._execute_supplemental("get_profile", {}, "src_gather_profile")
+            sim_now = profile.data["sim_now"]
+            self.last_business_date = self._format_date_line(sim_now)
+            start, end = suspicious_card_period(sim_now)
+            return [
+                profile,
+                self._execute_supplemental(
+                    "detect_anomalies",
+                    {"from_at": start, "to_at": end, "account_id": None},
+                    "src_gather_anomalies",
+                ),
+                self._execute_supplemental("get_cards", {"account_id": None}, "src_gather_cards"),
+                self._execute_supplemental(
+                    "get_accounts", {"history_days": 0}, "src_gather_accounts"
+                ),
+            ]
         x1_match = x1_month_match(state) if self.fetch_business_date else None
         if self.fetch_business_date and (monthly_report_requested(state) or x1_match):
             # B4 and narrow scoped X1 both need full aggregates and anomalies. These reads

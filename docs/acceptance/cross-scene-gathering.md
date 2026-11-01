@@ -25,3 +25,15 @@ X2已有test_x2_sources/test_idle_subscription_plan/test_subs_bills_prompt、L2 
 按协调者追加授权，plan.py中原“账单分析类问题一律不生成写计划”的笼统提示收窄为单独只读分析；已有SCOPED混合请求保留原授权写步骤并先完成真实分析读取。仅修改提示规格文案，不改planner状态/来源校验/授权或响应值。首轮联合X1、原订阅账单与plan e2e修复回归为1 failed / 41 passed：原测试依赖旧短语“账单分析类问题”。保留该短语并增加“单独的”限定，重新验证结果另记；没有降低既有断言，也没有生产LLM验证。
 
 提示修正后复跑上述3文件：42 passed，ruff通过；首轮失败与修复均保留记录。
+
+## X4：可疑卡冻结 + 储蓄至活期应急互转
+
+早停模型只读取get_cards，understanding使用合法freeze_card/transfer_self意图时，原补读不含get_accounts与detect_anomalies；实际双步骤计划的from_account_id/to_account_id来源不存在，PlanAdapter抛ReferenceError。这是实际读取依赖遗漏，不是授权或L3原子性改变。
+
+修复仅接受单条原始typed、SCOPED、needs_write=true且无实际澄清/echoes_untrusted的完整“可疑交易对应卡冻结，再从本人储蓄转明确金额到活期应急”句式。fresh get_profile后读取detect_anomalies/get_cards/get_accounts；异常区间严格对应G3 suspicious_cards的“上一自然月月初→当前银行业务时间”，不是仅上月，也不是滚动30天。L3 load_bank_state将业务时间归一到Asia/Shanghai，该实现与G3实际predicate_values代码运行输出已用内存快照对比。所有实际Envelope来源/版本/时刻/污点继续保留；查询不过滤或自行选择卡、账户，不改用户金额和L2 targets，不返回写执行结果。
+
+红测：X4最初3项全部失败（两个时间窗/来源缺失，以及合法双步骤计划ReferenceError）。修复后3项通过，补充原话kind、引号、额外外部转账后缀、scope/实际澄清、四个依赖错误及不自动选择多卡负控。G3 oracle首轮夹具缺少predicate_values最后用于版本复查的snapshot，1 failed / 139 passed；补全纯内存snapshot后联合以下6文件140 passed：
+
+`.venv/bin/pytest -q tests/agent/test_cross_scene_x4_gather.py tests/agent/test_cross_scene_gather.py tests/agent/test_llm_adapters.py tests/agent/test_lost_card_sources.py tests/gateway/w1/test_predicates.py tests/gateway/w1/test_parser_coverage_c.py`
+
+相关ruff与diff检查通过。只证明只读前提与本地来源校验；完整X4实际审批、转账、卡状态及回滚仍未由本任务运行。

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from services.agent.app.graph.state import AgentState, ReadRecord, UtteranceKind
@@ -18,6 +18,11 @@ _X1 = re.compile(
     r"(?:找出|查找|找)异常(?:交易)?[,，、;；]?"
     r"(?:并|再|然后)(?:把|将)?(?:我的)?(?:银行卡|卡)(?:的)?单笔限额"
     r"(?:设成|设为|设置为|降低到|调低到|降到)\d+(?:\.\d{1,2})?(?:元)?"
+)
+
+_X4 = re.compile(
+    r"(?:把(?:这笔|那笔)可疑交易对应的卡冻结|冻结可疑卡)[,，、;；]?"
+    r"再从(?:我的)?储蓄(?:账户)?转\d+(?:\.\d{1,2})?(?:元)?到(?:我的)?活期(?:账户)?应急"
 )
 
 
@@ -43,6 +48,22 @@ def scoped_typed_text(state: AgentState) -> str | None:
 def x1_month_match(state: AgentState) -> re.Match | None:
     text = scoped_typed_text(state)
     return _X1.fullmatch(text) if text is not None else None
+
+
+def x4_requested(state: AgentState) -> bool:
+    text = scoped_typed_text(state)
+    return text is not None and _X4.fullmatch(text) is not None
+
+
+def suspicious_card_period(sim_now: str) -> tuple[str, str]:
+    """Match G3 predicate_values: previous natural month start through bank now."""
+    now = datetime.fromisoformat(sim_now)
+    if now.tzinfo is None:
+        raise ValueError("business time must include timezone")
+    now = now.astimezone(ZoneInfo("Asia/Shanghai"))
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    previous_start = (month_start - timedelta(days=1)).replace(day=1)
+    return previous_start.isoformat(), now.isoformat()
 
 
 def natural_month_period(match: re.Match, sim_now: str) -> tuple[str, str, str]:
