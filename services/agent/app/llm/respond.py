@@ -858,11 +858,10 @@ def _read_names(reads: list, tool: str) -> dict[str, str]:
     }
 
 
-def _summarise_holdings(data: dict, names: dict[str, str]) -> str:
-    lines = ["当前持仓："]
+def _holding_sections(data: dict, names: dict[str, str]) -> list[tuple[str, list[str], str]]:
+    holding_lines: list[str] = []
+    lines = holding_lines
     holdings = data.get("holdings") or []
-    if not holdings:
-        lines.append("暂无持仓")
     for item in holdings:
         name = names.get(item.get("product_id"), "名称待核对的产品")
         line = (
@@ -872,13 +871,14 @@ def _summarise_holdings(data: dict, names: dict[str, str]) -> str:
         )
         for key, label in (
             ("cost_cents", "成本"),
-            ("market_value_cents", "可用份额估值"),
+            ("market_value_cents", "持仓总估值"),
             ("reserved_receivable_cents", "赎回待到账"),
         ):
             if type(item.get(key)) is int:
                 line += f"；{label}{_cents_yuan(item[key])}"
         lines.append(line)
-    lines.append("在途与近期订单（待结算款不计入可用余额）：")
+    order_lines: list[str] = []
+    lines = order_lines
     orders = data.get("orders") or []
     labels = {
         "PENDING_CONFIRM": "待确认",
@@ -887,8 +887,6 @@ def _summarise_holdings(data: dict, names: dict[str, str]) -> str:
         "FAILED": "失败",
         "EXPIRED": "已过期",
     }
-    if not orders:
-        lines.append("暂无订单")
     for item in orders:
         name = names.get(item.get("product_id"), "名称待核对的产品")
         kind = {"SUB": "申购", "RED": "赎回"}.get(item.get("type"), "业务订单")
@@ -900,7 +898,60 @@ def _summarise_holdings(data: dict, names: dict[str, str]) -> str:
             if item.get(key):
                 line += f"；{label}{_fmt_ts(item[key])}（北京时间）"
         lines.append(line)
-    return "\n".join(lines)
+    return [
+        ("当前持仓", holding_lines, "项"),
+        ("在途与近期订单（待结算款不计入可用余额）", order_lines, "笔"),
+    ]
+
+
+def _summarise_holdings(data: dict, names: dict[str, str]) -> str:
+    return "\n".join(
+        title + "：\n" + ("\n".join(rows) or "暂无记录")
+        for title, rows, _ in _holding_sections(data, names)
+    )
+
+
+def _bounded_query_sections(
+    sections: list[tuple[str, list[str], str]], *, prefix: str = "", guide: str
+) -> str:
+    """Fit complete financial entries, explicitly counting every omitted row.
+
+    Full ReadRecords remain unchanged. Never slice a row or its amount/date to
+    satisfy the display budget; unusually long rows can be omitted as a whole.
+    """
+
+    def heading(title, rows, shown, unit):
+        return (
+            f"{title}：共{len(rows)}{unit}，仅列前{shown}{unit}。"
+            if shown < len(rows)
+            else f"{title}：共{len(rows)}{unit}。"
+        )
+
+    reserve = (
+        len(prefix)
+        + len(guide)
+        + sum(len(heading(title, rows, len(rows) - 1, unit)) + 2 for title, rows, unit in sections)
+        + 4
+    )
+    if reserve > _MAX_RESPONSE_CHARS:
+        return "本次数据超出摘要预算，当前未展示条目。" + guide
+    nonempty = sum(bool(rows) for _, rows, _ in sections) or 1
+    quota = (_MAX_RESPONSE_CHARS - reserve) // nonempty
+    rendered = [prefix] if prefix else []
+    for title, rows, unit in sections:
+        chosen = []
+        used = 0
+        for row in rows:
+            # Names remain plain business text; embedded line breaks must not
+            # turn one financial entry into several independently sliced rows.
+            entry = row.replace("\r", " ").replace("\n", " ")
+            if used + len(entry) + 1 > quota:
+                break
+            chosen.append(entry)
+            used += len(entry) + 1
+        rendered.extend([heading(title, rows, len(chosen), unit), *chosen])
+    rendered.append(guide)
+    return "\n".join(rendered)
 
 
 def _summarise_scheduled(data: dict, names: dict[str, str]) -> str:
@@ -963,13 +1014,24 @@ def _query_reply(state: AgentState) -> str | None:
         holding = next((r for r in reads if r.tool == "get_holdings"), None)
         if holding is None:
             return "尚未完整取得持仓与订单数据，请稍后重新查询。"
-        text = _summarise_holdings(holding.data, _read_names(reads, "list_products"))
+        sections = _holding_sections(holding.data, _read_names(reads, "list_products"))
         accounts = next((r for r in reads if r.tool == "get_accounts"), None)
-        return text + ("\n" + _summarise_accounts(accounts.data)[0] if accounts else "")
+        if accounts:
+            sections.append(("账户资金", _summarise_accounts(accounts.data)[0].splitlines(), "项"))
+        return _bounded_query_sections(sections, guide="请到理财及账户页面查看全部记录。")
     if kind == "scheduled":
         names = _read_names(reads, "list_payees")
-        return "\n".join(
-            _summarise_scheduled(r.data, names) for r in reads if r.tool == "list_scheduled"
+        pages = [r for r in reads if r.tool == "list_scheduled"]
+        rows = [
+            _summarise_scheduled({"items": [item]}, names)
+            for page in pages
+            for item in page.data.get("items", [])
+        ]
+        incomplete = bool(pages and pages[-1].data.get("next_cursor"))
+        return _bounded_query_sections(
+            [("已读取定时转账" if incomplete else "定时转账", rows, "笔")],
+            prefix="列表尚有未读取页，已读取条数不代表全部。" if incomplete else "",
+            guide="请到定时转账页面查看全部记录。",
         )
     if kind == "upcoming":
         profile = next((r for r in reads if r.tool == "get_profile"), None)
@@ -978,15 +1040,44 @@ def _query_reply(state: AgentState) -> str | None:
             return "尚未取得完整扣费范围，请稍后重新查询。"
         start = datetime.fromisoformat(profile.data["sim_now"]).astimezone(_SHANGHAI)
         end = start + timedelta(days=int(values[0]))
-        return (
-            f"扣费范围：（{_fmt_ts(start.isoformat())}，"
-            f"{_fmt_ts(end.isoformat())}]（北京时间）。\n" + _summarise_upcoming(upcoming.data)[0]
+        merchant_rows = [
+            _summarise_subscriptions({"items": [item]})[0]
+            for item in upcoming.data.get("items", [])
+        ]
+        scheduled_rows = [
+            f"{_data_label(item.get('target_display')) or '已登记目标'}；"
+            f"金额{_cents_yuan(item.get('amount_cents'))}；到期{_fmt_ts(item.get('due_at'))}"
+            for item in upcoming.data.get("scheduled_items", [])
+        ]
+        totals = "；".join(
+            label + _cents_yuan(upcoming.data[key])
+            for key, label in (
+                ("charges_total_cents", "商户代扣合计"),
+                ("scheduled_transfers_total_cents", "定时转账合计"),
+                ("reserve_total_cents", "总预留"),
+            )
+            if type(upcoming.data.get(key)) is int
+        )
+        return _bounded_query_sections(
+            [("商户代扣", merchant_rows, "笔"), ("定时转账", scheduled_rows, "笔")],
+            prefix=(
+                f"扣费范围：（{_fmt_ts(start.isoformat())}，"
+                f"{_fmt_ts(end.isoformat())}]（北京时间）。\n{totals}"
+            ),
+            guide="请到订阅及定时转账页面查看全部记录。",
         )
     if kind == "compare":
         compared = next((r for r in reversed(reads) if r.tool == "compare_products"), None)
         if compared is None:
             return "未能唯一对应到两款产品，请核对产品名称后重试。此查询没有购买任何产品。"
-        return "产品比较（历史收益不代表未来表现）：\n" + _summarise_products(compared.data)[0]
+        rows = [
+            _summarise_products({"items": [item]})[0] for item in compared.data.get("items", [])
+        ]
+        return _bounded_query_sections(
+            [("比较产品", rows, "款")],
+            prefix="历史收益不代表未来表现。",
+            guide="请到理财产品页面查看全部比较信息。",
+        )
     transactions = [r for r in reads if r.tool == "get_transactions"]
     if not transactions:
         return "尚未取得交易数据，请明确查询期间后重试。"

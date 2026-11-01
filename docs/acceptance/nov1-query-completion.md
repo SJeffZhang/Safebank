@@ -49,3 +49,15 @@ Pending.
 - Original formal43 results remain19/16/8; no new live or frozen-success claims. Root owns independent review, PG persist/reload, concurrency/consistency and exact-head full CI. Original12 fallback provenance still requires previously saved intermediate evidence; tests prove the new authoritative-source reply passes the unchanged verifier, not which original provider failure occurred.
 
 All assigned implementation units are committed. Shared AGENTS/PRD untouched.
+
+### Independent review corrections (P2 value label and reply budget)
+
+B's exact889488f review found two display defects. New tests first reproduced five REDs: the reserved-unit holding label and unbounded holdings/scheduled/upcoming/long-name comparison collections. The fix labels unchanged market_value_cents as holding total value, then budgets deterministic collection replies to600 characters by complete financial rows/sections. Every section reports its full read count and, when omitted, the exact displayed-prefix count; fixed native-page guidance gives access to all records. Long rows are omitted whole, never string-sliced through names/amounts/dates. Underlying ReadRecords and financial amounts remain unchanged. No authorization/verification/provider retry change.
+
+Verification after correction:
+
+- New regression plus existing query/gather/summaries:30 passed.
+- Original independent probes copied unchanged to a neutral test-only directory:3 passed. An initial invocation from inside B's original archive imported that original archive's production modules and reproduced its expected old2 failures; it was not testing the corrected worktree. The neutral directory avoids that import shadowing and leaves B's original red archive untouched.
+- Pure agent suite:960 passed,39 skipped.
+- Full default pytest:4509 passed,1121 skipped in41.97s; no real PG/provider opt-in.
+- Ruff check and format pass. B will independently recheck the new exact commit; coordinator still owns PG and final integration gates.
