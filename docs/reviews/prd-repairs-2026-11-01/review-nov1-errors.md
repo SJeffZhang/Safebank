@@ -32,3 +32,14 @@ The public messages deliberately do not assert that business execution was zero.
 The existing SSE error event framing and message/type fields remain available; added code/status_code fields are additive. BFF accepts the existing type/message shape, and frontend error handling still consumes message. The stable type value no longer exposes Python exception class names. HTTP authentication handling is unchanged by the diff.
 
 No model, retry or authorization policy was relaxed, no failed span was auto-corrected, and no post-execution error was translated into a claim of bank rollback. Server-side exception logging remains diagnostic; these tests establish the public boundary, not a new logging-retention policy. The unchanged HTTPException/thread-lock paths and actual PG checkpoints remain outside this pure review's runtime coverage. Full integrated-head CI, root PG gates and any future formal case25 live rerun are still required separately.
+
+
+## Final integrated CI follow-up — legacy SSE test contract
+
+**APPROVE** for the single test-only adjustment in exact `2b51bbe92a4b3692e1ab8557e6c2ec587b92ae5f` relative to its parent. Read-only git diff confirms changes are limited to `tests/agent/test_sse_wire.py` and documentation; no Agent production mapping, logging, privacy or authorization code changed.
+
+The old assertion expected public SSE.type=TypeError, which conflicts with the already-reviewed b27 public error contract. The replacement asserts AGENT_REQUEST_FAILED and AgentError, and adds explicit rejection of both internal class name TypeError and the original “string indices” exception message in the complete collected error events. The injected exception remains a real TypeError from the same stream path. Thus this updates the expected public contract and strengthens the privacy negative assertions; it does not accept arbitrary errors to make CI green.
+
+The server-side log assertions remain: exact “run stream failed” record must exist, its exc_info must be present, and the new additional assertion requires exc_info[0] is TypeError. Neither the original exception nor diagnostic logging is replaced with the public AgentError. No assertion was removed that required server exception information; the new check more specifically proves the logged exception identity.
+
+Root reports the preceding b913 full CI stopped at this old test (1 failed /41 passed), then the corrected complete AGENT_DB group yielded42 passed. These are root-owned runtime results, not rerun by this reviewer. **b913 is not CI PASSED**. The final changed head must run the entire CI from the beginning; this test-only review and Agent group result do not substitute for that. Root's preserved old DBprd01 and planned nextprd02 are not altered or independently inspected here. No DB/provider/API/browser/Docker/service execution was performed for this follow-up.

@@ -82,3 +82,11 @@ Files: services/agent/app/llm/understand.py, services/agent/app/main.py及tests�
 - [x] 百分比Unicode符号及近零方向不得借同向容差放过，独审原红/复审通过。
 - [ ] 最终明确40位head全部本机CI及按head合并、恢复main；原测试库先无损改名保留。
 - [ ] 用户另会话原43真实复验（本开发对话不执行、不代改结果）。
+
+## 完整CI追加（发布仍待最终精确head）
+
+- [x] 旧SSE内部type断言与新公共契约同步，服务端真实TypeError堆栈检查增强，完整Agent PG42过。
+- [x] W1/W2旧hint正控改真实publisher绑定源，保留未决任务/旧授权/used_by与未采纳负控；新查询current sid零写+全库ID不变，不清旧UNKNOWN。
+- [x] 数字姓名与中文金额唯一合法切分，歧义不授写；独审188纯/23负控，真实G3/PG旧3红新3绿，候选G19/G3正向1过。
+- [x] canonical真实异常Sep4/full5的精确集合/证据与PRD同步，seed字节/生成器执行AST/阈值不变，正式L3 PG334/W2 328过。
+- [ ] 上述修订的完整40位head全部本机CI；旧2b的剩余诊断不代替完整结果。
