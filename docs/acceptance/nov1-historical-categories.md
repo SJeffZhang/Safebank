@@ -5,3 +5,5 @@
 日期额外验证通过生产persist→真实PostgreSQL timestamptz(UTC)→load_bank_state→get_holdings：上海10/15写入，PG显示UTC10/14 16:00，公开trade_date仍10/15且确认/到账时刻不变。精确修复前6c137db归档跑同一PG测试旧1失败，当前1通过；日志/private/tmp/sbg-nov1-trade-date-pg-{red,green3}.log。新fixture最初导入dynamic effect错误、runtime试图seed只读products被权限正确拒绝，改为FUTURE_EFFECTS和admin仅fixture建档，未放宽产品权限；上述两次不计产品红测。
 
 独审及最终全CI另核。不修改原演示CSV或已存在数据库；读投影修正不等于重跑原场景或改账。
+
+独审e42d2de发现P2：普通刷卡商户虽有权威MCC，但原_load_obligations只加载代扣相关商户，先前纯手工snapshot无法覆盖真实loader缺口。原报告REQUEST_CHANGES与1红/4负控绿保留。root补同症旧1红：仅把当前客户自有账户消费历史引用的merchant IDs传入现有目录查询，禁止加载外人/无关目录；不新增连接、不扩state scope。修复后loader/投影/bankcore相关503通过，日志sbg-nov1-category-loader-{red,green}.log，须再按精确SHA复审。
