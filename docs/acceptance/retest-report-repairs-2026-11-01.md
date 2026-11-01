@@ -33,3 +33,18 @@
 ## 环境与未执行边界
 
 发现另一会话演示结束后留下两个整栈运行，已只停止 `safebank-e2e-1029` 七个容器，全部容器、卷与代际保留；`safebank`保留为唯一完整运行栈。未reset、删库卷、清理worktree/WIP、调用真实DeepSeek、执行浏览器演示/录制/断网彩排或tag。用户在另一对话进行新版本演示；本轮不把自动测试或健康检查当现场24/43项通过。
+
+## 首轮完整CI未通过（保留失败）
+
+完整`1c601881590256af1b8d1251915f9dd52b66375c`从头运行，unit4977/1169条件skip、FE494/BFF16/build及GW17/锁63/状态252/共享79/AgentDB42/W1 2042/义务334/W2 328/W3a64均通过；W3b在旧并发夹具失败，立即停止，不称全CI通过。实际不是死锁，`create_for_evaluation`严格比较持久evaluation.preflight与view.model_dump时，旧手写夹具漏新增false计算标志而被正确拒绝。
+
+错误夹具位于W4b2b共享seed及W4b1创建夹具；将按当前PreflightView构建默认值，保留显式金额/来源/哈希不匹配负控与生产严格比较。还要将旧死锁RED只认SQLSTATE40P01/55P03，排除把任意结构异常算死锁的假阳性。该测试修复由独立worktree实现，root实际PG核验后仍须新完整head从头全部CI。原失败聚合与receipt在`retest-report-ci/1c60188-failed`，敏感raw trace只留私有临时日志。P1尚未执行，当前bank_p1_test已无损保存在prd06，尚未新建测试库。
+
+## CI夹具修复及实际复核
+
+独立测试作者`9a68ddfc0f0cf78124c098b6bdbc4ea049c40217`（集成4cf3e5d）和`8ea8fb0eade5c1e9101f80dd1829ef2459042204`（集成ea78ed1）仅更新两处Schema默认夹具和两处并发测试的异常观测：旧approval-first RED只认Postgres40P01/55P03；done任务非锁异常必须传播，endpoint也必须等待成功后台任务。未改任何生产文件、锁顺序、超时、金额/哈希/审批或负控；旧失败日志保留。
+
+- root实际 `GATEWAY_DB_TESTS=1 UV_CACHE_DIR=/private/tmp/sbg-uv-cache uv run --group poc pytest -q tests/gateway/w3b tests/gateway/w4b1 tests/gateway/w4b2b tests/gateway/w4b2c`：**322通过/0skip**，不是收集数。
+- 集成endpoint补丁后root实际整个W3b：**88通过/0skip**；旧失败GREEN转绿且RED确有锁SQLSTATE，endpoint后台任务异常不再被忽略。
+- 非作者D独审两提交APPROVE，97项纯hash/binding/panel测试过，确认显式不匹配负控与业务状态/OTP断言保留。报告归档retest-ci-fixture-review.md。
+- 之前1c完整CI仍是FAILED，以上专项不能补成PASSED；接下来必须对新完整40位head从头重跑全部本机CI。

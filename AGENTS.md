@@ -35,7 +35,7 @@
 
 ## 3. 当前状态（每次工作后更新）
 
-**最后更新**：2026-11-01（双报告R1–R6开发修复及全部非作者独审/整合29ID审查APPROVE，集成FE494/BFF16/build及实际PG专项通过；进入精确40位head完整本机CI，尚不称全CI或现场验收通过）
+**最后更新**：2026-11-01（首轮1c60188完整CI因旧preflight夹具缺字段在W3b停止，失败证据保留；仅测试修订后实际PG322及整W3b88过，追加独审APPROVE；新完整40位head全部CI尚待，不称现场或冻结通过）
 
 | 模块 | 状态 |
 |---|---|
@@ -1059,9 +1059,13 @@
 
 | 2026-11-01 | Codex（BFF记录纠正） | 集成FE494/build已过；初次BFF监听127.0.0.1被沙箱EPERM阻断，前一条集成记录过早称BFF16过。已明确补记首轮不算通过，经工具获准本机完整重跑16pass/0fail，当前结论基于新日志。未改产品代码；最终完整head CI仍待。 |
 
-| 2026-11-01 | Codex（前端独审） | B在精确5c86b0c隔离archive独审FE，完整499通过(含8独立临时负控)/tsc绿，APPROVE；C对B readcard精确d91fddf独审55过/APPROVE。所有四实现单元均有非作者独审；D独立整分支需求归属/29ID审核定稿中。全CI前先保留bank_p1_test，最终完整SHA全部CI仍为发布门禁。 |
+| 2026-11-01 | Codex（前端独审） | B在精确5c86b0c隔离archive独审FE，完整499通过(含8独立临时负控)/tsc绿，APPROVE；C对B readcard精确d91fddf独审55过/APPROVE。全部实现单元均有非作者独审；D独立整分支需求归属/29ID审核定稿中。全CI前先保留bank_p1_test，最终完整SHA全部CI仍为发布门禁。 |
 
 | 2026-11-01 | Codex（最终需求审核与CI准备） | D固定c8a881d最终整合/PRD归属审查APPROVE、无可操作P0/P1/P2，独立101Python/76FE通过并核代码tree一致，六场景29ID边界逐项映射，报告及五份独审哈希归档retest-repairs-2026-11-01。首轮本机完整CI将以含所有修复/独审的完整40位SHA运行；不得将专项、默认条件skip、旧现场或容器健康当全CI。已核main未移动、gh有WRITE、连接器404改用gh；保留全部旧库卷/分支/WIP。 |
+
+| 2026-11-01 | Codex（完整CI首次中止） | 精确1c601881590256af1b8d1251915f9dd52b66375c全CI在W3b旧session-first并发测试失败即停：实际evaluation preflight does not match view，非观察到死锁。旧W4b2b/W4b1夹具漏新增计算标志、生产严格比较正确拒绝；新增独立子agent仅修测试fixture并收紧RED只认真实锁SQLSTATE，禁止放宽生产授权或加超时。前序unit4977/1169skip、FE494/BFF16/build、W1 2042/义务334/W2 328/W3a64及其他前序PG过，均不替代全CI；后续未执行。失败回执归档retest-report-ci/1c60188-failed；bank_p1_test原OID保留prd06且P1未运行。 |
+
+| 2026-11-01 | Codex（CI夹具门禁修复） | 独立test-only9a68→4cf3、8ea8→ea78：两默认preflight以当前Schema序列化，生产strict相等不变；RED仅40P01/55P03且done异常必传播，endpoint亦收后台异常、不丢业务transition/OTP断言。root实际四审批套件322过/0skip，endpoint补丁后整W3b88过/0skip；D非作者复审APPROVE/97纯测过，全部原日志/负控保留。1c首次完整CI仍FAILED，新head必须从头全部CI；P1测试库仍未重建、原prd06保留。 |
 
 ## 5. 下一步待办（按顺序）
 
