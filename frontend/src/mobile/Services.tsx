@@ -934,11 +934,7 @@ export function Wealth(p: PageProps) {
                 <article className="product-row" key={product.id}>
                   <div className="product-main">
                     <span className="product-type">
-                      {product.product_type === "MONEY_MARKET"
-                        ? "货币基金"
-                        : product.product_type === "BOND"
-                          ? "债券产品"
-                          : "混合产品"}
+                      {({ MMF: "货币基金", BOND: "债券产品", MIXED: "混合产品", EQUITY: "股票产品" } as Record<string, string>)[product.product_type] ?? "未知类型"}
                     </span>
                     <button
                       className="product-title"

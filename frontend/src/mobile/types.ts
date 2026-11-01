@@ -57,10 +57,11 @@ export interface Subscription {
   next_due_at: string;
   status: string;
 }
+export type ProductType = "MMF" | "BOND" | "MIXED" | "EQUITY";
 export interface Product {
   id: string;
   name: string;
-  product_type: string;
+  product_type: ProductType;
   risk_level: number;
   risk_label: string;
   nav: string;

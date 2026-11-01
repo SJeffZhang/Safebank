@@ -6,7 +6,7 @@ import { read } from './api';
 import type { PageProps } from './Banking';
 vi.mock('./api',()=>({read:vi.fn()}));
 const props:PageProps={sid:'ses_test',profile:{customer_id:'cus_test',display_name:'测试',phone_masked:'138 **** 0000',sim_now:'2026-10-29T10:00:00+08:00',risk_profile:{level:2,is_valid:true,valid_until:'2027-10-29T00:00:00+08:00'}},accounts:[{id:'acc_test',type:'CURRENT',display_name:'活期',account_no_masked:'**** 0818',balance_cents:100000,available_cents:100000,pending_debit_cents:0,pending_credit_cents:0,current_card_id:'crd_test'}],revision:0,busy:false,notify:vi.fn(),onPropose:vi.fn()};
-const base={product_type:'MONEY_MARKET',risk_label:'保守',nav:'1.0000',nav_date:'2026-10-28',recent_return_bp:12,confirm_days:0,settle_days:1,min_amount_cents:100,risk_disclosure:'不保证本金及收益。',disclosure_version:'v1',nav_history:[]};
+const base={product_type:'MMF',risk_label:'保守',nav:'1.0000',nav_date:'2026-10-28',recent_return_bp:12,confirm_days:0,settle_days:1,min_amount_cents:100,risk_disclosure:'不保证本金及收益。',disclosure_version:'v1',nav_history:[]};
 beforeEach(()=>{vi.clearAllMocks();vi.mocked(read).mockImplementation(async(_sid,tool)=>tool==='list_products'?{items:[{...base,id:'prd_low',name:'低风险示例',risk_level:1},{...base,id:'prd_high',name:'高风险示例',risk_level:4}]}:tool==='get_holdings'?{holdings:[{account_id:'acc_test',product_id:'prd_low',units:'10.0000',available_units:'10.0000',market_value_cents:1000,reserved_receivable_cents:0}],orders:[]}:{questionnaire_id:'rq_test',questions:[]});});
 it('explains suitability and filters high risk products without treating a UI match as authorization',async()=>{
  const user=userEvent.setup();render(<Wealth {...props}/>);
@@ -44,4 +44,22 @@ it('an expired assessment prevents purchase and provides a questionnaire entry',
  render(<Wealth {...props} profile={{...props.profile,risk_profile:{level:2,is_valid:false,valid_until:'2025-10-29T00:00:00+08:00'}}}/>);
  expect(await screen.findByRole('button',{name:'开始风险测评'})).toBeInTheDocument();
  expect(screen.getAllByRole('button',{name:'需先测评'}).every(button=>(button as HTMLButtonElement).disabled)).toBe(true);
+});
+
+it('labels every current backend product type and never classifies an unknown type as mixed', async () => {
+ const types = [
+  ['MMF', '货币基金'], ['BOND', '债券产品'], ['MIXED', '混合产品'],
+  ['EQUITY', '股票产品'], ['FUTURE_TYPE', '未知类型'],
+ ];
+ vi.mocked(read).mockImplementation(async (_sid, tool) => tool === 'list_products'
+  ? {items: types.map(([type], i) => ({...base,id:`prd_${i}`,name:`产品${i}`,product_type:type,risk_level:i === 3 ? 4 : 1}))}
+  : tool === 'get_holdings' ? {holdings:[],orders:[]} : {questionnaire_id:'rq_test',questions:[]});
+ render(<Wealth {...props}/>);
+ await screen.findByText('产品0');
+ for (const [i, [, label]] of types.entries()) {
+  const row = screen.getByText(`产品${i}`).closest('article')!;
+  expect(within(row).getByText(label)).toBeInTheDocument();
+ }
+ expect(within(screen.getByText('产品3').closest('article')!).getByRole('button',{name:'超出风险等级'})).toBeDisabled();
+ expect(props.onPropose).not.toHaveBeenCalled();
 });
