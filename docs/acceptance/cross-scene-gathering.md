@@ -1,6 +1,6 @@
 # 跨场景真实读取链路修复（2026-10-31）
 
-基线为已交付前端分支f4af1ba；本分支fix/cross-scene-gathering。仅修改L1 gather私有读取辅助、必要cards显示与相应纯测试；不改respond/verify/写执行，不运行真实API、模型、DB、Docker或浏览器。
+基线为已交付前端分支f4af1ba；本分支fix/cross-scene-gathering。修改L1 gather私有读取辅助、必要cards显示，以及协调者追加授权的understand/plan结构化选择上下文与提示和对应纯测试；不改respond/verify/写执行，不运行真实API、模型、DB、Docker或浏览器。
 
 ## X1：月度分析 + 卡单笔限额
 
@@ -16,7 +16,7 @@
 
 相关ruff check和format通过。以上为纯内存/假模型测试，不是X1真实演示或实际降限额验收。
 
-## X2/X3/X4静查（后续补充）
+## X2/X3/X4初始静查（后续单元见下）
 
 X2已有test_x2_sources/test_idle_subscription_plan/test_subs_bills_prompt、L2 derived/predicate及禁止外部收款目标测试；X3已有多稳健产品澄清与L2预留派生/适当性谓词测试；X4已有L2两动作作用域/可疑卡谓词测试。L3通用多步骤失败回滚由tests/integration/test_execution.py覆盖（本任务未运行PG）；这些均不能替代各完整生产gather→计划→审批→原子执行用例。按协调者指令继续用早停模型核对X4/X3的实际必读遗漏，并独立提交证据。
 
@@ -59,3 +59,10 @@ X2已有test_x2_sources/test_idle_subscription_plan/test_subs_bills_prompt、L2 
 最终在当前全部L1源码上运行：`.venv/bin/pytest -q tests/agent -m 'not db'`，**859 passed / 40 deselected**（8.45秒）。40项为明确排除的数据库测试，不算通过。相关G3/W2派生/测评纯测试另联合127 passed（是重叠子集，不相加）。本轮全部修改的Python文件ruff check/format及git diff --check通过。
 
 上述是实际编译图和假上游/假模型纯测试，未调用生产模型、真实服务API、PG、Docker或浏览器；不能据此宣称X3生产演示、真实适当性授权与资金预留/结算已验收。
+
+
+## X2测试形状校正
+
+按协调者指令，仅把test_idle_subscription_plan、test_plan_e2e_fixes与test_subs_bills_prompt中detect_subscriptions夹具校准为真实typical_amount_cents，派生来源pointer同步到该字段。新增fixture构造器通过冻结READ_RESULTS验证merchant/billing、周期、次数、用量证据与年化成本等完整形状。list_subscriptions原有amount_cents语义及产品金额代码均未修改；既有17项正负控全部通过。静态旧fixture不能推断为产品新失败，原报告X2已经正确引用典型金额，此处不虚称产品红绿。
+
+在该校正后的最终源码再次运行`.venv/bin/pytest -q tests/agent -m 'not db'`：**859 passed / 40 deselected，7.61秒**；本轮所有修改Python的ruff check及diff检查通过。没有新增真实API、模型、DB、Docker或浏览器运行。
