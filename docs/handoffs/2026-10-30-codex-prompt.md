@@ -1,4 +1,4 @@
-你接手 SafeBank（2026 深圳金融科技大赛「银行 AI 智能体」赛题，截止 2026-11-02），成为唯一协调者兼实现者。
+你接手 BankSense（2026 深圳金融科技大赛「银行 AI 智能体」赛题，截止 2026-11-02），成为唯一协调者兼实现者。
 
 工作目录：/Users/zhangshijie/Desktop/Project/Fintech2026（worktree 都在 ../Fintech2026-wt/）。
 

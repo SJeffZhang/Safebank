@@ -1,4 +1,4 @@
-# 交接说明：SafeBank Gateway → Codex（2026-10-23）
+# 交接说明：BankSense Gateway → Codex（2026-10-23）
 
 > 写给在 Codex 中接手本项目的协调 agent。仓库 `SJeffZhang/Safebank` 的 `main` 是唯一事实来源；本文件之外的一切以 `AGENTS.md`（当前状态与规则）和 `PRD.md`（设计规格）为准。
 

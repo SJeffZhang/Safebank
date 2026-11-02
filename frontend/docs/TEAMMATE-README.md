@@ -1,6 +1,6 @@
-# SafeBank UI
+# BankSense UI
 
-React + TypeScript + Vite 实现的 SafeBank 移动端界面（首页 / 理财 / 卡片 / 订阅 / 账单 / 小安 / 个人 / 转账）。
+React + TypeScript + Vite 实现的 BankSense 移动端界面（首页 / 理财 / 卡片 / 订阅 / 账单 / 小安 / 个人 / 转账）。
 
 ## 本地开发
 

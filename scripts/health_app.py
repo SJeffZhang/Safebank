@@ -9,7 +9,7 @@ from fastapi import FastAPI, Header, HTTPException
 
 
 def create_app(service: str, *, internal: bool = False) -> FastAPI:
-    app = FastAPI(title=f"SafeBank {service} P0", docs_url=None, redoc_url=None)
+    app = FastAPI(title=f"BankSense {service} P0", docs_url=None, redoc_url=None)
     path = "/internal/health" if internal else "/health"
 
     @app.get(path)

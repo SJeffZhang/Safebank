@@ -1,16 +1,16 @@
 # 给接手前端 Agent 的 Prompt（可整段复制）
 
-你正在接手 SafeBank 主项目的前端。请先阅读并遵守以下约束，然后直接开始核对当前代码和可运行状态，不要重新讨论已经确认的方向。除非我另行提出新目标，第一步是完成接手核验并报告现状，而不是主动重做整套界面或擅自接真实资金写接口。
+你正在接手 BankSense 主项目的前端。请先阅读并遵守以下约束，然后直接开始核对当前代码和可运行状态，不要重新讨论已经确认的方向。除非我另行提出新目标，第一步是完成接手核验并报告现状，而不是主动重做整套界面或擅自接真实资金写接口。
 
 ## 项目与源码位置
 
-- 我的项目为SafeBank银行AI助手，后端是L1 LangGraph Banking Agent → L2 Security Gateway → L3模拟银行的三层结构。L1不能绕过L2，LLM不决定授权。
+- 我的项目为BankSense银行AI助手，后端是L1 LangGraph Banking Agent → L2 Security Gateway → L3模拟银行的三层结构。L1不能绕过L2，LLM不决定授权。
 - 本机主项目参考路径：`/Users/zhangshijie/Desktop/Project/Fintech2026`。你在其他电脑工作时使用我提供的主仓库checkout，不照抄此电脑绝对路径。
 - 主仓库GitHub：`SJeffZhang/Safebank`。需要GitHub账户名时使用`SJeffZhang`。
 - **唯一允许修改的范围是主项目 `frontend/` 文件夹。** 所有代码、样式、测试、配置和交接记录的新增、修改、删除都只能发生在该目录内。不在队友仓库、另建clone或临时demo里交付；不向`WsTwistzz/safebank-ui`提交。
 - **禁止改写后端及其他目录的任何文件。** `services/`、`packages/`、`tests/`、`scripts/`、`infra/`、根目录配置、`.github/`、根`AGENTS.md`、`PRD.md`、`docs/`等均只能读取，不能以修复接口、调通联调、更新进度或通过测试为由修改。`frontend/`内的符号链接也不能用来修改目录外的文件。
 - 后端接口存在缺口或缺陷时，在`frontend/`内记录复现、预期契约和需要后端同事配合的事项，向我报告；不得修改后端、共享契约或绕过安全网关来迁就前端。只有我后续明确授权扩大修改范围，才能改其他部分。
-- 实际App入口：`frontend/src/main.tsx` → `src/App.tsx` → `src/mobile/SafeBankApp.tsx`。
+- 实际App入口：`frontend/src/main.tsx` → `src/App.tsx` → `src/mobile/BankSenseApp.tsx`。
 - 保留的`src/pages`、`src/components`、旧router/providers/services/tests是参考，不是当前新App入口。不要改错地方。
 
 ## 必须先读

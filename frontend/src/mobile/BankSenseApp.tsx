@@ -41,7 +41,7 @@ function route() {
   if (id === "subscriptions") return "security";
   return navigation.some((n) => n.id === id) ? id : "not-found";
 }
-export default function SafeBankApp() {
+export default function BankSenseApp() {
   return (
     <ThemeProvider>
       <BankApp />
@@ -92,7 +92,7 @@ function BankApp() {
     return () => window.removeEventListener("hashchange", h);
   }, []);
   useEffect(() => {
-    document.title = `${navigation.find((n) => n.id === page)?.label ?? "SafeBank"} · SafeBank`;
+    document.title = `${navigation.find((n) => n.id === page)?.label ?? "BankSense"} · BankSense`;
   }, [page]);
   useEffect(() => {
     if (!menu) return;
@@ -251,7 +251,7 @@ function BankApp() {
       {!props ? (
         <main className="login-scene">
           <div className="login-brand">
-            <span className="brand-mark">S</span>SafeBank
+            <span className="brand-mark">B</span>BankSense
           </div>
           <div className="login-composition">
             <section className="login-copy">
@@ -269,7 +269,7 @@ function BankApp() {
               <div className="login-art">
                 <div className="bank-card large">
                   <div className="bank-card-brand">
-                    <span className="brand-glyph">S</span>SafeBank
+                    <span className="brand-glyph">B</span>BankSense
                     <span>DEBIT</span>
                   </div>
                   <div className="chip">
@@ -279,7 +279,7 @@ function BankApp() {
                   <div className="bank-number">••••　••••　••••　0818</div>
                   <div className="bank-card-bottom">
                     <span>
-                      SafeBank<small>安心相伴，随行所需</small>
+                      BankSense<small>安心相伴，随行所需</small>
                     </span>
                     <span className="card-circles">
                       <i />
@@ -291,7 +291,7 @@ function BankApp() {
             </section>
             <section className="login-form">
               <Badge>{isPreview ? "合成数据预览" : "银行沙箱演示"}</Badge>
-              <h2>欢迎回到 SafeBank</h2>
+              <h2>欢迎回到 BankSense</h2>
               <p>选择演示客户，使用本地配置的 PIN 登录。</p>
               {loading ? (
                 <Loading />
@@ -357,7 +357,7 @@ function BankApp() {
               )}
             </section>
           </div>
-          <footer>SafeBank · 银行 AI 智能体沙箱演示</footer>
+          <footer>BankSense · 银行 AI 智能体沙箱演示</footer>
         </main>
       ) : (
         <>
@@ -377,7 +377,7 @@ function BankApp() {
             aria-label="全部服务"
           >
             <a className="wordmark" href="#overview">
-              <span className="brand-mark">S</span>SafeBank
+              <span className="brand-mark">B</span>BankSense
               <span className="brand-period">.</span>
             </a>
             <div className="nav-label">日常金融</div>
@@ -450,10 +450,10 @@ function BankApp() {
                 </button>
               </div>
               <div className="breadcrumb">
-                {page === "overview" && <span className="brand-glyph">S</span>}
+                {page === "overview" && <span className="brand-glyph">B</span>}
                 <strong>
                   {page === "overview"
-                    ? "SafeBank"
+                    ? "BankSense"
                     : (navigation.find((n) => n.id === page)?.label ??
                       "页面不存在")}
                 </strong>
@@ -467,12 +467,12 @@ function BankApp() {
                 ) : (
                   <button
                     type="button"
-                    className="mode-indicator"
+                    className="icon-button demo-console-trigger"
                     title="打开演示控制台"
+                    aria-label="打开演示控制台"
                     onClick={() => setDemoConsole(true)}
                   >
-                    <i />
-                    已连接银行沙箱
+                    演示
                   </button>
                 )}
                 <a
@@ -546,7 +546,7 @@ function BankApp() {
                 )}
               </div>
               {page !== "assistant" && <footer className="workspace-footer">
-                <span>SafeBank · 安心相伴</span>
+                <span>BankSense · 安心相伴</span>
                 <span>
                   银行模拟时间 {props.profile.sim_now.slice(0, 10)} ·
                   所有金额以人民币计
@@ -655,7 +655,7 @@ function BankApp() {
       )}
       {demoConsole && <DemoConsole onClose={() => setDemoConsole(false)} />}
           {help && (
-        <Modal title="使用 SafeBank" onClose={() => setHelp(false)}>
+        <Modal title="使用 BankSense" onClose={() => setHelp(false)}>
           <div className="modal-body">
             <h3>从您的日常业务开始</h3>
             <p>

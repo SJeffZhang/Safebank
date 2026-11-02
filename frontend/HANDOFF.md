@@ -1,4 +1,4 @@
-# SafeBank 前端交接文档
+# BankSense 前端交接文档
 
 银行卡最新视觉：三卡使用石墨黑/铂银/香槟金金属拉丝材质，前景与露出叠卡颜色一致。入场改为后排到前景逐张显现（每张错开320ms），结束或主动切卡后不再等待整套序列；下方信息随后淡入。减少动态效果保持降级，外观不代表产品等级或权限。最终397项/构建通过，详见验收末尾。
 
@@ -26,7 +26,7 @@
 
 ## 2. 交付与运行状态
 
-- 新 App 的真实入口为 `src/main.tsx` → `src/App.tsx` → `src/mobile/SafeBankApp.tsx`。
+- 新 App 的真实入口为 `src/main.tsx` → `src/App.tsx` → `src/mobile/BankSenseApp.tsx`。
 - 新业务页面都在 `src/mobile/`；`src/pages/`、`src/components/`、旧 providers/router/services/tests 保留作迁移参考，**不是当前 App 的页面入口**。
 - 当前默认 `VITE_BANK_MODE=preview`，显著标识合成数据。不要删除这个标识。
 - Preview 银行业务数据位于模块内存，刷新重置。主题和卡片用途保存在浏览器；它们刷新仍在。
@@ -75,7 +75,7 @@ CI：`.github/workflows/frontend.yml` 在前端相关 push/PR 运行 Node 22 / n
 
 | 文件/目录 | 职责 |
 | --- | --- |
-| `src/mobile/SafeBankApp.tsx` | 登录/bootstrap、hash 路由、导航/返回栈、页面公共 props、预演/确认入口、主题按钮 |
+| `src/mobile/BankSenseApp.tsx` | 登录/bootstrap、hash 路由、导航/返回栈、页面公共 props、预演/确认入口、主题按钮 |
 | `src/mobile/Banking.tsx` | 首页、转账/本人互转/定时/AA、收款人、账单/异常；共享 Panel/Field/Segments |
 | `src/mobile/Services.tsx` | 银行卡叠卡/用途/申请/限制、订阅、理财/产品风险/持仓/问卷 |
 | `src/mobile/Assistant.tsx` | 对话、结构化卡片、澄清、中断/恢复、停止接收；铺满内容区 |

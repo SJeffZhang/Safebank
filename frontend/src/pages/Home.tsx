@@ -25,7 +25,7 @@ export function HomePage() {
   const navigate = useNavigate();
   const home = useHomeService();
   const { customer } = useSession();
-  useDocumentTitle('首页 · SafeBank');
+  useDocumentTitle('首页 · BankSense');
 
   const [hidden] = useState<boolean>(readAmountHidden);
   const [offline, setOffline] = useState(false);

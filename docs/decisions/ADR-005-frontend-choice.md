@@ -1,4 +1,4 @@
-# ADR-005：竖版 SafeBank App 与同站 BFF
+# ADR-005：竖版 BankSense App 与同站 BFF
 
 日期：2026-10-28。状态：本次前端实现采用，真实三层联调尚未验收。
 

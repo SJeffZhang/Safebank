@@ -361,7 +361,7 @@ def app_factory(
             app.state.checkpointer = saver
             yield
 
-    app = FastAPI(title="SafeBank L1 Agent", lifespan=lifespan)
+    app = FastAPI(title="BankSense L1 Agent", lifespan=lifespan)
 
     # ── Health ────────────────────────────────────────────────────────
 

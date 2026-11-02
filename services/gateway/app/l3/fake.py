@@ -159,7 +159,7 @@ class FakeL3:
 
     # ---- app ---------------------------------------------------------------
     def app(self) -> FastAPI:
-        app = FastAPI(title="SafeBank fake L3", docs_url=None, redoc_url=None, openapi_url=None)
+        app = FastAPI(title="BankSense fake L3", docs_url=None, redoc_url=None, openapi_url=None)
 
         async def _require_token(request: Request) -> bool:
             if request.headers.get("X-Service-Token") != self.token:

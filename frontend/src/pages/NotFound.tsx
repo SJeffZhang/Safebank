@@ -6,7 +6,7 @@ import styles from '../layout/layout.module.css';
 
 export function NotFoundPage() {
   const navigate = useNavigate();
-  useDocumentTitle('页面不存在 · SafeBank');
+  useDocumentTitle('页面不存在 · BankSense');
 
   return (
     <div className={styles.page}>

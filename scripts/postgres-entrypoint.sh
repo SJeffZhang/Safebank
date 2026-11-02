@@ -4,7 +4,7 @@
 set -eu
 
 if [ "$(id -u)" != 0 ]; then
-    printf '%s\n' 'SafeBank PostgreSQL bootstrap must start as root' >&2
+    printf '%s\n' 'BankSense PostgreSQL bootstrap must start as root' >&2
     exit 1
 fi
 

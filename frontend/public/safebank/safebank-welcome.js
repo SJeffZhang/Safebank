@@ -1,4 +1,4 @@
-/* SafeBank welcome component · 玻璃银行卡 × C2 石墨黑 / 香槟金
+/* BankSense welcome component · 玻璃银行卡 × C2 石墨黑 / 香槟金
    保留 674×1270 舞台等比缩放、safebank-navigate 事件、玻璃材质与按压反馈。 */
 (function () {
   'use strict';
@@ -183,7 +183,7 @@
         <div class="brand">
           <span class="mark" aria-hidden="true"></span>
           <span>
-            <span class="brand-name">SafeBank</span>
+            <span class="brand-name">BankSense</span>
             <span class="brand-sub">Banking</span>
           </span>
         </div>
@@ -191,15 +191,15 @@
         <div class="art" aria-hidden="true">
           <span class="glow"></span>
           <div class="card card-c">
-            <div class="card-top"><span class="card-bank">SafeBank</span><span class="chip"></span></div>
+            <div class="card-top"><span class="card-bank">BankSense</span><span class="chip"></span></div>
             <div class="card-mid"><span class="card-no">•••• 4932</span><span class="card-tag">Connected</span></div>
           </div>
           <div class="card card-b">
-            <div class="card-top"><span class="card-bank">SafeBank</span><span class="chip"></span></div>
+            <div class="card-top"><span class="card-bank">BankSense</span><span class="chip"></span></div>
             <div class="card-mid"><span class="card-no">•••• 7153</span><span class="card-tag">Everyday</span></div>
           </div>
           <div class="card card-a">
-            <div class="card-top"><span class="card-bank">SafeBank</span><span class="chip"></span></div>
+            <div class="card-top"><span class="card-bank">BankSense</span><span class="chip"></span></div>
             <div class="card-mid"><span class="card-no">•••• 2680</span><span class="card-tag">Secure</span></div>
           </div>
           <span class="pill pill-connected">Connected</span>
@@ -223,7 +223,7 @@
     </div>
   `;
 
-  class SafeBankWelcome extends HTMLElement {
+  class BankSenseWelcome extends HTMLElement {
     static get observedAttributes() {
       return ['mode'];
     }
@@ -368,5 +368,5 @@
     }
   }
 
-  customElements.define('safebank-welcome', SafeBankWelcome);
+  customElements.define('safebank-welcome', BankSenseWelcome);
 })();

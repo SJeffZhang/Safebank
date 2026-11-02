@@ -60,7 +60,7 @@ export function Security(
         <span className="my-profile-avatar" role="img" aria-label={`${p.profile.display_name}的头像`}>
           {Array.from(p.profile.display_name.trim())[0] ?? "我"}
         </span>
-        <div><span className="eyebrow">MY SAFEBANK</span><h1>{p.profile.display_name}</h1><p>{p.profile.phone_masked}</p></div>
+        <div><span className="eyebrow">MY BANKSENSE</span><h1>{p.profile.display_name}</h1><p>{p.profile.phone_masked}</p></div>
         <Badge><Icon name="shield" size={12}/>个人账户</Badge>
       </div>
       <Segments items={[{id:"subscriptions",label:"订阅管理"},{id:"activity",label:"安全记录"}]}

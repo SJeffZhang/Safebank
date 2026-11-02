@@ -51,7 +51,7 @@ scripts/ds-worker.sh review <worktree> <提示文件> <日志名>
 
 ## 5. 待用户确认的新安排：L1 并行开发
 
-交接前，另一个会话（「SafeBank Gateway 主要开发」）转达了用户的决定：**L1（PRD §13 流 C）立即与 L2 并行**。理由是 L2-plan 里「不做 L1」是协调者自己收窄的范围，不是用户的决定（用户只暂停了前端和 BFF）。要求如下：
+交接前，另一个会话（「BankSense Gateway 主要开发」）转达了用户的决定：**L1（PRD §13 流 C）立即与 L2 并行**。理由是 L2-plan 里「不做 L1」是协调者自己收窄的范围，不是用户的决定（用户只暂停了前端和 BFF）。要求如下：
 
 1. 修正 `docs/plans/L2-plan.md` 中「不做 L1」那一条；在 `AGENTS.md` §4 记录这次纠正，并在 §3、§5 增加 L1 进度行。
 2. 按 PRD §6 写 L1 任务书（如 `docs/plans/briefs/C1-agent.md`，另附公共约定），拆成小组件：图骨架与 AgentState；DeepSeek 适配与 strict 计划生成（沿用 ADR-002：/beta、关闭思考、reasoning_content 处理）；gateway 客户端与 §6.1.1 返回码路由表；审批 interrupt/resume；回放录制。只改 `services/agent/` 与 `tests/agent/`。gateway 未完成的接口按 PRD §9.5 写 fake 测试，fake 不能当作联调通过。

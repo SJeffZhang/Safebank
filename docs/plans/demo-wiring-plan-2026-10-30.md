@@ -12,7 +12,7 @@
 
 ---
 
-# SafeBank Demo Wiring Plan: freeze Demo v1, then fix bugs
+# BankSense Demo Wiring Plan: freeze Demo v1, then fix bugs
 
 ## Context
 
@@ -185,7 +185,7 @@ Order:
 
 - **Frontend**
   - `frontend/server/bff.mjs`: container bind address, `/state` 404 fallback, F13 console proxy (sms / clock / attack / assert / compare).
-  - `frontend/src/mobile/SafeBankApp.tsx`, `Services.tsx`, `Approval.tsx`: hide preview-only features in live mode, demo SMS toast, clock console.
+  - `frontend/src/mobile/BankSenseApp.tsx`, `Services.tsx`, `Approval.tsx`: hide preview-only features in live mode, demo SMS toast, clock console.
   - New `frontend/src/mobile/AttackConsole.tsx`.
   - New `frontend/Dockerfile`.
 - **Compose / ops**

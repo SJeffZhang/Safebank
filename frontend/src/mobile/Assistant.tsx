@@ -314,7 +314,7 @@ export function Assistant(
             </span>
             <div>
               <strong>小安</strong>
-              <small>{isPreview ? "交互预览" : "SafeBank 银行助手"}</small>
+              <small>{isPreview ? "交互预览" : "BankSense 银行助手"}</small>
             </div>
             <Badge>
               <Icon name="shield" size={12} />

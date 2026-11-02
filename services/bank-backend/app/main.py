@@ -124,7 +124,7 @@ def create_app(
             raise BankError(Code.UNAUTHENTICATED, 401)
 
     app = FastAPI(
-        title="SafeBank L3",
+        title="BankSense L3",
         version="1.0.0",
         lifespan=lifespan,
         dependencies=[Depends(authenticate)],

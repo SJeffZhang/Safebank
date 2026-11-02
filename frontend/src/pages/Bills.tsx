@@ -39,7 +39,7 @@ function groupTransactions(list: BillTransaction[]): Map<string, BillTransaction
 
 export function BillsPage() {
   const service = useBillsService();
-  useDocumentTitle('账单与异常 · SafeBank');
+  useDocumentTitle('账单与异常 · BankSense');
 
   const [months, setMonths] = useState<string[]>([]);
   const [month, setMonth] = useState<string>(() => readViewState(BILL_MONTH_KEY, ''));

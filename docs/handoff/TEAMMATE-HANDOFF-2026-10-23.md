@@ -1,4 +1,4 @@
-# SafeBank Gateway：队友接续交接
+# BankSense Gateway：队友接续交接
 
 2026-10-23。本文件面向接手的人类队友，是当前交接入口。业务开发按用户要求暂停；本次仅推送已有检查点和交接文档，不把未评审成果合并到main。仓库：https://github.com/SJeffZhang/Safebank 。
 

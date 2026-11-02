@@ -101,7 +101,7 @@ def build_public_app(
     # The global dependency enforces the auth matrix on every route (open routes
     # return None; anything else must present a valid F/A/D credential + JWT).
     app = FastAPI(
-        title="SafeBank Gateway",
+        title="BankSense Gateway",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
@@ -145,7 +145,7 @@ def build_internal_app(
     if public_key is None and runtime is not None:
         public_key = runtime.jwt_public_key
     app = FastAPI(
-        title="SafeBank Gateway internal", docs_url=None, redoc_url=None, openapi_url=None
+        title="BankSense Gateway internal", docs_url=None, redoc_url=None, openapi_url=None
     )
     if runtime is not None:
         runtime.install(app)

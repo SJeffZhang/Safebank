@@ -1,6 +1,6 @@
-# SafeBank App 与 BFF
+# BankSense App 与 BFF
 
-移动端优先的银行 Web App，采用石墨与香槟金配色。桌面以 375×812 手机视口展示，手机端铺满屏幕，页面内部滚动，底部导航常驻。当前产品入口为 `src/mobile/SafeBankApp.tsx`。
+移动端优先的银行 Web App，采用石墨与香槟金配色。桌面以 375×812 手机视口展示，手机端铺满屏幕，页面内部滚动，底部导航常驻。当前产品入口为 `src/mobile/BankSenseApp.tsx`。
 
 App 提供转账、账单、卡片、订阅、理财和跨场景助手入口；所有写操作使用统一的预演与确认面板。截图见[仓库首页](../README.md)。
 
