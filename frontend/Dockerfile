@@ -1,4 +1,4 @@
-# SafeBank mobile app + same-origin BFF for the demo stack (live mode).
+# BankSense mobile app + same-origin BFF for the demo stack (live mode).
 FROM node:22.11.0-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./

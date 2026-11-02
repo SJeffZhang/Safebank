@@ -29,7 +29,7 @@ function statusBadge(card: CardInfo): { text: string; cls: string } {
 
 export function CardsPage() {
   const service = useCardsService();
-  useDocumentTitle('卡片 · SafeBank');
+  useDocumentTitle('卡片 · BankSense');
 
   const [cards, setCards] = useState<CardInfo[]>([]);
   const [status, setStatus] = useState<LoadStatus>('initial');

@@ -28,7 +28,7 @@ export function WelcomePage() {
   const { status, markAppVisited } = useSession();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const authenticated = status === 'authenticated';
-  useDocumentTitle('欢迎 · SafeBank');
+  useDocumentTitle('欢迎 · BankSense');
 
   useEffect(() => {
     markWelcomeSeenThisDocument();
@@ -71,7 +71,7 @@ export function WelcomePage() {
           >
             {/* 组件未加载时的降级内容（有 Shadow DOM 后不显示） */}
             <div className={styles.fallback}>
-              <p className={styles.fallbackBrand}>SafeBank</p>
+              <p className={styles.fallbackBrand}>BankSense</p>
               <p className={styles.fallbackEyebrow}>WELCOME TO SAFE BANK</p>
               <h1 className={styles.fallbackTitle}>
                 Take control of

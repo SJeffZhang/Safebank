@@ -1,7 +1,7 @@
 [project]
 name = "safebank-gateway"
 version = "0.1.0"
-description = "SafeBank Gateway: isolated banking agent sandbox"
+description = "BankSense Gateway: isolated banking agent sandbox"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "fastapi==0.161.1",

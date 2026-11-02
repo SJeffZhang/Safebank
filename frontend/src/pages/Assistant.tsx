@@ -142,7 +142,7 @@ export function AssistantPage() {
   const assistant = useAssistantService();
   const transfer = useTransferService();
   const navigate = useNavigate();
-  useDocumentTitle('小安 · SafeBank');
+  useDocumentTitle('小安 · BankSense');
 
   // 恢复会话：瞬时状态（生成中 / 澄清提交中）在刷新后已无对应请求，必须归一化。
   const restoredState = useMemo(() => normalizeRestored(readViewState<unknown>(ASSISTANT_VIEW_KEY, null)), []);

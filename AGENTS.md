@@ -1,4 +1,4 @@
-# AGENTS.md：SafeBank Gateway 接手指南
+# AGENTS.md：BankSense Gateway 接手指南
 
 > 任何 agent（Claude Code、Codex、Cursor 等）接手本项目时，**先完整读完本文件**，再读 [PRD.md](PRD.md)。
 > 本文件是项目的「当前状态 + 工作规则」唯一来源。每完成一个工作单元都要更新 §4「进度日志」和 §3「当前状态」。
@@ -33,9 +33,23 @@
 12. 主办方不提供 LLM、沙箱或数据：API 自备，L3 就是沙箱，演示数据全部自造（合成数据，不含真实个人信息）。
 13. **前端原暂停约定（2026-10-28 已按用户明确指令恢复本任务，代码只在主项目 `frontend/`，竖版 App、继承队友风格、Codex 亲自实现，不使用 DS worker）**（用户 2026-10-23 原决定）：前端 App 与 BFF（PRD §9.6 F1–F13、§9.10 页面）**一律不开工**，直到用户亲自下令。在此之前只做后端；需要浏览器 / BFF 的地方，测试中直接用 F 服务令牌 + app JWT 调 gateway 代替。L2 阶段计划见 [docs/plans/L2-plan.md](docs/plans/L2-plan.md)。
 
+14. **项目对外名称统一为 BankSense**（用户2026-11-02确认）。页面、标题、导出文件和当前文档使用新名称；内部兼容标识、真实仓库URL与不可变历史验收证据保留原值，不能因更名重建数据或改写原始实测结论。
+
 ## 3. 当前状态（每次工作后更新）
 
 **最后更新**：2026-11-01（双报告修复/独审完成，精确代码9545148a12fff197beea350dbadbd2abb89fe4d7全部35步本机CI PASSED；含回执最终head完整CI、匹配合并/恢复main结果以PR #114实际回执为准，原24/43现场未改、不冻结）
+
+本机手测部署（2026-11-02）：当前main基础为ac0884e，本地feat/banksense-brand已按用户要求统一BankSense对外名称并更新3000整站；7服务healthy，登录/get_accounts与实际静态产物品牌检查通过，数据库和PIN保留。此本地更名未提交推送，不代表冻结验收。
+
+本地界面补修：控制台入口原被CSS隐藏，现已在fix/demo-console-entry将顶栏入口显示为“演示”，构建并更新frontend，HTTP/产物核验通过；未提交，未代点或自动登录。
+
+理财数据补记（2026-11-02）：旧基础库产品目录为0，现已安全增补正式种子6产品及6空结算账户；真实App产品/持仓/问卷接口通过。旧客户余额/交易/时钟不变，仍非完整新代际演示初始化。
+
+张三卡片补记（2026-11-02）：本地演示库现有三张ACTIVE卡1234/5678/9012，前端沿用石墨/银/香槟金；新增备用活期余额0，旧余额/交易不变。正式get_cards读取通过，未修改canonical种子。
+
+张三订阅补记（2026-11-02）：已在当前本地库增补四条canonical合成订阅，月265元/年3180元；当前模拟10/15下未来7天视频30元(10/18 06:00)、音乐15元(10/20 06:00)，共45元。旧余额/交易/指令不变，无实际扣费；历史周期性消费/闲置识别未补造。
+
+演示初始化已接线：新代际reset默认包含banksense_showcase_v1（三卡/零余额备用账户/原六产品与四订阅），保留canonical授权链及旧库；33项隔离回归/独审通过。用户已授权提交推送，当前手测库不reset。
 
 | 模块 | 状态 |
 |---|---|
@@ -1069,6 +1083,22 @@
 
 | 2026-11-01 | Codex（完整代码CI通过） | 精确9545148a12fff197beea350dbadbd2abb89fe4d7全部35步骤本机CI PASSED/exit0：unit4977/1169条件skip、FE494/BFF16/build、GW17/锁63/状态252/共享79/AgentDB42、W1 2042/义务334/W2 328/W3a64/W3b88/审批120/确认58/屏障56/SMS8/恢复48、E0b119/P1资金33/并发5/一致性17/网络隔离/真实L3重启幂等/冻结契约、S1 113/clock6/notify52。回执retest-report-ci/9545148，聚合SHA9a6ee550…；重叠不相加、skip不算真实PG或模型。此前1c失败保留；954前置检查误启动已在unit精准停、未进PG，make up provision重建的零表test库101382也保留prd07，prd06原94369无损，守卫再核成功后才取得完整PASS。普通push并建PR114草稿；本次仅记录已实测954，含记录的最终head仍从头全CI且match-head合并，实际最终SHA/merge/恢复写PR114。 |
 
+| 2026-11-01 | Codex（GitHub进度复查） | 按用户要求fetch并以detached origin/main检出aa7e5d26160ef3be1d7b9341a0398b2f0390d0b1，原交接分支/worktree/WIP保留。#104/#105/#107–#112均已合；#112最终972070578d74b331a5969e83d36e893819d65d26完整CI及合并后回执已核，树哈希与main相同。本机默认pytest独立复跑4477 passed/1121 skipped（44.71s），日志/private/tmp/sbg-progress-check-20261101-pytest.log；未重跑条件PG/前端/完整CI，引用PR回执不混称本机实测。默认demo仅6代表用例，完整43条、两独立reset六场景、实际生产录制/断网回放和冻结清单仍待；无demo-v1标签，D6/D7仍stub。当地Docker可见safebank及safebank-e2e-1029两套旧运行栈，与队友环境记录不同，未部署/重启/停止、未读凭据或调用模型；不把healthy当新head验收。仅更新本地进度记录，未提交推送、未更新公开进度。 |
+| 2026-11-01 | Codex（用户手工测试启动） | 用户明确要求全站启动供本人测试，覆盖前轮不部署范围。当前aa7e5d2构建bank-backend/shared及frontend镜像，复用既有本地凭据与依赖；先停主栈业务服务、备份bank/gateway至/private/tmp/sbg-before-latest-20261101-214442（0700目录/0600 dump），执行两套迁移后以既有safebank卷启动7服务，全部healthy。地址http://127.0.0.1:3000；本机另一旧e2e栈3001未改，不作为最新版入口。首页/客户目录/张三真实登录/get_accounts返回2账户/退出通过；初次smoke误用list_accounts为404，改用实际get_accounts后通过，非产品缺陷。gateway/agent/bank主文件容器哈希与当前源码一致；agent live且API已配置，DEMO_MODE=true，未发送模型请求或执行转账、不初始化/删除数据。构建及切换日志/private/tmp/sbg-start-latest-{build,switch}.log；PIN仅供用户本地沙箱登录，不写库内文档。 |
+| 2026-11-01 | Codex（拉最新供手测） | 按用户明确要求fetch并检出origin/main 8e2810e6764e3fd3e37406b31e694605751e0356（#113），旧本地AGENTS完整备份/private/tmp/sbg-local-agents-before-8e2810e.md及补丁保留，原两条进度日志带回。构建并更新3000主栈frontend/operator/agent/gateway/bank-backend，7服务healthy；未reset/seed/删除库卷，未改3001旧栈。首页及JS bundle、张三真实登录/get_accounts两账户/退出通过；网关hint_sources、agent verify、L3 reads容器文件哈希均与新head相同。构建/切换日志/private/tmp/sbg-start-8e2810e-{build,switch}.log；PIN保持，未发送模型请求或执行资金写入，不视为43用例/冻结通过。 |
+| 2026-11-02 | Codex（更新手测整站） | 按用户要求fetch并检出main ac0884e2253f7d9ea5c8220183d207efa7000c5c（#114），原本地AGENTS备份/private/tmp/sbg-local-agents-before-ac0884e.md/patch并带回历史日志。构建并更新3000主栈，7服务healthy；首页/JS、张三登录/get_accounts两账户/退出通过，gateway preflight、agent cards及bank reads容器哈希与源码匹配。未迁移/reset/seed/删除任何库卷、未改3001旧栈，PIN保持；未发送模型请求或执行资金操作，不称完整验收。日志/private/tmp/sbg-start-ac0884e-{build,switch}.log。 |
+| 2026-11-02 | Codex（演示控制台入口可见性） | 用户截图证实mode-indicator被App CSS两处display:none隐藏，先前口头定位错误；右上eye实际为主题开关。用户要求代开控制台，当前无可用IAB点击工具且OS辅助访问拒绝(-25211)，未假称已点击。fix/demo-console-entry将按钮改为可见icon-button文字“演示”、加aria-label，并让顶栏容纳额外按钮；仅构建/更新frontend，构建成功且HTTP首页/JS含入口/health200验证。无鉴权/OTP/资金路径改动，不自动登录控制台，不改数据。用户刷新后可点演示打开；BFF重建需重新登录。改动未提交/合并，日志/private/tmp/sbg-demo-console-entry-{build,up}.log。 |
+
+| 2026-11-02 | Codex（BankSense统一命名） | 用户明确将整个项目对外名称改BankSense；feat/banksense-brand更新所有当前页面/标题/导航品牌/卡片/助手/演示短信/导出账单/服务标题及README/PRD/当前交接文档，App入口文件改BankSenseApp.tsx、品牌首字母B、npm显示名banksense-app与锁一致。真实仓库URL、内部包/数据库/Compose/协议头/存储键兼容保留，原始acceptance/review证据、历史规格与旧进度日志字节/事实不改。前端494/BFF16、默认Python4977通过1169条件skip、Docker构建及diff-check通过；更新3000主栈7healthy，实际HTML/JS品牌无旧展示、真实登录/账户读/退出与三层部署源码核验通过。未请求模型/执行资金写/reset库卷；原可见演示入口补修保留。未提交/推送或合并，不称完整本机CI/新live/冻结；详情docs/acceptance/banksense-brand-2026-11-02.md。 |
+
+| 2026-11-02 | Codex（理财产品空目录排查） | 用户发现3000理财页无产品。实际bank库dataset=p1_core_v1且products=0/holdings=0，非前端筛选；此前保留旧基础库未核演示目录。未执行会回填持仓/授权/风险日期的全量seed_demo或reset；先0600 pg_dump备份/private/tmp/banksense-before-product-catalog-20261102.dump，再仅用正式prepare_seed产品与空INTERNAL结算账户、maintenance角色单事务ON CONFLICT DO NOTHING安装，各新增6。事务核对全部旧账户余额/客户/时钟及转账流水持仓订单定时数量不变。真实BFF李四登录/list_products返回6、get_holdings及问卷接口成功并退出；未虚造持仓或新交易。脚本/private/tmp/banksense-install-product-catalog.py，不称初始化/全套演示数据完成。 |
+
+| 2026-11-02 | Codex（张三新增两张演示卡） | 用户明确要求只补后端两卡，前端现有graphite/silver/champagne叠卡无需改。数据库one_current_card_per_account约束保留：crd_zs_2/5678关联现有储蓄，crd_zs_3/9012关联新增备用活期零余额账户；原1234卡保留。maintenance角色单事务获取clock SHARE及张三state_versions UPDATE锁、补current_card_id并递增版本，未修改旧余额、未生成转账。先0600 pg_dump备份/private/tmp/banksense-before-zhangsan-extra-cards-20261102.dump；事务断言旧客户账本计数/所有余额不变，新账户四累计均0。真实张三BFF登录/get_cards三张ACTIVE，API顺序对应石墨/银/香槟金并退出。仅本地演示数据，无前端/种子/权限规则改动；脚本/private/tmp/banksense-add-zhangsan-cards.py。 |
+
+| 2026-11-02 | Codex（张三订阅与未来扣费数据） | 用户明确要求补订阅/未来扣费数据。旧基础库已有canonical四billing但无MERCHANT_MANDATE，故列表空；当前模拟时间仍为正式初始10/15 09上海。保留原billing/现有定时及所有取消状态，精确验证canonical manifest字段、所选4 instruction/grant均从未存在，再通过本机维护脚本新增四种子订阅和逐一scope/hash绑定的合成既有授权，追加LOCAL_DEMO_SUBSCRIPTION_INSTALL审计（明确非用户计划执行），未制造审批/OTP/交易或修改运行时鉴权规则。clock SHARE+客户version UPDATE锁、版本递增，断言所有账户余额、旧指令、转账数量不变，审计链332事件通过；两库先备份/private/tmp/banksense-before-subscriptions-20261102。真实App list_subscriptions四项/月265年3180及upcoming_charges未来7天两笔45元通过。脚本/private/tmp/banksense-add-subscription-fixtures.py；仅本地演示补数、不冒称未来实际扣款已验收，未补造历史消费/闲置证据。 |
+
+| 2026-11-02 | Codex（演示初始化与待推版本） | 用户要求提交推送当前版本，并将本地补数据接入演示初始化。新增app.seed_showcase，reset仅在新库seed_demo之后/seed_consents之前调用；canonical fixture未变，原种子产品/订阅/正式空网关授权安装保持，新增张三两卡/零余额备用账户及current_card指针，generation manifest记banksense_showcase_v1并验证三卡/六产品/四订阅/零余额。新及原seed/生命周期33项真实隔离PG与纯测通过，生产loader/read验证月265/年3180、7日45。独审P2指针漏版本先PG红再绿，复审APPROVE；旧余额、用户冻结卡、异主冲突保护保持，无运行角色扩权。未重置手测库；品牌FE494/BFF16/Python4977及构建证据保留，本次不合并/不tag。GitHub本机HTTPS经代理TLS断开，连接器确认SJeffZhang及仓库push权限，正通过可用连接器交付。 |
+
 ## 5. 下一步待办（按顺序）
 
 ### 第二轮复测双报告修复（2026-11-01）
@@ -1137,7 +1167,7 @@ P0 准备阶段（决定后续一切）：
 
 ### 前端进度（用户2026-10-28明确恢复；竖版 App）
 
-- [x] 主项目 `frontend/` 内实现，沿用原色板/主题；375×812 竖版、内部滚动、底部导航；新入口 `src/mobile/SafeBankApp.tsx`。
+- [x] 主项目 `frontend/` 内实现，沿用原色板/主题；375×812 竖版、内部滚动、底部导航；新入口 `src/mobile/BankSenseApp.tsx`。
 - [x] 六场景页面、统一预演/确认/OTP、小安、安全中心；同站 BFF，真实 wire 适配，预览数据隔离。
 - [x] 新 App 20 项、BFF 10 项、build 通过；竖版合成转账/OTP/取消订阅及页面外观亲验。旧版路由两项超时如实记录。
 - [ ] 真实三层与真实模型联调、W5 console、生产会话持久化、真机键盘与完整 P2 验收。

@@ -88,7 +88,7 @@ function Section({ title, meta, children }: { title: string; meta: string; child
 export default function ComponentsPage() {
   const toast = useToast();
   const { theme, toggleTheme } = useTheme();
-  useDocumentTitle('组件展示 · SafeBank');
+  useDocumentTitle('组件展示 · BankSense');
 
   const [nav, setNav] = useState<NavKey>('home');
   const [wealthTab, setWealthTab] = useState('holdings');
@@ -126,7 +126,7 @@ export default function ComponentsPage() {
   return (
     <div className={styles.page}>
       <TopBar
-        title="SafeBank UI"
+        title="BankSense UI"
         subtitle="设计变量与基础组件 · 375 × 812 · /dev/components"
         actions={
           <IconButton
@@ -143,7 +143,7 @@ export default function ComponentsPage() {
         <div className={styles.intro}>
           <p className={styles.introTitle}>设计变量与基础组件</p>
           <p className={styles.introText}>
-            颜色、字体、圆角、间距与状态全部来自 SafeBank 界面简报 C3。所有数据均为演示，不连接真实接口；
+            颜色、字体、圆角、间距与状态全部来自 BankSense 界面简报 C3。所有数据均为演示，不连接真实接口；
             写操作的确认统一由 ApprovalSheet 承担。
           </p>
           <div className={styles.badgeRow}>

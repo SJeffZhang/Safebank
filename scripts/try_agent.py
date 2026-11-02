@@ -1088,7 +1088,7 @@ def run(
 
 def _parse_args(argv: list[str] | None = None) -> Config:
     parser = argparse.ArgumentParser(
-        description="SafeBank try-agent: drive the full three-layer L1 flow",
+        description="BankSense try-agent: drive the full three-layer L1 flow",
     )
     parser.add_argument(
         "--gateway-url", default=os.environ.get("GATEWAY_URL", "http://gateway:8200")

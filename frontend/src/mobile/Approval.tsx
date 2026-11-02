@@ -315,7 +315,7 @@ export function Approval({
                             if (!isPreview) {
                               // Demo stack only: the console reads the simulated SMS (D5).
                               demoSms(id)
-                                .then((m) => setSms(`【SafeBank 演示短信】验证码 ${m.code}，2 分钟内有效，请勿泄露。`))
+                                .then((m) => setSms(`【BankSense 演示短信】验证码 ${m.code}，2 分钟内有效，请勿泄露。`))
                                 .catch((e) =>
                                   setSms(
                                     e instanceof BankError && e.code === "CONSOLE_LOGIN_REQUIRED"

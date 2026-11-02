@@ -25,7 +25,7 @@ export function TransferPage() {
   const service = useTransferService();
   const flow = useTransferFlow(service);
   const { state, selectedAccount, accountPaused, actions } = flow;
-  useDocumentTitle('转账 · SafeBank');
+  useDocumentTitle('转账 · BankSense');
 
   const isMock = service instanceof MockTransferService;
 

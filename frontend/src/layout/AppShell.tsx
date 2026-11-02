@@ -37,7 +37,7 @@ function navKeyFor(pathname: string): NavKey {
 }
 
 function titleFor(map: Record<string, Title>, pathname: string): Title {
-  return map[pathname] ?? ['SafeBank'];
+  return map[pathname] ?? ['BankSense'];
 }
 
 export function AppShellPrimary() {

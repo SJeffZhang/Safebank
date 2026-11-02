@@ -28,7 +28,7 @@ type LoadStatus = 'initial' | 'loading' | 'loaded' | 'empty' | 'error';
 
 export function SubscriptionsPage() {
   const service = useSubscriptionsService();
-  useDocumentTitle('订阅与提醒 · SafeBank');
+  useDocumentTitle('订阅与提醒 · BankSense');
 
   const [subs, setSubs] = useState<Subscription[]>([]);
   const [summary, setSummary] = useState<SubscriptionSummary | null>(null);

@@ -55,7 +55,7 @@ const payees: Payee[] = [
   {
     id: "pye_ww",
     name: "王五",
-    bank_name: "SafeBank",
+    bank_name: "BankSense",
     account_no_masked: "**** 8891",
     has_transfer_history: true,
     alias: "房租",
@@ -71,7 +71,7 @@ const payees: Payee[] = [
   {
     id: "pye_ls",
     name: "李四",
-    bank_name: "SafeBank",
+    bank_name: "BankSense",
     account_no_masked: "**** 1026",
     has_transfer_history: false,
     alias: null,
@@ -353,7 +353,7 @@ const titles: Record<string, string> = {
 };
 function display(key: string, value: unknown): unknown {
   if (key === "card_id")
-    return `SafeBank 借记卡 · ${cards.find((c) => c.id === value)?.last4 ?? value}`;
+    return `BankSense 借记卡 · ${cards.find((c) => c.id === value)?.last4 ?? value}`;
   if (["account_id", "from_account_id", "to_account_id"].includes(key)) {
     const a = accounts.find((a) => a.id === value);
     return a ? `${a.display_name} · ${a.account_no_masked}` : value;

@@ -174,7 +174,7 @@ export function Cards(p: PageProps) {
                     style={{ "--deck-index": index, zIndex: index + 1 } as CSSProperties}
                     onClick={() => { setDeckSettled(true); setCardId(item.id); setLimit(null); setLost(false); }}
                     aria-label={`选择${purposeOf(item.id) !== "未设置用途" ? purposeOf(item.id) : p.accounts.find((a) => a.id === item.account_id)?.display_name ?? "银行卡"}，尾号${item.last4}`}>
-                    <span className="deck-bank"><span className="brand-glyph">S</span> {purposeOf(item.id)}</span>
+                    <span className="deck-bank"><span className="brand-glyph">B</span> {purposeOf(item.id)}</span>
                     <span className="deck-tail">{item.last4}<Icon name="down" size={12} /></span>
                   </button>
                 ))}
@@ -184,7 +184,7 @@ export function Cards(p: PageProps) {
                 className={`bank-card large card-deck-front ${card.status !== "ACTIVE" ? "inactive" : ""}`}
               >
                 <div className="bank-card-brand">
-                  <span className="brand-glyph">S</span>SafeBank
+                  <span className="brand-glyph">B</span>BankSense
                   <span>{purposeOf(card.id)}</span>
                 </div>
                 <div className="chip">
@@ -388,7 +388,7 @@ export function Cards(p: PageProps) {
       {applicationOpen && <Modal title="申请新银行卡" onClose={() => setApplicationOpen(false)}>
         <div className="modal-body card-application">
           {!isPreview ? <Alert>当前环境暂未接入新卡申请服务，请联系银行办理。</Alert> : <>
-            <Badge>合成演示申请</Badge><h3>SafeBank 标准借记卡</h3>
+            <Badge>合成演示申请</Badge><h3>BankSense 标准借记卡</h3>
             <p className="muted">申请人：{p.profile.display_name} · {p.profile.phone_masked}</p>
             <p className="helper">确认后在演示环境生成一张新卡和余额为零的活期账户，不涉及真实开户。</p>
             <Field label="新卡用途"><input value={applicationPurpose} maxLength={12} onChange={event=>setApplicationPurpose(event.target.value)} placeholder="如：工资收款" /></Field>
@@ -439,9 +439,9 @@ export function Cards(p: PageProps) {
         <Modal title="银行卡号" onClose={closeNumber}>
           <div className="modal-body card-number-details">
             <div className="card-number-bank">
-              <span className="brand-mark">S</span>
+              <span className="brand-mark">B</span>
               <div>
-                <strong>SafeBank 借记卡</strong>
+                <strong>BankSense 借记卡</strong>
                 <small>尾号 {card.last4} · {p.profile.display_name}</small>
               </div>
             </div>

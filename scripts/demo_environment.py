@@ -246,6 +246,11 @@ class DemoEnvironment:
         self.compose(
             "run", "--rm", "bank-maintenance", "python", "-m", "app.seed_demo", overlay=overlay
         )
+        # Add the UI showcase cards to this unpublished generation only.
+        # Products/subscriptions and their exact prior consents remain canonical.
+        self.compose(
+            "run", "--rm", "bank-maintenance", "python", "-m", "app.seed_showcase", overlay=overlay
+        )
         # Explicit fixed synthetic prior consent, never reconstructed by a
         # runtime demo-mode bypass. Export validates exact original bank rows;
         # install accepts only an empty unpublished gateway database.
@@ -272,6 +277,7 @@ class DemoEnvironment:
         digest = self.verify(names)
         manifest = {
             "generation": generation,
+            "profile": "banksense_showcase_v1",
             "databases": names,
             "initial": digest,
             "created_at": datetime.now(UTC).isoformat(),
@@ -323,7 +329,13 @@ class DemoEnvironment:
             order by id) from accounts),
           'instructions', (select json_agg(json_build_array(id,status,next_run_at)
             order by id) from standing_instructions),
-          'orders', (select count(*) from fund_orders));"""
+          'orders', (select count(*) from fund_orders),
+          'products', (select count(*) from products),
+          'subscriptions', (select count(*) from standing_instructions
+            where customer_id='cus_zs' and kind='MERCHANT_MANDATE' and status='ACTIVE'),
+          'cards', (select json_agg(json_build_array(c.id,c.last4,c.status,a.id,a.current_card_id)
+            order by c.id) from cards c join accounts a on a.id=c.account_id
+            where a.customer_id='cus_zs'));"""
         data = json.loads(self.sql("postgres-bank", names["bank"], query))
         seed = json.loads(
             (self.deploy / "services/bank-backend/fixtures/l1_seed_v1.json").read_text()
@@ -350,6 +362,18 @@ class DemoEnvironment:
                 ]
                 if actual_accounts.get(account["id"]) != expected:
                     raise RuntimeError("unexpected initial account balance")
+        expected_cards = [
+            ["crd_zs_1", "1234", "ACTIVE", "acc_zs_chk", "crd_zs_1"],
+            ["crd_zs_2", "5678", "ACTIVE", "acc_zs_sav", "crd_zs_2"],
+            ["crd_zs_3", "9012", "ACTIVE", "acc_zs_demo_reserve", "crd_zs_3"],
+        ]
+        if (
+            data.get("cards") != expected_cards
+            or actual_accounts.get("acc_zs_demo_reserve") != [0, 0, 0, 0]
+            or data.get("products") != len(seed.get("products", []))
+            or data.get("subscriptions") != 4
+        ):
+            raise RuntimeError("invalid BankSense showcase cards, products or subscriptions")
         data["gateway_revision"] = self.sql(
             "postgres-bank", names["gateway"], "SELECT version_num FROM alembic_version;"
         )

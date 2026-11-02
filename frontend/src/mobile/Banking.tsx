@@ -289,7 +289,7 @@ export function Overview(p: PageProps) {
         <div className="overview-aside">
           <section className="bank-card mini">
             <div className="bank-card-brand">
-              <span className="brand-glyph">S</span>SafeBank<span>DEBIT</span>
+              <span className="brand-glyph">B</span>BankSense<span>DEBIT</span>
             </div>
             <div className="chip">
               <i />

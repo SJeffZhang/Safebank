@@ -1,1 +1,1 @@
-export { default } from "./mobile/SafeBankApp";
+export { default } from "./mobile/BankSenseApp";

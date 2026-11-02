@@ -41,7 +41,7 @@ function riskClass(band: string): string {
 
 export function WealthHoldingsPage() {
   const service = useWealthService();
-  useDocumentTitle('全部持仓 · SafeBank');
+  useDocumentTitle('全部持仓 · BankSense');
 
   const [tab, setTab] = useState<string>(() => readViewState(WEALTH_HOLDINGS_TAB_KEY, 'holdings'));
   const [hidden, setHidden] = useState<boolean>(readAmountHidden);

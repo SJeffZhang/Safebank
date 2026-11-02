@@ -240,3 +240,62 @@ def test_previous_image_is_retained_before_mutable_tag_rebuild(tmp_path, monkeyp
     demo.reset()
     build = next(i for i, event in enumerate(events) if event[0] == "build")
     assert len([e for e in events[:build] if e[0] == "retain"]) == 5
+
+
+def test_showcase_runs_only_during_new_generation_before_seed_consent(tmp_path, monkeypatch):
+    demo = environment(tmp_path, monkeypatch)
+    calls = []
+
+    def compose(*args, **kwargs):
+        calls.append(args)
+        return "a" * 64 if args[:2] == ("images", "-q") else ""
+
+    monkeypatch.setattr(demo, "compose", compose)
+    result = demo.reset()
+    commands = [a[a.index("-m") + 1] for a in calls if "-m" in a]
+    assert (
+        commands.index("app.seed_demo")
+        < commands.index("app.seed_showcase")
+        < commands.index("app.seed_consents")
+    )
+    assert result["profile"] == "banksense_showcase_v1"
+
+
+@pytest.mark.parametrize("corrupt", ["cards", "reserve", "products", "subscriptions"])
+def test_verify_refuses_incomplete_showcase(tmp_path, monkeypatch, corrupt):
+    demo = environment(tmp_path, monkeypatch)
+    fixture = demo.deploy / "services/bank-backend/fixtures"
+    fixture.mkdir(parents=True)
+    seed = {
+        "dataset_revision": "seed1",
+        "sim_now": "2026-10-15T09:00:00+08:00",
+        "accounts": [],
+        "products": [{}] * 6,
+    }
+    (fixture / "l1_seed_v1.json").write_text(json.dumps(seed))
+    data = {
+        "customers": 4,
+        "balanced": True,
+        "orders": 0,
+        "seed": "seed1",
+        "sim_now": seed["sim_now"],
+        "accounts": [["acc_zs_demo_reserve", 0, 0, 0, 0]],
+        "products": 6,
+        "subscriptions": 4,
+        "cards": [
+            ["crd_zs_1", "1234", "ACTIVE", "acc_zs_chk", "crd_zs_1"],
+            ["crd_zs_2", "5678", "ACTIVE", "acc_zs_sav", "crd_zs_2"],
+            ["crd_zs_3", "9012", "ACTIVE", "acc_zs_demo_reserve", "crd_zs_3"],
+        ],
+    }
+    if corrupt == "cards":
+        data["cards"].pop()
+    elif corrupt == "reserve":
+        data["accounts"][0][1] = 1
+    elif corrupt == "products":
+        data["products"] = 0
+    else:
+        data["subscriptions"] = 0
+    monkeypatch.setattr(demo, "sql", Mock(return_value=json.dumps(data)))
+    with pytest.raises(RuntimeError, match="showcase"):
+        DemoEnvironment.verify(demo, {"bank": "new_bank", "gateway": "new_gateway"})

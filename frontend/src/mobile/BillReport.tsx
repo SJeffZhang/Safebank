@@ -50,7 +50,7 @@ export function BillReport({sid,month,period,simMonth}:{sid:string;month:string;
       '逐月汇总（入账 / 消费 / 支出）',...report.rows.map(row=>`${row.month}：¥${money(row.income_cents)} / ¥${money(row.summary.total_cents)} / ¥${money(row.expense_cents)}`),
       '按银行模拟时间统计；入账与支出包含转账，消费单独列示。'].join('\n');
     const url=URL.createObjectURL(new Blob([text],{type:'text/plain;charset=utf-8'}));
-    const anchor=document.createElement('a');anchor.href=url;anchor.download=`SafeBank-${period==='month'?month:month.slice(0,4)}-账单报告.txt`;anchor.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    const anchor=document.createElement('a');anchor.href=url;anchor.download=`BankSense-${period==='month'?month:month.slice(0,4)}-账单报告.txt`;anchor.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
   return <div className="modal-body bill-report">
     <div><span className="eyebrow">YOUR BILL REPORT</span><h3>{title}</h3><p className="helper">{months[0]} 至 {months[months.length - 1]} · 全部账户 · 已读取 {report.rows.length}/{months.length} 个月</p></div>

@@ -1,4 +1,4 @@
-# SafeBank Gateway：Codex → Claude 详细交接（2026-10-24）
+# BankSense Gateway：Codex → Claude 详细交接（2026-10-24）
 
 ## 0. 交接边界与最新用户决定
 
@@ -6,7 +6,7 @@
 
 **最新直接指令：用户先要求“暂停所有的定时任务”，随后要求准备详细交接文档和 prompt，准备把工作交接回 Claude。**
 
-- `safebank-worker`（SafeBank P2→P3 自主推进）：已通过 Codex app 工具改为 `PAUSED`，本次再次读配置确认。
+- `safebank-worker`（BankSense P2→P3 自主推进）：已通过 Codex app 工具改为 `PAUSED`，本次再次读配置确认。
 - `skillloop`（SkillLoop 本地模型下载检查）：本来即为 `PAUSED`，保持暂停。
 - 不因接手、余额恢复或旧 heartbeat 提示自动恢复任何定时任务。用户明确要求恢复后再操作。
 - 原有后端 P2→P3 逐组件推进与合格组件发布授权有历史记录；这次 Codex 只做交接。Claude 收到用户发送的接手 prompt 后按其中范围工作，不能把“写交接文档”理解成 Codex 此刻继续开发。

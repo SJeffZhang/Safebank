@@ -16,7 +16,7 @@ export function LoginPage() {
   const location = useLocation();
   const auth = useAuthService();
   const { login } = useSession();
-  useDocumentTitle('登录 · SafeBank');
+  useDocumentTitle('登录 · BankSense');
 
   const [customers, setCustomers] = useState<DemoCustomer[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -181,7 +181,7 @@ export function LoginPage() {
             SB
           </span>
           <span className={styles.brandText}>
-            <span className={styles.brandName}>SafeBank</span>
+            <span className={styles.brandName}>BankSense</span>
             <span className={styles.brandSub}>GATEWAY</span>
           </span>
         </div>

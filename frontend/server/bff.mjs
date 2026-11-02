@@ -650,6 +650,6 @@ if (
   const port = Number(process.env.PORT ?? 3001);
   const host = process.env.HOST ?? "127.0.0.1";
   createBff().listen(port, host, () =>
-    console.log(`SafeBank BFF listening on http://${host}:${port}`),
+    console.log(`BankSense BFF listening on http://${host}:${port}`),
   );
 }

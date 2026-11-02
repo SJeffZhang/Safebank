@@ -140,9 +140,9 @@ describe('欢迎页', () => {
     await waitFor(() => expect(currentPath).toBe('/'));
   });
 
-  it('渲染 SafeBank 品牌、英文标题与中文说明', () => {
+  it('渲染 BankSense 品牌、英文标题与中文说明', () => {
     renderWelcome();
-    expect(screen.getByText('SafeBank')).toBeInTheDocument();
+    expect(screen.getByText('BankSense')).toBeInTheDocument();
     expect(screen.getByText('WELCOME TO SAFE BANK')).toBeInTheDocument();
     expect(screen.getByText(/Take control of/)).toBeInTheDocument();
     expect(screen.getByText(/账户、转账与理财/)).toBeInTheDocument();

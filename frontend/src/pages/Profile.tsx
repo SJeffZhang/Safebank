@@ -63,7 +63,7 @@ export function ProfilePage() {
   const { logout, customer } = useSession();
   const { theme, toggleTheme } = useTheme();
   const profile = useProfileService();
-  useDocumentTitle('个人 · SafeBank');
+  useDocumentTitle('个人 · BankSense');
 
   const transferService = useTransferService();
   const cardService = useCardsService();
