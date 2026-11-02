@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="400" viewBox="0 0 1280 400" role="img" aria-labelledby="title desc">
+  <title id="title">SafeBank Gateway</title>
+  <desc id="desc">先预演，再执行。银行 AI 助手与金融业务安全网关。</desc>
+  <defs>
+    <linearGradient id="bg" x2="1" y2="1">
+      <stop stop-color="#14181c"/>
+      <stop offset="1" stop-color="#272c2e"/>
+    </linearGradient>
+    <linearGradient id="gold" x2="1" y2="1">
+      <stop stop-color="#e8d8b5"/>
+      <stop offset="1" stop-color="#ac8c4f"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="400" rx="20" fill="url(#bg)"/>
+  <path d="M0 336H1280" stroke="#e2cea4" stroke-opacity=".13"/>
+  <g fill="none" stroke="#e2cea4" stroke-opacity=".12">
+    <circle cx="1070" cy="173" r="174"/>
+    <circle cx="1070" cy="173" r="138"/>
+    <circle cx="1070" cy="173" r="102"/>
+  </g>
+  <path d="M1069 61l70 28v66c0 57-37 94-70 113-33-19-70-56-70-113V89z" fill="#d5bd8b" fill-opacity=".05" stroke="url(#gold)" stroke-width="2"/>
+  <path d="M1039 160l21 21 42-46" fill="none" stroke="url(#gold)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="64" y="69" fill="#c8af7e" font-family="Arial, sans-serif" font-size="13" letter-spacing="3">FINTECHATHON 2026 / BANKING AGENT</text>
+  <text x="60" y="150" fill="#f5f2eb" font-family="Arial, sans-serif" font-size="64" font-weight="700" letter-spacing="-2">SafeBank Gateway</text>
+  <text x="64" y="211" fill="#e2cea4" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="31" font-weight="500">先预演，再执行。</text>
+  <text x="64" y="259" fill="#adb1ad" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="18">让自然语言走进银行业务，让每一次操作都有据可查。</text>
+  <g font-family="Arial, sans-serif" font-size="13" letter-spacing="1.6">
+    <text x="64" y="373" fill="#ddd7c9">BANKING AGENT</text>
+    <text x="309" y="373" fill="#d2b782">SECURITY GATEWAY</text>
+    <text x="595" y="373" fill="#ddd7c9">BANKING BACKEND</text>
+  </g>
+  <path d="M252 368h27m-7-4 7 4-7 4m265-4h27m-7-4 7 4-7 4" fill="none" stroke="#bda574"/>
+</svg>

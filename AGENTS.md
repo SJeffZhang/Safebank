@@ -35,10 +35,11 @@
 
 ## 3. 当前状态（每次工作后更新）
 
-**最后更新**：2026-10-31（#96/#98/#99/#100/#101/#102/#103已验收合并；FORM G4/G8实现与恢复/污点回归中，赎回及六场景彩排仍待）
+**最后更新**：2026-11-02（竞赛仓库首页与部署文档整理；当前检出 feat/form-authorization / 7ceda71，业务合并与冻结状态不因文档整理改变）
 
 | 模块 | 状态 |
 |---|---|
+| 仓库展示与复现 | **2026-11-02 本地完成**：重写根 README 与模块说明，补品牌横幅、六场景、证据指标、架构/部署/验证导航及安全边界。新增 docker-compose.demo.yml 仅向 Agent 注入模型 key，L2/L3 开 DEMO_MODE 且保留 B2/双网隔离。基线7ceda71亲跑unit3552/1065skip、frontend400、BFF16及build；lint/契约/Compose静态与边界检查通过。记录docs/acceptance/repository-2026-11-02.md；用户已授权提交推送，发布分支codex/repository-presentation；未调模型、未部署或修改卷。 |
 | 调研 | 开源项目元数据和 DeepSeek 官方信息已核实；评分/提交已从官网公开 JS 核实（docs/acceptance/official-v1.md）；竞品「明鉴」未核实 |
 | PRD | **`PRD.md` = v2.1 定稿**（§0–§16；三轮多 agent 审核 + 两次修订复核，决议 D1–D47 见 §0.5；执行屏障增量约定见ADR-008）。v1.2 与作废的 v2.0 草稿在 `docs/archive/`；审核报告在 `docs/reviews/` |
 | 代码 | **P1 完成并逐组件验收且已由PR #1合入main**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116项单元+33项真实PG通过，契约v1已冻结。历史功能提交7fd7a26、CI权限修复70dcabe，远端unit与p1-postgres均通过（run 39929405919）；完整六场景业务仍未完成。 |
@@ -952,6 +953,12 @@
 | 2026-10-31 | Codex | FORM候选f6479e1新代际live真实F/app路径通过：黄级G19→G4→G9/G6→G8转20000分、绿级冻结成功，重复G4/G8不重复写。SQL两app_form计划EXECUTED/捕获epoch0，两永久绑定/CONSUMED claims、零伪造utterance、一笔20000分转账、卡FROZEN、审批USED/YELLOW、L3各一次、账本平衡、迁移0005。证据form-authorization-live.json；unit3552/1065条件skip，组件295项，独审APPROVE；开始最终head完整CI，未合104/未冻结。 |
 
 | 2026-10-31 | Codex | #104 a9cb028最终CI在旧0001升级保留测试停下：测试增量列清单漏authorization_epoch，实际旧行原字段一致但新增NULL未剥离。补BIGINT/NULL增量断言、保留所有原字段严格相等，真实迁移schema3通过；重跑新最终head完整CI。34独立分支仅新增红测，预审子代理报Codex用量上限，未请求DeepSeek重试，资金修复仍需独审后合并。 |
+
+| 2026-11-02 | Codex | 用户要求全面整理参赛仓库、重写README并突出优势、技术指标与启动部署。核对当前代码/Compose/验收JSON/旧README，确认旧首页仍为P1、实际为feat/form-authorization/7ceda71；据实现重写根/前端/L1/L2/L3/bankcore/评测说明，新增文档导航、架构、部署、验证、安全边界与原生SVG横幅，保留开发历史与来源记录。新增演示Compose叠加解决默认栈未注入Agent模型key及未启用演示入口的问题，凭证不进入版本库；DEMO_MODE不改变B2策略。亲跑make test3552passed/1065conditional skips，frontend400/BFF16/build，make lint与contracts-check/Compose config --quiet通过。未发起模型请求、未启动或重建栈、未动既有卷，未提交推送。文档链接与配置边界最终复核中。 |
+
+| 2026-11-02 | Codex | 仓库文档最终复核：补验收记录repository-2026-11-02.md，修CLI参数为实际--customer-id；静态比较Compose前后network/volumes及逐服务ports/挂载/只读/cap/security/command不变，仅Agent取得模型key、B2保持，缺key按预期拒绝。重新读取语料405条/11文件；SVG XML解析与渲染预览通过。首次链接检查发现待建验收记录，创建后重新检查。全部改动留在当前功能分支工作区，未自动提交、推送或改变仓库可见性。新配置尚未全新机器实启，不声称部署live通过。 |
+
+| 2026-11-02 | Codex | 用户明确要求“推上去”。核对GitHub当前身份SJeffZhang，fetch确认远端main已更新至ac0884e，当前7ceda71已包含于main；为保留后续业务更新，仓库整理单独提交并推送codex/repository-presentation，不覆盖main、不混入后续业务提交。本次文件范围仅对外文档、演示配置与维护日志；提交前复核diff/敏感文件，沿用同一内容上一轮已通过的回归结果。 |
 
 ## 5. 下一步待办（按顺序）
 

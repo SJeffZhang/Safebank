@@ -1,0 +1,15 @@
+# Local competition demo. Use with docker-compose.yml; keep the base network
+# and credential boundaries. Compose reads DEEPSEEK_API_KEY from the root .env.
+services:
+  agent:
+    environment:
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?Set DEEPSEEK_API_KEY in the root .env}
+  gateway:
+    environment:
+      DEMO_MODE: 'true'
+      EVAL_MODE: 'false'
+      GATEWAY_PROFILE: B2
+  bank-backend:
+    environment:
+      DEMO_MODE: 'true'
+      EVAL_MODE: 'false'

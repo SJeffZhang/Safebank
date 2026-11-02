@@ -1,149 +1,81 @@
-# gateway（L2 Security Gateway）
+# L2 · Security Gateway
 
-三明治架构的中间层：L1（agent）的所有读工具、评估与执行都经这里进入 L3。L2 是唯一持有 `GATEWAY_SERVICE_TOKEN` 的一方，也是唯一能写 L3 的一方。W0 打下的基础骨架已通过架构评审修订，W1–W4 在此之上并行填业务。
+网关是助手、表单与银行后端之间的业务入口。它独立验证授权来源，预演金融状态，检查跨步骤与跨会话风险，并负责审批、OTP、执行恢复和审计。授权规则不依赖 LLM 判断。
 
-> import 路径：本服务包名是 `services.gateway.app`（目录 `services/gateway/app/`），不是顶层 `app`。仓库共享 PYTHONPATH 里已有 bank-backend 的 `app` 包，为避免同名冲突，gateway 一律用 `services.gateway.app.*` 导入；包内用相对导入（`from .config import ...`）。
+## 评估与执行
 
-## 启动
-
-```bash
-make keys && make up          # 根目录编排：build → postgres → bank 迁移/seed → gateway 迁移 → 全部服务
-# 或单独跑进程（两个绑定地址必须不同）：
-GATEWAY_PUBLIC_BIND=127.0.0.1 GATEWAY_INTERNAL_BIND=127.0.0.2 \
-  .venv/bin/python -m services.gateway.app.main
+```text
+契约 → 实体 → 来源与污点 → 意图 → 快照 → 累积预演 → 工作流 → 决策 → 审计
 ```
 
-一个 asyncio 进程跑两个 `uvicorn.Server`：
+结果为 `ALLOW`、`REQUIRE_APPROVAL`、`REPLAN` 或 `DENY`。工具基础风险与 ActionKind 来自 [`policies/tools.yaml`](policies/tools.yaml)；金额、目标和派生值要通过来源与意图范围检查。
 
-- `public_app`：`:8200`，只有公共路由（G1–G22a + `/health`），**绝不注册 `/internal/*`**。
-- `internal_app`：`:8201`，**只有 `/internal/*`**（S 服务令牌），供 scheduler 回调（S1）。
+确认面板与 `view_hash` 由 L2 生成，审批绑定具体计划和风险内容。执行时再次复演，状态变化不能沿用不相符的审批。表单步骤只从持久化 action 重建，并验证会话、有效期和授权代际。未知执行结果通过 L3 对账恢复。
 
-启动时校验授权矩阵覆盖（`auth/matrix.coverage_errors`）：已挂载路由 ⊆ 矩阵、矩阵里每条记录都有对应路由（D 路由与 G22 按 DEMO/EVAL 模式），public 不能有 `/internal/*`、internal 不能有非 `/internal/*`。
+定时转账、商户代扣与基金事件通过内部回调检查当前授权与业务状态；审计哈希链记录决策与执行事件。完整说明见[架构文档](../../docs/architecture.md)。
+
+## 运行边界
+
+一个进程启动两个应用，共用受控运行资源：
+
+| 应用 | 监听位置 | 范围 |
+|---|---|---|
+| public | `agent-net:8200` | App / Agent 业务接口；不注册 `/internal/*` |
+| internal | `bank-net:8201` | 调度回调；不注册公共接口 |
+
+路由授权矩阵在启动时检查覆盖，调用方身份决定 `origin`。L1 不能自称表单来源。BFF、Agent、scheduler 与控制台使用独立凭证；只有网关运行路径使用 L3 业务调用令牌。
+
+包导入名为 `services.gateway.app`，避免与银行后端的 `app` 同名。
+
+## 启动与环境变量
+
+根目录启动步骤见[部署指南](../../docs/deployment.md)。迁移由独立 `gateway-maintenance` 容器执行。配置集中于 [`app/config.py`](app/config.py)。
+
+| 变量 | 用途 |
+|---|---|
+| `GATEWAY_DATABASE_URL` | 网关运行角色数据库连接 |
+| `GATEWAY_PUBLIC_BIND` / `GATEWAY_INTERNAL_BIND` | 两个不同网络的绑定地址 |
+| `GATEWAY_SERVICE_TOKEN` | 网关调用 L3 |
+| `FRONTEND_SERVICE_TOKEN` / `AGENT_SERVICE_TOKEN` / `SCHEDULER_SERVICE_TOKEN` | F / A / S 调用身份 |
+| `DEMO_CONSOLE_TOKEN` | 独立演示控制台身份 |
+| `APPROVAL_HMAC_KEY` / `OTP_HMAC_KEY` | 独立审批与验证码密钥，至少 32 字节且互异 |
+| `JWT_PRIVATE_KEY_PATH` / `JWT_PUBLIC_KEY_PATH` | Ed25519 签验密钥 |
+| `DEMO_PINS_FILE` | 本机生成的合成客户 PIN |
+| `BANK_BACKEND_URL` | L3 地址，默认 `http://bank-backend:8300` |
+| `DEMO_MODE` / `EVAL_MODE` | 互斥；演示与评测接口仅在对应模式挂载 |
+| `GATEWAY_PROFILE` | 默认完整 B2；非 B2 只允许 EVAL 模式 |
+| `GATEWAY_MAX_EXECUTIONS` | 执行并发上限，默认 8 |
+
+Compose 用短暂引导进程将只读宿主秘密文件复制至私有 tmpfs，再永久降权到 UID/GID 10001。宿主私钥与 PIN 保持 0600；最终应用不以 root 执行。资源、密钥或撤销校验缺失时拒绝继续。
+
+## 代码入口
+
+| 路径 | 内容 |
+|---|---|
+| `app/pipeline/` | 九阶段评估与执行复演 |
+| `app/utterance/` | 原话登记、解析、范围与生命周期 |
+| `app/approval/` | 确认面板、审批绑定、OTP |
+| `app/execution/` | 执行、状态变化屏障与恢复 |
+| `app/auth/` | 凭证、JWT、PIN、授权矩阵与撤销检查 |
+| `app/internal/scheduled.py` | 到期业务授权与终态处理 |
+| `app/audit/` | 哈希链与校验 |
+| `app/runtime.py` | 双应用共享运行资源 |
+| `migrations/` | 前向 Alembic 迁移与 DDL 快照 |
 
 ## 测试
 
 ```bash
-make test-gateway        # 单元测试（双端口隔离、护栏、错误、JWT、矩阵、fake L3、流水线、DDL 防漂移）
-make test-gateway-db     # 起唯一命名/随机端口的临时 Postgres 16，跑迁移与 DB 测试，测完销毁
-make test                # 全量（含 P1 116 单测）
-make up && make test-p1  # 全栈健康 + P1 真实 PG 验收（指挥在集成分支跑）
+make test-gateway
+make test-gateway-db
+make test-shared-runtime
+make test-w1
+make test-w2
+make test-w3b
+make test-w4b1
+make test-w4b2b
+make test-w4b2c
+make test-w4c
+make test-s1
 ```
 
-`make test-gateway-db` 内部设置 `GATEWAY_DB_TESTS=1`；其余 pytest 调用会跳过 DB 测试。多个 worker 可并发跑 `test-gateway-db`，互不冲突。
-
-## 环境变量（gateway.env）
-
-| 变量 | 说明 |
-|---|---|
-| `GATEWAY_DATABASE_URL` | 运行角色 `gateway_app` 连 `gateway` 库 |
-| `GATEWAY_PUBLIC_BIND` / `GATEWAY_INTERNAL_BIND` | 两端口绑定地址（必须不同、不能 `0.0.0.0`） |
-| `GATEWAY_SERVICE_TOKEN` | L2 → L3 |
-| `FRONTEND_SERVICE_TOKEN` / `AGENT_SERVICE_TOKEN` / `SCHEDULER_SERVICE_TOKEN` / `DEMO_CONSOLE_TOKEN` | F/A/S/D 服务令牌，常量时间比较，启动时校验互不相同 |
-| `APPROVAL_HMAC_KEY` / `OTP_HMAC_KEY` | W4/W5 用。显式 Settings 一次性快照，UTF-8 编码各 ≥32 bytes、互异且不等任何服务令牌；缺失/短/重复在 DB/L3 分配前 503 拒绝。|
-| `DEMO_MODE` / `EVAL_MODE` | 互斥；非 B2 `GATEWAY_PROFILE` 只在 EVAL_MODE |
-| `GATEWAY_PROFILE` | `B0/B1/B2/B2_NO_PREFLIGHT/B2_NO_WORKFLOW/B2_NO_TAINT`，默认 B2 |
-| `GATEWAY_MAX_EXECUTIONS` | 并发执行上限，默认 8 |
-| `BANK_BACKEND_URL` | L3 base URL，默认 `http://bank-backend:8300` |
-| `JWT_PUBLIC_KEY_PATH` | EdDSA 公钥路径，默认 `/run/secrets/jwt-public.pem`；缺失/读不到拒绝启动 |
-
-## 目录结构
-
-```text
-services/gateway/
-├── alembic.ini
-├── migrations/                 # 独立 Alembic；波次 1 期间 worker 不写迁移
-│   ├── env.py                  # 读 GATEWAY_MIGRATION_DATABASE_URL
-│   ├── schema_v1.json          # 从 app/tables.py 固化的 DDL（表拓扑序 + 索引排序）
-│   └── versions/0001_gateway.py
-└── app/
-    ├── main.py                 # 双应用单进程入口 + 路由 include + 矩阵覆盖断言（仅 W0 改）
-    ├── config.py               # Settings + 启动护栏
-    ├── errors.py               # GatewayError + 统一错误体
-    ├── middleware.py           # trace-id、404/405/500 统一错误、契约 details
-    ├── db.py                   # engine / ready
-    ├── tables.py               # gateway 库全部表（CHECK 由 schemas.enums 生成）
-    ├── state.py                # 状态迁移唯一入口（legal 迁移表 + transition 校验）—— 只此一处改状态
-    ├── idempotency.py          # request_dedup 持久幂等辅助（request_idempotent）
-    ├── locks.py                # customer_lock（W4 实现、W5 复用）
-    ├── schemas/                # 对外的 Pydantic 模型 + 枚举（仅 W0 改，改即接口变更）
-    ├── policy/
-    │   └── registry.py         # ToolPolicy + action_kind + outflow + 加载校验（结构仅 W0 改，W2 只改值）
-    ├── approval/               # W4：service.create_for_evaluation / planview.build_view
-    ├── evaluation/             # W3：repo.append_evaluation
-    ├── execution/              # W4：replay（W3 实现、W4 调用）
-    ├── auth/
-    │   ├── tokens.py           # F/A/S/D 令牌 + 严格 EdDSA JWT 校验/测试签发（W1 扩展签发）
-    │   ├── matrix.py           # 静态授权矩阵全表 + lookup + 覆盖断言（仅 W0/指挥改）
-    │   └── deps.py             # resolve_caller / caller_dependency（解析 Caller、推导 origin、写 request.state.caller）
-    ├── api/                    # 公共路由模块，各任务只改自己的
-    │   ├── auth.py sessions.py          # W1（G1/G14/G22；G3/G15/G18–G22a）
-    │   ├── tools.py                      # W2（G2）
-    │   ├── plans.py                      # W3（G4）
-    │   ├── execution.py approvals.py     # W4（G5/G8；G6/G7/G9/G10/G17）
-    │   ├── notify_audit.py               # W5（G11/G12/G13/G16）
-    │   └── demo.py                       # W5（D0–D12，仅 DEMO/EVAL 挂载）
-    ├── internal/scheduled.py   # W5（S1）
-    ├── l3/
-    │   ├── client.py           # httpx 客户端（prepare 3s/execute 10s/其余 5s，可注入；L3NotDelivered/L3OutcomeUnknown/L3BusinessError）
-    │   └── fake.py             # 有状态 fake L3：真实超时/丢包/commit_then_drop、令牌校验、intent 状态机、可编程快照与结果
-    ├── audit/chain.py          # 审计哈希链 append / append_tx / verify（hash 覆盖 created_at_wall，时区规范到 UTC）
-    └── pipeline/               # 评估流水线（仅 W0 改 __init__.py / context.py）
-        ├── __init__.py         # 编排 + DENY 只短路 ⑤⑥⑦ + profile 开关
-        ├── context.py          # EvalContext（每阶段一个结果槽 + steps + 惰性 L3 状态访问器）/ Finding / Stage
-        └── {contract,entity,provenance,intent,snapshot,preflight,workflow,decision,audit}.py
-```
-
-`policies/tools.yaml` 在 `services/gateway/policies/`（注册表 `app/policy/registry.py` 读取并校验 14 个写工具）。
-
-## 分工与共享规则（W1–W4 阅读）
-
-- **阶段归属**：① contract、② entity、③ provenance、④ intent → **W2**；⑤ snapshot、⑥ preflight、⑦ workflow、⑧ decision、⑨ audit 阶段 + G4 组装 → **W3**；W1 生产原话/scope，W4 审批与执行。
-- **不改的文件**：`pipeline/__init__.py`、`pipeline/context.py`、`schemas/**`、`auth/matrix.py`、`state.py`、`tables.py`、`migrations/**`、`main.py`、`policy/registry.py` 的结构、`policies/tools.yaml` 的结构、`pyproject.toml`、`uv.lock`、compose。需要改就写「待决」由指挥统一改。
-- **工具注册表**：`policies/tools.yaml` 的结构与 14 个工具的集合由 W0 锁定，W2 之后只能提交值的修正。`action_kind` 对找不到的卡 fail-closed（抛 `LookupError`）；对外转出口径用 `registry.outflow(tool, args, shadow_state)`（只有 TRANSFER_EXTERNAL 与目标为他人的 schedule_transfer 计，申购/赎回不计）。
-- **状态变更**只能调 `state.transition`（会校验合法迁移表，非法边直接 `ValueError`）；**request_id 接口**只能用 `app.idempotency.request_idempotent`（进行中返回 409 `EXECUTION_IN_PROGRESS`，produce 抛异常清进行中行）；错误只能 `raise GatewayError(Code.X)`；调 L3 只能用 `L3Client`（测试用 fake L3 的 `transport()`）；审计只能用 `audit.append_tx`（不要在含 HTTP 调用的事务里 append）。
-- **交叉接口占位**（签名已定，实现方标注在 docstring）：`approval.service.create_for_evaluation`（W4）、`approval.planview.build_view`（W4）、`evaluation.repo.append_evaluation`（W3）、`locks.customer_lock`（W4）、`execution.replay.replay`（W3 实现、W4 调用）。
-- **波次 1 不写迁移**：需要改表写进「待决」，由指挥在集成分支串行加 `0002_wave1`。
-- **② 实体阶段**用 `ctx.bank_state()`（惰性、带缓存的 L3 快照，带计划步骤）核对所有权并写 `ctx.steps`；⑤ 只钉住 versions/clock_version，不重复拉取。
-
-## 流水线插件接口
-
-- 阶段按 §7.2 ①–⑨ 顺序编排；DENY 后只短路 ⑤ snapshot/⑥ preflight/⑦ workflow，⑧ decision 与 ⑨ audit 恒运行（`always_run=True`）。E 类错误（如契约 E422）`raise GatewayError`，不写成 finding。
-- `EvalContext` 每阶段一个结果槽：`identity`/`authorization`（W1）、`provenance`/`intent`（W2）、`snapshot`/`preflight`/`workflow`/`decision`（W3），加上 `mode`、`profile`、`wall_now`、`conn`、`l3`、`stage_status`。`Finding` 即 `schemas.FindingView`（effect 枚举为 `FindingEffect`）。
-- `GATEWAY_PROFILE` 消融通过 `Stage.enabled(profile)` 关闭阶段；`evaluate(ctx, mode=...)` 支持 EVALUATE / EXECUTE_REPLAY / SHADOW_B1（SHADOW_B1 不写库、不审计）。
-
-## 待决（给指挥）
-
-- `BANK_BACKEND_URL` 与 `ExecutionJobStatus`/`WorkflowEventStatus` 的取值请补记 PRD §11.1 / §7.2。
-- `requirements.txt`/`requirements-test.txt` 已按锁重新导出，`.wheels` 已生成，镜像可起。
-- `gateway_admin` 尚无 LOGIN 凭证（reset 用），W5 需要补；`ALTER DEFAULT PRIVILEGES … ON SEQUENCES` 已在 0001 里补上，但对已跑过 0001 的旧卷不会重放，fresh `make up` 会带上。
-- 公共路由已挂全局 `caller_dependency`：非 `/health` 路由不带凭证一律 401（默认拒绝），处理函数经 `request.state.caller` 取 `Caller`。
-
-## 集中运行资源与秘密文件（S1）
-
-生产入口 `serve` 在启动两个监听器前进入一次 `app.runtime.gateway_runtime`，统一创建 AsyncEngine、L3Client 和 UTC wall clock；两应用共享 `app.state.db/l3/wall_now/settings`。只在两个监听器都停止后关闭资源，启动中途出错也释放已创建的资源。处理器不得另建池。单独构造 app 的单元测试仍兼容原签名；生产资源由入口负责注入。
-
-`JWT_PRIVATE_KEY_PATH` 默认 `/run/secrets/jwt-private.pem`；私钥必须是普通 0600 文件，拒绝符号链接，且必须与公钥构成 Ed25519 密钥对。`DEMO_PINS_FILE` 默认 `/run/secrets/demo_pins`，PIN 解析与哈希由 W1 `auth.pin.configured_hashes_from_file(pins_file: str)` 提供；runtime 将当前 `Settings.demo_pins_file` 原样传给它，启动时加载一次后保留在 `app.state.pin_hashes`，请求期间不重读。显式 Settings 路径不受进程中 `DEMO_PINS_FILE`、`DEMO_PIN_HASHES` 或旧零参 loader 缓存覆盖；不同启动各自加载，包括同一路径内容更新后的新启动。W1 模块尚未合并时该资源明确未配置；S1 不提供默认 PIN 或成功替身。模块存在但新 loader 缺失/不可调用，或 loader 拒绝缺失/非法文件时以 `DEPENDENCY_UNAVAILABLE` / 503 拒绝启动，且不退回旧 `configured_hashes()`。`gateway_runtime(..., pin_hashes=...)` 的显式注入继续跳过自动加载，空字典也保持该行为。
-
-`caller_dependency` 在验证 F/A 客户 JWT 后调用 W1 `tokens.check_revocation(conn,caller,now=...)`；DB、时钟或检查函数缺失均拒绝（503），撤销/过期/缺行错误由 W1 决定并传递。S/F/D 的纯服务凭证及控制台凭证按原授权矩阵处理。真实登录→会话→撤销验收须在 W1 合并后补跑；S1 的签名替身测试只证明依赖接线。
-
-Compose 的 gateway 使用短暂 root 引导进程 `scripts.gateway_entrypoint` 读取 `/run/bootstrap` 中只读挂载的宿主 0600 私钥和 demo_pins。它只将两文件复制到 `/run/gateway-private` 私有 tmpfs（目录 0700、文件 0600、属主 UID/GID 10001），设置进程内 JWT_PRIVATE_KEY_PATH/DEMO_PINS_FILE 后清空附加组并降到 UID/GID 10001，再 exec gateway。最终应用无 effective/permitted capabilities，保留 no-new-privileges；宿主文件权限不变。
-
-引导仅增加 CHOWN（赋予副本所有权）、DAC_OVERRIDE（读取不同宿主 UID 的 0600 文件）、SETUID/SETGID（永久降权）四项 capability；其他服务仍保持原用户及 cap_drop ALL。私钥与 PIN 不进入镜像或日志，源挂载不可写。运行目录不是独立 tmpfs、缺文件或权限错误均拒绝启动。
-
-```bash
-make test-shared-runtime # 明确启用真实临时PG与独立Linux秘密权限验收
-```
-
-该目标要求 Docker 后台可用，使用已有 `safebank-p0:local` 为 Linux 验收基底，只构建独立随机 tag，既不替换现有镜像 tag，也不启动/停止 compose 栈。临时 PG 的 PGDATA 与秘密验收均显式使用 tmpfs，不分配 Docker 数据卷。
-
-W4 锁服务接口已确定为 `locks.configure(db,max_executions=...)`；集中 runtime 在 hook 存在时传入同一个 engine，缺失时保留尚未实现状态。生产连接池为 `max(18,2*max_executions+2)`，无 overflow。
-
-## 审批 / OTP 密钥（W4b2a）
-
-`GatewayRuntime` 启动时从显式 `Settings.approval_hmac_key` / `Settings.otp_hmac_key` 一次性取得两项独立密钥快照（UTF-8 编码为 `bytes`，`repr=False`），在分配 DB 连接池、锁和 L3 客户端**之前**校验：非空非空白、各 ≥32 bytes、互异且不等任何已配置服务令牌。任一失败 `DEPENDENCY_UNAVAILABLE` / 503，错误消息不泄露原值。
-
-`install(app)` 将同一个 bytes 对象分别放到 `app.state.approval_hmac_key` / `app.state.otp_hmac_key`；双应用共享同一 runtime 资源，不重复编码或缓存。`Settings` 上的字段 `repr=False` 确保日志/错误仅打印 `<hidden>`。
-
-本组件不调用 `approval.service.configure`——该库当前为全局 `_config`，将全局重配当成实例隔离会在两个不同 runtime 间串用密钥。后续确认/OTP 调用方须设计显式实例适配，本组件仅提供资源快照。
-
-S1 评审修复后，监听器由 GatewayServer 包装真实 Uvicorn 生命周期：停止监听、等待或取消并等待在途请求、完成 lifespan 后才释放 DB/L3；任一 listener 的启动/运行异常及上层取消都走此路径。Compose healthcheck 是独立进程，单独降权到 UID/GID 10001 后才发起 HTTP。状态入口按表唯一单列 PK 寻址，authorization_claims 只允许 CLAIMED→CONSUMED。
+数据库与秘密权限目标需要 Docker，使用独立临时环境。完整 CI 列表见 [`checks.yml`](../../.github/workflows/checks.yml)，已有实测与未覆盖项见[验证说明](../../docs/validation.md)。
