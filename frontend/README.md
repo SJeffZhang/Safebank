@@ -56,7 +56,7 @@ npm run test:bff
 npm run build
 ```
 
-2026-11-02 本轮回归：前端 400 项、BFF 16 项通过，TypeScript 与构建通过。BFF 套件使用本地测试上游，真实业务结果另见[验证说明](../docs/validation.md)。
+2026-11-02 本轮回归：前端 494 项、BFF 16 项通过，TypeScript 与构建通过。BFF 套件使用本地测试上游，真实业务结果另见[验证说明](../docs/validation.md)。
 
 完整卡号与 PIN 查看流程目前只在合成预览提供；live 模式没有完整 PAN 接口，不将该演示交互当作真实银行鉴权。开户、真实短信与真实支付不属于当前后端接入范围。
 

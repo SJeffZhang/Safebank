@@ -4,12 +4,12 @@ SafeBank 将自动化测试、真实模型链路和安全效果评测分开记�
 
 ## 本次回归
 
-2026-11-02，在代码基线 `7ceda71`、分支 `feat/form-authorization` 上执行：
+2026-11-02，在代码基线 `f324c52`、分支 `feat/form-authorization` 上执行：
 
 | 命令 | 结果 | 说明 |
 |---|---|---|
-| `make test` | 3,552 passed / 1,065 skipped | 30.86 秒；条件跳过项没有计为通过 |
-| `cd frontend && npm test` | 400 passed，43 个文件 | 13.77 秒；包含 App 与既有页面回归 |
+| `make test` | 4,977 passed / 1,169 skipped | 35.90 秒；条件跳过项没有计为通过 |
+| `cd frontend && npm test` | 494 passed，50 个文件 | 13.73 秒；包含 App 与既有页面回归 |
 | `cd frontend && npm run test:bff` | 16 passed / 0 skipped | 本地测试上游，检查 BFF HTTP 边界 |
 | `cd frontend && npm run build` | 通过 | TypeScript 与 Vite 构建 |
 
