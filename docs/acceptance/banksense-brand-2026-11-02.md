@@ -9,7 +9,7 @@
 
 验证：前端 494 passed，BFF 16 passed，默认 Python 4977 passed / 1169 conditional skipped。Docker 两镜像构建成功；整站 7 服务 healthy。HTTP 实际 HTML/JS 中标题、助手、演示短信均为 BankSense；旧品牌只保留内部协议头，页面展示无旧名称。真实登录、正式 get_accounts 返回两账户、退出成功，三个后端部署入口文件与当前源码相同。
 
-未调用生产模型、执行资金操作或重置数据。未跑完整条件 PostgreSQL CI；本次无授权/资金规则变化。日志位于本机 `/private/tmp/banksense-{frontend-test,bff-test,python-test,build,up}.log`。当前改动未提交推送。
+未调用生产模型、执行资金操作或重置数据。未跑完整条件 PostgreSQL CI；本次无授权/资金规则变化。日志位于本机 `/private/tmp/banksense-{frontend-test,bff-test,python-test,build,up}.log`。代码已推送 `feat/banksense-brand`，草稿 [PR #116](https://github.com/SJeffZhang/Safebank/pull/116)。代码提交为 `8b412bbbe6f2e70e76abc613258342e6ccc0543d`；完整最终head CI与合并仍待，不把本记录当冻结完成。
 
 ## 可重复初始化接线
 

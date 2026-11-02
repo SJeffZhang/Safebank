@@ -39,9 +39,9 @@
 
 **最后更新**：2026-11-01（双报告修复/独审完成，精确代码9545148a12fff197beea350dbadbd2abb89fe4d7全部35步本机CI PASSED；含回执最终head完整CI、匹配合并/恢复main结果以PR #114实际回执为准，原24/43现场未改、不冻结）
 
-本机手测部署（2026-11-02）：当前main基础为ac0884e，本地feat/banksense-brand已按用户要求统一BankSense对外名称并更新3000整站；7服务healthy，登录/get_accounts与实际静态产物品牌检查通过，数据库和PIN保留。此本地更名未提交推送，不代表冻结验收。
+本机手测部署（2026-11-02）：当前main基础为ac0884e，本地feat/banksense-brand已按用户要求统一BankSense对外名称并更新3000整站；7服务healthy，登录/get_accounts与实际静态产物品牌检查通过，数据库和PIN保留。此版本已推送feat/banksense-brand并创建草稿PR #116，尚未合入main，不代表冻结验收。
 
-本地界面补修：控制台入口原被CSS隐藏，现已在fix/demo-console-entry将顶栏入口显示为“演示”，构建并更新frontend，HTTP/产物核验通过；未提交，未代点或自动登录。
+本地界面补修：控制台入口原被CSS隐藏，现已在fix/demo-console-entry将顶栏入口显示为“演示”，构建并更新frontend，HTTP/产物核验通过；已随feat/banksense-brand推送，未代点或自动登录。
 
 理财数据补记（2026-11-02）：旧基础库产品目录为0，现已安全增补正式种子6产品及6空结算账户；真实App产品/持仓/问卷接口通过。旧客户余额/交易/时钟不变，仍非完整新代际演示初始化。
 
@@ -1098,6 +1098,8 @@
 | 2026-11-02 | Codex（张三订阅与未来扣费数据） | 用户明确要求补订阅/未来扣费数据。旧基础库已有canonical四billing但无MERCHANT_MANDATE，故列表空；当前模拟时间仍为正式初始10/15 09上海。保留原billing/现有定时及所有取消状态，精确验证canonical manifest字段、所选4 instruction/grant均从未存在，再通过本机维护脚本新增四种子订阅和逐一scope/hash绑定的合成既有授权，追加LOCAL_DEMO_SUBSCRIPTION_INSTALL审计（明确非用户计划执行），未制造审批/OTP/交易或修改运行时鉴权规则。clock SHARE+客户version UPDATE锁、版本递增，断言所有账户余额、旧指令、转账数量不变，审计链332事件通过；两库先备份/private/tmp/banksense-before-subscriptions-20261102。真实App list_subscriptions四项/月265年3180及upcoming_charges未来7天两笔45元通过。脚本/private/tmp/banksense-add-subscription-fixtures.py；仅本地演示补数、不冒称未来实际扣款已验收，未补造历史消费/闲置证据。 |
 
 | 2026-11-02 | Codex（演示初始化与待推版本） | 用户要求提交推送当前版本，并将本地补数据接入演示初始化。新增app.seed_showcase，reset仅在新库seed_demo之后/seed_consents之前调用；canonical fixture未变，原种子产品/订阅/正式空网关授权安装保持，新增张三两卡/零余额备用账户及current_card指针，generation manifest记banksense_showcase_v1并验证三卡/六产品/四订阅/零余额。新及原seed/生命周期33项真实隔离PG与纯测通过，生产loader/read验证月265/年3180、7日45。独审P2指针漏版本先PG红再绿，复审APPROVE；旧余额、用户冻结卡、异主冲突保护保持，无运行角色扩权。未重置手测库；品牌FE494/BFF16/Python4977及构建证据保留，本次不合并/不tag。GitHub本机HTTPS经代理TLS断开，连接器确认SJeffZhang及仓库push权限，正通过可用连接器交付。 |
+
+| 2026-11-02 | Codex（GitHub推送回执） | 已通过SJeffZhang连接器发布代码提交8b412bbbe6f2e70e76abc613258342e6ccc0543d至feat/banksense-brand，草稿PR #116：https://github.com/SJeffZhang/Safebank/pull/116。发布前68文件凭据/路径扫描和diff-check通过；GitHub源码树15e7f8bb3ab3b575514570b58644d46f541d517c与本地提交完全一致，客户端TLS故障未改变仓库凭据/网络设置。GitHub生成提交元数据与本地原74f3600不同，已精确重建远端commit对象并保留旧提交于refs/wip；本地分支/追踪与远端对齐。代码/初始化/复审已交付，完整最终head本机CI与合并仍待；期间main已由队友推进，未覆盖main或自动合并。本次仅补交付文档。 |
 
 ## 5. 下一步待办（按顺序）
 
