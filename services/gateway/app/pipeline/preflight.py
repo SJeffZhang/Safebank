@@ -94,18 +94,25 @@ class PreflightStage(Stage):
         state = await ctx.bank_state()
         steps = ctx.plan_draft.steps
         cumulative = not ctx.profile.startswith("B1")
-        has_transfer = any(s.tool == "transfer" for s in ctx.steps)
+        affects_reserve = any(
+            s.tool in {"transfer", "subscribe_product", "schedule_transfer"} for s in ctx.steps
+        )
 
         self._single_thresholds(ctx)
         sim = self._simulate(state, steps, ctx.customer_id, ctx.plan_id, cumulative)
         if sim.error is not None:
             await self._record_hard(ctx, sim, cumulative)
-            if cumulative and has_transfer:
+            if cumulative:
                 self._display_reserve(ctx, state)
         else:
             self._record_success(ctx, state, sim)
-            if cumulative and has_transfer:
+            if cumulative and affects_reserve:
                 await self._reserve(ctx, state, sim.state)
+            elif cumulative:
+                # Protective/non-outflow plans keep their existing policy path.
+                # Show the same pre-plan reserve as outflow plans when known,
+                # without turning unavailable display data into a new denial.
+                self._display_reserve(ctx, state)
         self._irreversible(ctx)
 
     # ---- per-step single thresholds (B1 and B2) ---------------------------
@@ -193,13 +200,14 @@ class PreflightStage(Stage):
         """Best-effort display reserve for a plan that already failed.
 
         The failure finding (INSUFFICIENT_FUNDS etc.) must never be masked by a
-        reserve dependency 503, so an unavailable projection just leaves the
-        display fields at zero.
+        reserve dependency 503. Unavailable display data keeps the explicit
+        availability flag false; a default zero must not claim zero obligations.
         """
         report = self._project_optional(ctx, before)
         if report is None:
             return
         ctx.preflight.scheduled_reserve_cents = report.total_reserve_cents
+        ctx.preflight.reserve_projection_available = True
         ctx.preflight.shortfall_before_cents = report.total_shortfall_cents
 
     async def _reserve(self, ctx: EvalContext, before, after) -> None:
@@ -208,6 +216,7 @@ class PreflightStage(Stage):
         if report_before is None or report_after is None:
             return
         ctx.preflight.scheduled_reserve_cents = report_before.total_reserve_cents
+        ctx.preflight.reserve_projection_available = True
         ctx.preflight.shortfall_before_cents = report_before.total_shortfall_cents
         ctx.preflight.shortfall_after_cents = report_after.total_shortfall_cents
         if report_after.total_shortfall_cents > report_before.total_shortfall_cents:
@@ -273,20 +282,48 @@ class PreflightStage(Stage):
         index = next((i for i, s in enumerate(steps) if s.step_id == step_id), None)
         if index is None:
             return None
-        shadow = apply_plan(state, steps[:index], ctx.customer_id, ctx.plan_id).state
+        prefix = apply_plan(state, steps[:index], ctx.customer_id, ctx.plan_id)
+        if prefix.error is not None:
+            return None
+        shadow = prefix.state
         step = ctx.steps[index]
         args = step.args
-        if code is Code.CARD_SINGLE_LIMIT:
-            return self._card_single_limit(shadow, args)
-        if code is Code.CARD_DAILY_LIMIT:
-            return self._card_daily_remaining(shadow, args)
         report = self._project_optional(ctx, shadow)
         if report is None:
             return None
-        account = report.accounts.get(args["from_account_id"])
+        account = report.accounts.get(args.get("from_account_id", args.get("account_id")))
         if account is None:
             return None
-        return account.max_outflow_cents
+        maximum = account.max_outflow_cents
+        if step.tool != "transfer":
+            return maximum
+        if step.outflow:
+            single = self._card_single_limit(shadow, args)
+            daily = self._card_daily_remaining(shadow, args)
+            if single is None or daily is None:
+                return None
+            customer_daily = self.thresholds["daily_outflow_limit_cents"] - (
+                shadow.counters.daily_outflow_cents.get(ctx.customer_id, 0)
+            )
+            maximum = min(maximum, single, daily, customer_daily)
+        if maximum <= 0:
+            return None
+        # A hint is a proposal, but must not promise an amount that fails some
+        # other constraint or leaves a later unchanged step unable to execute.
+        # Reuse the exact pure execution rules; never mutate the evaluated plan.
+        candidate = steps[index].model_copy(
+            update={"args": steps[index].args.model_copy(update={"amount_cents": maximum})}
+        )
+        trial = apply_plan(
+            state, (*steps[:index], candidate, *steps[index + 1 :]), ctx.customer_id, ctx.plan_id
+        )
+        baseline = self._project_optional(ctx, state)
+        projected = self._project_optional(ctx, trial.state) if trial.error is None else None
+        if baseline is None or projected is None:
+            return None
+        if projected.total_shortfall_cents > baseline.total_shortfall_cents:
+            return None
+        return maximum
 
     @staticmethod
     def _card_single_limit(shadow, args) -> int | None:

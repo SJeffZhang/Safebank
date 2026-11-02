@@ -60,3 +60,20 @@ Final a9cb028 full CI stopped at historical0001 upgrade preservation: the expect
 incremental-column list omitted the new nullable epoch. Extended that list with
 BIGINT/NULL, retaining every original-field equality assertion. All3 real migration
 schema tests now pass; rerun complete CI on the resulting final head.
+
+Resumed on another local machine (2026-10-31): exact final
+`7ceda71db5aae1c8293aa60ee6f526f54c1641e8` complete workflow-equivalent local CI
+PASSED with exit0. Unit3552/1065 conditional skips; real PG and migrations,
+obligations227, W1 1794, W2 274, W3b58, W4c48, concurrency5, consistency17,
+network/process-restart recovery and frozen contracts all passed. Frontend paths
+were unchanged, so the normal frontend workflow path filter skipped that job.
+Independent read-only security review APPROVE. Merged as9484424 using expected
+full head protection.
+
+The first resumed full run stopped with3 empty loopback HTTP502 responses before
+financial assertions. The host system proxy intercepted127.0.0.1 startup traffic;
+the affected3 tests passed with local proxy exclusion. The complete final SHA CI
+then restarted from the beginning with NO_PROXY=127.0.0.1,localhost and passed.
+No business code or test assertions were changed for this environment adjustment.
+This is local CI evidence; no successful GitHub Actions run is claimed.
+Six-scenario rehearsals and offline production replay remain pending.

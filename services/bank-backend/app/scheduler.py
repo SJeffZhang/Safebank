@@ -18,12 +18,13 @@ from pydantic import BaseModel, Field, field_validator
 from safebank_bankcore.ids import digest
 from safebank_contracts.codes import Code
 from safebank_contracts.state import EVENT_KIND_RANK
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import LABEL_STYLE_TABLENAME_PLUS_COL, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from . import models as m
 from .errors import BankError
 from .execution import utcnow
+from .reminders import build_reminder_job, next_reminder_scan, reminder_scan_at
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,83 @@ class Scheduler:
                 row.next_due_at,
                 f"{row.id}|{row.amount_cents}|{row.account_id}",
             )
+        sim_now, _ = await self.read_clock(conn)
+        created += await self.scan_reminders(conn, sim_now)
+        return created
+
+    async def scan_reminders(self, conn, sim_now: datetime) -> int:
+        """Scan today's 09:00 window; repeated/recovery scans preserve first due_at."""
+        scan = reminder_scan_at(sim_now)
+        if scan is None:
+            return 0
+        billing, mandate = m.merchant_billing, m.standing_instructions
+        billing_fields = (
+            "id",
+            "customer_id",
+            "account_id",
+            "merchant_id",
+            "amount_cents",
+            "next_due_at",
+            "active",
+            "created_at",
+        )
+        mandate_fields = (
+            "id",
+            "customer_id",
+            "kind",
+            "status",
+            "from_account_id",
+            "billing_id",
+            "merchant_id",
+            "max_amount_cents",
+            "end_at",
+            "created_at",
+        )
+        rows = (
+            (
+                await conn.execute(
+                    select(
+                        *[billing.c[key] for key in billing_fields],
+                        *[mandate.c[key] for key in mandate_fields],
+                    )
+                    .select_from(
+                        billing.join(
+                            mandate,
+                            (mandate.c.billing_id == billing.c.id)
+                            & (mandate.c.customer_id == billing.c.customer_id)
+                            & (mandate.c.from_account_id == billing.c.account_id)
+                            & (mandate.c.merchant_id == billing.c.merchant_id),
+                        )
+                    )
+                    .where(
+                        billing.c.active.is_(True),
+                        billing.c.next_due_at > scan,
+                        billing.c.next_due_at <= scan + timedelta(days=3),
+                        billing.c.created_at <= scan,
+                        mandate.c.created_at <= scan,
+                        mandate.c.kind == "MERCHANT_MANDATE",
+                        mandate.c.status == "ACTIVE",
+                        mandate.c.max_amount_cents >= billing.c.amount_cents,
+                        or_(mandate.c.end_at.is_(None), mandate.c.end_at >= billing.c.next_due_at),
+                    )
+                    .set_label_style(LABEL_STYLE_TABLENAME_PLUS_COL)
+                )
+            )
+            .mappings()
+            .all()
+        )
+        created = 0
+        for row in rows:
+            job = build_reminder_job(
+                billing={key: row[f"merchant_billing_{key}"] for key in billing_fields},
+                mandate={key: row[f"standing_instructions_{key}"] for key in mandate_fields},
+                scan_at=scan,
+            )
+            if job is not None:
+                result = await conn.execute(
+                    pg_insert(m.event_jobs).values(**job).on_conflict_do_nothing()
+                )
+                created += result.rowcount
         return created
 
     async def _insert_job(self, conn, kind, source_id, due_at, payload) -> int:
@@ -153,6 +231,7 @@ class Scheduler:
         async with self.db.connect() as conn:
             sim_now, _ = await self.read_clock(conn)
         async with self.db.begin() as conn:
+            await self.scan_due(conn, sim_now)
             job = await self._claim_next(conn, sim_now)
             if job is None:
                 return None
@@ -342,10 +421,18 @@ class ClockAdvancer:
                                 m.event_jobs.c.due_at <= target_at,
                             )
                         )
+                        scan_at = next_reminder_scan(sim_now)
+                        scan_boundary = scan_at if scan_at <= target_at else None
                         destination = target_at if next_due is None else max(sim_now, next_due)
+                        if scan_boundary is not None:
+                            destination = min(destination, scan_boundary)
                         if destination > sim_now:
                             await self.scheduler.set_clock(conn, destination, version + 1)
                         state["sim_now"] = destination
+                    # A daily scan is a clock boundary even with no queued jobs.
+                    # Loop at its exact time so scan_due sees current authorization.
+                    if scan_boundary is not None and destination == scan_boundary:
+                        continue
                     # No clock/row transaction survives the callback to S1/L2.
                     if next_due is None:
                         await self._refresh_counts(job_id)

@@ -56,4 +56,4 @@ make contracts-check
 
 并发与一致性目标先运行 `make test-p1`。`make test-integration` 针对当前部署检查真实网络、HTTP 与重启恢复，会改变测试客户状态并重启服务，只在专用部署检出执行。数据卷不因排错而删除。
 
-已完成的真实场景与尚待赎回专项等范围见[验证说明](../../docs/validation.md)。
+已完成的真实场景与尚待完整彩排等范围见[验证说明](../../docs/validation.md)。

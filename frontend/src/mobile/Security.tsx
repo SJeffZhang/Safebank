@@ -253,7 +253,7 @@ export function Security(
             <dl>
               <div>
                 <dt>安全决策</dt>
-                <dd>{plan.decision.decision}</dd>
+                <dd>{plan.decision?.decision ?? "暂无决策记录"}</dd>
               </div>
               <div>
                 <dt>执行状态</dt>

@@ -1,3 +1,4 @@
+import { productTypeLabel } from "./types";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { read, getCardNumber, isPreview } from "./api";
 import { useLoad } from "./hooks";
@@ -934,11 +935,7 @@ export function Wealth(p: PageProps) {
                 <article className="product-row" key={product.id}>
                   <div className="product-main">
                     <span className="product-type">
-                      {product.product_type === "MONEY_MARKET"
-                        ? "货币基金"
-                        : product.product_type === "BOND"
-                          ? "债券产品"
-                          : "混合产品"}
+                      {productTypeLabel(product.product_type)}
                     </span>
                     <button
                       className="product-title"

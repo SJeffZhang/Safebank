@@ -1,8 +1,8 @@
 """Pure-function analytics: spending summary (R4), anomaly detection (R5),
 and subscription detection (R9).
 
-Consumption = CARD_SPEND / MANDATE, POSTED only.
-Transfer out = TRANSFER_EXTERNAL with direction OUT.
+Consumption = CARD_SPEND / MERCHANT_CHARGE (legacy MANDATE), POSTED OUT only.
+Transfer out = P2P_INTERNAL / P2P_EXTERNAL (legacy TRANSFER_EXTERNAL), OUT only.
 Self-transfers, fund operations, deposits are excluded entirely.
 
 Anomaly detection (R5) only examines CARD_SPEND transactions, using only
@@ -30,16 +30,17 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from safebank_contracts.state import BankState
 
+from safebank_bankcore.merchant_categories import transaction_category
+from safebank_bankcore.periods import normalize_period
 from safebank_bankcore.reserve import _business_time
+from safebank_bankcore.transaction_facts import is_external_transfer
 
 # The 8 category buckets defined in PRD §5.2.
 CATEGORIES = ("", "餐饮", "交通", "购物", "娱乐", "生活服务", "数码", "健身", "其他")
 
 # Transaction kinds that count as consumption.
-_CONSUMPTION_KINDS = {"CARD_SPEND", "MANDATE"}
-
-# Transaction kinds that count as external transfer out.
-_TRANSFER_OUT_KINDS = {"TRANSFER_EXTERNAL"}
+_CHARGE_KINDS = frozenset({"MERCHANT_CHARGE", "MANDATE"})
+_CONSUMPTION_KINDS = _CHARGE_KINDS | {"CARD_SPEND"}
 
 
 def spending_summary(
@@ -88,6 +89,7 @@ def spending_summary(
     total_cents = 0
     prev_total_cents = 0
     transfer_out_cents = 0
+    owned_account_ids = {a.id for a in state.accounts.values() if a.customer_id == customer_id}
 
     for tx in state.transactions:
         # Only owned accounts.
@@ -102,11 +104,8 @@ def spending_summary(
 
         local_ts = _business_time(tx.occurred_at)
 
-        if tx.kind in _CONSUMPTION_KINDS:
-            cat = tx.category or ""
-            # Map to known categories; "其他" is the catch-all.
-            if cat not in CATEGORIES:
-                cat = "其他"
+        if tx.kind in _CONSUMPTION_KINDS and tx.direction == "OUT":
+            cat = transaction_category(state, tx)
 
             if _in_month(local_ts):
                 cat_amt[cat]["cur"] += tx.amount_cents
@@ -118,7 +117,7 @@ def spending_summary(
             ):
                 cat_amt[cat]["prev"] += tx.amount_cents
                 prev_total_cents += tx.amount_cents
-        elif tx.kind in _TRANSFER_OUT_KINDS and tx.direction == "OUT":
+        elif is_external_transfer(tx, state.transfers, owned_account_ids):
             if _in_month(local_ts):
                 transfer_out_cents += tx.amount_cents
 
@@ -178,7 +177,7 @@ def _tx_view(state: BankState, tx) -> dict:
         available_after_cents=tx.available_after_cents,
         counterparty=tx.counterparty,
         memo=tx.memo,
-        category=tx.category,
+        category=transaction_category(state, tx),
         merchant_id=tx.merchant_id,
         merchant_name=None,
         payee_id=tx.payee_id,
@@ -274,10 +273,13 @@ def detect_anomalies(
                 ev["threshold_cents"] = 100_000
 
         # 2d. ANOMALY_CATEGORY_OUTLIER  (≥ 10 prior same-cat in 90 d, amount > μ + 3σ)
-        if tx.category:
+        if tx.category or (state.obligations and tx.merchant_id in state.obligations.merchants):
             cutoff = tx.occurred_at - _days_as_delta(90)
             same_cat_prior = [
-                h for h in prior if h.category == tx.category and h.occurred_at >= cutoff
+                h
+                for h in prior
+                if transaction_category(state, h) == transaction_category(state, tx)
+                and h.occurred_at >= cutoff
             ]
             if len(same_cat_prior) >= 10:
                 amounts_dec = [Decimal(h.amount_cents) for h in same_cat_prior]
@@ -387,7 +389,7 @@ def detect_subscriptions(
     for tx in state.transactions:
         if tx.merchant_id is None:
             continue
-        if tx.kind != "MANDATE":  # charges = merchant mandate deductions only
+        if tx.kind not in _CHARGE_KINDS or tx.direction != "OUT":
             continue
         if tx.status != "POSTED":
             continue
@@ -483,8 +485,8 @@ def detect_subscriptions(
         recent = 0
         previous = 0
         for tx in all_by_merchant.get(merchant_id, []):
-            if tx.kind == "MANDATE":
-                continue  # exclude charge transactions
+            if tx.kind in _CHARGE_KINDS:
+                continue  # canonical and historical charges are never usage
             bt = _business_time(tx.occurred_at)
             if bt > sim_now:
                 continue
@@ -498,10 +500,7 @@ def detect_subscriptions(
         is_idle = usage_expected and recent == 0 and previous > 0
 
         # ── Annual cost ─────────────────────────────────────────────
-        if period == "WEEKLY":
-            annual_cost_cents = typical * 52
-        else:
-            annual_cost_cents = typical * 12
+        _, annual_cost_cents = normalize_period(typical, period)
 
         items.append(
             dict(

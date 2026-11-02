@@ -8,9 +8,13 @@ single repair attempt, and always masks ≥8-digit numbers at the end.
 from __future__ import annotations
 
 import re
+import unicodedata
+from datetime import UTC, datetime
 from enum import StrEnum
 
 from services.agent.app.graph.state import AgentContext, AgentState
+from services.agent.app.llm.execution_receipts import execution_receipt
+from services.agent.app.llm.fixed_templates import executed_failed_fallback, respond_template
 
 # ── Extraction patterns ─────────────────────────────────────────────────────
 
@@ -21,7 +25,7 @@ _AMOUNT_CNY_RE = re.compile(r"(¥|￥)\s*([\d,]+(?:\.\d{1,2})?)")
 _AMOUNT_YUAN_RE = re.compile(r"([\d,]+(?:\.\d{1,2})?)\s*(元|块)")
 
 # Percentage
-_PCT_RE = re.compile(r"([\d]+(?:\.[\d]+)?)\s*%")
+_PCT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 
 # Card tail: 尾号 followed by an optional copula (为/是) and an ASCII word
 # token.  Valid tails are exactly 4 digits; anything else (card IDs, 5+
@@ -187,6 +191,47 @@ def extract_amounts(text: str) -> list[dict]:
     return results
 
 
+def _percentage_prefix(text: str, start: int) -> tuple[int, int | None]:
+    """Find one sign across at most32 Unicode whitespace characters.
+
+    Normalize one scalar only, so raw spans always refer to the original text.
+    Unknown dash/minus and repeated signs remain invalid tokens rather than
+    disappearing and exposing an apparently unsigned positive percentage.
+    """
+
+    def before_gap(index: int) -> tuple[int, bool]:
+        for _ in range(32):
+            if not index or not text[index - 1].isspace():
+                return index, True
+            index -= 1
+        return index, not (index and text[index - 1].isspace())
+
+    def sign_like(char: str) -> bool:
+        normalized = unicodedata.normalize("NFKC", char)
+        return (
+            normalized in {"+", "-", "−"}
+            or unicodedata.category(char) == "Pd"
+            or "MINUS" in unicodedata.name(char, "")
+        )
+
+    index, bounded = before_gap(start)
+    if not bounded:
+        return index, None
+    if index:
+        symbol = text[index - 1]
+        normalized = unicodedata.normalize("NFKC", symbol)
+        if normalized in {"+", "-", "−"}:
+            previous, bounded = before_gap(index - 1)
+            if not bounded or (previous and sign_like(text[previous - 1])):
+                return index - 1, None
+            return index - 1, 1 if normalized == "+" else -1
+        if sign_like(symbol):
+            return index - 1, None
+    if start and (text[start - 1].isdigit() or text[start - 1] == "."):
+        return start - 1, None
+    return start, 1
+
+
 def extract_percentages(text: str) -> list[dict]:
     """Extract percentage values from *text*.
 
@@ -194,13 +239,19 @@ def extract_percentages(text: str) -> list[dict]:
     """
     results: list[dict] = []
     for m in _PCT_RE.finditer(text):
-        raw = m.group(0)
+        start, direction = _percentage_prefix(text, m.start())
         try:
-            value = float(m.group(1))
+            number = float(m.group(1))
         except ValueError:
             continue
+        value = direction * number if direction is not None else None
         results.append(
-            {"span": m.span(), "raw": raw, "value": value, "kind": ExtractedKind.PERCENTAGE}
+            {
+                "span": (start, m.end()),
+                "raw": text[start : m.end()],
+                "value": value,
+                "kind": ExtractedKind.PERCENTAGE,
+            }
         )
     return results
 
@@ -234,6 +285,144 @@ def _yuan_str_to_cents(raw: str) -> int | None:
         return cents
     except (ValueError, OverflowError):
         return None
+
+
+def _replan_receipt(state: AgentState) -> str:
+    """Bind suggested amounts to this decision's original transfer steps.
+
+    Hint labels and unrelated read amounts are never financial evidence for a
+    maximum. This is display-only: selecting a hint and authorizing a new plan
+    remain gateway operations.
+    """
+    from pydantic import ValidationError
+    from safebank_contracts.plan import PlanDraft
+
+    from services.agent.app.gateway.wire import GatewayDecision
+    from services.agent.app.llm.respond import _replan_user_items
+
+    raw = state.get("decision")
+    if not isinstance(raw, dict):
+        if not hasattr(raw, "model_dump"):
+            return respond_template("REPLAN_USER")
+        raw = raw.model_dump(mode="json")
+    lines = [respond_template("REPLAN_USER")]
+    # Reuse only deterministic finding labels; discard every unbound hint label.
+    lines.extend("- " + item for item in _replan_user_items({"findings": raw.get("findings", [])}))
+    base = "\n".join(lines)
+    try:
+        decision = GatewayDecision.model_validate(raw)
+        plan = PlanDraft.model_validate(state.get("plan_draft"))
+    except (ValidationError, TypeError):
+        return base
+    if (
+        decision.plan_id != state.get("plan_id")
+        or plan.session_id != state.get("session_id")
+        or any(f.effect == "DENY" for f in decision.findings)
+    ):
+        return base
+
+    shrinkable = {
+        "INSUFFICIENT_FUNDS",
+        "CARD_SINGLE_LIMIT",
+        "CARD_DAILY_LIMIT",
+        "SCHEDULED_SHORTFALL",
+        "HOLDING_INSUFFICIENT",
+        "MIN_PURCHASE_NOT_MET",
+    }
+    replans = [finding for finding in decision.findings if finding.effect == "REPLAN"]
+    if not replans or any(
+        finding.resolver != "user" or finding.code not in shrinkable for finding in replans
+    ):
+        return base
+
+    payees: dict[str, set[str]] = {}
+    for read in state.get("reads") or ():
+        if _obj_attr(read, "tool") != "list_payees":
+            continue
+        data = _obj_attr(read, "data")
+        items = (data.get("items") if isinstance(data, dict) else _obj_attr(data, "items")) or ()
+        if not isinstance(items, (list, tuple)):
+            continue
+        for item in items:
+            payee_id, fingerprint = _obj_attr(item, "id"), _obj_attr(item, "target_fingerprint")
+            if isinstance(payee_id, str) and isinstance(fingerprint, str):
+                payees.setdefault(payee_id, set()).add(fingerprint)
+
+    original = []
+    for index, step in enumerate(plan.steps):
+        if step.tool != "transfer":
+            continue
+        args = step.args
+        if args.to_account_id:
+            target, kind = "int:" + args.to_account_id, "TRANSFER_SELF"
+        elif isinstance(args.payee_id, str) and len(payees.get(args.payee_id, ())) == 1:
+            target, kind = next(iter(payees[args.payee_id])), "TRANSFER_EXTERNAL"
+        else:
+            return base
+        original.append((index, kind, args.from_account_id, target, args.amount_cents))
+    if not original:
+        return base
+    step_indices = {step.step_id: index for index, step in enumerate(plan.steps)}
+    failed_indices = set()
+    for finding in replans:
+        index = step_indices.get(finding.step_id)
+        if index is None or plan.steps[index].tool != "transfer":
+            return base
+        failed_indices.add(index)
+    now_wall = datetime.now(UTC)
+    seen = set()
+    for hint in decision.replan_hints:
+        try:
+            expires = datetime.fromisoformat(hint.expires_at_wall)
+        except ValueError:
+            continue
+        if expires.tzinfo is None or expires.utcoffset() is None or expires <= now_wall:
+            continue
+        scope = hint.scope
+        if (
+            set(scope.action_kinds) != {item[1] for item in original}
+            or scope.period is not None
+            or scope.channel is not None
+            or len(scope.transfers) != len(original)
+        ):
+            continue
+        if scope.fields:
+            own_targets = {item[3][4:] for item in original if item[1] == "TRANSFER_SELF"}
+            if (
+                set(scope.fields) != {"to_account_id"}
+                or len(own_targets) != 1
+                or not isinstance(scope.fields["to_account_id"], str)
+                or scope.fields["to_account_id"] not in own_targets
+            ):
+                continue
+        remaining = list(original)
+        changes = []
+        for transfer in scope.transfers:
+            matches = [
+                item
+                for item in remaining
+                if item[3] == transfer.target_fingerprint
+                and scope.from_account_id in (None, item[2])
+                and transfer.from_account_id in (None, item[2])
+                and 0 < transfer.amount_cents <= item[4]
+            ]
+            if len(matches) != 1:
+                break
+            item = matches[0]
+            remaining.remove(item)
+            if transfer.amount_cents < item[4]:
+                changes.append((item[0], transfer.amount_cents))
+        else:
+            if not remaining and {index for index, _ in changes} == failed_indices:
+                for index, amount in changes:
+                    if (index, amount) in seen:
+                        continue
+                    seen.add((index, amount))
+                    lines.append(
+                        f"- 原计划第{index + 1}步转账建议最多{amount // 100}.{amount % 100:02d}元，"
+                        "调整金额后仍需您重新确认，本次未执行。"
+                    )
+    return "\n".join(lines)
 
 
 # ── Fact set builder ────────────────────────────────────────────────────────
@@ -400,12 +589,13 @@ def _amount_in_facts(cents: int, facts: list[int]) -> bool:
     return False
 
 
-def _pct_in_facts(value: float, facts: list[float]) -> bool:
-    """Check if *value* matches any fact (±0.1% tolerance)."""
-    if not facts:
+def _pct_in_facts(value: float | None, facts: list[float]) -> bool:
+    """Keep negative/zero/positive direction before the same-sign tolerance."""
+    if value is None or not facts:
         return False
     for f in facts:
-        if abs(value - f) <= 0.1:
+        same_direction = (value < 0) == (f < 0) and (value > 0) == (f > 0)
+        if same_direction and abs(value - f) <= 0.1:
             return True
     return False
 
@@ -548,6 +738,18 @@ class OutputVerifier:
         self._llm = llm
 
     def __call__(self, state: AgentState, _context: AgentContext) -> str:
+        # A free-text draft or repair cannot override committed business facts.
+        status = _obj_attr(state.get("execution"), "status")
+        if status == "EXECUTED":
+            return mask_long_numbers(execution_receipt(state))
+        if status == "UNKNOWN":
+            return mask_long_numbers(respond_template("UNKNOWN"))
+        if status == "FAILED":
+            return mask_long_numbers(executed_failed_fallback())
+
+        if _obj_attr(state.get("decision"), "decision") == "REPLAN":
+            return mask_long_numbers(_replan_receipt(state))
+
         draft: str = state.get("reply_draft") or ""
         if not draft:
             return "您的请求已收到。"
@@ -574,13 +776,19 @@ class OutputVerifier:
                     + extract_card_last4(repaired)
                 )
                 re_unverified = check_against_facts(re_extracted, fact_set)
-                if not re_unverified:
+                if not re_unverified and not check_semantic_consistency(repaired, state):
                     text = repaired
-                # else: fall through → use original text (will be masked below)
 
         # Step 4.5: deterministic scrub — an unverified card tail must never
         # reach the user, even when the LLM is absent or its repair failed.
         text = _scrub_unverified_card_tails(text, fact_set)
+
+        # Any failed/empty/invalid repair must not expose known wrong facts.
+        remaining = check_against_facts(
+            extract_amounts(text) + extract_percentages(text) + extract_card_last4(text), fact_set
+        )
+        if remaining or check_semantic_consistency(text, state):
+            text = respond_template("GENERIC_ERROR")
 
         # Step 5: always mask long numbers
         masked = mask_long_numbers(text)
@@ -624,7 +832,9 @@ class OutputVerifier:
             repaired: str = getattr(result, "content", "") or ""
             repaired = repaired.strip()
             return repaired if repaired else None
-        except Exception:
+        except Exception as exc:
+            if getattr(exc, "status_code", None) in (402, 403, 429):
+                raise
             return None
 
 

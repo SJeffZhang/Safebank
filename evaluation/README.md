@@ -33,6 +33,6 @@ live 模式使用 DeepSeek V4 Pro，会产生实际费用；先在进程环境�
 
 当前稳定性驱动主要验证理解、计划、来源和 G4 决策，不把「到达审批」计作真实资金执行。端到端业务结果仍需单独检查 L3 状态，已有案例见[验证说明](../docs/validation.md)。
 
-CLI 接受 `replay` 参数，但该模式尚未接通；Agent 的回放组件与专项测试不能替代整套评测回放。`make eval`、`make demo` 和 `make reset` 仍是明确失败的占位目标。
+CLI 接受 `replay` 参数，但该模式尚未接通；Agent 的回放组件与专项测试不能替代整套评测回放。`make eval` 和 `make reset` 仍是明确失败的占位目标。独立的 `make demo` 已接入 `scripts.demo_runner`，默认使用 replay，要求录制文件、隔离网络与 SQL 回执；详见[驱动验收](../docs/acceptance/demo-runner.md)。
 
 测试：`make test-e0b` 启用真实临时 PostgreSQL；纯指标与语料测试可通过 `make test` 运行。历史组件验收见 [E0b 记录](../docs/acceptance/E0b-runner.md)。

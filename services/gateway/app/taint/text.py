@@ -6,6 +6,8 @@ import re
 import unicodedata
 from decimal import Decimal, InvalidOperation
 
+from ..utterance.phone import phone_matches, phone_number
+
 
 def normalize(value: str) -> str:
     return "".join(
@@ -58,6 +60,17 @@ _BOOL_TRUE_EXTRA, _BOOL_FALSE_EXTRA = _classify_bool_verbs()
 
 def matches(value, text: str, param: str, state, customer_id: str | None = None) -> bool:
     raw = normalize(text)
+    if param == "units":
+        if not isinstance(value, (str, Decimal)) or not re.fullmatch(
+            r"[0-9]{1,14}(?:\.[0-9]{1,4})?(?:份)?", raw
+        ):
+            return False
+        try:
+            requested = Decimal(raw.removesuffix("份"))
+            actual = Decimal(value)
+            return requested > 0 and actual.is_finite() and requested == actual
+        except InvalidOperation:
+            return False
     if param.endswith("_cents"):
         # User amounts are yuan. No float conversion or rounding is permitted.
         raw = re.sub(r"^(人民币|CNY|RMB|¥|￥)", "", raw, flags=re.I)
@@ -103,6 +116,18 @@ def matches(value, text: str, param: str, state, customer_id: str | None = None)
             else {"false", "否", "关闭", "关掉", "不补卡", "不包括自己"} | _BOOL_FALSE_EXTRA
         )
     if isinstance(value, str):
+        if param == "payee_id" and phone_number(raw) is not None:
+            # The caller already proves this exact span belongs to a live typed
+            # authorization root. Only its whole phone slot may identify one
+            # current-customer saved payee; this adds no write scope.
+            if phone_number(text) is None:
+                return False
+            ids = [
+                payee.id
+                for payee in state.payees.values()
+                if payee.customer_id == customer_id and phone_matches(text, payee.phone)
+            ]
+            return ids == [value]
         if normalize(value) == raw:
             return True
         # Human names can resolve only to owned, unique entities; ownership and

@@ -1,0 +1,124 @@
+"""Actual S1 -> backend snapshot resolver/loader -> pinned versions, no IO/DB."""
+
+import asyncio
+from contextlib import asynccontextmanager
+from copy import deepcopy
+from datetime import UTC, datetime
+from types import SimpleNamespace
+
+import pytest
+from app.events import EventService
+from app.main import create_app
+from safebank_contracts.plan import SnapshotRequest
+from sqlalchemy.sql.elements import BooleanClauseList
+from sqlalchemy.sql.operators import and_, or_
+
+from services.gateway.app.internal import scheduled as s1
+from services.gateway.app.pipeline.snapshot import SnapshotStage
+from tests.obligations_data.test_scheduled_peer_runtime_unit import Memory, _matches
+
+
+class Rows:
+    def __init__(self, rows, columns):
+        self.rows, self.columns, self.mapping = rows, columns, False
+
+    def mappings(self):
+        self.mapping = True
+        return self
+
+    def all(self):
+        return self.rows if self.mapping else [tuple(r[c] for c in self.columns) for r in self.rows]
+
+    def one(self):
+        assert len(self.rows) == 1
+        return self.rows[0] if self.mapping else self.all()[0]
+
+    def first(self):
+        return self.rows[0] if self.rows else None
+
+    one_or_none = first
+
+    def scalar(self):
+        return self.rows[0][self.columns[0]] if self.rows else None
+
+    def __iter__(self):
+        return iter(self.all())
+
+
+def matches(expr, row):
+    if isinstance(expr, BooleanClauseList):
+        values = [matches(c, row) for c in expr.clauses]
+        return all(values) if expr.operator is and_ else any(values) if expr.operator is or_ else False
+    if getattr(expr.right, "__visit_name__", None) == "null":
+        return row[expr.left.name] is None
+    return _matches(expr, row)
+
+
+class Database:
+    def __init__(self, external):
+        original = Memory()
+        self.tables = deepcopy(original.tables)
+        self.tables["customers"] = [c.model_dump(mode="python") for c in original.state.customers.values()]
+        self.tables["cards"] = [c.model_dump(mode="python") for c in original.state.cards.values()]
+        self.tables["clock"][0]["dataset_revision"] = "review"
+        self.tables["state_versions"] = [
+            {"customer_id": "cus_a", "version": 11},
+            {"customer_id": "cus_b", "version": 47},
+            {"customer_id": "cus_unrelated", "version": 99},
+        ]
+        if external:
+            self.tables["payees"][0]["target_account_id"] = None
+
+    @asynccontextmanager
+    async def connect(self):
+        yield self
+
+    @asynccontextmanager
+    async def begin(self):
+        yield self
+
+    async def execution_options(self, **_kwargs):
+        return self
+
+    async def execute(self, statement):
+        if not getattr(statement, "is_select", False):
+            return Rows([], [])  # READ ONLY transaction marker only.
+        table = statement.get_final_froms()[0].name
+        rows = [r for r in self.tables.get(table, []) if all(matches(c, r) for c in statement._where_criteria)]
+        return Rows(rows, [c.name for c in statement.selected_columns])
+
+    async def scalar(self, query):
+        return (await self.execute(query)).scalar()
+
+
+@pytest.mark.parametrize("external", [False, True])
+def test_re_evaluate_real_snapshot_loads_actual_peer_version_and_pins_it(monkeypatch, external):
+    async def check():
+        db = Database(external)
+        backend = create_app(db=db, service_token="synthetic", fingerprint_key="synthetic", demo_mode=False, scheduler_enabled=False)
+        endpoint = next(r.endpoint for r in backend.routes if getattr(r, "path", None) == "/internal/snapshot")
+        snapshots = []
+
+        class L3:
+            async def snapshot(self, body):
+                snapshots.append(deepcopy(body))
+                return (await endpoint(SnapshotRequest.model_validate(body))).model_dump(mode="json")
+
+        # Isolate the snapshot contract, using its actual stage. Other policy
+        # stages and actual L3 execution are covered by separate rule/PG gates.
+        async def snapshot_pipeline(ctx, *, stages):
+            await SnapshotStage().run(ctx)
+
+        monkeypatch.setattr(s1, "run_pipeline", snapshot_pipeline)
+        event = await EventService().get_event(db, "evt_peer", "cus_a")
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
+            l3=L3(), db=db, wall_now=lambda: datetime.now(UTC))), state=SimpleNamespace(caller=None))
+        ctx = await s1._re_evaluate(request, event)
+        expected = {"cus_a": 11} if external else {"cus_a": 11, "cus_b": 47}
+        versions, clock = s1._pinned(ctx)
+        assert versions == expected and clock == 1
+        assert set(ctx.snapshot.customers) == set(expected)
+        assert len(snapshots) == 1 and snapshots[0]["steps"][0]["args"]["payee_id"] == "pye_peer"
+        assert "cus_unrelated" not in versions
+
+    asyncio.run(check())

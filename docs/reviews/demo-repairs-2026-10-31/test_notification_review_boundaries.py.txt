@@ -1,0 +1,93 @@
+"""Independent pure multi-period clock/reminder and authority controls."""
+import asyncio
+from copy import deepcopy
+from datetime import timedelta
+
+import pytest
+from app.reminders import build_reminder_job, reminder_is_current, reminder_scan_at
+from app.scheduler import ClockAdvancer
+from safebank_bankcore.events import apply_merchant_charge
+from safebank_bankcore.ids import digest
+from tests.bankcore.obligations_fixtures import raw_billing, raw_mandate, raw_projection_state
+from tests.obligations_data.test_reminders import DUE, SCAN, MemoryClockScheduler, billing, mandate, build
+
+
+@pytest.mark.parametrize('field,new_value', [
+    ('id', 'si_replacement'), ('billing_id', 'bil_replacement'),
+    ('merchant_id', 'mer_replacement'), ('from_account_id', 'acc_replacement'),
+    ('customer_id', 'cus_replacement'), ('max_amount_cents', 1000),
+])
+def test_old_reminder_cannot_borrow_changed_instruction_identity(field, new_value):
+    payload = build()['immutable_payload']['payload']
+    changed = mandate()
+    changed[field] = new_value
+    assert not reminder_is_current(payload, billing(), changed, SCAN)
+
+
+class PeriodScheduler(MemoryClockScheduler):
+    def __init__(self, *, active):
+        super().__init__(target=DUE + timedelta(days=8, hours=6), has_billing=False)
+        self.bill = raw_billing(period='WEEKLY', anchor_day=None, weekday=6, next_due_at=DUE)
+        self.mandate = raw_mandate(status='ACTIVE' if active else 'DELETED')
+        self.state = raw_projection_state(billings=[self.bill], mandates=[self.mandate])
+        self.terminal = []
+
+    async def scan_due(self, conn, until):
+        self.scans.append(self.now)
+        current = self.state.obligations.billings[self.bill.id]
+        due = current.next_due_at
+        if due <= until:
+            event_id = digest(['MERCHANT_CHARGE', current.id, due.isoformat()])
+            self.jobs.setdefault(event_id, {'id': event_id, 'kind': 'MERCHANT_CHARGE',
+                'rank': 4, 'due_at': due, 'status': 'PENDING'})
+        scan = reminder_scan_at(self.now)
+        if scan:
+            reminder = build_reminder_job(billing=current.model_dump(mode='python'),
+                mandate=self.mandate.model_dump(mode='python'), scan_at=scan)
+            if reminder:
+                self.jobs.setdefault(reminder['id'], reminder)
+        return 0
+
+    async def run_once(self):
+        pending = [j for j in self.jobs.values() if j['status'] != 'DONE' and j['due_at'] <= self.now]
+        if not pending:
+            return None
+        job = min(pending, key=lambda j: (j['due_at'], j['rank'], j['id']))
+        status = 'SUCCESS'
+        if job['kind'] == 'MERCHANT_CHARGE':
+            after, effects, run = apply_merchant_charge(self.state, billing_id=self.bill.id,
+                due_at=job['due_at'], event_id=job['id'])
+            assert run is not None
+            self.state = after
+            status = run.status
+            self.terminal.append((job['due_at'], status))
+        else:
+            payload = job['immutable_payload']['payload']
+            assert reminder_is_current(payload,
+                self.state.obligations.billings[self.bill.id].model_dump(mode='python'),
+                self.mandate.model_dump(mode='python'), self.now)
+        job['status'] = 'DONE'
+        self.dispatched.append((self.now, deepcopy(job)))
+        return {'event_id': job['id'], 'status': status}
+
+
+@pytest.mark.parametrize('active', [True, False])
+def test_multiperiod_merchant_cursor_advances_without_looping_and_reminders_stay_unique(active):
+    async def run():
+        scheduler = PeriodScheduler(active=active)
+        advancer = ClockAdvancer(scheduler)
+        job_id = advancer.advance(scheduler.target, 'review_multi_period')
+        for _ in range(300):
+            if advancer.status(job_id)['status'] in ('DONE', 'FAILED', 'RETRYING'):
+                break
+            await asyncio.sleep(0)
+        assert advancer.status(job_id)['status'] == 'DONE'
+        assert scheduler.now == scheduler.target
+        assert scheduler.terminal == [(DUE, 'SUCCESS' if active else 'BLOCKED'),
+                                      (DUE + timedelta(days=7), 'SUCCESS' if active else 'BLOCKED')]
+        assert scheduler.state.obligations.billings[scheduler.bill.id].next_due_at == DUE + timedelta(days=14)
+        reminder_jobs = [j for _, j in scheduler.dispatched if j['kind'] == 'REMINDER']
+        assert len(reminder_jobs) == (2 if active else 0)
+        assert len({j['id'] for j in reminder_jobs}) == len(reminder_jobs)
+        assert all(at <= scheduler.now for at, _ in scheduler.dispatched)
+    asyncio.run(run())

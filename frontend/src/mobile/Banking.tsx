@@ -398,6 +398,8 @@ export function Transfers(p: PageProps) {
   const [selected, setSelected] = useState<string[]>([]);
   const [include, setInclude] = useState(true);
   const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const normalizedPhone = phone.normalize("NFKC").trim();
   const [accountNo, setAccountNo] = useState("");
   const [newPayeeOpen, setNewPayeeOpen] = useState(false);
   const [newPayeeError, setNewPayeeError] = useState("");
@@ -443,11 +445,11 @@ export function Transfers(p: PageProps) {
     setTargetType("external");
     setNewPayeeOpen(false);
     setPendingPayee(undefined);
-    setName(""); setAccountNo(""); setBank("");
+    setName(""); setAccountNo(""); setBank(""); setPhone("");
     p.notify(`已选择新收款人 ${added.name}，请核对转账金额后继续。`);
   }, [query.value, pendingPayee]);
   function openNewPayee() {
-    setName(""); setAccountNo(""); setBank("");
+    setName(""); setAccountNo(""); setBank(""); setPhone("");
     setNewPayeeError(""); setPendingPayee(undefined);
     setNewPayeeOpen(true);
   }
@@ -457,10 +459,14 @@ export function Transfers(p: PageProps) {
       setNewPayeeError("请填写姓名、12–32 位银行卡号和开户行。");
       return;
     }
+    if (normalizedPhone && !/^[0-9]{11}$/.test(normalizedPhone)) {
+      setNewPayeeError("手机号请填写完整的11位数字，或留空。");
+      return;
+    }
     setNewPayeeError("");
     setPendingPayee({ ids: payees.map(item => item.id), name: name.trim(), bank: bank.trim(), last4: accountNo.slice(-4) });
     await p.onPropose("PAYEE_ADD", {
-      name: name.trim(), account_no: accountNo, bank_name: bank.trim(), phone: null, alias: null,
+      name: name.trim(), account_no: accountNo, bank_name: bank.trim(), phone: normalizedPhone || null, alias: null,
     });
   }
   const chosen = p.accounts.find((a) => a.id === source);
@@ -475,11 +481,15 @@ export function Transfers(p: PageProps) {
         setError("请填写姓名、12–32 位银行卡号和开户行。");
         return;
       }
+      if (normalizedPhone && !/^[0-9]{11}$/.test(normalizedPhone)) {
+        setError("手机号请填写完整的11位数字，或留空。");
+        return;
+      }
       await p.onPropose("PAYEE_ADD", {
         name: name.trim(),
         account_no: accountNo,
         bank_name: bank.trim(),
-        phone: null,
+        phone: normalizedPhone || null,
         alias: null,
       });
       return;
@@ -622,6 +632,11 @@ export function Transfers(p: PageProps) {
                     onChange={(e) => setBank(e.target.value)}
                     required
                   />
+                </Field>
+                <Field label="手机号（选填）">
+                  <input type="tel" inputMode="numeric" autoComplete="off" maxLength={11}
+                    value={phone} onChange={(e) => setPhone(e.target.value)}
+                    placeholder="供后续按手机号查找收款人" />
                 </Field>
               </>
             ) : (
@@ -847,7 +862,7 @@ export function Transfers(p: PageProps) {
         </aside>
       </div>
       {newPayeeOpen && (
-        <Modal title="添加新收款人" onClose={() => { setNewPayeeOpen(false); setAccountNo(""); }}>
+        <Modal title="添加新收款人" onClose={() => { setNewPayeeOpen(false); setAccountNo(""); setPhone(""); }}>
           <form className="modal-body new-payee-form" onSubmit={(event) => {
             event.preventDefault(); void addNewPayee();
           }}>
@@ -858,9 +873,12 @@ export function Transfers(p: PageProps) {
               onChange={(event) => setAccountNo(event.target.value.replace(/\D/g, ""))} placeholder="请输入完整银行卡号" /></Field>
             <Field label="开户行"><input value={bank} required maxLength={80}
               onChange={(event) => setBank(event.target.value)} placeholder="如：中国工商银行" /></Field>
+            <Field label="手机号（选填）"><input type="tel" inputMode="numeric" autoComplete="off" maxLength={11}
+              value={phone} onChange={(event) => setPhone(event.target.value)}
+              placeholder="供后续按手机号查找收款人" /></Field>
             {newPayeeError && <Alert tone="error">{newPayeeError}</Alert>}
             <Button type="submit" disabled={p.busy}>{p.busy ? "正在处理…" : "预演并确认添加"}</Button>
-            <Button variant="ghost" onClick={() => { setNewPayeeOpen(false); setAccountNo(""); }}>返回转账</Button>
+            <Button variant="ghost" onClick={() => { setNewPayeeOpen(false); setAccountNo(""); setPhone(""); }}>返回转账</Button>
           </form>
         </Modal>
       )}
@@ -922,8 +940,8 @@ export function Transfers(p: PageProps) {
     </>
   );
 }
-export function Bills(p: PageProps) {
-  const [month, setMonth] = useState(p.profile.sim_now.slice(0, 7));
+export function Bills(p: PageProps & {initialMonth?: string}) {
+  const [month, setMonth] = useState(p.initialMonth ?? p.profile.sim_now.slice(0, 7));
   const [reportPeriod, setReportPeriod] = useState<"month" | "year">();
   const [category, setCategory] = useState("");
   const [search, setSearch] = useState("");

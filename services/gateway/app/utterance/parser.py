@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -17,6 +18,7 @@ from safebank_contracts.state import BankState
 from ..policy.registry import action_kind
 from ..schemas.enums import ParseStatus
 from ..schemas.scope import NormalizedScope, ScopeTransfer
+from .phone import phone_matches, phone_number
 
 LEXICON = yaml.safe_load(
     (Path(__file__).resolve().parents[2] / "policies/intent_lexicon.yaml").read_text()
@@ -64,6 +66,7 @@ class Parsed:
     cancel: bool = False
     required_fields: list[str] = field(default_factory=list)
     candidates: list[dict[str, str]] = field(default_factory=list)
+    guidance_template: str | None = None
 
 
 def near_name(left: str, right: str) -> bool:
@@ -245,40 +248,126 @@ def _verbs(tool: str) -> str:
     )
 
 
-def _transfer_clause(clause: str) -> Command | None:
+def _transfer_clause(clause: str, target_labels: tuple[str, ...] | None = None) -> Command | None:
     source = None
     if clause.startswith("从"):
         prefix = re.fullmatch(r"从(?P<source>.+?)(?P<body>(?:给|向|转).+)", clause)
         if prefix is None:
             return None
         source, clause = prefix["source"].strip(), prefix["body"]
-    patterns = [
-        (rf"把\s*(?P<money>{MONEY})\s*(?:转给|转账给)\s*(?P<target>.+)", False),
-        (rf"(?:给|向)(?P<target>.+?)(?:转账?|转入)?\s*(?P<money>{MONEY})", False),
-        (rf"(?:转账?给|转给|转到|转入)(?P<target>.+?)\s*(?P<money>{MONEY})", False),
-        (rf"转(?:账)?\s*(?P<money>{MONEY})(?:到|给)(?P<target>.+?)(?:应急)?", False),
-        (rf"(?P<target>.+?)\s*(?P<money>{MONEY})", True),
-    ]
-    for pattern, bare in patterns:
-        match = re.fullmatch(pattern, clause)
-        if match:
+
+    def matches(target: str) -> Iterator[tuple[re.Match[str], bool]]:
+        patterns = [
+            (rf"把\s*(?P<money>{MONEY})\s*(?:转给|转账给)(?P<target>{target})", False),
+            (rf"(?:给|向)(?P<target>{target})(?:转账?|转入)?\s*(?P<money>{MONEY})", False),
+            (rf"(?:转账?给|转给|转到|转入)(?P<target>{target})\s*(?P<money>{MONEY})", False),
+            (rf"转(?:账)?\s*(?P<money>{MONEY})(?:到|给)(?P<target>{target})(?:应急)?", False),
+            (rf"(?P<target>{target})\s*(?P<money>{MONEY})", True),
+        ]
+        for pattern, bare in patterns:
+            if match := re.fullmatch(pattern, clause):
+                yield match, bare
+
+    def command(match: re.Match[str], bare: bool, amount: int) -> Command:
+        return Command(
+            "transfer",
+            target=match["target"].strip(),
+            amount_cents=amount,
+            source=source,
+            bare=bare,
+        )
+
+    # Match every complete saved label against the complete grammar before a
+    # lazy target capture can consume a name's trailing numeral as money.
+    # Multiple legal target/amount splits fail closed; order/length never votes.
+    def joined_digits(money: str) -> bool:
+        value = re.fullmatch(_MONEY_PATTERN, money)["value"]
+        return len(value) > 1 and value[0] in _CN_DIGIT_V and value[1] in _CN_DIGIT_V
+
+    exact: dict[tuple[str, int], tuple[Command, str]] = {}
+    for label in target_labels or ():
+        for match, bare in matches(re.escape(label)):
             amount = money_cents(match["money"])
-            if amount is None:
-                return None
-            return Command(
-                "transfer",
-                target=match["target"].strip(),
-                amount_cents=amount,
-                source=source,
-                bare=bare,
-            )
+            if amount is not None:
+                exact.setdefault((label, amount), (command(match, bare, amount), match["money"]))
+    if exact:
+        if len(exact) != 1:
+            return None
+        selected, money = next(iter(exact.values()))
+        # Even a registered short name cannot turn an unknown longer name's
+        # digit into a malformed amount such as 六九百. Keep this conservative
+        # transfer boundary local; other tools' money parsing is unchanged.
+        return None if joined_digits(money) else selected
+
+    for match, bare in matches(".+?"):
+        amount = money_cents(match["money"])
+        if amount is None or joined_digits(match["money"]):
+            return None
+        if (
+            target_labels is not None
+            and match["money"][0] in _CN_DIGIT_V
+            and match.end("target") == match.start("money")
+        ):
+            # An unresolved adjacent Chinese numeral might still belong to the
+            # name. Never feed that guessed amount into prefix/near candidates.
+            return None
+        return command(match, bare, amount)
     return None
 
 
-def _clause(clause: str) -> Command | None:
+_QUERY_CLAUSES = tuple(
+    re.compile(pattern + r"[?？]?")
+    for pattern in (
+        r"我有哪些定时转账",
+        r"AA收款进度怎么样",
+        r"查(?:一下)?我(?:(?:20\d{2}年)?(?:0?[1-9]|1[0-2])月|上个月|上月)的消费流水",
+        r"我在[\u4e00-\u9fffA-Za-z0-9·]{1,40}花了多少钱",
+        r"我上个月各类消费的占比",
+        r"和前一个月比怎么样",
+        r"最近有没有异常交易",
+        r"我的卡今天还能刷多少",
+        r"找出所有周期性扣费",
+        r"我有哪些订阅",
+        r"一年总共要花多少",
+        r"未来[1-9]\d?天有哪些扣费",
+        r"哪些订阅是闲置没用的",
+        r"我的风险等级是多少",
+        r"有哪些理财产品适合我",
+        r"我的持仓和在途订单有哪些",
+    )
+)
+
+
+def _query_clause(clause: str) -> bool:
+    if any(pattern.fullmatch(clause) for pattern in _QUERY_CLAUSES):
+        return True
+    compare = re.fullmatch(
+        r"比较(?:一下)?[\u4e00-\u9fffA-Za-z0-9·]{1,24}和"
+        r"[\u4e00-\u9fffA-Za-z0-9·]{1,24}[?？]?",
+        clause,
+    )
+    return bool(
+        compare and not re.search(r"申购|赎回|转账|取消|冻结|解冻|挂失|开启|关闭|新增", clause)
+    )
+
+
+def _clause(clause: str, target_labels: tuple[str, ...] | None = None) -> Command | None:
     """Each alternative consumes its entire clause, including direction and units."""
     clause = re.sub(r"^(?:然后|并|再)\s*", "", clause, count=1)
     clause = re.sub(r"^(?:请帮我|帮我|替我|请)\s*", "", clause, count=1)
+    # These are read-only clauses, not write capabilities. Match the whole
+    # clause so a query cannot swallow a trailing operation or manufacture
+    # authorization from its dates, product names or numeric filter values.
+    if _query_clause(clause):
+        return Command("read")
+    # Consume the whole report clause. A following write clause is still parsed
+    # independently; report keywords cannot hide an unknown action suffix.
+    if re.fullmatch(
+        r"(?:给我)?(?:出|生成)(?:一份)?(?:(?:20\d{2}年)?(?:0?[1-9]|1[0-2])月|上个月|上月)"
+        r"(?:的)?账单报告",
+        clause,
+    ):
+        return Command("read")
     if re.fullmatch(
         r"(?:(?:看|查看|分析)(?:我|我的)?上月(?:消费|账单)(?:和异常)?|找出异常交易|只查退款|查退款|读备注|(?:改成|改为|换成)(?:是什么意思|什么意思|怎么理解))",
         clause,
@@ -434,7 +523,7 @@ def _clause(clause: str) -> Command | None:
     )
     if future or monthly or weekly:
         match = future or monthly or weekly
-        transfer = _transfer_clause(match["body"])
+        transfer = _transfer_clause(match["body"], target_labels)
         if transfer is not None:
             if monthly:
                 if not 1 <= int(monthly["day"]) <= 31:
@@ -458,7 +547,7 @@ def _clause(clause: str) -> Command | None:
             "_split_participants",
             fields={"participants": names, "include_self": bool(split["self"])},
         )
-    return _transfer_clause(clause)
+    return _transfer_clause(clause, target_labels)
 
 
 def _accounts(label: str | None, owned: list) -> list:
@@ -492,18 +581,41 @@ def _card_candidates(label: str, cards: list, predicates: dict[str, list[str]]) 
     ]
 
 
+def _phone_target(label: str) -> str | None:
+    return phone_number(re.sub(r"^(?:手机号码|手机号)", "", normalize(label)))
+
+
+def _exact_payee(label: str, payee) -> bool:
+    number = _phone_target(label)
+    if number is not None:
+        # A phone-looking target must use the saved phone field, never a
+        # numeric name/alias or an account-number coincidence.
+        return phone_matches(number, payee.phone)
+    return normalize(label) in {normalize(payee.name), normalize(payee.alias or "")}
+
+
 def _payees(label: str, payees: list) -> list:
     label = normalize(label)
-    exact = [
-        payee for payee in payees if label in {normalize(payee.name), normalize(payee.alias or "")}
-    ]
-    if exact:
+    exact = [payee for payee in payees if _exact_payee(label, payee)]
+    if exact or _phone_target(label) is not None:
         return exact
-    return [
+    near = [
         payee
         for payee in payees
         if near_name(payee.name, label) or (payee.alias and near_name(payee.alias, label))
     ]
+    if near:
+        return near
+    # A partial registered name is a clarification candidate only. It never
+    # satisfies _exact_payee and therefore cannot directly authorize transfer.
+    if re.fullmatch(r"[\u4e00-\u9fff]{1,7}", label):
+        return [
+            payee
+            for payee in payees
+            if normalize(payee.name).startswith(label)
+            or (payee.alias and normalize(payee.alias).startswith(label))
+        ]
+    return []
 
 
 _WEEKDAYS = {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "日": 6, "天": 6}
@@ -599,6 +711,28 @@ def scope_is_complete(scope: NormalizedScope) -> bool:
     return True
 
 
+def _transfer_target_labels(state: BankState, customer_id: str) -> tuple[str, ...]:
+    """Only current-customer identities already accepted by target resolution."""
+    labels: set[str] = set()
+    for payee in state.payees.values():
+        if payee.customer_id != customer_id:
+            continue
+        for value in (payee.name, payee.alias):
+            if value and _exact_payee(value, payee):
+                labels.add(normalize(value))
+        if number := phone_number(payee.phone):
+            labels.update((number, "手机号" + number, "手机号码" + number))
+    for account in state.accounts.values():
+        if account.customer_id == customer_id:
+            labels.update((normalize(account.id), normalize(account.display_name)))
+            if account.type in ("CHECKING", "SAVINGS"):
+                kind = "活期" if account.type == "CHECKING" else "储蓄"
+                labels.update(
+                    prefix + kind + suffix for prefix in ("", "我的") for suffix in ("", "账户")
+                )
+    return tuple(sorted(label for label in labels if label))
+
+
 def parse(
     text: str, state: BankState, customer_id: str, predicates: dict[str, list[str]] | None = None
 ) -> Parsed:
@@ -614,8 +748,19 @@ def parse(
     clauses = [part.strip() for part in re.split(r"[，,；;。]", clean)]
     if not all(clauses):
         return Parsed()
-    commands = [_clause(clause) for clause in clauses]
+    # Refuse direct risk-level assignment before bare-number shorthand can
+    # interpret the R5 suffix. This is a form guide, never an assessment scope.
+    if len(clauses) == 1 and re.fullmatch(
+        r"(?:请帮我|帮我|替我|请)?把?风险测评(?:改成|改为|设为|调到)R[1-5][?？]?", clean
+    ):
+        return Parsed(guidance_template="risk_assessment_form")
+    target_labels = _transfer_target_labels(state, customer_id)
+    commands = [_clause(clause, target_labels) for clause in clauses]
     if any(command is None for command in commands):
+        if len(clauses) == 1:
+            consultation = re.fullmatch(r"我?能不能(?P<body>(?:给|向).+?)[?？]?", clean)
+            if consultation and _transfer_clause(consultation["body"].rstrip("?？")) is not None:
+                return Parsed(guidance_template="transfer_consultation")
         return Parsed()
     owned = [account for account in state.accounts.values() if account.customer_id == customer_id]
     payees = [payee for payee in state.payees.values() if payee.customer_id == customer_id]
@@ -771,13 +916,10 @@ def parse(
             else:
                 matches = _payees(command.target, payees)
                 if not matches:
+                    if re.search(r"\d{8,}", command.target):
+                        return Parsed(guidance_template="register_payee_form")
                     return Parsed()
-                exact = [
-                    payee
-                    for payee in matches
-                    if normalize(command.target)
-                    in {normalize(payee.name), normalize(payee.alias or "")}
-                ]
+                exact = [payee for payee in matches if _exact_payee(command.target, payee)]
                 if len(exact) == 1:
                     transfers.append(
                         ScopeTransfer(
@@ -907,12 +1049,42 @@ def parse(
                 return Parsed()
             kinds.append(action_kind(tool, {}, state).value)
         elif tool == "cancel_scheduled":
-            selected = [
-                item
-                for item in state.instructions
-                if normalize(command.target) in {normalize(item.id), normalize(item.target_display)}
-            ]
-            if len(selected) != 1 or not put("instruction_id", selected[0].id):
+            selected = []
+            payee_by_id = {payee.id: payee for payee in payees}
+            target_accounts = {a.id for a in _accounts(command.target, owned)}
+            for item in state.instructions:
+                if item.from_account_id not in {account.id for account in owned}:
+                    continue
+                if normalize(command.target) == item.id:
+                    selected.append(item)
+                elif item.status == "ACTIVE":
+                    payee = payee_by_id.get(item.payee_id)
+                    if (payee is not None and _exact_payee(command.target, payee)) or (
+                        item.payee_id is None and item.to_account_id in target_accounts
+                    ):
+                        selected.append(item)
+            if not selected:
+                return Parsed()
+            if len(selected) == 1:
+                if not put("instruction_id", selected[0].id):
+                    return Parsed()
+            elif not missing(
+                "instruction_id",
+                [
+                    _candidate(
+                        "instruction_id",
+                        item.id,
+                        f"{command.target} "
+                        f"{item.amount_cents // 100}.{item.amount_cents % 100:02d}元 "
+                        + (
+                            item.next_run_at.astimezone(BUSINESS_TIMEZONE).isoformat()
+                            if item.next_run_at is not None
+                            else "下次时间待核实"
+                        ),
+                    )
+                    for item in selected
+                ],
+            ):
                 return Parsed()
             kinds.append(action_kind(tool, {}, state).value)
         elif tool == "add_payee":

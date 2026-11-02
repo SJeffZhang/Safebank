@@ -20,9 +20,13 @@ import hashlib
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from safebank_bankcore.funds import fund_event_at
 from safebank_bankcore.ids import canonical, derive
+from safebank_bankcore.subscription_savings import subscription_savings
+from safebank_contracts import risk_questionnaire
 from safebank_contracts.enums import Risk
 from safebank_contracts.state import BankState
+from safebank_contracts.tools import Assessment
 
 from ..policy.registry import policy
 from ..schemas.enums import PlanStatus
@@ -101,6 +105,38 @@ def _transfer_fields(ctx: EvalContext, state: BankState | None, args: dict[str, 
             key="target_account", label="本人账户", value=f"本行 尾号{_last4(account.account_no)}"
         )
     return [target_field, account_field]
+
+
+def _assessment_fields(ctx: EvalContext, args: dict[str, Any]) -> list[PlanViewField]:
+    if ctx.origin != "app_form":
+        raise ValueError("risk assessment requires app_form")
+    assessment = Assessment.model_validate(args)
+    questions = risk_questionnaire.QUESTIONNAIRE.get(assessment.questionnaire_id)
+    answers = {answer.question_id: answer.option_id for answer in assessment.answers}
+    if questions is None or len(questions) != 6 or set(answers) != set(questions):
+        raise ValueError("assessment requires complete authoritative questionnaire metadata")
+    fields = [
+        PlanViewField(key="questionnaire_id", label="问卷版本", value=assessment.questionnaire_id)
+    ]
+    # The versioned contract supplies both order and text. Never display caller
+    # labels or bare IDs; these fields already participate in the semantic hash.
+    for question_id, question in questions.items():
+        options = {option.id: option for option in question.options}
+        selected = options.get(answers[question_id])
+        if (
+            question.id != question_id
+            or not isinstance(question.prompt, str)
+            or not question.prompt.strip()
+            or len(options) != len(question.options)
+            or selected is None
+            or not isinstance(selected.label, str)
+            or not selected.label.strip()
+        ):
+            raise ValueError("assessment requires authoritative question and answer text")
+        fields.append(
+            PlanViewField(key=f"answer:{question_id}", label=question.prompt, value=selected.label)
+        )
+    return fields
 
 
 def _fields_for(ctx: EvalContext, state: BankState | None, step: ResolvedStep):
@@ -218,11 +254,36 @@ def _fields_for(ctx: EvalContext, state: BankState | None, step: ResolvedStep):
             PlanViewField(key="instruction_id", label="代扣授权", value=args["instruction_id"])
         )
         fields.append(PlanViewField(key="merchant", label="商户", value=subscription.merchant_name))
+        active = subscription.status == "ACTIVE"
+        monthly: int | None = None if active else 0
+        if state.obligations is not None:
+            instruction = state.obligations.standing_instructions.get(subscription.instruction_id)
+            billing = state.obligations.billings.get(subscription.billing_id)
+            if (
+                instruction is None
+                or billing is None
+                or instruction.kind != "MERCHANT_MANDATE"
+                or instruction.billing_id != billing.id
+                or instruction.customer_id != billing.customer_id
+                or instruction.from_account_id != billing.account_id
+                or instruction.merchant_id != billing.merchant_id
+                or subscription.account_id != billing.account_id
+                or subscription.merchant_id != billing.merchant_id
+            ):
+                raise ValueError("subscription is absent from the authoritative billing snapshot")
+            savings = subscription_savings(state, args["instruction_id"], ctx.customer_id)
+            if active:
+                monthly = savings[0] if savings is not None else None
+        fields.append(
+            PlanViewField(
+                key="monthly_saving",
+                label="预计每月节省",
+                value=_yuan(monthly) if monthly is not None else "暂无法确定",
+                unit="元" if monthly is not None else None,
+            )
+        )
     elif tool == "submit_risk_assessment":
-        # BankState carries no authoritative questionnaire metadata, so this
-        # tool cannot safely build an approval panel; fail closed (PRD §9.5
-        # "不能仅显示裸 ID"; authoritative questionnaire display is deferred).
-        raise ValueError("submit_risk_assessment panel requires questionnaire metadata")
+        fields.extend(_assessment_fields(ctx, args))
     elif tool in _FUND_TOOLS:
         product_id = args["product_id"]
         if state is None:
@@ -233,9 +294,25 @@ def _fields_for(ctx: EvalContext, state: BankState | None, step: ResolvedStep):
         fields.append(PlanViewField(key="product", label="产品", value=product.name))
         if tool == "subscribe_product":
             fields.append(amount(args["amount_cents"]))
+            fields.append(
+                PlanViewField(
+                    key="expected_confirm_at",
+                    label="预计确认时间",
+                    value=fund_event_at(product, state.sim_now, "SUB").isoformat(),
+                    unit="datetime",
+                )
+            )
         else:
             fields.append(
                 PlanViewField(key="units", label="份额", value=str(args["units"]), unit="份")
+            )
+            fields.append(
+                PlanViewField(
+                    key="expected_settle_at",
+                    label="预计到账时间",
+                    value=fund_event_at(product, state.sim_now, "RED").isoformat(),
+                    unit="datetime",
+                )
             )
     return tuple(fields)
 

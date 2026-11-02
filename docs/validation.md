@@ -39,10 +39,11 @@ SafeBank 将自动化测试、真实模型链路和安全效果评测分开记�
 | 闲置订阅转储蓄 | 仅 gym 被取消，其他三条订阅保持 ACTIVE；定期向本人储蓄转 19,900 分，两期共 39,800 分；原扣费两期 BLOCKED | [JSON](acceptance/idle-subscription-savings-live.json) / [说明](acceptance/idle-subscription-savings.md) |
 | 红级挂失 | 卡状态 LOST，无补卡；审批 USED / RED；OTP 已确认；一次业务操作、零转账、账本平衡 | [JSON](acceptance/lost-card-source-live.json) / [说明](acceptance/lost-card-source.md) |
 | 模拟时钟与基金申购 | 推进至 12 月 6 日；2,000 元订单 SETTLED、在途冻结归零；16 个终态事件 / 16 条终态审计，14 SUCCESS / 2 BLOCKED | [JSON](acceptance/demo-clock-live.json) / [说明](acceptance/demo-clock.md) |
+| 基金赎回 | 货币基金 L1 赎回 1,000 份，已入账 100,000 分；非货币基金表单赎回 100 份，经时钟结算入账 12,311 分，各一笔付款且账本平衡 | [JSON](acceptance/redemption-sources-live.json) / [说明](acceptance/redemption-sources.md) |
 | 表单授权生命周期 | F/app 路径完成 20,000 分转账与绿色冻结；两计划 EXECUTED，claims CONSUMED；重复请求未重复写，零伪造原话 | [JSON](acceptance/form-authorization-live.json) / [说明](acceptance/form-authorization.md) |
 | 数据代际与失败回滚 | 新旧数据库并存、初始摘要一致、旧会话失效；切换故障后恢复旧运行环境 | [说明](acceptance/demo-generation.md) |
 
-表单记录来自当前功能分支；相关记录末尾仍保留最终完整 CI 与合并门禁状态。单组件通过不等于比赛演示整体冻结。
+表单记录与其他组件证据均保留当时的代码和合并门禁状态；对应实现现已随主线集成。单组件通过不等于比赛演示整体冻结。
 
 ## 分层复现
 
@@ -87,4 +88,4 @@ make test-s1
 
 ## 尚未发布的结果
 
-完整六场景两轮新数据集 live、赎回专项 live、全量攻击 ASR / 正常任务 TSR、B1 / B2 对照与延迟分位数仍待最终报告。回放组件已有专项测试，评测 CLI 的 replay 模式尚未接通，不能据此声称完整断网演示已验收。
+完整六场景两轮新数据集 live、全量攻击 ASR / 正常任务 TSR、B1 / B2 对照与延迟分位数仍待最终报告。生产模型适配已接入 record / replay，专用 `make demo` 驱动检查录制、离线网络与 SQL 回执；评测 CLI 的 replay 模式仍未接通。完整断网演示尚需真实录制和数据库业务状态验收。

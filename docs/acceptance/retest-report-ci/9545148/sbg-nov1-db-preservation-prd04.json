@@ -1,0 +1,10 @@
+{
+  "source_name": "bank_p1_test",
+  "preserved_name": "bank_p1_preserved_20261101_prd04",
+  "before_oid": 80341,
+  "active_connections_before": 0,
+  "before_ci_sha": "5139208740fe9fcd57e7ab2b2e7d695c704e8484",
+  "started_at": "2026-11-01T12:47:04.321243+00:00",
+  "after_oid": 80341,
+  "verified_at": "2026-11-01T12:47:04.435887+00:00"
+}

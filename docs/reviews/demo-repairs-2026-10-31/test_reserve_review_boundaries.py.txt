@@ -1,0 +1,81 @@
+"""Independent reserve rule controls using real pure bankcore."""
+
+import asyncio
+from datetime import timedelta
+
+import pytest
+from safebank_contracts.codes import Code
+from safebank_contracts.plan import PlanDraft
+from app.state import _derive_views
+from services.gateway.app.pipeline.context import EvalContext
+from services.gateway.app.pipeline.entity import EntityStage
+from services.gateway.app.pipeline.preflight import PreflightStage
+from tests.bankcore.obligations_fixtures import raw_billing, raw_mandate, raw_merchant, raw_projection_state
+from tests.bankcore.test_funds import funds_state
+from tests.contracts.samples import step
+from tests.gateway.w3a.conftest import build_ctx, run_entity, w3_state
+
+
+def fund_ctx(steps, *, profile="B2", missing=False):
+    bank = funds_state().model_copy(update={"obligations": None if missing else raw_projection_state(
+        billings=[raw_billing()], mandates=[raw_mandate()], merchants=[raw_merchant()]
+    ).obligations})
+    if bank.obligations is not None:
+        _, subscriptions = _derive_views(bank.obligations, "cus_a")
+        bank = bank.model_copy(update={"subscriptions": subscriptions})
+    plan = PlanDraft(request_id="req_review", session_id="ses_review", utterance_ids=["act_review"],
+                     intents=[], rationale="", steps=steps)
+    ctx = EvalContext(plan_draft=plan, plan_id="pln_review", origin="app_form", customer_id="cus_a", session_id="ses_review")
+    ctx.profile = profile
+    ctx._lazy_state = bank
+    asyncio.run(EntityStage().run(ctx))
+    return ctx
+
+
+@pytest.mark.parametrize("product", ["prd_mmf", "prd_bond"])
+def test_b1_subscription_comparison_remains_deliberately_non_cumulative(product):
+    ctx = fund_ctx([step("subscribe_product", product_id=product, amount_cents=2000000)], profile="B1")
+    asyncio.run(PreflightStage().run(ctx))
+    assert ctx.preflight.executable and not any(f.code is Code.SCHEDULED_SHORTFALL for f in ctx.findings)
+
+
+@pytest.mark.parametrize("product", ["prd_mmf", "prd_bond"])
+def test_insufficient_subscription_uses_account_id_hint_without_keyerror_or_mutation(product):
+    ctx = fund_ctx([step("subscribe_product", product_id=product, amount_cents=3000000)])
+    asyncio.run(PreflightStage().run(ctx))
+    assert not ctx.preflight.executable
+    assert any(f.code is Code.INSUFFICIENT_FUNDS for f in ctx.findings)
+    assert ctx.preflight.hint_max_outflow == {ctx.steps[0].step_id: 1997000}
+    assert ctx.plan_draft.steps[0].args.amount_cents == 3000000
+
+
+def test_hard_suitability_deny_is_not_masked_by_missing_reserve_data():
+    ctx = fund_ctx([step("subscribe_product", product_id="prd_bond", amount_cents=2000000)], missing=True)
+    customer = ctx._lazy_state.customers["cus_a"].model_copy(update={"risk_level": 1})
+    ctx._lazy_state = ctx._lazy_state.model_copy(update={"customers": {"cus_a": customer}})
+    asyncio.run(PreflightStage().run(ctx))
+    assert not ctx.preflight.executable and any(f.code is Code.SUITABILITY_MISMATCH for f in ctx.findings)
+
+
+def test_cancel_then_invest_does_not_reserve_revoked_authorization():
+    cancel = step("cancel_subscription", instruction_id="si_video")
+    cancel.update(step_id="cancel")
+    subscribe = step("subscribe_product", product_id="prd_mmf", amount_cents=2000000)
+    subscribe.update(step_id="invest", depends_on=["cancel"])
+    ctx = fund_ctx([cancel, subscribe])
+    asyncio.run(PreflightStage().run(ctx))
+    assert ctx.preflight.executable and not any(f.code is Code.SCHEDULED_SHORTFALL for f in ctx.findings)
+
+
+@pytest.mark.parametrize("days,should_replan", [(1, True), (8, False)])
+def test_new_schedule_only_counts_inside_real_seven_day_projection(days, should_replan):
+    bank = w3_state()
+    card = bank.cards["crd_a"].model_copy(update={"single_limit_cents": 600000})
+    bank = bank.model_copy(update={"cards": {**bank.cards, card.id: card}})
+    item = step("schedule_transfer", from_account_id="acc_a", payee_id="pye_b", amount_cents=598000,
+                period="ONCE", first_run_at=(bank.sim_now + timedelta(days=days)).isoformat())
+    ctx = run_entity(build_ctx([item], state=bank))
+    asyncio.run(PreflightStage().run(ctx))
+    assert ctx.preflight.executable
+    assert any(f.code is Code.SCHEDULED_SHORTFALL for f in ctx.findings) is should_replan
+    assert ctx.plan_draft.steps[0].args.amount_cents == 598000

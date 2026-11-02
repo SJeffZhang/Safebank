@@ -523,35 +523,23 @@ class TestOutputVerifierNoLLM:
         assert "622202" not in result
 
     def test_with_llm_repair(self):
-        """With LLM, unverified items trigger repair attempt."""
+        """A valid repaired read-only amount is still accepted."""
 
         class FakeLLM:
             def invoke(self, messages):
-                return type("r", (), {"content": "已向王五转账 800.00 元。"})
+                return type("r", (), {"content": "余额800.00元。"})
 
         verifier = OutputVerifier(llm=FakeLLM())
-        # balance_cents=80000 → 800.00 yuan; FakeLLM returns 800.00 → match
         state = {
-            "reply_draft": "已向王五转账 900.00 元。",
-            "execution": {
-                "status": "EXECUTED",
-                "steps": [
-                    {
-                        "step_id": "s1",
-                        "tool": "transfer",
-                        "status": "SUCCESS",
-                        "result": {"balance_cents": 80000},
-                    }
-                ],
-            },
+            "reply_draft": "余额900.00元。",
+            "reads": [{"data": {"balance_cents": 80000}}],
         }
         result = verifier(state, None)
-        # FakeLLM returns "800.00" → repair corrected the wrong "900.00"
         assert "800.00" in result
         assert "900.00" not in result
 
     def test_llm_repair_fails(self):
-        """When LLM raises, original text is used (with masking)."""
+        """A failed repair must not pass the known wrong amount through."""
 
         class BadLLM:
             def invoke(self, messages):
@@ -559,15 +547,12 @@ class TestOutputVerifierNoLLM:
 
         verifier = OutputVerifier(llm=BadLLM())
         state = {
-            "reply_draft": "已向王五转账 900.00 元。",
-            "execution": {
-                "status": "EXECUTED",
-                "steps": [],
-            },
+            "reply_draft": "余额900.00元。",
+            "reads": [{"data": {"balance_cents": 80000}}],
         }
         result = verifier(state, None)
-        # Falls through to original + masking
         assert len(result) > 0
+        assert "900.00" not in result
 
     # ── card tail bug (2026-10-29): unverified card tail must not reach the user ─
 

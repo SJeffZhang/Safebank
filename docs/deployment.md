@@ -100,7 +100,7 @@ make down
 
 ## 4. 数据重置与演示代际
 
-`make reset`、`make demo` 和 `make eval` 仍为明确失败的旧占位命令，不能用于复现。
+`make reset` 和 `make eval` 仍为明确失败的旧占位命令。`make demo` 已接入专用驱动，默认 `LLM_MODE=replay`，需要预先准备录制、隔离部署、离线网络和匹配的 SQL 回执，不会自动重置数据库。没有这些前置条件时会拒绝运行；详见[驱动验收](acceptance/demo-runner.md)。
 
 现有 `make demo-reset` / `make demo-up` 面向维护者的隔离演示检出，需要本机 `e2e.override.yml` 和配套秘密文件，不是全新 clone 的通用启动命令。代际机制会创建新的 bank / gateway / agent 数据库、保留旧库与历史镜像，在切换失败时恢复上一代。实现和已测范围见[代际验收](acceptance/demo-generation.md)。
 

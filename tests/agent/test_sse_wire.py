@@ -360,7 +360,7 @@ class TestValuesEventNotRepr:
 
 
 class TestStreamErrorLogged:
-    """A run that raises keeps its traceback in the server log, not only the SSE message."""
+    """Internal exceptions stay in server logs; SSE uses the public error contract."""
 
     def test_stream_exception_is_logged_with_traceback(self, agent_pg, ed25519_keys, caplog):
         app = _setup_test_app(agent_pg, ed25519_keys, "ALLOW")
@@ -379,7 +379,10 @@ class TestStreamErrorLogged:
                 result = _stream_graph(tc, token, tid, "给张三转 8 元", "utt_err")
 
         errors = [e for e in result["events"] if e["event"] == "error"]
-        assert errors and errors[0]["data"]["type"] == "TypeError"
+        assert errors and errors[0]["data"]["code"] == "AGENT_REQUEST_FAILED"
+        assert errors[0]["data"]["type"] == "AgentError"
+        assert "TypeError" not in str(errors) and "string indices" not in str(errors)
         logged = [r for r in caplog.records if r.message == "run stream failed"]
         assert logged, "stream failure must be logged server-side"
         assert logged[0].exc_info is not None
+        assert logged[0].exc_info[0] is TypeError

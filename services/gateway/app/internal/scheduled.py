@@ -37,6 +37,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 from safebank_bankcore.events import apply_merchant_charge
 from safebank_bankcore.grants import due_in_consent, instruction_scope
+from safebank_bankcore.ids import digest
 from safebank_contracts.codes import Code
 from safebank_contracts.plan import (
     DemoEvidence,
@@ -52,6 +53,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from .. import tables as t
 from ..audit.chain import append as audit_append
 from ..errors import GatewayError
+from ..event_notifications import notify_event_result
 from ..l3.client import L3Error
 from ..pipeline import contract, decision, entity, preflight, snapshot, workflow
 from ..pipeline import evaluate as run_pipeline
@@ -230,6 +232,8 @@ async def _finalize_claim(
     code: str | None,
     wall_now,
     trace_id: str | None,
+    *,
+    event: dict[str, Any],
 ) -> None:
     """Promote the IN_PROGRESS row to a terminal status with audit in one
     transaction.  Only succeeds if the row is still IN_PROGRESS."""
@@ -257,8 +261,11 @@ async def _finalize_claim(
                 plan_id=None,
                 now_wall=wall_now,
             )
+            await notify_event_result(conn, event=event, status=status)
         except Exception as exc:
-            raise GatewayError(Code.DEPENDENCY_UNAVAILABLE, 503, "audit write failed") from exc
+            raise GatewayError(
+                Code.DEPENDENCY_UNAVAILABLE, 503, "event audit or notification write failed"
+            ) from exc
 
 
 async def _release_claim(db, event_id: str) -> None:
@@ -274,7 +281,14 @@ async def _release_claim(db, event_id: str) -> None:
 
 
 async def _finalize_system_result(
-    db, app, event_id: str, customer_id: str, result: dict[str, Any], trace_id: str | None
+    db,
+    app,
+    event_id: str,
+    customer_id: str,
+    result: dict[str, Any],
+    trace_id: str | None,
+    *,
+    event: dict[str, Any],
 ) -> dict[str, Any]:
     """Record L3's terminal outcome for a system event.
 
@@ -291,8 +305,14 @@ async def _finalize_system_result(
     if status not in _TERMINAL_STATUSES:
         await _release_claim(db, event_id)
         return _retrying(event_id)
+    if event.get("event_id") != event_id or event.get("customer_id") != customer_id:
+        raise ValueError("event definition identity mismatch")
+    execution = dict(result, status=status)
+    event = dict(event, execution=execution)
     code = (result.get("result") or {}).get("code") or result.get("code")
-    await _finalize_claim(db, event_id, customer_id, status, code, app.wall_now(), trace_id)
+    await _finalize_claim(
+        db, event_id, customer_id, status, code, app.wall_now(), trace_id, event=event
+    )
     return {
         "event_id": event_id,
         "status": status,
@@ -340,7 +360,9 @@ async def _handle_system_event(
         await _release_claim(db, event_id)
         return _retrying(event_id)
 
-    return await _finalize_system_result(db, app, event_id, customer_id, result, trace_id)
+    return await _finalize_system_result(
+        db, app, event_id, customer_id, result, trace_id, event=event
+    )
 
 
 async def _handle_demo_event(
@@ -370,11 +392,24 @@ async def _handle_demo_event(
         await _release_claim(db, event_id)
         return _retrying(event_id)
 
+    import json
+
+    payload = event.get("payload")
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    payload = payload if isinstance(payload, dict) else {}
+    kind = payload.get("kind")
+    kind = {"credit": "EXTERNAL_CREDIT", "debit": "EXTERNAL_DEBIT", "split": "SPLIT_PAYMENT"}.get(
+        kind, kind
+    )
+    if kind not in ("EXTERNAL_CREDIT", "EXTERNAL_DEBIT", "SPLIT_PAYMENT"):
+        await _release_claim(db, event_id)
+        return _retrying(event_id)
     evidence = DemoEvidence(
         type="DEMO_EVENT",
         event_id=event_id,
-        console_session_id="scheduler",
-        kind="EXTERNAL_CREDIT",
+        console_session_id=payload.get("console_session_id") or "scheduler",
+        kind=kind,
     )
     try:
         result = await l3.event_execute(
@@ -390,7 +425,9 @@ async def _handle_demo_event(
         await _release_claim(db, event_id)
         return _retrying(event_id)
 
-    return await _finalize_system_result(db, app, event_id, customer_id, result, trace_id)
+    return await _finalize_system_result(
+        db, app, event_id, customer_id, result, trace_id, event=event
+    )
 
 
 async def _re_evaluate(request: Request, event: dict[str, Any]) -> EvalContext:
@@ -432,7 +469,209 @@ def _scope_in_state(state: BankState, event: dict) -> dict | None:
     )
 
 
-async def _handle_merchant_event(request: Request, grant: dict | None, event: dict) -> dict:
+async def _handle_reminder_event(request: Request, event: dict[str, Any]) -> dict[str, Any]:
+    """A read-only reminder still requires its exact live mandate and saved grant."""
+    app = request.app.state
+    try:
+        raw = await app.l3.snapshot(
+            {"customer_id": event["customer_id"], "steps": [], "event_id": None}
+        )
+        state = BankState.model_validate(raw)
+    except (L3Error, ValueError, TypeError):
+        await _release_claim(app.db, event["event_id"])
+        return _retrying(event["event_id"])
+    async with app.db.connect() as conn:
+        grant = await _load_grant(conn, event.get("instruction_id"))
+    obligations = state.obligations
+    billing = obligations.billings.get(event["source_id"]) if obligations else None
+    instruction = (
+        obligations.standing_instructions.get(event.get("instruction_id")) if obligations else None
+    )
+    payload = event.get("payload")
+    valid = False
+    try:
+        fields = {
+            "billing_id",
+            "customer_id",
+            "account_id",
+            "amount_cents",
+            "charge_due_at",
+            "instruction_id",
+        }
+        charge_due = datetime.fromisoformat(payload["charge_due_at"])
+        reminder_due = datetime.fromisoformat(event["due_at"])
+        seed = grant["scope_json"].get("seed_consent") if grant else None
+        bound = (
+            seed["terms"]
+            if seed
+            else grant["scope_json"].get("instruction_scope")
+            if grant
+            else None
+        )
+        valid = (
+            isinstance(payload, dict)
+            and set(payload) == fields
+            and type(payload["amount_cents"]) is int
+            and digest(payload) == event["payload_hash"]
+            and billing is not None
+            and instruction is not None
+            and instruction.kind == "MERCHANT_MANDATE"
+            and instruction.status == "ACTIVE"
+            and billing.active
+            and (
+                payload["billing_id"],
+                payload["customer_id"],
+                payload["account_id"],
+                payload["instruction_id"],
+            )
+            == (billing.id, event["customer_id"], billing.account_id, instruction.id)
+            and (
+                instruction.billing_id,
+                instruction.customer_id,
+                instruction.from_account_id,
+                instruction.merchant_id,
+            )
+            == (billing.id, billing.customer_id, billing.account_id, billing.merchant_id)
+            and billing.customer_id == event["customer_id"]
+            and billing.amount_cents == payload["amount_cents"] == event["amount_cents"]
+            and 0 < billing.amount_cents <= instruction.max_amount_cents
+            and billing.next_due_at == charge_due
+            and reminder_due <= state.sim_now < charge_due <= state.sim_now + timedelta(days=3)
+            and billing.created_at <= state.sim_now
+            and instruction.created_at <= state.sim_now
+            and (instruction.end_at is None or instruction.end_at >= charge_due)
+            and grant is not None
+            and grant["status"] == "ACTIVE"
+            and grant.get("revoked_at") is None
+            and grant["instruction_id"] == instruction.id
+            and grant["customer_id"] == event["customer_id"]
+            and grant["source_plan_id"] == instruction.source_plan_id == event["source_plan_id"]
+            and grant["scope_hash"] == instruction.grant_scope_hash == event["grant_scope_hash"]
+            and bound == event.get("grant_scope") == _scope_in_state(state, event)
+        )
+    except (KeyError, TypeError, ValueError, AttributeError):
+        valid = False
+    if not valid:
+        return await _block(
+            request,
+            app.db,
+            event,
+            "BLOCKED",
+            Code.MANDATE_NOT_ACTIVE.value,
+            ctx=EvalContext(snapshot=state),
+        )
+    try:
+        result = await app.l3.event_execute(
+            event["event_id"],
+            {
+                "expected_versions": dict(state.versions),
+                "clock_version": state.clock_version,
+                "expected_payload_hash": event["payload_hash"],
+                "authorization_evidence": {
+                    "type": "SYSTEM_REMINDER",
+                    "billing_id": billing.id,
+                    "instruction_id": instruction.id,
+                },
+            },
+        )
+    except L3Error:
+        await _release_claim(app.db, event["event_id"])
+        return _retrying(event["event_id"])
+    return await _finalize_system_result(
+        app.db,
+        app,
+        event["event_id"],
+        event["customer_id"],
+        result,
+        getattr(request.state, "trace_id", None),
+        event=event,
+    )
+
+
+def _revoked_merchant_matches(
+    grant: dict, event: dict, state: BankState, expected_event_id: str | None
+) -> bool:
+    """A revocation can prove a refusal only; it can never authorize a charge.
+
+    Original consents retain their creation bindings. A marked lazy-grant
+    tombstone instead binds its cancellation source and customer/instruction;
+    the event's original creation terms must still match the fresh bank state.
+    """
+    try:
+        obligations = state.obligations
+        instruction = obligations.standing_instructions.get(event["instruction_id"])
+        billing = obligations.billings.get(event["source_id"])
+        account = state.accounts.get(event["account_id"])
+        due = datetime.fromisoformat(event["due_at"])
+        period = datetime.fromisoformat(event["period_key"])
+        if not (
+            expected_event_id is not None
+            and event["event_id"] == expected_event_id
+            and event["kind"] == "MERCHANT_CHARGE"
+            and grant["status"] == "REVOKED"
+            and grant.get("revoked_at") is not None
+            and instruction is not None
+            and instruction.kind == "MERCHANT_MANDATE"
+            and instruction.status == "DELETED"
+            and billing is not None
+            and billing.active
+            and account is not None
+            and grant["instruction_id"] == instruction.id == event["instruction_id"]
+            and (
+                grant["customer_id"]
+                == instruction.customer_id
+                == billing.customer_id
+                == account.customer_id
+                == event["customer_id"]
+            )
+            and event["customer_id"] in obligations.covered_customer_ids
+            and (instruction.billing_id == billing.id == event["billing_id"] == event["source_id"])
+            and (instruction.merchant_id == billing.merchant_id == event["merchant_id"])
+            and (instruction.from_account_id == billing.account_id == event["account_id"])
+            and instruction.source_plan_id == event["source_plan_id"]
+            and instruction.grant_scope_hash == event["grant_scope_hash"]
+            and _scope_in_state(state, event) == event["grant_scope"]
+            and type(event["amount_cents"]) is int
+            and 0 < billing.amount_cents == event["amount_cents"]
+            and event["payload"] == f"{billing.id}|{billing.amount_cents}|{billing.account_id}"
+            and digest(event["payload"]) == event["payload_hash"]
+            and due.tzinfo is not None
+            and period == due == billing.next_due_at
+            and max(instruction.created_at, billing.created_at) <= due <= state.sim_now
+        ):
+            return False
+        saved = grant["scope_json"]
+        if "revocation" in saved:
+            marker = saved["revocation"]
+            return (
+                set(saved) == {"revocation"}
+                and isinstance(marker, dict)
+                and set(marker) == {"plan_id", "step_id", "tool"}
+                and marker["tool"] == "cancel_subscription"
+                and isinstance(marker["step_id"], str)
+                and bool(marker["step_id"])
+                and isinstance(marker["plan_id"], str)
+                and bool(marker["plan_id"])
+                and marker["plan_id"] == grant["source_plan_id"]
+                and grant["scope_hash"]
+                == digest(["revoked-grant", event["customer_id"], instruction.id])
+                and grant["approved_risk"] == "RED"
+            )
+        seed = saved.get("seed_consent")
+        bound = seed["terms"] if seed else saved.get("instruction_scope")
+        return (
+            grant["scope_hash"] == event["grant_scope_hash"]
+            and grant["source_plan_id"] == event["source_plan_id"]
+            and bound == event["grant_scope"]
+            and (not seed or seed.get("kind") == "SEED_CONSENT")
+        )
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return False
+
+
+async def _handle_merchant_event(
+    request: Request, grant: dict | None, event: dict, *, expected_event_id: str | None = None
+) -> dict:
     """Mandate authorizes a billing, never a fabricated payee transfer.
 
     The exact same pure applier used by L3 checks mandate state/cap and funds.
@@ -445,6 +684,27 @@ async def _handle_merchant_event(request: Request, grant: dict | None, event: di
             {"customer_id": event["customer_id"], "steps": [], "event_id": None}
         )
         state = BankState.model_validate(raw)
+        if grant is not None and grant.get("status") == "REVOKED":
+            code = Code.SCHEDULED_BYPASS.value
+            if _revoked_merchant_matches(grant, event, state, expected_event_id):
+                _, _, run = apply_merchant_charge(
+                    state,
+                    billing_id=event["source_id"],
+                    due_at=datetime.fromisoformat(event["due_at"]),
+                    event_id=event["event_id"],
+                    period_key=event["period_key"],
+                )
+                if (
+                    run is not None
+                    and run.status == "BLOCKED"
+                    and run.code == Code.MANDATE_NOT_ACTIVE.value
+                ):
+                    code = Code.MANDATE_NOT_ACTIVE.value
+            # This branch ends in a pinned refusal, including malformed
+            # tombstones and still-ACTIVE bank instructions. Never execute.
+            return await _block(
+                request, app.db, event, "BLOCKED", code, ctx=EvalContext(snapshot=state)
+            )
         if grant is not None and _scope_in_state(state, event) != event.get("grant_scope"):
             return await _block(
                 request,
@@ -511,6 +771,7 @@ async def _handle_merchant_event(request: Request, grant: dict | None, event: di
         event["customer_id"],
         result,
         getattr(request.state, "trace_id", None),
+        event=event,
     )
 
 
@@ -599,7 +860,9 @@ async def _backfill_grant(db, l3, event: dict[str, Any], wall_now) -> dict[str, 
             )
             .on_conflict_do_nothing()
         )
-    return grant
+        # A concurrent committed cancellation may have installed a REVOKED row.
+        # Never return the locally reconstructed ACTIVE candidate after a conflict.
+        return await _load_grant(conn, grant["instruction_id"])
 
 
 async def _block(
@@ -647,6 +910,7 @@ async def _block(
         event["customer_id"],
         result,
         getattr(request.state, "trace_id", None),
+        event=event,
     )
 
 
@@ -665,6 +929,11 @@ async def scheduled_authorize(request: Request, body: AuthorizeRequest) -> dict[
     if caller is None or caller.kind is not ServiceKind.S:
         raise GatewayError(Code.UNAUTHENTICATED, 401)
 
+    return await authorize_event(request, body)
+
+
+async def authorize_event(request: Request, body: AuthorizeRequest) -> dict[str, Any]:
+    """Shared event engine; called only after S1 or D4 credential checks."""
     app = request.app.state
     db = app.db
     l3 = app.l3
@@ -691,7 +960,7 @@ async def scheduled_authorize(request: Request, body: AuthorizeRequest) -> dict[
         customer_id = event["customer_id"]
         if event.get("execution") is not None:
             return await _finalize_system_result(
-                db, app, event_id, customer_id, event["execution"], trace_id
+                db, app, event_id, customer_id, event["execution"], trace_id, event=event
             )
 
         # ── System events (no grant) ────────────────────────────────────────
@@ -701,6 +970,9 @@ async def scheduled_authorize(request: Request, body: AuthorizeRequest) -> dict[
             return await _handle_system_event(
                 request, db, app, l3, event, event_id, customer_id, trace_id
             )
+
+        if event_kind == "REMINDER":
+            return await _handle_reminder_event(request, event)
 
         if event_kind == "DEMO_EVENT":
             return await _handle_demo_event(
@@ -733,6 +1005,9 @@ async def scheduled_authorize(request: Request, body: AuthorizeRequest) -> dict[
                     ctx=None,
                 )
 
+        if event_kind == "MERCHANT_CHARGE" and grant.get("status") == "REVOKED":
+            return await _handle_merchant_event(request, grant, event, expected_event_id=event_id)
+
         # Revoked grants and fingerprint mismatches refuse without re-evaluation.
         seed = grant["scope_json"].get("seed_consent")
         bound_scope = seed["terms"] if seed else grant["scope_json"].get("instruction_scope")
@@ -743,6 +1018,7 @@ async def scheduled_authorize(request: Request, body: AuthorizeRequest) -> dict[
         )
         if (
             grant["status"] != "ACTIVE"
+            or grant.get("revoked_at") is not None
             or grant["scope_hash"] != event["grant_scope_hash"]
             or grant["customer_id"] != customer_id
             or grant["source_plan_id"] != event["source_plan_id"]
@@ -828,7 +1104,9 @@ async def scheduled_authorize(request: Request, body: AuthorizeRequest) -> dict[
             await _release_claim(db, event_id)
             return _retrying(event_id)
 
-        return await _finalize_system_result(db, app, event_id, customer_id, result, trace_id)
+        return await _finalize_system_result(
+            db, app, event_id, customer_id, result, trace_id, event=event
+        )
 
     except Exception:
         # On any unhandled error, release the claim so the event isn't

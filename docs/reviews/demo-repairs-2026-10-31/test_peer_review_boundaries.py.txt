@@ -1,0 +1,81 @@
+"""Independent peer-transfer lock/identity controls; pure SQL AST + bankcore."""
+
+import asyncio
+from copy import deepcopy
+
+import pytest
+from app.errors import BankError
+from app.events import EventService
+from safebank_contracts.codes import Code
+from sqlalchemy.dialects import postgresql
+
+from tests.obligations_data.test_scheduled_peer_runtime_unit import Memory, execute, memory_runtime
+
+
+@pytest.mark.parametrize("mutation", ["source", "direct_target", "target_owner"])
+def test_lock_after_target_binding_changes_do_not_load_or_post(memory_runtime, mutation):
+    db = Memory()
+
+    def change(value):
+        instruction = value.tables["standing_instructions"][0]
+        if mutation == "source":
+            instruction["from_account_id"] = "acc_b"
+        elif mutation == "direct_target":
+            instruction["to_account_id"] = "acc_b"
+        else:
+            next(row for row in value.tables["accounts"] if row["id"] == "acc_b")["customer_id"] = "cus_other"
+
+    db.on_version_lock = change
+    with pytest.raises(BankError) as caught:
+        asyncio.run(execute(db))
+    assert caught.value.code is Code.STATE_CHANGED
+    assert not db.scopes and not db.writes and not db.persisted
+
+
+@pytest.mark.parametrize("missing", ["version", "account"])
+def test_missing_real_peer_row_fails_before_any_write(memory_runtime, missing):
+    db = Memory()
+    table, field, value = ("state_versions", "customer_id", "cus_b") if missing == "version" else ("accounts", "id", "acc_b")
+    db.tables[table] = [row for row in db.tables[table] if row[field] != value]
+    with pytest.raises(BankError) as caught:
+        asyncio.run(execute(db))
+    assert caught.value.code is (Code.STATE_CHANGED if missing == "version" else Code.NOT_FOUND)
+    assert not db.scopes and not db.writes and not db.persisted
+
+
+def test_peer_clock_barrier_is_share_and_customer_locks_are_sorted():
+    async def check():
+        db = Memory()
+        statements = []
+        original = db.execute
+
+        async def record(query):
+            statements.append(str(query.compile(dialect=postgresql.dialect())))
+            return await original(query)
+
+        db.execute = record
+        await EventService()._lock_peer_versions(db, ("cus_b", "cus_a"), 1, {"cus_a": 0, "cus_b": 0})
+        assert "FOR SHARE" in statements[0]
+        assert "ORDER BY state_versions.customer_id FOR UPDATE" in statements[1]
+        assert db.locks[-1] == ("state_versions", ("cus_a", "cus_b"))
+
+    asyncio.run(check())
+
+
+def test_external_target_stays_single_customer_even_with_extra_callback_versions(memory_runtime):
+    db = Memory()
+    db.tables["payees"][0]["target_account_id"] = None
+    payee = db.state.payees["pye_peer"].model_copy(update={"target_account_id": None})
+    db.state = db.state.model_copy(update={"payees": {payee.id: payee}})
+    result = asyncio.run(execute(db, {"cus_a": 0, "cus_b": 999, "cus_other": 999}))
+    assert result["status"] == "SUCCESS"
+    assert db.scopes == [("cus_a",)] and db.versions() == {"cus_a": 1, "cus_b": 0}
+
+
+def test_terminal_peer_replay_requires_no_fresh_version_and_never_writes_again(memory_runtime):
+    db = Memory()
+    assert asyncio.run(execute(db))["status"] == "SUCCESS"
+    before = deepcopy((db.tables, db.writes, db.persisted, db.scopes))
+    result = asyncio.run(execute(db, {}))
+    assert result["status"] == "SUCCESS" and result["replayed"] is True
+    assert (db.tables, db.writes, db.persisted, db.scopes) == before

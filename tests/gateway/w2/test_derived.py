@@ -78,7 +78,7 @@ def test_cancelled_fees_are_exact_deduplicated_and_bound_to_self_schedule(monkey
         ctx._lazy_state,
         subscriptions=(subscription,),
         obligations=ObligationSnapshot(
-            covered_customer_ids=("cus_a",),
+            covered_customer_ids=("cus_a", "cus_b"),
             merchants={"mer_a": raw_merchant(id="mer_a", name="合成订阅")},
             billings={
                 "bil_a": raw_billing(
@@ -87,6 +87,8 @@ def test_cancelled_fees_are_exact_deduplicated_and_bound_to_self_schedule(monkey
                     account_id="acc_a",
                     merchant_id="mer_a",
                     amount_cents=19900,
+                    anchor_day=1,
+                    next_due_at=subscription.next_due_at,
                 )
             },
             standing_instructions={

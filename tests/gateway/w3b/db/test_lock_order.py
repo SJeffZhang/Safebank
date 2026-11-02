@@ -37,6 +37,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from safebank_contracts.enums import Risk
 from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.pool import NullPool
 
 from services.gateway.app import tables
@@ -408,11 +409,10 @@ def test_old_approval_first_vs_create_for_evaluation_produces_deadlock(gateway_d
             session_id=SID,
         )
 
-        deadlock_detected = False
+        lock_errors: list[str] = []
 
         async def conn_a_old():
             """OLD/WRONG lock order: approval → session (recreates the bug)."""
-            nonlocal deadlock_detected
             try:
                 async with db.connect() as conn_a:
                     async with conn_a.begin() as tx_a:
@@ -425,12 +425,14 @@ def test_old_approval_first_vs_create_for_evaluation_produces_deadlock(gateway_d
                         # OLD ORDER: session second — must deadlock with conn_b.
                         await _lock_session(conn_a, snap["sid"], CUSTOMER)
                         await tx_a.rollback()
-            except Exception:
-                deadlock_detected = True
+            except DBAPIError as exc:
+                sqlstate = getattr(exc.orig, "sqlstate", None)
+                if sqlstate not in {"40P01", "55P03"}:
+                    raise
+                lock_errors.append(sqlstate)
 
         async def conn_b_cfe():
             """create_for_evaluation — locks session first (production path)."""
-            nonlocal deadlock_detected
             await ready.wait()
             await asyncio.sleep(0.1)
             try:
@@ -444,8 +446,11 @@ def test_old_approval_first_vs_create_for_evaluation_produces_deadlock(gateway_d
                             view=view_b,
                         )
                         await tx_b.rollback()
-            except Exception:
-                deadlock_detected = True
+            except DBAPIError as exc:
+                sqlstate = getattr(exc.orig, "sqlstate", None)
+                if sqlstate not in {"40P01", "55P03"}:
+                    raise
+                lock_errors.append(sqlstate)
             finally:
                 proceed.set()
 
@@ -460,11 +465,17 @@ def test_old_approval_first_vs_create_for_evaluation_produces_deadlock(gateway_d
             t.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
 
-        await db.dispose()
+        try:
+            # Propagate contract/configuration failures instead of counting them
+            # as evidence of a database lock conflict.
+            await asyncio.gather(*done)
+        finally:
+            await db.dispose()
 
-        assert deadlock_detected, (
-            "OLD approval→session order did NOT deadlock with create_for_evaluation. "
-            "The ABBA scenario may not be reproducible — check the seed data."
+        assert not pending, f"OLD lock-order tasks did not complete: {len(pending)}"
+        assert lock_errors, (
+            "OLD approval→session order did NOT produce SQLSTATE 40P01/55P03 "
+            "with create_for_evaluation. Check the seed data and lock contention."
         )
 
     asyncio.run(run())

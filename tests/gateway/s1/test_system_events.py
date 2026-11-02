@@ -215,6 +215,7 @@ def test_demo_event_success_when_demo_enabled(app_config):
                 source_id="demo_session_02",
                 kind="DEMO_EVENT",
             )
+            | {"payload": {"kind": "EXTERNAL_CREDIT", "console_session_id": "scheduler"}}
         )
 
         resp = await app.client.post(

@@ -29,6 +29,7 @@ from ..audit.chain import append as audit_append
 from ..errors import GatewayError
 from ..evaluation.repo import append_evaluation, latest_revision
 from ..forms import form_draft, load_forms
+from ..hint_sources import publish_replan_hints
 from ..idempotency import request_idempotent
 from ..middleware import digest_hex
 from ..pipeline import evaluate as run_pipeline
@@ -71,7 +72,13 @@ async def _load_authorization(
     l3=None,
     bank=None,
 ) -> AuthorizationInputs:
-    """Load ACTIVE, unexpired utterances for *session_id* into AuthorizationInputs."""
+    """Load only the plan-declared ACTIVE, unexpired authorization roots.
+
+    G4 first binds these IDs to the assistant JWT; execution callers supply
+    the persisted plan IDs. The evidence verifier still requires exact root
+    set equality and loads/validates necessary parents separately. Session
+    context, including other SCOPED utterances, never becomes an extra root.
+    """
     if origin == "app_form":
         auth, _, _, _ = await load_forms(
             conn,
@@ -91,6 +98,7 @@ async def _load_authorization(
                 select(t.utterances)
                 .where(
                     t.utterances.c.sid == session_id,
+                    t.utterances.c.id.in_(tuple(source_ids or ())),
                     t.utterances.c.status == UtteranceStatus.ACTIVE.value,
                     t.utterances.c.expires_at_wall > now,
                 )
@@ -320,7 +328,9 @@ async def evaluate_plan(request: Request) -> JSONResponse:
                 )
                 ctx.authorization = form_auth
             else:
-                ctx.authorization = await _load_authorization(read_conn, sid, customer_id, now)
+                ctx.authorization = await _load_authorization(
+                    read_conn, sid, customer_id, now, source_ids=plan_draft.utterance_ids
+                )
         except GatewayError:
             raise
         except Exception as exc:
@@ -427,6 +437,10 @@ async def evaluate_plan(request: Request) -> JSONResponse:
             created_at_wall=now,
         )
 
+        published_hints = await publish_replan_hints(
+            conn, ctx, session_row, evaluation_id=evaluation_id, revision=revision, now=wall_now()
+        )
+
         # ── Approval (REQUIRE_APPROVAL only) ──────────────────────
         approval_id: str | None = None
         view_hash: str | None = None
@@ -493,7 +507,7 @@ async def evaluate_plan(request: Request) -> JSONResponse:
             "risk": risk_str,
             "approval_id": approval_id,
             "findings": findings_json,
-            "replan_hints": [h.model_dump(mode="json") for h in decision.replan_hints],
+            "replan_hints": [h.model_dump(mode="json") for h in published_hints],
             "preflight": preflight_json,
             "versions": versions_json,
             "clock_version": clock_version_num,

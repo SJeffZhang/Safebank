@@ -21,6 +21,8 @@ ingest → understand → gather → plan → evaluate
 
 当前适配固定使用 DeepSeek V4 Pro、显式 `/beta`、关闭思考、`temperature=0` 和 `max_retries=0`。理解与计划使用结构化工具；信息收集只绑定 18 个读工具。模型提供参数来源，身份、会话和请求字段由代码填写。
 
+生产模型工厂支持 `LLM_MODE=live|record|replay`；回放只替换模型响应，不替代 L2 授权。缺失、损坏或不匹配的录制会拒绝继续，不回退到真实模型。接入与检查范围见[回放验收](../../docs/acceptance/runtime-llm-replay.md)。
+
 工具自由文本用不可信标记包裹，输出端检查金额与敏感内容。模型是规划者，授权结果完全由网关返回。
 
 ## 启动与配置
@@ -29,7 +31,9 @@ ingest → understand → gather → plan → evaluate
 
 | 变量 | 用途 |
 |---|---|
-| `DEEPSEEK_API_KEY` | 模型 API key，真实运行必需 |
+| `DEEPSEEK_API_KEY` | 模型 API key，live / record 必需；replay 不加载密钥 |
+| `LLM_MODE` | `live`（默认）、`record` 或 `replay` |
+| `LLM_PROFILE` / `LLM_CASE_ID` / `LLM_REPLAY_ROOT` | 录制与回放的策略、用例和持久化目录 |
 | `AGENT_SERVICE_TOKEN` | 以 A 身份调用网关 |
 | `GATEWAY_URL` | 网关公共接口，Compose 内为 `http://gateway:8200` |
 | `AGENT_DATABASE_URL` | 助手检查点数据库 |

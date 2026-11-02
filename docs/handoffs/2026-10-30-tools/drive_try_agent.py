@@ -104,7 +104,12 @@ def main() -> int:
             text,
             "--confirm",
         ]
-        + (["--out", os.environ["TRY_AGENT_OUT"]] if os.environ.get("TRY_AGENT_OUT") else []),
+        + (["--out", os.environ["TRY_AGENT_OUT"]] if os.environ.get("TRY_AGENT_OUT") else [])
+        + (
+            ["--request-id", os.environ["TRY_AGENT_REQUEST_ID"]]
+            if os.environ.get("TRY_AGENT_REQUEST_ID")
+            else []
+        ),
         cwd=deploy,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,

@@ -1,0 +1,28 @@
+
+> safebank-app@0.1.0 test:bff
+> node --test server/*.test.mjs
+
+✔ cookie stores an opaque session; tokens never enter login JSON; client auth is ignored (20.50225ms)
+✔ cross-origin writes rejected before any upstream call (4.511292ms)
+✔ same-origin missing custom CSRF header rejected (1.686542ms)
+✔ arbitrary proxy and internal endpoints fail closed (4.591666ms)
+✔ read tools require a session created in this browser login (3.048458ms)
+✔ gateway errors and status pass through while service tokens are redacted (1.574625ms)
+✔ resume cannot use a later or unbound assistant token (1.77525ms)
+✔ SSE interrupt binds original token; confirm and OTP stay on gateway; resume uses bound token (4.330625ms)
+✔ current L1 messages normalize to reply, raw values are filtered and interrupt is last (2.750208ms)
+✔ one thread cannot register overlapping utterances while its original request is running (2.533667ms)
+✔ health answers without login and without upstream calls (0.769375ms)
+✔ assistant state for a thread with no checkpoint yet is an empty chat, not an error (1.493458ms)
+✔ console routes require an operator console login (1.110083ms)
+✔ console login keeps the secret server-side and uses it for D calls (1.682666ms)
+✔ wrong console secret is rejected (1.794542ms)
+✔ demo SMS needs both logins and reveals only approvals the customer owns (2.236292ms)
+ℹ tests 16
+ℹ suites 0
+ℹ pass 16
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 104.780958

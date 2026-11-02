@@ -4,7 +4,10 @@
 Rewrites ``services/bank-backend/fixtures/l1_seed_v1.json`` with a concrete,
 reproducible history on ``acc_zs_chk`` that the bankcore analytics can detect:
 
-- exactly 3 anomalies on ``crd_zs_1`` (night-large / duplicate / new-merchant-large),
+- three deliberately anomalous transactions014/016/017 on ``crd_zs_1``
+  (night-large / duplicate / new-merchant-large); the unchanged canonical-category projection
+  also flags txn_zs_015 in September and original txn_zs_012 in October, giving
+  four September items and five through the seed clock,
 - exactly 4 monthly subscriptions (video/music/cloud/gym) with the gym idle,
 - the same 13 existing transactions (verbatim refund memo) and a final
   ``balance_after_cents`` of 600000 on the latest txn (txn_zs_013).
@@ -42,9 +45,10 @@ ORIGINAL_TXN_IDS = frozenset(f"txn_zs_{i:03d}" for i in range(1, 14))
 # --- merchants -------------------------------------------------------------
 # New everyday merchants + the three anomaly merchants. ``usage_expected`` is
 # set on mer_gym (existing row) so ``detect_subscriptions`` marks it idle.
-# Everyday categories (日用/零食/茶饮/生鲜) are disjoint from the anomaly
-# categories (娱乐/外卖/数码) and the enriched October rows (餐饮/出行/零售),
-# so the everyday spends can never trip CATEGORY_OUTLIER.
+# Raw labels do not isolate anomaly baselines: 零食/茶饮/外卖 map to canonical
+# 餐饮, and 生鲜/零售 map to canonical 购物. Their existing history legitimately
+# adds CATEGORY_OUTLIER to015/016 and original012; do not change the seed or
+# production thresholds to recover the old three-item expectation.
 NEW_MERCHANTS = [
     {"id": "mer_nightbar", "name": "夜色酒吧", "category": "娱乐"},
     {"id": "mer_waimai", "name": "美味外卖", "category": "外卖"},
@@ -94,7 +98,10 @@ def _mandate(txn_id, occurred_at, amount, counterparty, merchant_id, category):
 
 
 def _anomaly_txns():
-    """The 4 designed anomaly CARD_SPEND txns (3 flagged items)."""
+    """Four designed CARD_SPEND rows with three deliberately embedded anomalies.
+
+    Canonical history additionally makes the first takeaway row015 an outlier.
+    """
     return [
         # NIGHT_LARGE + NEW_MERCHANT_LARGE (02:13, 128000, first-seen merchant)
         _txn(
@@ -107,7 +114,8 @@ def _anomaly_txns():
             "娱乐",
         ),
         # DUPLICATE pair: 4 minutes apart, same card/merchant/amount.
-        # The *first* one carries no code (not night, < 100000, no prior).
+        # The first is not a duplicate/night/new-merchant signal, but canonical
+        # 餐饮 history independently flags it as a category outlier.
         _txn(
             "txn_zs_015",
             "2026-09-15T12:00:00+08:00",
@@ -202,10 +210,11 @@ def _gym_visits():
 def _daily_txns():
     """140 everyday CARD_SPEND rows spread across 2026-07-17 .. 2026-10-12.
 
-    Constant amount per merchant (σ=0, so ``amount > μ + 3σ`` is impossible)
-    and categories disjoint from the anomaly/enriched rows keep the everyday
-    spends out of ``detect_anomalies``. Daytime hours (09:00-16:59) avoid
-    NIGHT_LARGE, amounts < 100000 avoid NEW_MERCHANT_LARGE, and the
+    Amounts are constant per merchant, not necessarily per canonical category.
+    Shared 餐饮/购物 baselines also classify the takeaway and original retail
+    rows; raw labels cannot guarantee a three-item anomaly result.
+    Daytime hours (09:00-16:59) avoid NIGHT_LARGE, amounts < 100000 avoid
+    NEW_MERCHANT_LARGE, and the
     ``(i * 7) % 60`` minute spacing keeps same-merchant charges >= 44 minutes
     apart (no DUPLICATE within the 5-minute window).
     """

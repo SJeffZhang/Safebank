@@ -119,9 +119,10 @@ L1 不在银行网络中，也不持有 L3 业务调用凭证。浏览器只访�
 | 取消闲置订阅并转存 | 仅取消目标订阅；每期转存 199 元，两期共 398 元；原订阅两期扣款均被拦截 | [记录](docs/acceptance/idle-subscription-savings-live.json) |
 | 红级挂失 | OTP 确认后卡片变为 `LOST`；一次业务操作，无转账 | [记录](docs/acceptance/lost-card-source-live.json) |
 | 申购结算与模拟时钟 | 2,000 元申购已结算；16 个到期事件形成 14 个成功、2 个拦截终态，账本平衡 | [记录](docs/acceptance/demo-clock-live.json) |
+| 基金赎回 | 货币基金真实 L1 赎回 1,000 份并入账 1,000 元；非货币基金表单赎回 100 份，结算入账 123.11 元 | [记录](docs/acceptance/redemption-sources-live.json) |
 | 表单授权与幂等 | 200 元转账与冻结完成；重复请求未增加业务写入；未伪造用户原话 | [记录](docs/acceptance/form-authorization-live.json) |
 
-这些记录对应各自标注的提交与独立合成数据集。当前尚未发布完整六场景两轮验收、赎回专项 live、全量攻击成功率（ASR）、任务完成率（TSR）及性能基准。评测方法与证据索引见[验证说明](docs/validation.md)。
+这些记录对应各自标注的提交与独立合成数据集。当前尚未发布完整六场景两轮验收、全量攻击成功率（ASR）、任务完成率（TSR）及性能基准。评测方法与证据索引见[验证说明](docs/validation.md)。
 
 ## 启动与部署
 

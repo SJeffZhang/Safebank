@@ -10,6 +10,7 @@ from pathlib import Path
 import yaml
 from safebank_bankcore import projected_shortfall
 from safebank_bankcore.reserve import BUSINESS_TIMEZONE
+from safebank_bankcore.subscription_savings import subscription_savings
 from safebank_contracts.codes import Code
 from safebank_contracts.tools import READ_ARGS
 
@@ -80,6 +81,26 @@ def _lost_card_no_replacement(tool, param, value, row, span_text):
         and scope.get("fields", {}).get("replace") is False
         and bool(scope.get("fields", {}).get("card_id"))
         and normalize(span_text) in {"挂失", "丢了", "丢失了", "丢失", "丢"}
+    )
+
+
+def _split_includes_self(tool, param, value, row, span_text):
+    """Only the self phrase in a persisted, scoped typed AA command proves True.
+
+    The caller obtains ``row`` through the existing live, credential-bound lineage
+    proof. Equal arbitrary scope fields or a boolean read value are not this rule.
+    """
+    if tool != "create_split_request" or param != "include_self" or value is not True:
+        return False
+    scope = row.get("normalized_scope")
+    if not isinstance(scope, dict) or not isinstance(scope.get("fields"), dict):
+        return False
+    return (
+        row.get("kind") == "typed"
+        and row.get("parse_status") == "SCOPED"
+        and scope.get("action_kinds") == ["SPLIT_CREATE"]
+        and scope["fields"].get("include_self") is True
+        and normalize(span_text) == "我和"
     )
 
 
@@ -203,6 +224,9 @@ class ProvenanceStage(Stage):
                                     step.tool, param, value, row, text[start:end]
                                 )
                                 or _lost_card_no_replacement(
+                                    step.tool, param, value, row, text[start:end]
+                                )
+                                or _split_includes_self(
                                     step.tool, param, value, row, text[start:end]
                                 )
                             )
@@ -356,7 +380,29 @@ class ProvenanceStage(Stage):
                 resolver=Resolver.USER,
             )
             return "unknown"
-        expected = sum(s.amount_cents for s in subscriptions)
+        fees = []
+        for subscription in subscriptions:
+            savings = subscription_savings(state, subscription.instruction_id, ctx.customer_id)
+            if savings is None or savings[0] <= 0:
+                return "unknown"
+            # The reporting helper also normalizes weekly bills. X2 permits
+            # only real monthly fees on the same account, with matching views.
+            mandate = state.obligations.standing_instructions[subscription.instruction_id]
+            billing = state.obligations.billings[mandate.billing_id]
+            if billing.period != "MONTHLY" or (
+                billing.id,
+                billing.account_id,
+                billing.merchant_id,
+                billing.amount_cents,
+            ) != (
+                subscription.billing_id,
+                subscription.account_id,
+                subscription.merchant_id,
+                subscription.amount_cents,
+            ):
+                return "unknown"
+            fees.append(savings[0])
+        expected = sum(fees)
         return "derived" if type(value) is int and value == expected else "unknown"
 
     def _reserve_max_outflow(self, state, account_id):

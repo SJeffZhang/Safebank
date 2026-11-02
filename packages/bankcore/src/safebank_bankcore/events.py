@@ -46,6 +46,7 @@ from safebank_contracts.state import (
 from .banking import bump_outflow_counters, transfer_control_violation
 from .ids import derive, digest
 from .ledger import post_transfer
+from .merchant_categories import merchant_category
 from .reserve import _business_time, _next_month
 
 
@@ -273,7 +274,9 @@ def apply_scheduled_transfer(
         debit_account_id=inst.from_account_id,
         credit_account_id=credit,
         amount_cents=inst.amount_cents,
-        code="SCHEDULED_TRANSFER",
+        code=("P2P_INTERNAL" if payee.target_account_id else "P2P_EXTERNAL")
+        if external
+        else "SELF_TRANSFER",
         phase="POSTED",
         pending_id=None,
         plan_id=inst.source_plan_id,
@@ -281,7 +284,13 @@ def apply_scheduled_transfer(
         occurred_at=due,
         expires_at=None,
     )
-    after, fx, errors = post_transfer(state, cmd, due)
+    after, fx, errors = post_transfer(
+        state,
+        cmd,
+        due,
+        payee_id=inst.payee_id if external else None,
+        card_id=source.current_card_id if external else None,
+    )
     if errors:
         code = errors[0].code
         return _finish_scheduled(
@@ -364,7 +373,11 @@ def apply_merchant_charge(
     )
 
     block_code = None
-    if mandate is None or mandate.status != "ACTIVE":
+    if (
+        mandate is None
+        or mandate.status != "ACTIVE"
+        or (mandate.end_at is not None and due > _business_time(mandate.end_at))
+    ):
         block_code = Code.MANDATE_NOT_ACTIVE
     elif billing.amount_cents > mandate.max_amount_cents:
         block_code = Code.MANDATE_AMOUNT_EXCEEDED
@@ -391,7 +404,14 @@ def apply_merchant_charge(
         occurred_at=due,
         expires_at=None,
     )
-    after, fx, errors = post_transfer(state, cmd, due)
+    merchant = snap.merchants.get(billing.merchant_id)
+    after, fx, errors = post_transfer(
+        state,
+        cmd,
+        due,
+        merchant_id=billing.merchant_id,
+        category=merchant_category(merchant.mcc, merchant.category) if merchant else "其他",
+    )
     if errors:
         code = errors[0].code
         run = InstructionRun(

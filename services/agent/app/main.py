@@ -30,15 +30,16 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
+from services.agent.app.gateway.adapters import utterance_ref_from_fields
 from services.agent.app.graph import (
     AgentContext,
     Ports,
-    UtteranceRef,
     build_gateway_graph,
     build_graph,
 )
+from services.agent.app.llm._common import LlmToolError
 from services.agent.app.llm.cards import generate_cards
 
 _log = logging.getLogger(__name__)
@@ -285,6 +286,29 @@ def _make_production_verify():
 # ── SSE helpers ──────────────────────────────────────────────────────────
 
 
+def _stream_error_payload(exc: Exception) -> dict:
+    """Stable public errors; diagnostics and provider bodies stay server-side."""
+    status = getattr(exc, "status_code", None)
+    if type(status) is int and status in (402, 403, 429):
+        return {
+            "code": "PROVIDER_LIMIT_REACHED",
+            "status_code": status,
+            "type": "AgentError",
+            "message": "模型服务当前不可用，本批请求已停止。请稍后检查服务配置。",
+        }
+    if isinstance(exc, (ValidationError, LlmToolError)):
+        return {
+            "code": "MODEL_OUTPUT_INVALID",
+            "type": "AgentError",
+            "message": "未能生成有效回复，请刷新查看实际业务状态。",
+        }
+    return {
+        "code": "AGENT_REQUEST_FAILED",
+        "type": "AgentError",
+        "message": "本次请求处理失败，请刷新查看实际业务状态后再试。",
+    }
+
+
 def _serialize_interrupts(tasks: tuple) -> list[dict]:
     """Extract interrupt data from LangGraph tasks."""
     result = []
@@ -473,7 +497,7 @@ def app_factory(
                 if has_input:
                     raw_utts = body["input"]["utterances"]
                     utterances = [
-                        UtteranceRef(
+                        utterance_ref_from_fields(
                             id=u.get("id", f"utt_{i}"),
                             kind=u.get("kind", "typed"),
                             text=u.get("text", ""),
@@ -542,16 +566,11 @@ def app_factory(
             except HTTPException:
                 raise
             except Exception as exc:
-                # The client only receives the message; keep the traceback server-side.
+                # Keep all exception text and traceback server-side.
                 _log.exception("run stream failed")
                 yield (
                     "event: error\ndata: "
-                    + json.dumps(
-                        {
-                            "message": str(exc),
-                            "type": type(exc).__name__,
-                        }
-                    )
+                    + json.dumps(_stream_error_payload(exc), ensure_ascii=False)
                     + "\n\n"
                 )
             finally:

@@ -1,0 +1,41 @@
+"""Independent pure financial-state negative controls for D4."""
+import pytest
+from app.events import EventService
+from tests.test_demo_event_bridge import _row
+from tests.bankcore.test_external import _state, _split_state
+
+
+@pytest.mark.parametrize('changes', [
+    {'customer_id': 'cus_other'},
+    {'card_id': 'crd_other', 'channel': 'ONLINE'},
+    {'card_id': 'crd_a', 'channel': 'OVERSEAS'},
+])
+def test_debit_cannot_cross_customer_card_or_disabled_channel(changes):
+    state = _state()
+    payload = {'kind': 'EXTERNAL_DEBIT', 'customer_id': 'cus_a', 'account_id': 'acc_a',
+               'amount_cents': 100, **changes}
+    after, effects, errors = EventService()._apply_demo(state, _row(payload))
+    assert errors and not effects and after == state
+
+
+@pytest.mark.parametrize('changes', [
+    {'customer_id': 'cus_other'},
+    {'account_id': 'acc_s'},
+    {'split_item_id': 'spi_missing'},
+    {'amount_cents': 1},
+])
+def test_split_cannot_cross_customer_account_item_or_amount(changes):
+    state = _split_state()
+    payload = {'kind': 'SPLIT_PAYMENT', 'customer_id': 'cus_a', 'account_id': 'acc_a',
+               'amount_cents': 3334, 'split_item_id': 'spi_1', **changes}
+    after, effects, errors = EventService()._apply_demo(state, _row(payload))
+    assert errors and not effects and after == state
+
+
+def test_new_event_cannot_repay_a_paid_split_item():
+    payload = {'kind': 'SPLIT_PAYMENT', 'customer_id': 'cus_a', 'account_id': 'acc_a',
+               'amount_cents': 3334, 'split_item_id': 'spi_1'}
+    paid, effects, errors = EventService()._apply_demo(_split_state(), _row(payload, 'evt_one'))
+    assert effects and not errors
+    after, effects, errors = EventService()._apply_demo(paid, _row(payload, 'evt_two'))
+    assert errors and not effects and after == paid

@@ -1,0 +1,11 @@
+# ADR-013：取消授权墓碑与调整建议的来源绑定
+
+状态：已实施；最终验收见对应PR精确head本机CI回执。
+
+取消结果先在L3提交，再由W4核验客户、计划、attempt及终态归档。原scheduled_grant与执行归档在同一网关事务变为REVOKED，恢复路径相同。若指令尚未懒回填，不能把取消当作创建同意：写显式scope_json.revocation墓碑，source_plan_id指取消计划，RED仅拒绝默认值，永远不能作为ACTIVE授权。已有创建scope/source/risk与首次撤销时间保留。INSERT冲突后的懒回填必须重读数据库，不返回本地ACTIVE候选。
+
+已取消商户的回调使用fresh银行指令/账单/归属/源计划/scope/hash/事件payload及到期时刻核对；正确DELETED仅返回共享规则的MANDATE_NOT_ACTIVE及CHARGE_BLOCKED，其他状态或证据错误仍SCHEDULED_BYPASS。该分支只有拒绝路径，不重新创建授权或执行收费。
+
+G4的调整建议必须成为可核验的服务端来源，才能供G22a显示和G3单次采纳。既有hints表保留纯NormalizedScope；view_hash仅存64位摘要，将客户、会话、当前epoch、真实活原话根/来源、父计划/最新完整评估、实际计划、建议scope/文案与墙钟TTL绑定。发布与采纳在会话锁内重核，读取只提供当前视图，不授予执行权。旧无绑定记录拒绝。
+
+本轮只发布agent已授权转账范围内的严格金额收缩建议，不能改变目标、源账户、动作、周期或扩大金额；FORM不推断原话根且不发布此类建议。用户采纳后生成新的服务端hint原话，仍须新G4及现有审批/OTP/G8，采纳不会直接执行资金操作。无迁移、无通用scope白名单放行，LLM不决定授权。

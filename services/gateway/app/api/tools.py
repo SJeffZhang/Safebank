@@ -93,10 +93,10 @@ async def fetch_read(
             t.merchant_id == merchant and t.customer_id == customer_id for t in state.transactions
         ):
             raise GatewayError(Code.NOT_FOUND, 404)
-        # BankState v1 has no SplitView collection; a requested split cannot be
-        # proven owned at this boundary until that shared gap is resolved.
         if tool == "get_split_status" and args.get("request_id"):
-            raise GatewayError(Code.NOT_FOUND, 404)
+            split = next((s for s in state.splits if s.id == args["request_id"]), None)
+            if split is None or not owned(state, "account_id", split.account_id, customer_id):
+                raise GatewayError(Code.NOT_FOUND, 404)
         data = (
             READ_RESULTS[tool]
             .model_validate(await l3.read(tool, {"customer_id": customer_id, "args": args}))

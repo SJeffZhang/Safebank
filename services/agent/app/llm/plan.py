@@ -18,6 +18,7 @@ from services.agent.app.llm._common import (
     single_tool_call,
     validation_summary,
 )
+from services.agent.app.llm._cross_scene_reads import current_x3_selection
 from services.agent.app.llm.redact import resolve_pointer, strip_wall
 
 _PLAN_TOOL = "submit_action_plan"
@@ -69,20 +70,25 @@ _SYSTEM = (
     "AA 收款（create_split_request）的 participant_payee_ids 必须把原话中的人名逐个映射为 "
     "list_payees 读取结果 items 中对应的 id，不得为空；其来源只声明一条 utterance，"
     "span 覆盖原话中全部参与人名字（如「小林、小周、小陈」）。"
+    "include_self 也必须声明 typed 原话的 utterance 来源；「我和小林、小周AA」中 "
+    "include_self=true 的 span 只指向「我和」，不能省略、编造或从读取数据取布尔值；"
+    "缺少真实收款人列表或来源时不能猜ID或参数，必须补足信息再生成。"
     "订阅组合（找出没用的订阅取消掉并定时把省下的钱转走）里，schedule_transfer 的 "
     "amount_cents 必须用 derived 来源且 template 只能是 cancelled_monthly_fees，"
     "inputs 只能引用订阅读取（read）或取消步骤（step），不得引用原话字面金额；"
     "付款/收款账户仍用 read 来源，first_run_at 按用户说的日期（如每月1号）。"
-    "账单分析类问题（月度/商户账单、分类占比与环比、异常交易、消费报告）是只读任务，"
-    "不要生成任何写计划；需要的数据用 gather 阶段读取，计划节点只负责整理或直接说明"
-    "没有可执行的写操作。"
+    "单独的账单分析类问题（月度/商户账单、分类占比与环比、异常交易、消费报告）是只读任务，"
+    "不要生成写计划。已有SCOPED的分析与写操作混合请求，应先在gather完成真实分析读取，"
+    "再只保留原授权范围内的写步骤；不能因为含账单分析就把混合请求改为NO_WRITE，"
+    "也不能用分析数据扩大写权限，授权和确认仍由L2决定。"
     "理财操作：subscribe_product 的 product_id 必须从已读产品数据（list_products 或 "
     "get_product 的 items/id，以 prd_ 开头）用 read 来源引用，不能自己编造或从原话取值；"
     "account_id 选自己名下唯一活期账户（type=CHECKING，acc_ 开头）并用 read 来源引用，"
     "amount_cents 来自用户原话或 derived 的 available_less_7d_charges，"
     "不要自行判断适当性（适当性由网关判定）。"
-    "redeem_product 的 units（赎回份额）必须从 get_holdings 的 holdings 里用 read 来源引用，"
-    "不能自己编造份额；product_id 同样从已读产品数据引用。"
+    "redeem_product 的 units（赎回份额）只能取用户原话明确的数量，声明utterance来源，"
+    "用四位小数字符串；不得用持仓总份额代替部分赎回数量。必须先get_holdings读取本人可用持仓，"
+    "product_id/account_id使用读取来源，缺少明确赎回数量时追问，不得默认全部赎回。"
     "产品相关问题（产品列表/详情/比较）是只读任务，用 list_products / compare_products / "
     "get_product 读取，不要生成任何写计划。"
     "X-3「把下周要扣的会员费留够，剩下的钱买稳健型理财」：先读 upcoming_charges、"
@@ -294,8 +300,8 @@ def _wealth_source_problems(draft: PlanDraft, state: AgentState) -> list[str]:
       get_product; amount must come from the user's words or the
       available_less_7d_charges derived template (never a read/step/hint/action
       source or the wrong derived template).
-    - redeem_product.units must be read-sourced from get_holdings (never
-      invented from the utterance or another step).
+    - redeem_product.units must be selected by a typed utterance, never by holding data.
+      Holdings only establish the owned product/account and available bound.
 
     These are bounded local checks, not authorization — L2 re-derives sources.
     """
@@ -333,17 +339,52 @@ def _wealth_source_problems(draft: PlanDraft, state: AgentState) -> list[str]:
                     )
         elif step.tool == "redeem_product":
             units = sources.get("units")
-            if units is None or units.source.kind != "read":
+            if units is None or units.source.kind != "utterance":
                 problems.append(
-                    f"steps[{index}].units: 赎回份额必须从 get_holdings 的 holdings 里"
-                    "用 read 来源引用，不能自己编造或从原话取值"
+                    f"steps[{index}].units: 赎回份额必须来自用户原话utterance的明确数量，"
+                    "不能用持仓总份额代替；可用份额由get_holdings与L2核验"
                 )
-            else:
-                read = read_by_ref.get(units.source.ref)
-                if read is None or read.tool != "get_holdings":
-                    problems.append(
-                        f"steps[{index}].units: 赎回份额的 read 来源必须指向 get_holdings"
+            elif units.source.kind == "utterance":
+                from decimal import Decimal, InvalidOperation
+
+                ref = next(
+                    (
+                        u
+                        for u in state.get("utterances", [])
+                        if u.id == units.source.ref and u.kind is UtteranceKind.TYPED
+                    ),
+                    None,
+                )
+                start, end = units.source.span
+                raw = ref.text[start:end] if ref is not None else ""
+                try:
+                    exact = (
+                        bool(re.fullmatch(r"[0-9]{1,14}(?:\.[0-9]{1,4})?(?:份)?", raw))
+                        and Decimal(raw.removesuffix("份")) == step.args.units
                     )
+                except InvalidOperation:
+                    exact = False
+                if not exact:
+                    problems.append(f"steps[{index}].units: 赎回份额来源必须逐字对应原话明确数量")
+            holdings = [r for r in state.get("reads", []) if r.tool == "get_holdings"]
+            if not holdings:
+                problems.append(f"steps[{index}].units: 赎回前必须读取get_holdings")
+    return problems
+
+
+def _selection_problems(draft: PlanDraft, selection: dict | None) -> list[str]:
+    """Reject disagreement with the current choice; never fill model fields."""
+    if selection is None:
+        return []
+    fields = selection["fields"]
+    problems = []
+    for index, step in enumerate(draft.steps):
+        if step.tool != "subscribe_product":
+            continue
+        if step.args.product_id != fields["product_id"]:
+            problems.append(f"steps[{index}].product_id: 与当前G20已选产品不一致，请重新生成")
+        if fields.get("account_id") and step.args.account_id != fields["account_id"]:
+            problems.append(f"steps[{index}].account_id: 与当前G20选择上下文不一致，请重新生成")
     return problems
 
 
@@ -774,8 +815,6 @@ def _split_participant_problems(draft: PlanDraft, state: AgentState) -> list[str
             for entry in read.data.get("items", []):
                 if isinstance(entry, dict) and entry.get("id"):
                     known_payee_ids.add(entry["id"])
-    if not known_payee_ids:
-        return []  # no payee data available; L2 will catch
     problems: list[str] = []
     for index, step in enumerate(draft.steps):
         if step.tool != "create_split_request":
@@ -788,6 +827,23 @@ def _split_participant_problems(draft: PlanDraft, state: AgentState) -> list[str
                     "或先将收款人姓名映射到对应的 payee_id"
                 )
                 break  # one problem per step is enough
+    return problems
+
+
+def _split_source_problems(draft: PlanDraft, state: AgentState) -> list[str]:
+    """Require declared typed text evidence; L2 independently verifies its meaning."""
+    typed_ids = {u.id for u in state.get("utterances", []) if u.kind is UtteranceKind.TYPED}
+    problems = []
+    for index, step in enumerate(draft.steps):
+        if step.tool != "create_split_request":
+            continue
+        sources = [s.source for s in step.arg_sources if s.param == "include_self"]
+        if len(sources) != 1 or sources[0].kind != "utterance" or sources[0].ref not in typed_ids:
+            problems.append(
+                f"steps[{index}].include_self: 必须声明真实typed原话的utterance来源；"
+                "原话「我和」表示true时span仅指向这两个字，不能省略、编造或引用read数据；"
+                "金额、参与人和memo保持用户原意，仍交L2核验"
+            )
     return problems
 
 
@@ -980,6 +1036,50 @@ def _reference_problems(draft: PlanDraft, state: AgentState) -> list[str]:
     return problems
 
 
+def _strict_shape_feedback(data: dict | None, exc: Exception) -> str:
+    """Describe only known entity-shape failures, without echoing model values.
+
+    A conversion ValueError otherwise loses its actionable field name in the
+    generic validation summary. This supplies the existing one-shot retry with
+    schema examples; it never repairs a target or treats a proposal as authority.
+    """
+    if not isinstance(exc, ValueError) or not isinstance(data, dict):
+        return validation_summary(exc)
+    steps = data.get("steps")
+    if not isinstance(steps, list):
+        return validation_summary(exc)
+    fields: list[str] = []
+    for index, step in enumerate(steps):
+        if not isinstance(step, dict) or step.get("tool") not in ("transfer", "schedule_transfer"):
+            continue
+        args = step.get("args")
+        if not isinstance(args, dict):
+            continue
+        for key in ("payee_id", "to_account_id"):
+            if key not in args:
+                continue
+            value = args[key]
+            if isinstance(value, dict):
+                kind = value.get("kind")
+                if kind == "none" or (kind == "id" and isinstance(value.get("id"), str)):
+                    continue
+                if key == "payee_id" and kind == "ref" and isinstance(value.get("ref"), str):
+                    continue
+            fields.append(f"steps[{index}].{key}")
+            if len(fields) == _MAX_REFERENCE_PROBLEMS:
+                break
+        if len(fields) == _MAX_REFERENCE_PROBLEMS:
+            break
+    if not fields:
+        return validation_summary(exc)
+    return (
+        "、".join(fields) + ' 必须使用实体判别对象：已有目标用 {"kind":"id","id":"<已读实体ID>"}，'
+        '空目标用 {"kind":"none"}，不能用裸字符串或null。'
+        "保持用户原来的目标、金额与步骤，实体ID及read来源必须从本轮已读数据重新核对；"
+        "不能猜测或新增目标。"
+    )
+
+
 class PlanAdapter:
     def __init__(
         self,
@@ -996,8 +1096,10 @@ class PlanAdapter:
 
     def __call__(self, state: AgentState, context: AgentContext) -> PlanDraft:
         note = ""
+        selection = current_x3_selection(state, context)
         for attempt in range(self._max_retries + 1):
-            message = self._model.invoke(self._messages(state, note))
+            args = None
+            message = self._model.invoke(self._messages(state, note, selection))
             if self._observer is not None:
                 self._observer(message)
             try:
@@ -1014,11 +1116,14 @@ class PlanAdapter:
                 sem_problems = _semantic_problems(draft, state)
                 ch_problems = _channel_source_problems(draft, state)
                 sch_problems = _schedule_intent_vs_tool_problems(draft, state)
-                split_problems = _split_participant_problems(draft, state)
+                split_problems = _split_participant_problems(draft, state) + _split_source_problems(
+                    draft, state
+                )
                 der_problems = _derived_schedule_problems(draft, state)
                 idle_problems = _idle_subscription_problems(draft, state)
                 card_problems = _lost_card_source_problems(draft, state)
                 wealth_problems = _wealth_source_problems(draft, state)
+                selection_problems = _selection_problems(draft, selection)
                 all_problems = (
                     ref_problems
                     + val_problems
@@ -1030,6 +1135,7 @@ class PlanAdapter:
                     + idle_problems
                     + card_problems
                     + wealth_problems
+                    + selection_problems
                 )
                 if all_problems:
                     raise ReferenceError(all_problems)
@@ -1048,6 +1154,7 @@ class PlanAdapter:
                         and not idle_problems
                         and not card_problems
                         and not wealth_problems
+                        and not selection_problems
                     ):
                         fields = _exhausted_clarify_fields(val_problems)
                         if fields is not None:
@@ -1063,7 +1170,9 @@ class PlanAdapter:
                             labels = [_PARAM_LABELS[f] for f in fields]
                             raise ExhaustedClarify(fields, labels) from exc
                     raise
-                note = f"上次计划未通过校验（{validation_summary(exc)}），请修正后重新生成。"
+                note = (
+                    f"上次计划未通过校验（{_strict_shape_feedback(args, exc)}），请修正后重新生成。"
+                )
         raise AssertionError("unreachable")
 
     @staticmethod
@@ -1083,7 +1192,7 @@ class PlanAdapter:
         )
 
     @staticmethod
-    def _messages(state: AgentState, note: str) -> list:
+    def _messages(state: AgentState, note: str, selection: dict | None = None) -> list:
         parts = [
             "用户请求（id/kind/text；span 用 0 基半开区间 [start, end)，即 text[start:end]，"
             "end 不包含；每字符下标范围如下）："
@@ -1097,6 +1206,12 @@ class PlanAdapter:
             text = json.dumps(utterance.text, ensure_ascii=False)
             parts.append(f"- id={utterance.id} kind={utterance.kind.value} text={text}")
             parts.append(f"  下标范围: {_index_map(utterance.text)}")
+        if selection is not None:
+            parts.append(
+                "当前G20绑定的结构化产品选择只用于保持用户已选目标；实体仍引用实际读取，"
+                "金额使用已有derived模板并由L2重新计算，不能把scope当作授权或金融数值来源："
+            )
+            parts.append(json.dumps({"current_g20_selection": selection}, ensure_ascii=False))
         reads = state.get("reads", [])
         if reads:
             parts.append("已读数据（source_ref 供 {kind:read, ref:<source_ref>, pointer} 引用）：")

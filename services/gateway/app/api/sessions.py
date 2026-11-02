@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from safebank_contracts.codes import Code
@@ -12,6 +14,7 @@ from .. import tables as t
 from ..audit.chain import append, append_tx
 from ..auth.tokens import check_revocation, issue_assistant
 from ..errors import GatewayError
+from ..hint_sources import validate_hint_source
 from ..idempotency import request_idempotent
 from ..schemas.enums import ServiceKind
 from ..utterance.lifecycle import Revocation, deferred_error, raise_cached_error
@@ -319,7 +322,7 @@ async def get_clarification(sid: str, request: Request):
 async def get_hint(sid: str, hint_id: str, request: Request):
     async with db(request).connect() as conn:
         now = wall_now(request)
-        await session_for(conn, sid, request.state.caller, now)
+        session = await session_for(conn, sid, request.state.caller, now)
         row = (
             (
                 await conn.execute(
@@ -335,9 +338,10 @@ async def get_hint(sid: str, hint_id: str, request: Request):
             raise GatewayError(Code.AUTHORIZATION_CONSUMED, 409)
         if row["expires_at_wall"] is None or row["expires_at_wall"] <= now:
             raise GatewayError(Code.UTTERANCE_EXPIRED, 409)
+        await validate_hint_source(conn, session, row, now)
         return {
             "id": row["id"],
             "label": row["label"],
             "scope": row["scope_json"],
-            "expires_at_wall": row["expires_at_wall"].isoformat(),
+            "expires_at_wall": row["expires_at_wall"].astimezone(UTC).isoformat(),
         }

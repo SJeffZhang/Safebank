@@ -142,7 +142,7 @@ const products: Product[] = [
   {
     id: "prd_cash",
     name: "日日盈货币",
-    product_type: "MONEY_MARKET",
+    product_type: "MMF",
     risk_level: 1,
     risk_label: "保守",
     nav: "1.0000",
@@ -191,7 +191,7 @@ const products: Product[] = [
     nav_history: [],
   },
   {
-    id:"prd_flex",name:"安心活钱",product_type:"MONEY_MARKET",risk_level:1,risk_label:"保守",
+    id:"prd_flex",name:"安心活钱",product_type:"MMF",risk_level:1,risk_label:"保守",
     nav:"1.0000",nav_date:"2026-10-28",recent_return_bp:12,confirm_days:0,settle_days:1,min_amount_cents:100,
     risk_disclosure:"合成货币基金示例，仍存在信用及流动性风险，不保证本金或收益。赎回需等待结算。",disclosure_version:"v1",nav_history:[],
   },
@@ -430,6 +430,7 @@ function evaluate(action: {
         ]
       : [],
     scheduled_reserve_cents: reserve(),
+    reserve_projection_available: true,
     steps: [],
     holdings: [],
   };

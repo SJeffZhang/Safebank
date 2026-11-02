@@ -1,33 +1,63 @@
 import { explainCode } from "./copy";
 import { useEffect, useRef, useState } from "react";
-import { request, stream, isPreview } from "./api";
+import { getPlan, request, stream, isPreview } from "./api";
 import {
   uid,
   type UICard,
   type StreamEvent,
   type Clarification,
   type Fields,
+  type PlanStatus,
 } from "./types";
 import type { PageProps } from "./Banking";
 import { Icon, Button, Alert, Badge } from "./ui";
 import { AssistantWorkspace, detectTopic, type AssistantTopic } from "./AssistantWorkspace";
+import { billMonth, billMonths } from "./bill-month";
+import { AssistantReadData } from "./AssistantReadData";
+import { AssistantReply } from "./AssistantReply";
+import { isPlanTerminal, planPresentation } from "./plan-status";
 interface Message {
   id: string;
   role: "user" | "assistant";
   text: string;
   cards?: UICard[];
-  business?: AssistantTopic;
+  business?: {topic: AssistantTopic; month: string | null};
+  requestedMonths?: string[] | null;
 }
 const topics = [
   { icon: "chart", title: "账单分析", description: "消费分类与异常依据" },
   { icon: "transfer", title: "资金安排", description: "转账、定时与 AA 收款" },
   { icon: "repeat", title: "跨场景联动", description: "先分析，再预演整份计划" },
 ];
+const genericFormGuidance = {
+  title: "请在对应业务页面补充操作细节",
+  body: "请在对应业务页面核对并补充操作信息，或发送一条新的明确需求。",
+  links: [] as { href: string; label: string }[],
+};
+// Template IDs come from current G21; destinations and copy never come from L1 text.
+const formGuidance: Record<string, typeof genericFormGuidance> = {
+  risk_assessment_form: {
+    title: "请亲自完成风险测评",
+    body: "风险等级由您亲自完成六题测评后计算，小安不能直接将等级设为 R5。请前往理财页的风险测评，按实际情况作答。",
+    links: [{ href: "#wealth", label: "前往理财页" }],
+  },
+  register_payee_form: {
+    title: "请先核对并登记收款人",
+    body: "该收款目标尚未登记，无法自动新增收款人或转账。请在转账页手工填写并核对收款人信息。",
+    links: [{ href: "#transfer", label: "前往转账页" }],
+  },
+  transfer_consultation: {
+    title: "转账咨询不代表操作授权",
+    body: "这是转账咨询，本次没有发起转账。您可以查看账户余额和卡限额，或重新发送明确的转账指令；是否可办理仍需安全预演。",
+    links: [{ href: "#overview", label: "查看账户余额" }, { href: "#cards", label: "查看卡片限额" }],
+  },
+};
 export function Assistant(
   p: PageProps & {
     openApproval: (id: string) => void;
     onNewSession: () => void;
     onResumeRegister: (handler: (id: string) => Promise<void>) => void;
+    onExecuted?: () => void;
   },
 ) {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -37,12 +67,19 @@ export function Assistant(
   const [steps, setSteps] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [pending, setPending] = useState<string>();
-  const [clar, setClar] = useState<Clarification | null>(null);
+  const [clarification, setClar] = useState<{ sid: string; value: Clarification } | null>(null);
+  const clar = clarification?.sid === p.sid ? clarification.value : null;
+  const [answer, setAnswer] = useState("");
+  const [selecting, setSelecting] = useState(false);
+  const selection = useRef<object | null>(null);
+  const currentSession = useRef(p.sid);
+  currentSession.current = p.sid;
   const controller = useRef<AbortController>();
+  const refreshedPlans = useRef(new Set<string>());
   const end = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   function openTopic(topic: (typeof topics)[number]) {
-    if (busy || pending) return;
+    if (busy || selecting || pending) return;
     void send(topic.title);
   }
   useEffect(() => () => controller.current?.abort(), []);
@@ -50,6 +87,13 @@ export function Assistant(
     end.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [messages, stage]);
   useEffect(() => {
+    let live = true;
+    controller.current?.abort();
+    selection.current = null;
+    setBusy(false);
+    setSelecting(false);
+    setAnswer("");
+    refreshedPlans.current.clear();
     setMessages([]);
     setPending(undefined);
     setClar(null);
@@ -59,6 +103,7 @@ export function Assistant(
         tasks?: { interrupts: { value: { approval_id?: string } }[] }[];
       }>(`/sessions/${p.sid}/state`)
         .then((s) => {
+          if (!live) return;
           setMessages(
             (s.values.messages ?? [])
               .filter((m) => typeof m.content === "string")
@@ -73,9 +118,10 @@ export function Assistant(
             .find((i) => i.value.approval_id)?.value.approval_id;
           if (id) setPending(id);
         })
-        .catch(() => setError("历史会话暂不可用，新的原话仍需安全登记。"));
+        .catch(() => { if (live) setError("历史会话暂不可用，新的原话仍需安全登记。"); });
+    return () => { live = false; selection.current = null; controller.current?.abort(); };
   }, [p.sid]);
-  function handle(event: StreamEvent) {
+  function handle(event: StreamEvent, requestedMonths?: string[] | null) {
     const data = event.data;
     if (event.event === "error") {
       throw new Error(
@@ -119,6 +165,7 @@ export function Assistant(
           role: "assistant",
           text: "",
           cards: data.cards as UICard[],
+          requestedMonths,
         },
       ]);
   }
@@ -127,24 +174,26 @@ export function Assistant(
     setBusy(true);
     setSteps([]);
     setError("");
+    const sid = p.sid;
     const current = new AbortController();
     controller.current = current;
-    const active = () => controller.current === current && !current.signal.aborted;
+    const active = () => currentSession.current === sid && controller.current === current && !current.signal.aborted;
     try {
-      await stream(p.sid, body, event => { if (active()) handle(event); }, current.signal, resume);
+      await stream(p.sid, body, event => { if (active()) handle(event, typeof body.text === "string" && detectTopic(body.text) === "账单分析" ? billMonths(body.text, p.profile.sim_now) : undefined); }, current.signal, resume);
       if (!active()) return false;
       const c = await request<{ clarification: Clarification | null }>(
         `/sessions/${p.sid}/clarifications/current`,
       );
       if (!active()) return false;
-      setClar(c.clarification);
+      setClar(c.clarification ? { sid, value: c.clarification } : null);
+      setAnswer("");
       return true;
     } catch (e) {
       if (active())
         setError(e instanceof Error ? e.message : "连接中断，请检查任务状态");
       return false;
     } finally {
-      if (controller.current === current) {
+      if (currentSession.current === sid && controller.current === current) {
         setBusy(false);
         setStage("");
       }
@@ -158,7 +207,7 @@ export function Assistant(
   });
   async function send(selected?: string) {
     const value = (selected ?? text).trim();
-    if (!value || busy || pending) return;
+    if (!value || busy || selecting || pending) return;
     setText("");
     setMessages((m) => [...m, { id: uid(), role: "user", text: value }]);
     const completed = await run({
@@ -167,36 +216,94 @@ export function Assistant(
       text: value,
       hint_id: null,
       action_id: null,
-      clarification_id: clar?.id ?? null,
+      clarification_id: null,
     });
     const topic = detectTopic(value);
-    if (completed && topic) setMessages(m => [...m,{id:uid(),role:"assistant",text:"",business:topic}]);
+    if (completed && topic) setMessages(m => [...m,{id:uid(),role:"assistant",text:"",business:{topic,month:billMonth(value,p.profile.sim_now)}}]);
     input.current?.focus();
   }
+  function slotParent() {
+    if (clar?.kind !== "SLOTS" || !Array.isArray(clar.parent_utterance_ids) ||
+        clar.parent_utterance_ids.length !== 1 || !/^utt_[\w-]+$/.test(clar.parent_utterance_ids[0]) ||
+        clar.required_fields.length !== 1 || !clar.candidates.length) return null;
+    return clar.parent_utterance_ids[0];
+  }
+  async function submitAnswer() {
+    if (busy || selection.current || pending || !answer.trim()) return;
+    if (!slotParent()) { setError("补充信息已失效，请重新发起需求。"); return; }
+    const submission = {};
+    selection.current = submission;
+    setSelecting(true);
+    const value = answer.trim();
+    setMessages(m => [...m, { id: uid(), role: "user", text: value }]);
+    try {
+      await run({ request_id: uid(), kind: "typed", text: value, hint_id: null,
+        action_id: null, clarification_id: clar!.id });
+    } finally {
+      if (selection.current === submission) {
+        selection.current = null;
+        setSelecting(false);
+      }
+    }
+  }
   async function choose(c: Clarification["candidates"][number]) {
+    if (busy || pending || selection.current) return;
+    const parent = slotParent();
+    if (!parent || !clar?.candidates.some(candidate => candidate.field === c.field && candidate.entity_id === c.entity_id) ||
+        clar.required_fields[0] !== c.field) {
+      setError("补充信息已失效，请重新发起需求。");
+      return;
+    }
+    const sid = p.sid;
+    const choice = {};
+    selection.current = choice;
+    setSelecting(true);
+    setError("");
     try {
       const a = await request<{ action_id: string }>(
-        `/sessions/${p.sid}/actions`,
+        `/sessions/${sid}/actions`,
         {
           request_id: uid(),
           kind: "CLARIFICATION",
           action_kind: null,
           fields: [{ field: c.field, entity_id: c.entity_id }],
-          parent_utterance_id: null,
+          parent_utterance_id: parent,
         },
       );
+      if (currentSession.current !== sid || selection.current !== choice) return;
+      if (!/^act_[\w-]+$/.test(a.action_id)) throw new Error("补充信息登记失败，请重新发起需求。");
       await run({
         request_id: uid(),
         kind: "action",
         text: null,
         hint_id: null,
         action_id: a.action_id,
-        clarification_id: clar?.id,
+        clarification_id: null,
       });
     } catch (e) {
-      setError((e as Error).message);
+      if (currentSession.current === sid && selection.current === choice)
+        setError(e instanceof Error ? e.message : "补充信息登记失败，请重试。");
+    } finally {
+      if (selection.current === choice) {
+        selection.current = null;
+        setSelecting(false);
+      }
     }
   }
+  const guidance = clar && Object.prototype.hasOwnProperty.call(formGuidance, clar.prompt_template_id)
+    ? formGuidance[clar.prompt_template_id] : genericFormGuidance;
+  const seenClarifications = new Set(clar ? [clar.id] : []);
+  const displayedMessages = messages.map(message => ({
+    ...message,
+    cards: message.cards?.filter(card => {
+      if (card.type !== "CLARIFICATION" || !card.data || typeof card.data !== "object") return true;
+      const id = (card.data as Fields).id;
+      if (typeof id !== "string") return true;
+      if (seenClarifications.has(id)) return false;
+      seenClarifications.add(id);
+      return true;
+    }),
+  }));
   return (
     <div className="assistant-page">
       <div className="chat-layout">
@@ -213,7 +320,7 @@ export function Assistant(
               <Icon name="shield" size={12} />
               安全网关保护
             </Badge>
-            <Button className="chat-new-session" variant="ghost" disabled={busy || !!pending} onClick={p.onNewSession}>
+            <Button className="chat-new-session" variant="ghost" disabled={busy || selecting || !!pending} onClick={p.onNewSession}>
               <Icon name="plus" size={14}/>新会话
             </Button>
           </div>
@@ -232,7 +339,7 @@ export function Assistant(
                 <div className="capability-list">
                   {topics.map((topic) => (
                     <button type="button" key={topic.title} aria-label={topic.title}
-                      disabled={busy || !!pending} onClick={() => openTopic(topic)}>
+                      disabled={busy || selecting || !!pending} onClick={() => openTopic(topic)}>
                       <Icon name={topic.icon} />
                       <strong>{topic.title}</strong>
                       <small>{topic.description}</small>
@@ -244,7 +351,7 @@ export function Assistant(
                 </small>
               </div>
             ) : (
-              messages.map((m) => (
+              displayedMessages.map((m) => (
                 <div className={`chat-message ${m.role}`} key={m.id}>
                   {m.role === "assistant" && (
                     <span className="chat-avatar">
@@ -252,14 +359,24 @@ export function Assistant(
                     </span>
                   )}
                   <div>
-                    {m.text && <p>{m.text}</p>}
-                    {m.business && <AssistantWorkspace {...p} topic={m.business}/>}
+                    {m.text && (m.role === "assistant" ? <AssistantReply text={m.text} /> : <p>{m.text}</p>)}
+                    {m.business && <AssistantWorkspace {...p} topic={m.business.topic} requestedMonth={m.business.month}/>}
                     {m.cards?.map((card) => (
                       <SafeCard
                         card={card}
+                        requestedMonths={m.requestedMonths}
                         key={card.id}
                         sid={p.sid}
-                        busy={busy}
+                        busy={busy || selecting}
+                        revision={p.revision}
+                        onStatus={(status) => {
+                          if (status !== "PENDING_APPROVAL" && card.actions?.some(a => a.kind === "OPEN_APPROVAL" && a.ref === pending)) setPending(undefined);
+                          const planId = String((card.data as Fields)?.plan_id ?? "");
+                          if (status === "EXECUTED" && !refreshedPlans.current.has(planId)) {
+                            refreshedPlans.current.add(planId);
+                            p.onExecuted?.();
+                          }
+                        }}
                         onApproval={p.openApproval}
                         onHint={(id) =>
                           run({
@@ -294,20 +411,28 @@ export function Assistant(
                 <Badge>需要补充信息</Badge>
                 <h3>
                   {clar.kind === "FORM_REQUIRED"
-                    ? "请在对应业务页面补充操作细节"
+                    ? guidance.title
                     : "请选择您指的目标"}
                 </h3>
-                {clar.candidates.map((c) => (
+                {clar.kind === "FORM_REQUIRED" && <>
+                  <p>{guidance.body}</p>
+                  <div className="row">{guidance.links.map(link => <a className="button secondary" href={link.href} key={link.href}>{link.label}</a>)}</div>
+                </>}
+                {clar.kind === "SLOTS" && clar.candidates.map((c) => (
                   <Button
                     key={`${c.field}-${c.entity_id}`}
                     variant="secondary"
-                    disabled={busy}
+                    disabled={busy || selecting}
                     onClick={() => choose(c)}
                   >
                     {c.label}
                   </Button>
                 ))}
-                {!clar.candidates.length && (
+                {clar.kind === "SLOTS" && <form onSubmit={e => { e.preventDefault(); void submitAnswer(); }}>
+                  <label>补充本次目标<input value={answer} onChange={e => setAnswer(e.target.value)} disabled={busy || selecting || !!pending} maxLength={2000}/></label>
+                  <Button disabled={busy || selecting || !!pending || !answer.trim()} onClick={() => void submitAnswer()}>提交补充</Button>
+                </form>}
+                {!clar.candidates.length && clar.required_fields.length > 0 && (
                   <p>您可以在下方补充：{clar.required_fields.join("、")}</p>
                 )}
               </div>
@@ -347,7 +472,7 @@ export function Assistant(
               placeholder={
                 pending ? "请先处理待确认计划" : "向小安描述您的需求…"
               }
-              disabled={busy || !!pending}
+              disabled={busy || selecting || !!pending}
               maxLength={2000}
               onKeyDown={(e) => {
                 if (
@@ -380,7 +505,7 @@ export function Assistant(
               <button
                 type="submit"
                 className="send-button"
-                disabled={!text.trim() || !!pending}
+                disabled={selecting || !text.trim() || !!pending}
                 aria-label="发送消息"
               >
                 <Icon name="arrow" />
@@ -396,7 +521,6 @@ export function Assistant(
     </div>
   );
 }
-import { money } from "./ui";
 const allowedRoutes: Record<string, string> = {
   "/": "overview",
   "/home": "overview",
@@ -411,18 +535,50 @@ const allowedRoutes: Record<string, string> = {
 };
 function SafeCard({
   card,
+  requestedMonths,
   sid,
   busy,
+  revision,
+  onStatus,
   onApproval,
   onHint,
 }: {
   card: UICard;
+  requestedMonths?: string[] | null;
   sid: string;
   busy: boolean;
+  revision: number;
+  onStatus: (status: string) => void;
   onApproval: (id: string) => void;
   onHint: (id: string) => void;
 }) {
+  const statusHandler = useRef(onStatus);
+  statusHandler.current = onStatus;
   const [labels, setLabels] = useState<Record<string, string>>({});
+  const [plan, setPlan] = useState<PlanStatus>();
+  const [planError, setPlanError] = useState("");
+  const planId = card.type === "PLAN_STATUS" && card.data && typeof card.data === "object" ? String((card.data as Fields).plan_id ?? "") : "";
+  useEffect(() => {
+    if (!planId || !/^pln_[\w-]+$/.test(planId)) return;
+    let live = true;
+    let timer: ReturnType<typeof setTimeout>;
+    setPlan(undefined); setPlanError("");
+    const load = async () => {
+      try {
+        const current = await getPlan(planId);
+        if (!live) return;
+        if (current.plan_id !== planId) throw new Error("计划身份不一致，请重新查询。");
+        setPlan(current); statusHandler.current(current.status);
+        if (!isPlanTerminal(current.status)) timer = setTimeout(load,1800);
+      } catch (e) {
+        if (live) setPlanError(e instanceof Error ? e.message : "计划状态读取失败");
+      }
+    };
+    void load();
+    return () => {live=false;clearTimeout(timer);};
+  }, [sid,planId,revision]);
+  const shownStatus = planError ? "UNAVAILABLE" : plan?.status ?? "CHECKING";
+  const shownCard = planId ? {...card,data:{...(card.data as Fields),status:shownStatus}} : card;
   useEffect(() => {
     let live = true;
     for (const a of card.actions ?? [])
@@ -451,20 +607,20 @@ function SafeCard({
     NAVIGATE: "继续办理",
   };
   return (
-    <div className="safe-ui-card">
+    <div className="safe-ui-card" role="group" aria-label={title[card.type] ?? "业务信息"}>
       <strong>{title[card.type] ?? "业务信息"}</strong>
-      {card.source_ref && <small>来源 {card.source_ref}</small>}
-      <CardData card={card} />
+      <CardData card={shownCard} requestedMonths={requestedMonths} />
+      {planError && <Alert tone="error">{planError}</Alert>}
       <div className="row">
         {(card.actions ?? []).map((a, i) =>
-          a.kind === "OPEN_APPROVAL" && /^apv_/.test(a.ref) ? (
+          a.kind === "OPEN_APPROVAL" && /^apv_/.test(a.ref) && (!planId || !isPlanTerminal(shownStatus)) ? (
             <Button
               variant="secondary"
               key={i}
-              disabled={busy}
-              onClick={() => onApproval(a.ref)}
+              disabled={busy || (!!planId && ["CHECKING","UNAVAILABLE"].includes(shownStatus))}
+              onClick={() => onApproval(plan?.decision?.approval_id ?? a.ref)}
             >
-              查看确认面板
+              {!planId || shownStatus === "PENDING_APPROVAL" ? "查看确认面板" : "查看计划状态"}
             </Button>
           ) : a.kind === "HINT" && labels[a.ref] ? (
             <Button
@@ -490,7 +646,7 @@ function SafeCard({
   );
 }
 
-function CardData({ card }: { card: UICard }) {
+function CardData({ card, requestedMonths }: { card: UICard; requestedMonths?: string[] | null }) {
   const data =
     card.data && typeof card.data === "object" ? (card.data as Fields) : {};
   const objects = (key: string) =>
@@ -499,20 +655,13 @@ function CardData({ card }: { card: UICard }) {
           (v): v is Fields => !!v && typeof v === "object",
         )
       : [];
-  const cash = (v: unknown) =>
-    typeof v === "number" && Number.isSafeInteger(v) ? `¥ ${money(v)}` : "—";
   if (card.type === "PLAN_STATUS") {
-    const states: Record<string, string> = {
-      EXECUTED: "操作已完成",
-      UNKNOWN: "结果确认中",
-      PENDING_APPROVAL: "等待您确认",
-      FAILED: "执行失败",
-    };
+    const presentation = planPresentation(String(data.status));
     return (
       <>
         <div className="card-status">
-          <Badge tone={data.status === "EXECUTED" ? "success" : "amber"}>
-            {states[String(data.status)] ?? "请查询计划状态"}
+          <Badge tone={presentation.tone}>
+            {presentation.label}
           </Badge>
         </div>
         {data.status === "UNKNOWN" && (
@@ -539,49 +688,5 @@ function CardData({ card }: { card: UICard }) {
   if (card.type === "CLARIFICATION")
     return <p>请通过下方的补充信息区选择目标或补充需求。</p>;
   if (card.type === "NAVIGATE") return <p>您可以打开对应业务页面继续办理。</p>;
-  const entries =
-    card.type === "ACCOUNT"
-      ? objects("accounts")
-      : card.type === "HOLDINGS"
-        ? objects("holdings")
-        : objects("items");
-  if (!entries.length) return <p>当前没有可展示的记录。</p>;
-  return (
-    <>
-      {entries.slice(0, 5).map((item, i) => {
-        const name = String(
-          item.display_name ??
-            item.counterparty ??
-            item.merchant_name ??
-            item.name ??
-            (card.type === "CARD"
-              ? `银行卡 · ${item.last4 ?? "—"}`
-              : card.type === "PRODUCTS"
-                ? `产品 · ${item.id ?? ""}`
-                : card.type === "HOLDINGS"
-                  ? `持仓 · ${item.product_id ?? ""}`
-                  : "业务记录"),
-        );
-        const value =
-          card.type === "ACCOUNT"
-            ? cash(item.available_cents)
-            : card.type === "CARD"
-              ? String(item.status ?? "")
-              : card.type === "PRODUCTS"
-                ? `R${item.risk_level ?? "—"}`
-                : card.type === "HOLDINGS"
-                  ? String(item.available_units ?? "—") + " 份"
-                  : cash(item.amount_cents);
-        return (
-          <div className="card-row" key={i}>
-            <span>{name}</span>
-            <strong>{value}</strong>
-          </div>
-        );
-      })}
-      {entries.length > 5 && (
-        <p>另有 {entries.length - 5} 条，可到业务页面查看完整记录。</p>
-      )}
-    </>
-  );
+  return <AssistantReadData card={card} requestedMonths={requestedMonths} />;
 }

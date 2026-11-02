@@ -1,0 +1,100 @@
+{
+  "scope": "demo observations and read-only source review only; no product fixes",
+  "issues": [
+    {
+      "id": "FLOW-CHOICE-01",
+      "severity": "functional blocker",
+      "cases": [
+        "02",
+        "38"
+      ],
+      "observation": "Valid recipient/product choices register SCOPED actions, then public invalid-reply error occurs; no new plan or bank changes.",
+      "source_review": "Legal action.text=null conflicts with entry UtteranceRef.text:str. Exact full field trace not captured, so source finding is not asserted as unique runtime cause.",
+      "evidence": [
+        "02-choice-error-review.md",
+        "38-choice-error-review.md",
+        "screens/02-choice-error.txt",
+        "screens/38-choice-error.txt"
+      ]
+    },
+    {
+      "id": "FLOW-HINT-01",
+      "severity": "functional interaction blocker",
+      "cases": [
+        "40"
+      ],
+      "observation": "REPLAN explains correct5000 upper bound and persists matching hint, but no adoption button appears.",
+      "source_review": "Real ReplanHint.id versus card builder reading.ref prevents HINT action.",
+      "evidence": [
+        "40-hint-ui-review.md",
+        "receipts/40-isolated-after-gateway.json",
+        "screens/40-isolated-result.txt"
+      ]
+    },
+    {
+      "id": "UI-01",
+      "severity": "presentation",
+      "cases": [
+        "12",
+        "13",
+        "15",
+        "17",
+        "31",
+        "34b"
+      ],
+      "observation": "Read cards directly show model untrusted_data wrappers.",
+      "evidence": [
+        "residual-ui-findings.md"
+      ]
+    },
+    {
+      "id": "UI-02",
+      "severity": "presentation",
+      "cases": [
+        "12",
+        "13",
+        "14",
+        "15",
+        "17",
+        "24",
+        "25",
+        "26",
+        "27",
+        "31",
+        "32",
+        "34b"
+      ],
+      "observation": "Read cards expose src/si/prd identifiers; raw Markdown table and UTC timestamp formatting also remain in some views.",
+      "evidence": [
+        "residual-ui-findings.md",
+        "screens/14-result.txt",
+        "screens/15-result.txt"
+      ]
+    },
+    {
+      "id": "PREFLIGHT-RESERVE-01",
+      "severity": "display semantics to clarify",
+      "cases": [
+        "28",
+        "34"
+      ],
+      "observation": "Non-outflow plan preflight displays default future7 reserve0 despite known effective charges; actual28 after-cancel video3000 and LS34 unchanged4500 cents.",
+      "source_review": "affects_reserve excludes cancel_subscription/redeem_product; absent calculation keeps default0. No observed wrong debit or authorization bypass.",
+      "evidence": [
+        "28-grant-evidence-review.md",
+        "34-evidence-review.md",
+        "screens/28-pending.txt",
+        "screens/34-pending.txt"
+      ]
+    },
+    {
+      "id": "DOC-ANOMALY-01",
+      "severity": "documentation consistency",
+      "observation": "Old PRD section2.2 three-anomaly wording remains while section8.2 and actual new canonical projection specify September4/full5.",
+      "evidence": [
+        "read-oracles.md",
+        "read-evidence-review-2.md"
+      ]
+    }
+  ]
+}

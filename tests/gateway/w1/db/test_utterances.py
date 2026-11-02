@@ -349,7 +349,7 @@ def test_cancel_supersedes_approvals_but_preserves_executing_jobs(gateway_db, mo
     asyncio.run(run())
 
 
-def test_hint_adoption_uses_server_label_and_expires_once(gateway_db, monkeypatch):
+def test_legacy_unbound_hint_is_unreadable_and_cannot_be_adopted(gateway_db, monkeypatch):
     async def run():
         async with harness(gateway_db, monkeypatch) as (_, client, db, _, _, clock, _):
             token = await login(client)
@@ -372,15 +372,29 @@ def test_hint_adoption_uses_server_label_and_expires_once(gateway_db, monkeypatc
                     )
                 )
             view = await client.get(f"/sessions/{sid}/hints/{id_}", headers=headers(token))
-            assert view.status_code == 200 and view.json()["label"] == "王五只转300元"
+            assert view.status_code == 409
+            assert view.json()["error"]["code"] == "AUTHORIZATION_CANCELLED"
             accepted = await client.post(
                 f"/sessions/{sid}/utterances",
                 headers=headers(token),
                 json={"request_id": "req_hint_accept", "kind": "hint", "hint_id": id_},
             )
-            assert accepted.status_code == 201, accepted.text
-            assert accepted.json()["utterance"]["scope"]["transfers"][0]["amount_cents"] == 30000
-            reused = await client.get(f"/sessions/{sid}/hints/{id_}", headers=headers(token))
-            assert reused.status_code == 409
+            assert accepted.status_code == 409
+            assert accepted.json()["error"]["code"] == "AUTHORIZATION_CANCELLED"
+            async with db.connect() as conn:
+                source = (
+                    (await conn.execute(select(t.hints).where(t.hints.c.id == id_)))
+                    .mappings()
+                    .one()
+                )
+                assert source["used_by"] is None
+                rows = (
+                    (await conn.execute(select(t.utterances).where(t.utterances.c.sid == sid)))
+                    .mappings()
+                    .all()
+                )
+                assert len(rows) == 1
+                assert rows[0]["id"] == old["id"] and rows[0]["status"] == "ACTIVE"
+                assert rows[0]["normalized_scope"] == old["scope"]
 
     asyncio.run(run())

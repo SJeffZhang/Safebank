@@ -1,0 +1,8 @@
+{
+  "source_name": "bank_p1_test",
+  "preserved_name": "bank_p1_preserved_20261101_prd01",
+  "preserved_oid": 73326,
+  "verified_at": "2026-11-01T12:08:35.609653+00:00",
+  "before_ci_sha": "b9139320ed835b40a9d2f7f07a8a76399bc5cd79",
+  "note": "ALTER DATABASE completed; verification assertion int/string mismatch. CI interrupted during unit only; target verified and old source name absent before restart."
+}
