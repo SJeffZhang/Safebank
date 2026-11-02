@@ -4,7 +4,7 @@ SafeBank 将自动化测试、真实模型链路和安全效果评测分开记�
 
 ## 本次回归
 
-2026-11-02，在代码基线 `f324c52`、分支 `feat/form-authorization` 上执行：
+2026-11-02，在代码基线 `f324c52`、分支 `codex/repository-presentation` 上执行：
 
 | 命令 | 结果 | 说明 |
 |---|---|---|
