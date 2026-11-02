@@ -35,10 +35,11 @@
 
 ## 3. 当前状态（每次工作后更新）
 
-**最后更新**：2026-11-01（双报告修复/独审完成，精确代码9545148a12fff197beea350dbadbd2abb89fe4d7全部35步本机CI PASSED；含回执最终head完整CI、匹配合并/恢复main结果以PR #114实际回执为准，原24/43现场未改、不冻结）
+**最后更新**：2026-11-02（仓库展示PR #115同步main并解决文档冲突；保留#114业务与CI状态，比赛演示未冻结；本轮合并检查回执见PR #115）
 
 | 模块 | 状态 |
 |---|---|
+| 仓库展示与复现 | **2026-11-02 PR #115 合并验证中**：重写根 README 与模块说明，补品牌横幅、六场景、证据指标、架构/部署/验证导航及安全边界。新增 docker-compose.demo.yml 仅向 Agent 注入模型 key，L2/L3 开 DEMO_MODE 且保留 B2/双网隔离。基线7ceda71亲跑unit3552/1065skip、frontend400、BFF16及build；lint/契约/Compose静态与边界检查通过。记录docs/acceptance/repository-2026-11-02.md；用户已授权提交推送，发布分支codex/repository-presentation；未调模型、未部署或修改卷。 |
 | 调研 | 开源项目元数据和 DeepSeek 官方信息已核实；评分/提交已从官网公开 JS 核实（docs/acceptance/official-v1.md）；竞品「明鉴」未核实 |
 | PRD | **`PRD.md` = v2.1 定稿**（§0–§16；三轮多 agent 审核 + 两次修订复核，决议 D1–D47 见 §0.5；执行屏障增量约定见ADR-008）。v1.2 与作废的 v2.0 草稿在 `docs/archive/`；审核报告在 `docs/reviews/` |
 | 代码 | **P1历史基础已由PR #1合入main**：18读/14写契约、真实L3转账/卡片/账本/快照/执行恢复；116单元+33真实PG，契约v1已冻结。历史提交7fd7a26/70dcabe，远端run39929405919；该P1验收不等于完整六场景现场通过。当前业务开发/验收见以下模块与本次PR完整head回执。 |
@@ -1068,6 +1069,16 @@
 | 2026-11-01 | Codex（CI夹具门禁修复） | 独立test-only9a68→4cf3、8ea8→ea78：两默认preflight以当前Schema序列化，生产strict相等不变；RED仅40P01/55P03且done异常必传播，endpoint亦收后台异常、不丢业务transition/OTP断言。root实际四审批套件322过/0skip，endpoint补丁后整W3b88过/0skip；D非作者复审APPROVE/97纯测过，全部原日志/负控保留。1c首次完整CI仍FAILED，新head必须从头全部CI；P1测试库仍未重建、原prd06保留。 |
 
 | 2026-11-01 | Codex（完整代码CI通过） | 精确9545148a12fff197beea350dbadbd2abb89fe4d7全部35步骤本机CI PASSED/exit0：unit4977/1169条件skip、FE494/BFF16/build、GW17/锁63/状态252/共享79/AgentDB42、W1 2042/义务334/W2 328/W3a64/W3b88/审批120/确认58/屏障56/SMS8/恢复48、E0b119/P1资金33/并发5/一致性17/网络隔离/真实L3重启幂等/冻结契约、S1 113/clock6/notify52。回执retest-report-ci/9545148，聚合SHA9a6ee550…；重叠不相加、skip不算真实PG或模型。此前1c失败保留；954前置检查误启动已在unit精准停、未进PG，make up provision重建的零表test库101382也保留prd07，prd06原94369无损，守卫再核成功后才取得完整PASS。普通push并建PR114草稿；本次仅记录已实测954，含记录的最终head仍从头全CI且match-head合并，实际最终SHA/merge/恢复写PR114。 |
+
+| 2026-11-02 | Codex | 用户要求全面整理参赛仓库、重写README并突出优势、技术指标与启动部署。核对当前代码/Compose/验收JSON/旧README，确认旧首页仍为P1、实际为feat/form-authorization/7ceda71；据实现重写根/前端/L1/L2/L3/bankcore/评测说明，新增文档导航、架构、部署、验证、安全边界与原生SVG横幅，保留开发历史与来源记录。新增演示Compose叠加解决默认栈未注入Agent模型key及未启用演示入口的问题，凭证不进入版本库；DEMO_MODE不改变B2策略。亲跑make test3552passed/1065conditional skips，frontend400/BFF16/build，make lint与contracts-check/Compose config --quiet通过。未发起模型请求、未启动或重建栈、未动既有卷，未提交推送。文档链接与配置边界最终复核中。 |
+
+| 2026-11-02 | Codex | 仓库文档最终复核：补验收记录repository-2026-11-02.md，修CLI参数为实际--customer-id；静态比较Compose前后network/volumes及逐服务ports/挂载/只读/cap/security/command不变，仅Agent取得模型key、B2保持，缺key按预期拒绝。重新读取语料405条/11文件；SVG XML解析与渲染预览通过。首次链接检查发现待建验收记录，创建后重新检查。全部改动留在当前功能分支工作区，未自动提交、推送或改变仓库可见性。新配置尚未全新机器实启，不声称部署live通过。 |
+
+| 2026-11-02 | Codex | 用户明确要求“推上去”。核对GitHub当前身份SJeffZhang，fetch确认远端main已更新至ac0884e，当前7ceda71已包含于main；为保留后续业务更新，仓库整理单独提交并推送codex/repository-presentation，不覆盖main、不混入后续业务提交。本次文件范围仅对外文档、演示配置与维护日志；提交前复核diff/敏感文件，沿用同一内容上一轮已通过的回归结果。 |
+
+| 2026-11-02 | Codex | 用户要求将仓库展示分支合入main并解释阻塞。查明此前未创建PR，创建#115后merge-tree证实仅AGENTS最后更新时间冲突。合入origin/main ac0884e，保留两侧全部进度与主线最新业务状态；同步检查README中的旧占位命令、赎回及回放说明。只读子代理复核发现make demo已实现、赎回已有live及生产replay边界三组过时说明，已逐项修订。按项目门禁在main-baseline串行跑最终head完整本机CI，回执发布于PR #115；不调用模型、不开展现场彩排。 |
+
+| 2026-11-02 | Codex | #115同步主线候选f324c52单元4977/1169条件skip、前端494/50文件、BFF16及build通过。完整CI在bootstrap前因main-baseline旧venv引用临时Python且标准库缺失停止；未到部署/DB操作。旧venv移至本机临时备份，改用现有Homebrew Python3.12重建78个锁定依赖；不改源码或凭证。首页与验证表更新为上述最新实测，最终head完整CI重跑，结果回执见PR #115。 |
 
 ## 5. 下一步待办（按顺序）
 

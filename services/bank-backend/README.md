@@ -1,48 +1,59 @@
-# bank-backend：P1 核心
+# L3 · Banking Backend
 
-真实 FastAPI + PostgreSQL 后端，仅在 `bank-net:8300` 提供服务；所有已注册路由（含 health/readyz）需要 `X-Service-Token: GATEWAY_SERVICE_TOKEN`。不向宿主发布端口。L1 无服务令牌，也不能连接该网络。
+FastAPI + PostgreSQL 合成银行后端，提供账户、账本、收款人、银行卡、定时指令、订阅、AA 收款、风险测评与基金业务。服务只在 `bank-net:8300` 监听，不发布宿主端口，所有路由包括健康探针均校验网关服务令牌。
 
-从项目根目录执行 `make setup && make up`。该命令创建本地隔离凭证、构建镜像、启动数据库、执行 Alembic 迁移、幂等加载 `p1_core_v1` 核心测试数据后启动服务；重复运行保留已有数据。需要运行中的后台 Docker 引擎，不要求打开 Desktop 窗口。已有银行数据不自动重置。
+## 状态与执行
 
-P1 核心数据是甲/乙两个合成客户（cus_a/cus_b），账户 acc_a=600000 分、acc_s=2000000 分、acc_b=200000 分，卡 crd_a。本数据不是 PRD 的正式 baseline_v1。真实 HTTP 验收会做一笔 1 分本人互转，重复验收累计该变化。
+- 18 个读工具通过 `POST /internal/read/{tool}` 提供，返回值遵循共享契约。
+- `POST /internal/snapshot` 在只读一致性事务中加载银行状态，供网关预演。
+- `prepare / execute / reconcile` 管理执行身份、版本与未知结果恢复。
+- 业务效果、客户版本、执行结果、操作事件与 outbox 在同一事务中提交。
+- 到期任务通过内部网络请求 L2 授权；模拟时钟支持定时转账、代扣、基金确认与结算。
 
-已实现：
+金融规则由 [`bankcore`](../../packages/bankcore/README.md) 提供，与 L2 预演共用。金额只用整数分，份额用四位 Decimal；运行角色无 DDL / TRUNCATE 权限，迁移权限只进入维护容器。
 
-- `POST /internal/read/{tool}`：get_accounts、list_payees、get_transactions、get_cards、get_profile。
-- `POST /internal/snapshot`：唯一状态加载器，REPEATABLE READ + READ ONLY。
-- `POST /internal/plans/prepare`、`/execute`，`GET /internal/executions/{plan_id}?customer_id=`，`POST /internal/executions/{plan_id}/reconcile`。
-- `GET /internal/outbox?after=&limit=`、`POST /internal/outbox/ack`。每轮从 after=0 扫描未 ack 项，按 event_id 幂等处理再 ack；after 只用于本轮分页，不能当永久提交水位。
-- 转账（本人、本行、他行）、新增收款人、卡限额/渠道/冻结/解冻/挂失补卡。其他业务工具明确返回 TOOL_NOT_ALLOWED；调度、AA、订阅、基金和时钟推进属于后续阶段。
+## 启动与数据
 
-执行只接受已 prepare 且 attempt/证据/请求身份匹配的信封。锁序为 intent → clock FOR SHARE → 排序后的客户版本；引用摘要在锁内复核。全部业务效果、客户版本、执行结果、操作事件及 outbox 同事务提交。404、PREPARED 或超时都不能推断失败；通过 reconcile 获得 COMMITTED/CANCELLED，后者永久阻断迟到请求。
+从根目录按[部署指南](../../docs/deployment.md)操作。`make up` 执行迁移并安装 `p1_core_v1` 基础测试客户，`make seed-demo` 增量安装四个演示客户与合成历史。种子重跑保留既有业务状态，不等于重置。
 
-L2 的授权/审批/OTP 仍属于 P2/P3。当前 HTTP 验收信封仅由可信本地测试驱动生成，没有给 L1 增加入口。金额/份额和工具 JSON Schema 以 `packages/contracts` 为准，执行领域规则与预演共享 `packages/bankcore`。
-
-环境变量：
+既有定时与代扣条款需在首次使用前通过维护 CLI 导出并安装到空网关库。该步骤与普通用户审批分开，不生成虚假的执行或 OTP 记录。
 
 | 变量 | 用途 |
 |---|---|
-| BANK_DATABASE_URL | bank_app 运行角色，仅 DML；只能使用 PostgreSQL + asyncpg |
-| GATEWAY_SERVICE_TOKEN | 所有 L3 路由认证 |
-| FINGERPRINT_KEY | 账户指纹 HMAC |
-| BANK_MIGRATION_DATABASE_URL | 仅临时维护/迁移容器持有的管理员连接；不注入银行服务 |
-| P1_TEST_DATABASE_URL | 仅测试驱动持有；必须指向独立 bank_p1_test |
+| `BANK_DATABASE_URL` | `bank_app` 运行角色数据库连接 |
+| `GATEWAY_SERVICE_TOKEN` | 内部业务接口认证 |
+| `SCHEDULER_SERVICE_TOKEN` | 到期事件调用 L2 |
+| `S1_URL` | 内部授权地址，Compose 为 `http://gateway:8201` |
+| `SCHEDULER_ENABLED` | 是否启用调度器 |
+| `FINGERPRINT_KEY` | 账户指纹 HMAC |
+| `DEMO_MODE` / `EVAL_MODE` | 挂载受控演示接口 |
+| `BANK_MIGRATION_DATABASE_URL` | 仅维护容器使用的管理员连接 |
+| `P1_TEST_DATABASE_URL` | 独立 `bank_p1_test` 测试库 |
 
-验收命令：
+## 代码入口
 
-```sh
-make test                 # 本地单元；未配置真实 PG 的集成项显示 skipped
-make lint
-make test-postgres-bootstrap # 独立Linux新卷初始化/权限/重启回归
-make test-p1              # 重建独立测试库、空库迁移、重复升级、全部真实 PG 验收
-make test-p1-concurrency  # 在 test-p1 构建后独立运行
+| 路径 | 内容 |
+|---|---|
+| `app/state.py` | 统一状态加载与效果持久化 |
+| `app/reads.py` | 业务读工具与结果适配 |
+| `app/main.py` | 服务装配、内部路由与就绪探针 |
+| `app/scheduler.py` / `app/events.py` | 到期事件、状态与调度 |
+| `app/seed_demo.py` / `app/seed_consents.py` | 增量合成数据与既有条款导出 |
+| `fixtures/l1_seed_v1.json` | 固定演示数据 |
+| `migrations/` | 前向 Alembic 迁移 |
+
+## 测试
+
+```bash
+make test
+make test-postgres-bootstrap
+make test-obligations
+make test-p1
+make test-p1-concurrency
 make test-p1-consistency
-make test-integration     # 正在运行的真实服务：网络、HTTP、L3 重启恢复
 make contracts-check
 ```
 
-测试库清理仅针对固定名称 bank_p1_test；运行角色无 DDL/TRUNCATE。迁移 0001 固化 DDL，0002 分离请求与解析后摘要；0002 对非空旧执行表拒绝猜测迁移。迁移仅前进，不回退删除账本。
+并发与一致性目标先运行 `make test-p1`。`make test-integration` 针对当前部署检查真实网络、HTTP 与重启恢复，会改变测试客户状态并重启服务，只在专用部署检出执行。数据卷不因排错而删除。
 
-`make demo/eval/reset` 仍明确失败，等待后续完整演示、评测与正式种子数据实现。CI 配置见 `.github/workflows/checks.yml`；本地验收证据见 `docs/acceptance/P1.*.md`。
-
-Linux 全新部署通过 scripts/postgres-entrypoint.sh 适配宿主0600 SQL的所有者；启动副本位于容器私有tmpfs（目录0700/文件0600），再运行官方entrypoint。原始只读挂载和宿主密钥权限不变，正式bank卷不为修复CI而删除。
+已完成的真实场景与尚待完整彩排等范围见[验证说明](../../docs/validation.md)。
