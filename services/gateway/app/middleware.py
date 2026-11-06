@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from typing import Any
 from uuid import uuid4
 
@@ -21,6 +22,13 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from .errors import GatewayError
 
 MAX_TRACE_ID = 256
+# Requests are small JSON documents; anything larger is rejected before parsing.
+MAX_BODY_BYTES = 1024 * 1024
+# Real paths are far shorter (ids are ~30 chars). Idempotency keys store the
+# concrete path in request_dedup.route VARCHAR(256), so cap the path below it.
+MAX_PATH_CHARS = 200
+
+logger = logging.getLogger("safebank.gateway")
 
 
 def canonical_bytes(value: Any) -> bytes:
@@ -58,7 +66,97 @@ def error_response(
     return JSONResponse(status_code=status, content=body)
 
 
+def _has_nul(value: Any) -> bool:
+    if isinstance(value, str):
+        return "\x00" in value
+    if isinstance(value, dict):
+        return any(_has_nul(k) or _has_nul(v) for k, v in value.items())
+    if isinstance(value, list):
+        return any(_has_nul(v) for v in value)
+    return False
+
+
+def _input_problem(path: str, query: bytes, body: bytes) -> str | None:
+    """Return why the raw request can never be valid, or None.
+
+    PostgreSQL text cannot hold NUL and every gateway input is UTF-8 JSON, so
+    such requests are rejected here instead of failing deep inside a handler.
+    """
+    if "\x00" in path or b"\x00" in query or b"%00" in query:
+        return "nul_byte"
+    if len(path) > MAX_PATH_CHARS:
+        return "path_too_long"
+    if len(body) > MAX_BODY_BYTES:
+        return "body_too_large"
+    if not body:
+        return None
+    try:
+        decoded = body.decode("utf-8")
+    except UnicodeDecodeError:
+        return "invalid_utf8"
+    if "\x00" in decoded:
+        return "nul_byte"
+    if "\\u0000" in decoded.lower():
+        try:
+            if _has_nul(json.loads(decoded)):
+                return "nul_byte"
+        except RecursionError:
+            return "too_deep"
+        except ValueError:
+            return None  # malformed JSON is reported by the route's own parsing
+    return None
+
+
+class InputGuard:
+    """Pure ASGI guard that buffers the body once and replays it downstream."""
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        chunks: list[bytes] = []
+        size = 0
+        more = True
+        while more:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            chunk = message.get("body", b"")
+            size += len(chunk)
+            if size <= MAX_BODY_BYTES:
+                chunks.append(chunk)
+            more = message.get("more_body", False)
+        body = b"".join(chunks) if size <= MAX_BODY_BYTES else b"x" * (MAX_BODY_BYTES + 1)
+        problem = _input_problem(scope.get("path", ""), scope.get("query_string", b""), body)
+        if problem is not None:
+            request = Request(scope)
+            trace = getattr(request.state, "trace_id", None) or trace_id(request)
+            response = error_response(
+                trace, Code.CONTRACT_INVALID, 422, details={"reason": problem}
+            )
+            response.headers["X-Request-ID"] = trace
+            await response(scope, receive, send)
+            return
+        replayed = False
+
+        async def replay():
+            nonlocal replayed
+            if not replayed:
+                replayed = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            return await receive()
+
+        await self.app(scope, replay, send)
+
+
 def install_middleware(app: FastAPI) -> None:
+    # Added before the trace middleware, so it runs innermost of the two and
+    # still sees every request before routing and authentication.
+    app.add_middleware(InputGuard)
+
     @app.middleware("http")
     async def _trace(request: Request, call_next):
         request.state.trace_id = trace_id(request)
@@ -95,7 +193,15 @@ def install_middleware(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception):
-        # Never leak internals; depend on the trace id for correlation.
+        # Never leak internals to the client; the server log keeps the full
+        # traceback under the same trace id for correlation.
+        logger.error(
+            "unhandled exception trace_id=%s %s %s",
+            getattr(request.state, "trace_id", ""),
+            request.method,
+            request.url.path,
+            exc_info=exc,
+        )
         return error_response(
             getattr(request.state, "trace_id", ""),
             Code.DEPENDENCY_UNAVAILABLE,

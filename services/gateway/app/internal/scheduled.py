@@ -47,6 +47,7 @@ from safebank_contracts.plan import (
     ScheduledEvidence,
 )
 from safebank_contracts.state import BankState
+from safebank_contracts.tools import Id
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -94,8 +95,8 @@ class _ClaimResult(enum.StrEnum):
 
 
 class AuthorizeRequest(BaseModel):
-    event_id: str
-    request_id: str | None = None
+    event_id: Id
+    request_id: Id | None = None
     attempt: int = 1
 
 

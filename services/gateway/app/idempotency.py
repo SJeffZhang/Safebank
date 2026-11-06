@@ -17,6 +17,7 @@ from typing import Any
 from safebank_contracts.codes import Code
 from sqlalchemy import delete, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from . import tables as t
@@ -59,13 +60,19 @@ async def request_idempotent(
         try:
             status, response = await produce()
         except BaseException:
-            await conn.execute(
-                delete(t.request_dedup).where(
-                    t.request_dedup.c.customer_id == customer_id,
-                    t.request_dedup.c.route == route,
-                    t.request_dedup.c.request_id == request_id,
+            # A database error inside produce() leaves the transaction aborted;
+            # the in-flight row then disappears with the rollback anyway, and a
+            # failing cleanup must not replace the original error.
+            try:
+                await conn.execute(
+                    delete(t.request_dedup).where(
+                        t.request_dedup.c.customer_id == customer_id,
+                        t.request_dedup.c.route == route,
+                        t.request_dedup.c.request_id == request_id,
+                    )
                 )
-            )
+            except SQLAlchemyError:
+                pass
             raise
         await conn.execute(
             update(t.request_dedup)
