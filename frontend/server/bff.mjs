@@ -424,6 +424,11 @@ export function createBff({
         const r = await call("/auth/login", {
           method,
           data: { customer_id: b.customer_id, pin: b.pin },
+        }).catch((e) => {
+          // A refused login is a wrong PIN, not an expired session.
+          if (e.code === "UNAUTHENTICATED")
+            throw fail(401, e.code, "PIN 不正确，请重新输入", e.details);
+          throw e;
         });
         if (session) {
           sessions.delete(sessionId);

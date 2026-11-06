@@ -445,3 +445,13 @@ test("gateway error codes reach the user as readable Chinese, codes and details 
   const kept = await (await s.req("/plans/pln_d/execute", { request_id: "req_y" })).json();
   assert.equal(kept.error.message, "超出本次原话授权范围");
 });
+test("a refused login says the PIN is wrong, not that the session expired", async (t) => {
+  const s = await setup(t, () =>
+    json({ error: { code: "UNAUTHENTICATED", message: "UNAUTHENTICATED", details: {} } }, 401),
+  );
+  const r = await s.req("/auth/login", { customer_id: "cus_test", pin: "000000" });
+  assert.equal(r.status, 401);
+  const data = await r.json();
+  assert.equal(data.error.code, "UNAUTHENTICATED");
+  assert.equal(data.error.message, "PIN 不正确，请重新输入");
+});

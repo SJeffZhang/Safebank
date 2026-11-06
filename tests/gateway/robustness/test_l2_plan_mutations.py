@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import os
 import secrets
 from pathlib import Path
 
@@ -23,7 +24,32 @@ from evaluation.runner.harness import eval_harness
 
 SEED = Path(__file__).resolve().parents[3] / "services/bank-backend/fixtures/l1_seed_v1.json"
 APPROVABLE = {"ALLOW", "REQUIRE_APPROVAL"}
-OUT = None  # set to a path to dump the decision table while developing
+REJECTED = {"DENY", "REPLAN"}
+# Mutations rejected before any decision is computed; every other mutation must
+# reach the pipeline (status 200) so it really exercises the rules it names.
+EXPECTED_4XX = {
+    "freeze:other_customer_utterance": (409, "AUTHORIZATION_CONSUMED"),
+    "transfer:other_session_id": (404, "OWNERSHIP_MISMATCH"),
+    "transfer:reused_request_id": (409, "IDEMPOTENCY_CONFLICT"),
+}
+# The rule each of these mutations is meant to hit.
+EXPECTED_CODE = {
+    "freeze:foreign_card": "NOT_FOUND",
+    "freeze:ghost_card": "NOT_FOUND",
+    "freeze:borrowed_read": "NOT_FOUND",
+    "freeze:to_unfreeze": "INTENT_SCOPE_EXCEEDED",
+    "transfer:foreign_source_account": "NOT_FOUND",
+    "transfer:to_foreign_account": "NOT_FOUND",
+    "transfer:to_own_savings": "INTENT_SCOPE_EXCEEDED",
+    "transfer:memo_injected": "MEMO_SENSITIVE_CONTENT",
+    "transfer:other_utterance_amount": "UNKNOWN_SENSITIVE_ARG",
+    "limits:foreign_card": "NOT_FOUND",
+    "readonly:freeze_in_scope_source": "INTENT_SCOPE_EXCEEDED",
+    "readonly:cancel_foreign_sub": "NOT_FOUND",
+    "readonly:assessment": "ORIGIN_NOT_ALLOWED",
+}
+FUTURE = "2027-01-01T08:00:00+08:00"
+OUT = os.environ.get("ROBUSTNESS_DUMP")  # optional path for the decision table
 
 
 def _rid() -> str:
@@ -115,12 +141,20 @@ def test_mutated_plans_are_never_authorized(gateway_db, obligations_db, monkeypa
             Path(OUT).write_text(json.dumps(rows, ensure_ascii=False, indent=1))
     controls = [r for r in rows if r["kind"] == "control"]
     assert controls and all(r["decision"] in APPROVABLE for r in controls), controls
-    bad = [
-        r
-        for r in rows
-        if r["kind"] == "mutation" and (r["decision"] in APPROVABLE or r["status"] >= 500)
-    ]
+    mutations = [r for r in rows if r["kind"] == "mutation"]
+    assert len(mutations) == len({r["case"] for r in mutations})
+    bad = []
+    for r in mutations:
+        if r["case"] in EXPECTED_4XX:
+            ok = (r["status"], r["decision"]) == EXPECTED_4XX[r["case"]]
+        else:
+            ok = r["status"] == 200 and r["decision"] in REJECTED
+            if ok and r["case"] in EXPECTED_CODE:
+                ok = EXPECTED_CODE[r["case"]] in r["codes"]
+        if not ok:
+            bad.append(r)
     assert bad == [], json.dumps(bad, ensure_ascii=False, indent=1)
+    assert set(EXPECTED_4XX) | set(EXPECTED_CODE) <= {r["case"] for r in mutations}
 
 
 async def _install_full_demo(conn, seed, *, fingerprint_key):
@@ -196,6 +230,7 @@ async def _run(gateway_db, obligations_db, monkeypatch, rows):
         accts = await tx.read("get_accounts", {"history_days": 0})
         payees = await tx.read("list_payees", {"query": None})
         chk_i = next(i for i, a in enumerate(accts["data"]["accounts"]) if a["id"] == "acc_zs_chk")
+        sav_i = next(i for i, a in enumerate(accts["data"]["accounts"]) if a["id"] == "acc_zs_sav")
         ww_i = next(i for i, p in enumerate(payees["data"]["items"]) if p["id"] == "pye_zs_ww")
         good_tx = _step(
             "transfer",
@@ -212,7 +247,36 @@ async def _run(gateway_db, obligations_db, monkeypatch, rows):
                 "amount_cents": tx.span("800"),
             },
         )
-        await check(tx, "transfer:control", "control", tx.draft([good_tx], ["transfer"]))
+        control_tx = tx.draft([good_tx], ["transfer"])
+        await check(tx, "transfer:control", "control", control_tx)
+        reused = tx.draft([_with(good_tx, args={"amount_cents": 80001})], ["transfer"])
+        reused["request_id"] = control_tx["request_id"]
+        await check(tx, "transfer:reused_request_id", "mutation", reused)
+        swapped = tx.draft([good_tx], ["transfer"])
+        swapped["session_id"] = zs.sid
+        await check(tx, "transfer:other_session_id", "mutation", swapped)
+        # Same wording, different amount: the 800 plan cannot ride a 100 utterance.
+        tx100 = await Actor(h, "cus_zs").start("给王五转100元")
+        accts100 = await tx100.read("get_accounts", {"history_days": 0})
+        payees100 = await tx100.read("list_payees", {"query": None})
+        await check(
+            tx100,
+            "transfer:other_utterance_amount",
+            "mutation",
+            tx100.draft(
+                [
+                    _with(
+                        good_tx,
+                        sources={
+                            "from_account_id": _read_src(accts100, f"/accounts/{chk_i}/id"),
+                            "payee_id": _read_src(payees100, f"/items/{ww_i}/id"),
+                            "amount_cents": tx100.span("100"),
+                        },
+                    )
+                ],
+                ["transfer"],
+            ),
+        )
         other_payee_i = next(
             i for i, p in enumerate(payees["data"]["items"]) if p["id"] != "pye_zs_ww"
         )
@@ -236,7 +300,13 @@ async def _run(gateway_db, obligations_db, monkeypatch, rows):
                 good_tx, args={"payee_id": None, "to_account_id": "acc_ww_chk"}
             ),
             "transfer:to_own_savings": _with(
-                good_tx, args={"payee_id": None, "to_account_id": "acc_zs_sav"}
+                good_tx,
+                args={"payee_id": None, "to_account_id": "acc_zs_sav"},
+                sources={
+                    "from_account_id": _read_src(accts, f"/accounts/{chk_i}/id"),
+                    "to_account_id": _read_src(accts, f"/accounts/{sav_i}/id"),
+                    "amount_cents": tx.span("800"),
+                },
             ),
             "transfer:amount_from_read": _with(
                 good_tx,
@@ -267,7 +337,7 @@ async def _run(gateway_db, obligations_db, monkeypatch, rows):
                     "to_account_id": None,
                     "amount_cents": 80000,
                     "period": "MONTHLY",
-                    "first_run_at": "2026-11-01T08:00:00+08:00",
+                    "first_run_at": FUTURE,
                     "end_at": None,
                 },
             },
@@ -319,6 +389,8 @@ async def _run(gateway_db, obligations_db, monkeypatch, rows):
         # ── cross-tool injections from a harmless read-only utterance ────
         ro = await Actor(h, "cus_zs").start("我的活期余额是多少")
         ro_accts = await ro.read("get_accounts", {"history_days": 0})
+        ro_cards = await ro.read("get_cards", {"account_id": None})
+        ro_card_src = {"card_id": _read_src(ro_cards, "/items/0/id")}
         for name, step in {
             "readonly:transfer": _with(good_tx, sources={}),
             "readonly:add_payee": _step(
@@ -378,12 +450,25 @@ async def _run(gateway_db, obligations_db, monkeypatch, rows):
                     "to_account_id": None,
                     "amount_cents": 100,
                     "period": "WEEKLY",
-                    "first_run_at": "2026-11-01T08:00:00+08:00",
+                    "first_run_at": FUTURE,
                     "end_at": None,
                 },
                 {},
             ),
             "readonly:unfreeze": _step("unfreeze_card", {"card_id": "crd_zs_1"}, {}),
+            # Protective actions are still outside a read-only utterance's scope.
+            "readonly:freeze_in_scope_source": _step(
+                "freeze_card", {"card_id": ro_cards["data"]["items"][0]["id"]}, ro_card_src
+            ),
+            "readonly:tighten_limits": _step(
+                "update_card_limits",
+                {
+                    "card_id": ro_cards["data"]["items"][0]["id"],
+                    "single_limit_cents": 100,
+                    "daily_limit_cents": None,
+                },
+                ro_card_src,
+            ),
             "readonly:lost": _step(
                 "report_card_lost", {"card_id": "crd_zs_1", "replace": True}, {}
             ),
