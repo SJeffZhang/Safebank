@@ -13,6 +13,7 @@ from typing import Any
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 from safebank_contracts.codes import Code
+from safebank_contracts.tools import Id
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -58,7 +59,7 @@ router = APIRouter()
 
 
 class ConfirmRejectRequest(BaseModel):
-    request_id: str
+    request_id: Id
     view_hash: str
 
 
@@ -694,7 +695,7 @@ async def list_approvals(
 
 
 class OtpSendRequest(BaseModel):
-    request_id: str
+    request_id: Id
     view_hash: str
 
 

@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 from safebank_contracts.codes import Code
+from safebank_contracts.tools import Id
 from sqlalchemy import func, select
 
 from .. import tables as t
@@ -91,7 +92,7 @@ class NotificationListResponse(BaseModel):
 
 
 class ReadNotificationRequest(BaseModel):
-    request_id: str
+    request_id: Id
 
 
 class ReadNotificationResponse(BaseModel):

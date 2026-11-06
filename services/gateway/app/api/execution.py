@@ -23,6 +23,7 @@ from safebank_contracts.plan import (
     Prepare,
 )
 from safebank_contracts.protocol import PrepareResult
+from safebank_contracts.tools import Id
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -58,7 +59,7 @@ router = APIRouter()
 
 
 class ExecuteRequest(BaseModel):
-    request_id: str
+    request_id: Id
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -1183,11 +1184,11 @@ async def execute_plan(plan_id: str, request: Request):
     if caller is None or caller.customer_id is None:
         raise GatewayError(Code.UNAUTHENTICATED, 401)
 
-    body = await request.json()
     try:
+        body = await request.json()
         ExecuteRequest.model_validate(body)
     except Exception:
-        raise GatewayError(Code.INVALID_REQUEST, 422, "expected {request_id: str}") from None
+        raise GatewayError(Code.CONTRACT_INVALID, 422, "expected {request_id: str}") from None
 
     app_state = request.app.state
     l3 = app_state.l3

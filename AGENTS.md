@@ -1113,6 +1113,7 @@
 | 2026-11-02 | Codex | #115同步主线候选f324c52单元4977/1169条件skip、前端494/50文件、BFF16及build通过。完整CI在bootstrap前因main-baseline旧venv引用临时Python且标准库缺失停止；未到部署/DB操作。旧venv移至本机临时备份，改用现有Homebrew Python3.12重建78个锁定依赖；不改源码或凭证。首页与验证表更新为上述最新实测，最终head完整CI重跑，结果回执见PR #115。 |
 
 | 2026-11-02 | Codex（PR116合并前核验） | 用户要求CI通过即合并。首head984090f远端unit成功、p1-postgres运行中；main已合#115至a41d56c，PR文档冲突。同步main保留#115完整README/架构部署验证文档及本分支命名/初始化，补新横幅和模块说明BankSense名称，合并两侧全部日志；当前精确新head须完整本机CI后再按head合并，不以先前专项代替。 |
+| 2026-11-06 | Claude（新主会话） | 用户反馈 L2 遇到不符合预期的输入会直接崩溃，要求出报告与计划，后续不启动任何 DS worker。在 origin/main e2cb4c7 的只读 worktree review-l2-robust 中，用真实临时 PG 对全部 40 条公共路由与 S1 做约 5100 次畸形输入模糊测试，报告 docs/reviews/2026-11-06-l2-robustness.md：5 类崩溃（G8 引用不存在的 Code.INVALID_REQUEST 且 request.json() 未保护；NUL 字节进 PG；request_id/路径超出 VARCHAR(256)；幂等清理在已中止事务中掩盖原错误）均被全局兜底伪装成 503，且容器无日志；另 G3 解析对正常改写过度判 INTENT_UNCLEAR。授权判定未发现放行。用户令「Start Phase A」：分支 fix/l2-input-robustness 由协调者亲自实现（未用 DS worker）：纯 ASGI InputGuard 拒绝 NUL/非法 UTF-8/孤立代理/超 1MiB 正文/超 200 字符路径→422 CONTRACT_INVALID；G8 解析纳入 try；网关本地请求模型 request_id/event_id 改用契约 Id；幂等清理不再掩盖原错误；未处理异常带 trace_id 记日志（仍返回 503，是否改 500 待用户定）；新增 make test-gateway-robustness 并入 CI。红绿：分别撤掉守卫/日志/幂等/G8/路径上限/代理检查，对应测试均失败，恢复后通过。回归：lint、test 4983/1177 skip、test-gateway 2658/838 skip、gateway-db 17、robustness 15、w1 2042、w3b 88、w4b2b 58、w4b2c 56、w4c 48、w5-notify 52、s1 113、shared-runtime 79、contracts 均通过。Docker 中途停止一次，docker desktop start 恢复，两卷 CreatedAt 不变。Claude 只读子代理独审 APPROVE 无 P0/P1，P2 中孤立代理、超大正文提前拒绝、断连、缺失测试已在本分支补上，报告 docs/reviews/2026-11-06-l2-input-robustness-review.md。 |
 
 ## 5. 下一步待办（按顺序）
 
