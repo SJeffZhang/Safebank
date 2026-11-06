@@ -18,6 +18,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from safebank_contracts.codes import Code
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.requests import ClientDisconnect
 
 from .errors import GatewayError
 
@@ -66,14 +67,27 @@ def error_response(
     return JSONResponse(status_code=status, content=body)
 
 
-def _has_nul(value: Any) -> bool:
+def _string_problem(value: Any) -> str | None:
+    """Find a decoded JSON string PostgreSQL or the UTF-8 hash cannot hold."""
     if isinstance(value, str):
-        return "\x00" in value
+        if "\x00" in value:
+            return "nul_byte"
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:  # lone surrogate such as "\ud800"
+            return "invalid_utf8"
+        return None
     if isinstance(value, dict):
-        return any(_has_nul(k) or _has_nul(v) for k, v in value.items())
-    if isinstance(value, list):
-        return any(_has_nul(v) for v in value)
-    return False
+        items = [item for pair in value.items() for item in pair]
+    elif isinstance(value, list):
+        items = value
+    else:
+        return None
+    for item in items:
+        problem = _string_problem(item)
+        if problem is not None:
+            return problem
+    return None
 
 
 def _input_problem(path: str, query: bytes, body: bytes) -> str | None:
@@ -96,10 +110,10 @@ def _input_problem(path: str, query: bytes, body: bytes) -> str | None:
         return "invalid_utf8"
     if "\x00" in decoded:
         return "nul_byte"
-    if "\\u0000" in decoded.lower():
+    lowered = decoded.lower()
+    if "\\u0000" in lowered or "\\ud" in lowered:
         try:
-            if _has_nul(json.loads(decoded)):
-                return "nul_byte"
+            return _string_problem(json.loads(decoded))
         except RecursionError:
             return "too_deep"
         except ValueError:
@@ -120,17 +134,21 @@ class InputGuard:
         chunks: list[bytes] = []
         size = 0
         more = True
+        problem = None
         while more:
             message = await receive()
             if message["type"] == "http.disconnect":
-                return
+                raise ClientDisconnect()
             chunk = message.get("body", b"")
             size += len(chunk)
-            if size <= MAX_BODY_BYTES:
-                chunks.append(chunk)
+            if size > MAX_BODY_BYTES:
+                problem = "body_too_large"  # answer now; do not read the rest
+                break
+            chunks.append(chunk)
             more = message.get("more_body", False)
-        body = b"".join(chunks) if size <= MAX_BODY_BYTES else b"x" * (MAX_BODY_BYTES + 1)
-        problem = _input_problem(scope.get("path", ""), scope.get("query_string", b""), body)
+        body = b"".join(chunks)
+        if problem is None:
+            problem = _input_problem(scope.get("path", ""), scope.get("query_string", b""), body)
         if problem is not None:
             request = Request(scope)
             trace = getattr(request.state, "trace_id", None) or trace_id(request)

@@ -39,6 +39,7 @@ BODIES = {
     "nan": b'{"request_id": NaN}',
     "bad_utf8": b'{"request_id": "\xff\xfe"}',
     "raw_nul": b'{"request_id": "a\x00b"}',
+    "lone_surrogate": b'{"request_id": "\\ud800x", "text": "\\udfff"}',
 }
 ID_VALUES = ["xx_doesnotexist", "a" * 4000, "%00", "..%2F..", "null"]
 
