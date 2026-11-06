@@ -39,6 +39,49 @@ const routes = [
   ["GET", /^\/notifications$/],
   ["POST", new RegExp(`^/notifications/${idPattern}/read$`)],
 ];
+// Gateway error bodies carry a stable code and, at most, a developer-facing
+// English message. The customer sees this readable text instead; the code and
+// details are passed through unchanged for the UI and for diagnosis.
+const ERROR_TEXT = {
+  CONTRACT_INVALID: "请求内容不完整或格式不正确，请检查后重试",
+  UNAUTHENTICATED: "登录已失效，请重新登录",
+  TOKEN_EXPIRED: "登录已过期，请重新登录",
+  FORBIDDEN: "当前账户无权执行此操作",
+  ORIGIN_NOT_ALLOWED: "此操作需要在 App 内由您本人完成",
+  NOT_FOUND: "未找到相关记录，可能已失效",
+  OWNERSHIP_MISMATCH: "未找到相关记录，可能已失效",
+  TOOL_NOT_ALLOWED: "此操作当前不可用",
+  INTENT_UNCLEAR: "没能确认您的具体意图，请补充说明",
+  INTENT_SCOPE_EXCEEDED: "计划超出了您本次说明的范围，请重新说明",
+  UTTERANCE_EXPIRED: "这条指令已过期，请重新说一遍",
+  AUTHORIZATION_CONSUMED: "这条指令已被使用，请重新发起",
+  AUTHORIZATION_CANCELLED: "这条指令已被取消或替换，请重新发起",
+  STATE_CHANGED: "账户状态刚刚发生变化，请查看最新计划后再确认",
+  POLICY_CHANGED: "安全策略已更新，请重新发起",
+  APPROVAL_EXPIRED: "确认已超时，请重新发起",
+  APPROVAL_REJECTED: "该计划已被拒绝",
+  APPROVAL_SUPERSEDED: "该确认已被新的计划替代，请查看最新计划",
+  APPROVAL_USED: "该计划已确认过，无需重复操作",
+  APPROVAL_BINDING_MISMATCH: "确认信息与计划不一致，请刷新后重试",
+  VIEW_HASH_MISMATCH: "计划内容已更新，请刷新确认面板后再确认",
+  RISK_ACK_REQUIRED: "请先阅读并确认风险提示",
+  OTP_INVALID: "验证码不正确，请重新输入",
+  OTP_EXPIRED: "验证码已过期，请重新获取",
+  OTP_LOCKED: "验证码错误次数过多，请稍后重新发起",
+  RATE_LIMITED: "操作过于频繁，请稍后再试",
+  IDEMPOTENCY_CONFLICT: "重复的请求内容不一致，请刷新后重试",
+  EXECUTION_IN_PROGRESS: "该计划正在处理中，请稍后查看结果",
+  EXECUTION_CANCELLED: "该计划已取消",
+  EXECUTION_DEADLINE_EXPIRED: "执行已超时，请查询计划状态",
+  ASSESSMENT_MISSING: "请先完成风险测评",
+  SUITABILITY_MISMATCH: "该产品风险等级高于您的测评结果",
+  DEPENDENCY_UNAVAILABLE: "银行服务暂不可用，请稍后重试",
+};
+const CJK = /[\u4e00-\u9fff]/;
+function readableMessage(code, message) {
+  if (typeof message === "string" && CJK.test(message)) return message;
+  return ERROR_TEXT[code] ?? "请求未能完成，请稍后重试";
+}
 export function createBff({
   gatewayUrl = process.env.GATEWAY_URL ?? "http://127.0.0.1:8200",
   agentUrl = process.env.AGENT_URL ?? "http://127.0.0.1:8100",
@@ -127,7 +170,7 @@ export function createBff({
       throw fail(
         r.status,
         data.error?.code ?? "UPSTREAM_ERROR",
-        data.error?.message ?? "银行服务暂不可用",
+        readableMessage(data.error?.code, data.error?.message),
         data.error?.details ?? {},
       );
     return { data, status: r.status };
@@ -155,7 +198,7 @@ export function createBff({
       throw fail(
         r.status,
         out.error?.code ?? "UPSTREAM_ERROR",
-        out.error?.message ?? "演示服务暂不可用",
+        readableMessage(out.error?.code, out.error?.message),
         out.error?.details ?? {},
       );
     return { data: out, status: r.status };

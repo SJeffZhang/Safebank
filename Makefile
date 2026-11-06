@@ -81,7 +81,7 @@ test-gateway-db:
 
 .PHONY: test-gateway-robustness
 test-gateway-robustness:
-	GATEWAY_DB_TESTS=1 .venv/bin/pytest tests/gateway/robustness -q
+	GATEWAY_DB_TESTS=1 OBLIGATIONS_DB_TESTS=1 .venv/bin/pytest tests/gateway/robustness -q
 
 # W2 includes its real PostgreSQL ledger tests through the isolated fixture.
 test-w2:
