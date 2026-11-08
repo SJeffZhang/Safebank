@@ -903,7 +903,16 @@ def _parse(
     memo = None
     if found := _MEMO.search(clean):
         memo = found["memo"].strip()
-        if not memo or len(memo) > 200 or re.search(r"备注|附言", memo):
+        raw = _MEMO.search(text.strip(" 。.!！~"))
+        # The memo is one plain clause: a later command or retraction after it
+        # must not be swallowed as memo text, and quoted text is never scope.
+        if (
+            not memo
+            or len(memo) > 200
+            or re.search(r"备注|附言|[，,；;。\n\r]", memo)
+            or raw is None
+            or raw["memo"].strip() != memo
+        ):
             return Parsed()
         clean = clean[: found.start()].rstrip(" ,;")
         if not clean:

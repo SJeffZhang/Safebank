@@ -93,6 +93,9 @@ def test_memo_is_recorded_in_scope(text):
         "给王五转800元给赵六转900元，备注：房租",  # memo with two transfers is ambiguous
         "冻结我的卡，备注：丢了",  # memo only belongs to a transfer
         "给王五转800元，备注：" + "很" * 201,  # contract max length 200
+        "给王五转800元，备注房租，再给赵六转900元",  # a later command is not memo text
+        "给王五转800元，备注房租，不要转了",  # nor is a retraction
+        "给王五转800元，备注房租“押金”",  # partly quoted memo would differ from the plan
     ],
 )
 def test_memo_misuse_stays_unscoped(text):
