@@ -117,6 +117,10 @@ def route_evaluate_error(
     if status == 503:
         return RouteResult("respond", {}, True, respond_template("DEPENDENCY_UNAVAILABLE"))
 
+    # 500 INTERNAL_ERROR → respond. Evaluate never writes to L3, so "nothing executed" holds.
+    if status == 500 and code_value == "INTERNAL_ERROR":
+        return RouteResult("respond", {}, True, respond_template("INTERNAL_ERROR"))
+
     # Default: respond
     return RouteResult("respond", {}, True, respond_template("GENERIC_ERROR"))
 
@@ -157,7 +161,7 @@ def route_execute_error(
     STATE_CHANGED / POLICY_CHANGED with a new decision is the only path that
     re-routes (at most once) instead of going directly to respond.
     """
-    if decision is not None:
+    if decision is not None and status == 409:
         # 409 with a re-evaluated decision: STATE_CHANGED or POLICY_CHANGED
         d = decision.decision
         if d == "REQUIRE_APPROVAL":
@@ -179,8 +183,11 @@ def route_execute_error(
         )
 
     # 202 → unknown (done in route_execute_success via execute node, not error path)
-    # 503 on execute → unknown
-    if status == 503:
+    # Any 5xx on execute → unknown: the gateway may have failed after L3 committed,
+    # so the reply must never claim nothing was executed.
+    # A 2xx reaching here means G8 answered executed/unknown but L1 rejected the body,
+    # so money may have moved: also unknown, never "not executed".
+    if status >= 500 or 200 <= status < 300:
         return RouteResult(
             "respond", {"execution_status": "UNKNOWN"}, True, respond_template("UNKNOWN")
         )

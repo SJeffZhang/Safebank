@@ -75,8 +75,9 @@ def test_unhandled_exception_is_logged_with_trace_id(caplog):
 
     with caplog.at_level(logging.ERROR, logger="safebank.gateway"):
         response = asyncio.run(run())
-    assert response.status_code == 503
+    assert response.status_code == 500
     body = response.json()["error"]
+    assert body["code"] == "INTERNAL_ERROR"
     assert body["trace_id"] == "trace-robust-1"
     assert "boom-detail" not in response.text
     records = [r for r in caplog.records if r.name == "safebank.gateway"]

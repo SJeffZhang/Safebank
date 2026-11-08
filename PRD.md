@@ -716,12 +716,13 @@ START
 | | 409 `UTTERANCE_EXPIRED`、`AUTHORIZATION_*` | respond（模板：请重新发起） |
 | | 429 `RATE_LIMITED` | respond（模板：请稍后重试，本次未执行任何操作） |
 | | 503 `DEPENDENCY_UNAVAILABLE` | respond（模板：服务暂不可用，未执行任何操作） |
+| | 500 `INTERNAL_ERROR` | respond（模板：服务出现内部错误，未执行任何操作；evaluate 不写 L3） |
 | execute | `ExecutionResult` 成功 | respond（`PLAN_STATUS` 卡片） |
 | | 202 `{status: UNKNOWN}` | respond（模板「确认中」+ `PLAN_STATUS` 卡片）→ END。**L1 不轮询**，由 App 经 F8 / G5 轮询 |
 | | 409 `STATE_CHANGED` 或 `POLICY_CHANGED`（`details.decision` 为 L2 复演后的最新 Decision，plan_id 不变） | 按 `details.decision` 路由：`REQUIRE_APPROVAL` → await_approval（用其中新的 approval_id）；`ALLOW` → execute；`DENY` / `REPLAN` → respond。**不重新调用 evaluate**；本轮最多 1 次，超过转 respond |
 | evaluate / execute | 401 / 403 / 404，409 `IDEMPOTENCY_CONFLICT` | respond（模板：请重新发起，未执行任何操作） |
 | | 409 `APPROVAL_REJECTED`、`APPROVAL_EXPIRED`、`APPROVAL_SUPERSEDED`、`APPROVAL_USED`、`OTP_LOCKED`、`EXECUTION_CANCELLED`、`EXECUTION_DEADLINE_EXPIRED`、`EXECUTION_IN_PROGRESS` | respond（按代码映射固定文案） |
-| | 503 `DEPENDENCY_UNAVAILABLE` | 同 202 UNKNOWN |
+| | 任一 5xx（503 `DEPENDENCY_UNAVAILABLE`、500 `INTERNAL_ERROR`，以及无法解析的 5xx 响应）；200/202 但响应体校验失败；5xx 体内的 decision 一律忽略，只认 409 的 decision | 同 202 UNKNOWN（L2 可能在 L3 提交后才出错，不得回复「未执行」） |
 | | 任一 L3 业务失败码（`ExecutionResult.status=FAILED`） | respond（`BLOCKED` 卡片） |
 | 任意 | 其他未列出的返回 | respond（模板：请重新发起，未执行任何操作） |
 
@@ -1548,6 +1549,7 @@ App 切换客户必须退出并新建会话，不能复用旧 sid。新消息若
 | LINKED_STEP_FAILED | E409 | 整计划回滚的其他步骤状态 |
 | PENDING_ALREADY_RESOLVED / PENDING_EXPIRED | E409 | 两阶段重复终结/超时 |
 | DEPENDENCY_UNAVAILABLE | E503 | L3/数据库不可用，保留 UNKNOWN 判断，不能声称已回滚 |
+| INTERNAL_ERROR | E500 | L2 未处理异常的兜底（2026-11-08 用户决定由 503 改为 500）；服务端日志按 trace_id 记录 traceback，响应不含内部细节；执行类接口按 UNKNOWN 处理 |
 | ANOMALY_NIGHT_LARGE / ANOMALY_DUPLICATE / ANOMALY_NEW_MERCHANT_LARGE / ANOMALY_CATEGORY_OUTLIER | I | §8.2 确定性异常信号，不能单独产生授权 |
 
 ### 9.9 契约变更与验证

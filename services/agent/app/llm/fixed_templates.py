@@ -21,6 +21,7 @@ _RESPOND_TEMPLATES: dict[str, str] = {
     "AUTHORIZATION_INSUFFICIENT": "权限不足，无法执行此操作。",
     "RATE_LIMITED": "请求过于频繁，请稍后重试。本次未执行任何操作。",
     "DEPENDENCY_UNAVAILABLE": "服务暂不可用，未执行任何操作。",
+    "INTERNAL_ERROR": "服务出现内部错误，未执行任何操作，请稍后重试。",
     "UNKNOWN": "请求已提交，正在确认中…",
     "REINITIATE": "请求无法处理，请重新发起。未执行任何操作。",
     "APPROVAL_REJECTED": "审批已被拒绝。",

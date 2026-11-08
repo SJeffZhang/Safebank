@@ -76,6 +76,8 @@ const ERROR_TEXT = {
   ASSESSMENT_MISSING: "请先完成风险测评",
   SUITABILITY_MISMATCH: "该产品风险等级高于您的测评结果",
   DEPENDENCY_UNAVAILABLE: "银行服务暂不可用，请稍后重试",
+  // A 500 can follow a committed write: point to the plan status, never say "not executed".
+  INTERNAL_ERROR: "服务出现内部错误，请在我的页面的安全记录中查询操作状态",
 };
 const CJK = /[\u4e00-\u9fff]/;
 function readableMessage(code, message) {
