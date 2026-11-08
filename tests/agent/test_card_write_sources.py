@@ -83,7 +83,7 @@ def test_tail_span_as_card_id_source_is_retried_with_feedback():
     assert len(scripted.requests) == 2
     assert draft.steps[0].arg_sources[0].source.ref == "src_cards"
     feedback = str(scripted.requests[1])
-    assert "get_cards" in feedback
+    assert "原话里的尾号只用于在已读卡片中找到对应的卡" in feedback
 
 
 @pytest.mark.parametrize("tool", sorted(CASES))
