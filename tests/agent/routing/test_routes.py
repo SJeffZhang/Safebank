@@ -214,6 +214,8 @@ def test_decision_without_preflight_still_routes():
         (500, "PROTOCOL"),  # non-JSON or unparseable 500 body
         (502, "PROTOCOL"),
         (504, "PROTOCOL"),
+        (200, "PROTOCOL"),  # G8 said executed but L1 rejected the body
+        (202, "PROTOCOL"),
     ],
 )
 def test_execute_5xx_routes_to_respond_unknown(status, code):
@@ -232,3 +234,10 @@ def test_evaluate_internal_error_has_own_template():
     assert r.fixed_reply == respond_template("INTERNAL_ERROR")
     assert r.fixed_reply != respond_template("GENERIC_ERROR")
     assert "内部错误" in r.fixed_reply
+
+
+def test_execute_5xx_decision_in_body_does_not_bypass_unknown():
+    """Only a 409 re-evaluated decision re-routes; a 5xx stays unknown."""
+    r = route_execute_error(500, "INTERNAL_ERROR", decision=_decision("DENY"))
+    assert r.state.get("execution_status") == "UNKNOWN"
+    assert "未执行" not in r.fixed_reply

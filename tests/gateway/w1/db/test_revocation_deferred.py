@@ -588,7 +588,9 @@ def test_actual_sql_failure_rolls_back_revocation_audit_and_dedup(gateway_db, mo
                     base_url="http://gateway",
                 ) as observer:
                     response = await revoke(observer, token, sid, "cancel", request_id)
-                assert response.status_code == 503, response.text
+                # Unhandled SQL failure → 500 INTERNAL_ERROR (user decision 2026-11-08).
+                assert response.status_code == 500, response.text
+                assert response.json()["error"]["code"] == "INTERNAL_ERROR"
                 assert not armed[0]
                 async with db.connect() as conn:
                     assert (

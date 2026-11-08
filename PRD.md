@@ -722,7 +722,7 @@ START
 | | 409 `STATE_CHANGED` 或 `POLICY_CHANGED`（`details.decision` 为 L2 复演后的最新 Decision，plan_id 不变） | 按 `details.decision` 路由：`REQUIRE_APPROVAL` → await_approval（用其中新的 approval_id）；`ALLOW` → execute；`DENY` / `REPLAN` → respond。**不重新调用 evaluate**；本轮最多 1 次，超过转 respond |
 | evaluate / execute | 401 / 403 / 404，409 `IDEMPOTENCY_CONFLICT` | respond（模板：请重新发起，未执行任何操作） |
 | | 409 `APPROVAL_REJECTED`、`APPROVAL_EXPIRED`、`APPROVAL_SUPERSEDED`、`APPROVAL_USED`、`OTP_LOCKED`、`EXECUTION_CANCELLED`、`EXECUTION_DEADLINE_EXPIRED`、`EXECUTION_IN_PROGRESS` | respond（按代码映射固定文案） |
-| | 任一 5xx（503 `DEPENDENCY_UNAVAILABLE`、500 `INTERNAL_ERROR`，以及无法解析的 5xx 响应） | 同 202 UNKNOWN（L2 可能在 L3 提交后才出错，不得回复「未执行」） |
+| | 任一 5xx（503 `DEPENDENCY_UNAVAILABLE`、500 `INTERNAL_ERROR`，以及无法解析的 5xx 响应）；200/202 但响应体校验失败；5xx 体内的 decision 一律忽略，只认 409 的 decision | 同 202 UNKNOWN（L2 可能在 L3 提交后才出错，不得回复「未执行」） |
 | | 任一 L3 业务失败码（`ExecutionResult.status=FAILED`） | respond（`BLOCKED` 卡片） |
 | 任意 | 其他未列出的返回 | respond（模板：请重新发起，未执行任何操作） |
 
