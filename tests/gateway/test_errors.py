@@ -67,9 +67,9 @@ def test_framework_405_collapses_to_not_found():
     asyncio.run(run())
 
 
-def test_unhandled_exception_is_503():
+def test_unhandled_exception_is_500():
     # FastAPI registers the Exception handler as the ServerErrorMiddleware
-    # handler, which sends the 503 then re-raises for server logging. Drive the
+    # handler, which sends the 500 then re-raises for server logging. Drive the
     # ASGI app directly and capture the response before the re-raise.
     async def run():
         import json
@@ -101,7 +101,7 @@ def test_unhandled_exception_is_503():
             pass
         start = next(m for m in messages if m["type"] == "http.response.start")
         body = b"".join(m["body"] for m in messages if m["type"] == "http.response.body")
-        assert start["status"] == 503
-        assert json.loads(body)["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+        assert start["status"] == 500
+        assert json.loads(body)["error"]["code"] == "INTERNAL_ERROR"
 
     asyncio.run(run())

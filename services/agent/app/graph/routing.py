@@ -117,6 +117,10 @@ def route_evaluate_error(
     if status == 503:
         return RouteResult("respond", {}, True, respond_template("DEPENDENCY_UNAVAILABLE"))
 
+    # 500 INTERNAL_ERROR → respond. Evaluate never writes to L3, so "nothing executed" holds.
+    if status == 500 and code_value == "INTERNAL_ERROR":
+        return RouteResult("respond", {}, True, respond_template("INTERNAL_ERROR"))
+
     # Default: respond
     return RouteResult("respond", {}, True, respond_template("GENERIC_ERROR"))
 
@@ -179,8 +183,9 @@ def route_execute_error(
         )
 
     # 202 → unknown (done in route_execute_success via execute node, not error path)
-    # 503 on execute → unknown
-    if status == 503:
+    # Any 5xx on execute → unknown: the gateway may have failed after L3 committed,
+    # so the reply must never claim nothing was executed.
+    if status >= 500:
         return RouteResult(
             "respond", {"execution_status": "UNKNOWN"}, True, respond_template("UNKNOWN")
         )

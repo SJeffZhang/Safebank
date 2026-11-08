@@ -222,6 +222,6 @@ def install_middleware(app: FastAPI) -> None:
         )
         return error_response(
             getattr(request.state, "trace_id", ""),
-            Code.DEPENDENCY_UNAVAILABLE,
-            503,
+            Code.INTERNAL_ERROR,
+            500,
         )

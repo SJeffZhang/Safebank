@@ -202,3 +202,33 @@ def test_decision_without_preflight_still_routes():
     d = _decision("ALLOW")
     r = route_evaluate(d, 0)
     assert r.node == "execute"
+
+
+# ── 5xx on execute → UNKNOWN: L3 may already have committed ─────────────
+
+
+@pytest.mark.parametrize(
+    ("status", "code"),
+    [
+        (500, "INTERNAL_ERROR"),
+        (500, "PROTOCOL"),  # non-JSON or unparseable 500 body
+        (502, "PROTOCOL"),
+        (504, "PROTOCOL"),
+    ],
+)
+def test_execute_5xx_routes_to_respond_unknown(status, code):
+    r = route_execute_error(status, code)
+    assert r.node == "respond"
+    assert r.use_fixed_reply
+    assert r.state.get("execution_status") == "UNKNOWN"
+    assert "未执行" not in r.fixed_reply
+
+
+def test_evaluate_internal_error_has_own_template():
+    from services.agent.app.graph.routing import route_evaluate_error
+
+    r = route_evaluate_error(500, "INTERNAL_ERROR", 0)
+    assert r.node == "respond"
+    assert r.fixed_reply == respond_template("INTERNAL_ERROR")
+    assert r.fixed_reply != respond_template("GENERIC_ERROR")
+    assert "内部错误" in r.fixed_reply

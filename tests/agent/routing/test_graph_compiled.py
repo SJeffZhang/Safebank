@@ -17,6 +17,8 @@ test assertions are on state/routing semantics, not on exact HTTP count.
 
 from __future__ import annotations
 
+import httpx
+import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 from safebank_contracts.plan import PlanDraft
@@ -503,6 +505,31 @@ def test_execute_503_via_compiled_graph():
 
     result = _invoke(graph)
     assert "确认中" in result["reply_draft"]
+    assert result.get("execution") is None
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        error_response(500, "INTERNAL_ERROR"),
+        httpx.Response(500, text="Internal Server Error"),
+    ],
+    ids=["coded", "plain-text"],
+)
+def test_execute_500_via_compiled_graph_is_unknown(response):
+    """FAKE HTTP: a 500 after ALLOW may follow an L3 commit → UNKNOWN, never 'not executed'."""
+    graph, _client, _transport = _gateway_graph(
+        [
+            *_g20_ok(_g20_item("utt_a")),
+            json_response(200, _g4_allow("pln_a")),
+            response,
+            _NOOP,
+        ]
+    )
+
+    result = _invoke(graph)
+    assert "确认中" in result["reply_draft"]
+    assert "未执行" not in result["reply_draft"]
     assert result.get("execution") is None
 
 
