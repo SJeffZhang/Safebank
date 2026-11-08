@@ -94,8 +94,16 @@ def main() -> None:
         actual = {a["id"]: a for a in accounts.json()["accounts"]}
         assert actual["acc_a"]["available_cents"] == state.accounts["acc_a"].available_cents - 1
         assert actual["acc_s"]["available_cents"] == state.accounts["acc_s"].available_cents + 1
-        outbox = client.get("/internal/outbox")
-        assert any(e["payload"]["plan_id"] == plan_id for e in outbox.json()["items"])
+        # The outbox pages unacknowledged events oldest first; on a long-lived
+        # database this run's event may sit beyond the first page.
+        found, after = False, 0
+        while not found:
+            page = client.get("/internal/outbox", params={"after": after, "limit": 100}).json()
+            found = any(e["payload"]["plan_id"] == plan_id for e in page["items"])
+            if page["next_cursor"] is None:
+                break
+            after = int(page["next_cursor"])
+        assert found
         print(
             "PASS: actual HTTP -> PostgreSQL, service auth, snapshot, prepare, transfer and outbox"
         )

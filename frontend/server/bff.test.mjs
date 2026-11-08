@@ -414,3 +414,44 @@ test("demo SMS needs both logins and reveals only approvals the customer owns", 
   assert.equal((await s.req("/console/sms?approval_id=apv_other")).status, 404);
   assert.equal(s.calls.filter((c) => c.url.includes("/demo/sms")).length, before);
 });
+test("gateway error codes reach the user as readable Chinese, codes and details unchanged", async (t) => {
+  const replies = {
+    "/plans/pln_a/execute": [
+      { code: "CONTRACT_INVALID", message: "expected {request_id: str}", details: { reason: "nul_byte" } },
+      422,
+    ],
+    "/plans/pln_b/execute": [{ code: "STATE_CHANGED", message: "STATE_CHANGED", details: {} }, 409],
+    "/plans/pln_c/execute": [{ code: "SOMETHING_NEW", message: "internal english text", details: {} }, 409],
+    "/plans/pln_d/execute": [{ code: "INTENT_SCOPE_EXCEEDED", message: "超出本次原话授权范围", details: {} }, 409],
+  };
+  const s = await setup(t, (url) => {
+    if (url.endsWith("/auth/login")) return login();
+    const key = Object.keys(replies).find((k) => url.endsWith(k));
+    const [error, status] = replies[key];
+    return json({ error }, status);
+  });
+  await s.req("/auth/login", {});
+  const cjk = /[一-鿿]/;
+  for (const [path, [error, status]] of Object.entries(replies)) {
+    const r = await s.req(path, { request_id: "req_x" });
+    assert.equal(r.status, status);
+    const data = await r.json();
+    assert.equal(data.error.code, error.code);
+    assert.deepEqual(data.error.details, error.details);
+    assert.match(data.error.message, cjk, `${error.code} message not readable: ${data.error.message}`);
+    assert.doesNotMatch(data.error.message, /^[A-Z_]+$/);
+    assert.doesNotMatch(data.error.message, /request_id|english/);
+  }
+  const kept = await (await s.req("/plans/pln_d/execute", { request_id: "req_y" })).json();
+  assert.equal(kept.error.message, "超出本次原话授权范围");
+});
+test("a refused login says the PIN is wrong, not that the session expired", async (t) => {
+  const s = await setup(t, () =>
+    json({ error: { code: "UNAUTHENTICATED", message: "UNAUTHENTICATED", details: {} } }, 401),
+  );
+  const r = await s.req("/auth/login", { customer_id: "cus_test", pin: "000000" });
+  assert.equal(r.status, 401);
+  const data = await r.json();
+  assert.equal(data.error.code, "UNAUTHENTICATED");
+  assert.equal(data.error.message, "PIN 不正确，请重新输入");
+});
