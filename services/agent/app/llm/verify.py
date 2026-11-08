@@ -32,6 +32,8 @@ _PCT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 # digits, mixed alphanumerics) is extracted with last4=None so it can be
 # flagged and scrubbed.
 _CARD_LAST4_RE = re.compile(r"尾号(?:为|是)?\s*([A-Za-z0-9_]+)")
+# G21 card candidate labels are built by L2 as exactly 尾号 + four digits.
+_CANDIDATE_CARD_LABEL_RE = re.compile(r"尾号(\d{4})")
 
 # Amount string that should be preserved during masking (contains ¥/元/块)
 _AMOUNT_TEXT_RE = re.compile(r"(?:¥|￥)[\d,.]+|[\d,.]+\s*(?:元|块)")
@@ -443,6 +445,17 @@ def build_fact_set(state: AgentState) -> dict:
         if data is None:
             continue
         _collect_from_data(data, amounts, percentages, last4s)
+
+    # Card choices of the open G21 clarification: L2 builds these labels from
+    # owned L3 cards, so a reply listing them may name those tails.
+    clarification = state.get("clarification")
+    if isinstance(clarification, dict):
+        for candidate in clarification.get("candidates") or ():
+            if not isinstance(candidate, dict) or candidate.get("field") != "card_id":
+                continue
+            m = _CANDIDATE_CARD_LABEL_RE.fullmatch(str(candidate.get("label", "")))
+            if m:
+                last4s.append(m.group(1))
 
     # Walk decision preflight balances
     decision = state.get("decision")

@@ -57,7 +57,8 @@ _SYSTEM = (
     "cancel_subscription 的 instruction_id 必须从已读数据（list_subscriptions 或 "
     "detect_subscriptions 的 items 里的 instruction_id，以 si_ 开头）用 read 来源引用，"
     "不能自己编造或从原话直接取值。"
-    "report_card_lost 的 card_id 必须声明 get_cards.items 对应 id 的 read 来源；"
+    "卡片操作（冻结、解冻、限额、渠道开关、挂失）的 card_id 必须声明 get_cards.items "
+    "对应 id 的 read 来源；原话中的尾号只用来在已读卡片里找到这张卡，不能作为 card_id 的来源。"
     "多张当前卡未指明时必须追问，不得自行选择。replace也必须声明utterance来源；"
     "未要求补卡时replace=false，span只指向挂失/丢了等挂失动作词，不要省略来源。"
     "找出没用/闲置订阅时，只能取消 detect_subscriptions.items 中 is_idle=true 的集合；"
@@ -872,18 +873,56 @@ def _lost_card_clarify(body: PlanBody, state: AgentState) -> PlanBody:
     return body
 
 
-def _lost_card_source_problems(draft: PlanDraft, state: AgentState) -> list[str]:
+_CARD_WRITE_TOOLS = frozenset(
+    {
+        "freeze_card",
+        "unfreeze_card",
+        "update_card_limits",
+        "update_card_controls",
+        "report_card_lost",
+    }
+)
+
+
+def _typed_card_id(source, card_id: str, state: AgentState) -> bool:
+    """The user literally typed the card id itself (not merely its tail)."""
+    if source.kind != "utterance":
+        return False
+    utterance = next((u for u in state.get("utterances", []) if u.id == source.ref), None)
+    return utterance is not None and utterance.text[source.span[0] : source.span[1]] == card_id
+
+
+def _card_source_problems(draft: PlanDraft, state: AgentState) -> list[str]:
+    """Card writes cite the owned card read for card_id, never the typed tail.
+
+    Loss reporting needs exactly a get_cards read. Other card writes may also cite a
+    card id the user typed verbatim; hint/action/step sources stay with L2 to judge.
+    """
     card_reads = {r.source_ref for r in state.get("reads", []) if r.tool == "get_cards"}
     problems = []
     for index, step in enumerate(draft.steps):
-        if step.tool != "report_card_lost":
+        if step.tool not in _CARD_WRITE_TOOLS:
             continue
         sources = [s.source for s in step.arg_sources if s.param == "card_id"]
-        if len(sources) != 1 or sources[0].kind != "read" or sources[0].ref not in card_reads:
+        source = sources[0] if len(sources) == 1 else None
+        if source is None:
+            ok = False
+        elif source.kind == "read":
+            ok = source.ref in card_reads
+        elif step.tool == "report_card_lost":
+            ok = False
+        elif source.kind == "utterance":
+            ok = _typed_card_id(source, step.args.card_id, state)
+        else:
+            ok = True
+        if not ok:
             problems.append(
-                f"steps[{index}].card_id: 挂失必须引用 get_cards 读取结果中该卡 id 的 read 来源，"
-                "不能省略或猜测"
+                f"steps[{index}].card_id: 卡片操作必须引用 get_cards 读取结果中"
+                "该卡 id 的 read 来源；原话里的尾号只用于在已读卡片中找到对应的卡，"
+                "不能作为 card_id 来源，不能省略或猜测"
             )
+        if step.tool != "report_card_lost":
+            continue
         replacement = [s.source for s in step.arg_sources if s.param == "replace"]
         if len(replacement) != 1 or replacement[0].kind != "utterance":
             problems.append(
@@ -1121,7 +1160,7 @@ class PlanAdapter:
                 )
                 der_problems = _derived_schedule_problems(draft, state)
                 idle_problems = _idle_subscription_problems(draft, state)
-                card_problems = _lost_card_source_problems(draft, state)
+                card_problems = _card_source_problems(draft, state)
                 wealth_problems = _wealth_source_problems(draft, state)
                 selection_problems = _selection_problems(draft, selection)
                 all_problems = (

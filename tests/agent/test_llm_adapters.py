@@ -1426,7 +1426,7 @@ def test_gather_supplements_get_accounts_for_transfer_intent():
 
 
 def test_gather_no_supplement_for_non_transfer():
-    """Freeze card intent → no supplemental account/payee reads."""
+    """Freeze card intent → no supplemental account/payee reads (only the owned card list)."""
     executed = []
 
     def executor(name, args):
@@ -1438,8 +1438,8 @@ def test_gather_no_supplement_for_non_transfer():
     result = GatherAdapter(llm, executor, supplement_transfer_reads=True)(
         _make_gather_state(intents=["card"], text="冻结卡"), ctx()
     )
-    assert len(executed) == 0
-    assert len(result) == 0
+    assert executed == [("get_cards", {"account_id": None})]
+    assert [r.tool for r in result] == ["get_cards"]
 
 
 def test_gather_no_duplicate_get_accounts():
