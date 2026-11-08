@@ -1349,3 +1349,4 @@ make logs        # 查看各服务日志
 - [ ] 如果有设计变更，同步 PRD 对应章节，并在 `docs/decisions/` 中写 ADR
 - [ ] 写明未完成、未验证、已知 bug
 | 2026-11-08 | Claude（新主会话） | 500 分支本机 CI 首轮在 p1-test-w1 失败：test_revocation_deferred 四个参数化用例注入 SQL 除零（未处理异常）仍断言 503，改为断言 500 INTERNAL_ERROR，回滚断言全部保留。另查 S1 事件通知用例的失败是 S1 主动映射为 503 DEPENDENCY_UNAVAILABLE，不改。独立评审 APPROVE 无 P0；按其 P1（先前已存在）修：G8 返回 200/202 但 L1 拒收响应体时也归 UNKNOWN，不再回复「未执行」；P2：错误体中的 decision 只在 409 时生效，5xx 不被遮蔽。新增 3 条用例，旧 routing 下 3 failed，新 87 passed；受影响 DB 用例 test_revocation_deferred 与 S1 全部通过。PRD §6.1.1 同步。 |
+| 2026-11-08 | Claude（新主会话） | 7e65ec9 全量本机 CI PASSED（unit 5003/1178 skip、前端、p1-postgres 全部步骤含 w1 2042、obligations 338、s1 113、integration、contracts）；长期栈部署该提交后 live 核对登录、会话、正常读取与非法参数 422 可读错误均正常，容器内 bff.mjs 与分支一致。开 PR #119、贴本机 CI 结果后按完整 head 合并为 ee5564f；main-baseline 切到 ee5564f 并 make up（与测试 head 树相同），六服务 healthy。阶段 C、D 未开工，待用户决定。 |
