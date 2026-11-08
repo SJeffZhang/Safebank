@@ -84,7 +84,19 @@ def _candidate(field_name: str, entity_id: str, label: str) -> dict[str, str]:
 # Money is a complete slot, not a numeric substring of an arbitrary sentence.
 _CN_NUM = r"[零〇一二两三四五六七八九十百千万]+"
 _CN_NUM_VALUE = r"\d+(?:\.\d{1,2})?|" + _CN_NUM
-MONEY = r"(?:(?:人民币|CNY)\s*)?(?:" + _CN_NUM_VALUE + r")\s*(?:元|角|分|块钱|块)?"
+# Colloquial sub-units only follow a whole 元/块 amount and use one plain digit each:
+# 八百块五毛, 八百元五角三分, 八百元零五分. 零 is only the empty-角 gap before 分.
+_SUB_DIGIT = r"[一二两三四五六七八九1-9]"
+_SUB_UNITS = (
+    r"(?:" + _SUB_DIGIT + r"(?:毛钱|毛|角)(?:" + _SUB_DIGIT + r"分)?|零?" + _SUB_DIGIT + r"分)"
+)
+MONEY = (
+    r"(?:(?:人民币|CNY)\s*)?(?:"
+    + _CN_NUM_VALUE
+    + r")\s*(?:(?:元|块)"
+    + _SUB_UNITS
+    + r"|元|角|分|块钱|块)?"
+)
 
 _CN_DIGIT_V = {
     "零": 0,
@@ -179,8 +191,22 @@ def _parse_chinese_numeral(text: str) -> int | None:
 
 
 _MONEY_PATTERN = (
-    r"(?:(?:人民币|CNY)\s*)?(?P<value>" + _CN_NUM_VALUE + r")\s*(?P<unit>元|角|分|块钱|块)?"
+    r"(?:(?:人民币|CNY)\s*)?(?P<value>"
+    + _CN_NUM_VALUE
+    + r")\s*(?:(?P<whole>元|块)(?:(?P<jiao>"
+    + _SUB_DIGIT
+    + r")(?:毛钱|毛|角)(?:(?P<fen_after_jiao>"
+    + _SUB_DIGIT
+    + r")分)?|零?(?P<fen>"
+    + _SUB_DIGIT
+    + r")分)|(?P<unit>元|角|分|块钱|块))?"
 )
+
+
+def _sub_digit(char: str | None) -> int:
+    if char is None:
+        return 0
+    return int(char) if char.isdigit() else _CN_DIGIT_V[char]
 
 
 def money_cents(text: str) -> int | None:
@@ -198,6 +224,16 @@ def money_cents(text: str) -> int | None:
     else:
         value = Decimal(value_str)
     grammar = LEXICON["grammar"]
+    if match["whole"]:
+        # Sub-units extend an exact whole-yuan amount only: 8.5元5毛 is ambiguous.
+        if value != value.to_integral_value():
+            return None
+        cents = (
+            value * 100
+            + _sub_digit(match["jiao"]) * 10
+            + _sub_digit(match["fen_after_jiao"] or match["fen"])
+        )
+        return int(cents) if 0 < cents <= 2**63 - 1 else None
     cents = value * grammar["cents_per_unit"][match["unit"] or grammar["bare_money_unit"]]
     if cents != cents.to_integral_value() or not 0 < cents <= 2**63 - 1:
         return None
@@ -315,6 +351,21 @@ def _transfer_clause(clause: str, target_labels: tuple[str, ...] | None = None) 
     return None
 
 
+# "给王五转800元给赵六转900元": a second transfer may follow a completed amount
+# without a comma. Splitting is only accepted when every part is a transfer.
+_TRANSFER_BOUNDARY = re.compile(r"(?<=[元块毛角分钱])(?=(?:再|然后|并)?(?:给|向))")
+
+
+def _split_transfers(clause: str, target_labels: tuple[str, ...] | None) -> list[Command] | None:
+    parts = [part for part in _TRANSFER_BOUNDARY.split(clause) if part]
+    if len(parts) < 2:
+        return None
+    commands = [_clause(part, target_labels) for part in parts]
+    if any(cmd is None or cmd.tool != "transfer" or cmd.bare for cmd in commands):
+        return None
+    return commands
+
+
 _QUERY_CLAUSES = tuple(
     re.compile(pattern + r"[?？]?")
     for pattern in (
@@ -377,6 +428,11 @@ def _clause(clause: str, target_labels: tuple[str, ...] | None = None) -> Comman
         return Command("reserve")
     if re.fullmatch(r"(?:取消(?:闲置的?|没用的)订阅|找出(?:闲置的?|没用的)订阅取消掉)", clause):
         return Command("cancel_subscription", target="idle_subscriptions")
+    if re.fullmatch(
+        r"(?:取消(?:我的)?(?:所有|全部)(?:的)?订阅|把(?:我的)?(?:所有|全部)(?:的)?订阅都?取消(?:掉)?)",
+        clause,
+    ):
+        return Command("cancel_subscription", target="all_subscriptions")
     subscription = re.fullmatch(r"取消(?P<merchant>.+?)(?:的)?订阅", clause)
     if subscription:
         return Command("cancel_subscription", target=subscription["merchant"])
@@ -574,11 +630,14 @@ def _card_candidates(label: str, cards: list, predicates: dict[str, list[str]]) 
         return cards
     if label in {"可疑卡", "这笔可疑交易对应的卡", "那笔可疑交易对应的卡"}:
         return [card for card in cards if card.id in predicates.get("suspicious_cards", [])]
-    return [
-        card
-        for card in cards
-        if label in {card.id, "尾号" + card.last4, "尾号" + card.last4 + "的卡"}
-    ]
+    last4 = re.fullmatch(
+        r"(?:我的)?(?:卡号)?(?:尾号|末四位)(?:为|是)?(?P<last4>\d{4})"
+        r"(?:(?:的|那张)(?:卡|银行卡|借记卡)|卡)?",
+        label,
+    )
+    if last4:
+        return [card for card in cards if card.last4 == last4["last4"]]
+    return [card for card in cards if label == card.id]
 
 
 def _phone_target(label: str) -> str | None:
@@ -733,19 +792,123 @@ def _transfer_target_labels(state: BankState, customer_id: str) -> tuple[str, ..
     return tuple(sorted(label for label in labels if label))
 
 
+# Decorative symbols (emoji, pictographs) carry no banking meaning. They are
+# dropped only between tokens: one joining two CJK characters or two digits
+# could hide a name or amount and fails closed. Keycap marks (U+20E3) stay.
+_DECORATION_JOINERS = {"\ufe0f", "\ufe0e", "\u200d"}
+
+
+def _is_decoration(char: str) -> bool:
+    category = unicodedata.category(char)
+    return (
+        char in _DECORATION_JOINERS
+        or category == "So"
+        or (category == "Sk" and not char.isascii())
+        or 0x1F3FB <= ord(char) <= 0x1F3FF
+    )
+
+
+def _token_kind(char: str) -> str | None:
+    if char.isascii() and char.isalnum():
+        return "alnum"
+    if "\u4e00" <= char <= "\u9fff":
+        return "cjk"
+    return None
+
+
+def strip_decoration(text: str) -> str | None:
+    kept: list[str] = []
+    index = 0
+    while index < len(text):
+        if not _is_decoration(text[index]):
+            kept.append(text[index])
+            index += 1
+            continue
+        end = index
+        while end < len(text) and _is_decoration(text[end]):
+            end += 1
+        before = _token_kind(text[index - 1]) if index else None
+        after = _token_kind(text[end]) if end < len(text) else None
+        if before is not None and before == after:
+            return None
+        index = end
+    return "".join(kept)
+
+
+_MEMO = re.compile(r"(?:^|[,;\s])\s*(?:备注|附言)(?:是|为|:)?\s*(?P<memo>.*)$")
+_AMOUNT_TOKEN = re.compile(r"-?\d+(?:\.\d+)?(?=\s*(?:元|块钱|块)?$)")
+_MONTHLY_DAY = re.compile(r"(?<=每月)(\s*)(\d{1,2})(?=\s*[号日])")
+_WEEKLY_DAY = re.compile(r"(?:每周|每星期|每礼拜)(?P<day>[零〇八九十0-9]+)")
+
+
+def _value_guidance(
+    clean: str, state: BankState, customer_id: str, predicates: dict[str, list[str]] | None
+) -> str | None:
+    """Name the one rejected value when replacing it alone yields a complete scope.
+
+    Only a fixed template ID is returned; nothing from the substituted parse is
+    kept, so this never widens authorization.
+    """
+    if match := _AMOUNT_TOKEN.search(clean):
+        unit = clean[match.end() :].strip() or ""
+        if money_cents(match.group() + unit) is None:
+            candidate = clean[: match.start()] + "1" + clean[match.end() :]
+            if _parse(candidate, state, customer_id, predicates).status == ParseStatus.SCOPED:
+                return "amount_invalid"
+    if (match := _MONTHLY_DAY.search(clean)) and not 1 <= int(match.group(2)) <= 31:
+        candidate = clean[: match.start(2)] + "1" + clean[match.end(2) :]
+        if _parse(candidate, state, customer_id, predicates).status == ParseStatus.SCOPED:
+            return "schedule_date_invalid"
+    if match := _WEEKLY_DAY.search(clean):
+        candidate = clean[: match.start("day")] + "一" + clean[match.end("day") :]
+        if _parse(candidate, state, customer_id, predicates).status == ParseStatus.SCOPED:
+            return "schedule_date_invalid"
+    return None
+
+
 def parse(
     text: str, state: BankState, customer_id: str, predicates: dict[str, list[str]] | None = None
 ) -> Parsed:
     """Full-clause grammar; unknown text invalidates the entire write proposal."""
+    stripped = strip_decoration(normalize(text))
+    if stripped is None:
+        return Parsed()
+    result = _parse(stripped, state, customer_id, predicates)
+    if (
+        result.status == ParseStatus.INTENT_UNCLEAR
+        and result.guidance_template is None
+        and not result.scope.action_kinds
+    ):
+        clean = QUOTES.sub("", _command_text(stripped)).strip(" 。.!！~")
+        if re.fullmatch(r"(?:请帮我|帮我|请)?取消(?:我的)?订阅", clean):
+            return Parsed(guidance_template="subscription_select")
+        if guidance := _value_guidance(clean, state, customer_id, predicates):
+            return Parsed(guidance_template=guidance)
+    return result
+
+
+def _parse(
+    text: str, state: BankState, customer_id: str, predicates: dict[str, list[str]] | None = None
+) -> Parsed:
     text = normalize(text)
-    if text.strip(" 。.!！") in LEXICON["cancel"]:
+    if text.strip(" 。.!！~") in LEXICON["cancel"]:
         return Parsed(status=ParseStatus.NO_WRITE, cancel=True)
     correction = is_correction(text)
     text = _command_text(text)
-    clean = QUOTES.sub("", text).strip(" 。.!！")
+    clean = QUOTES.sub("", text).strip(" 。.!！~")
     if not clean:
         return Parsed() if correction else Parsed(status=ParseStatus.NO_WRITE)
-    clauses = [part.strip() for part in re.split(r"[，,；;。]", clean)]
+    # A trailing 备注/附言 is user-authored memo text, never more commands: it is
+    # cut off before clause parsing and only attaches to exactly one transfer.
+    memo = None
+    if found := _MEMO.search(clean):
+        memo = found["memo"].strip()
+        if not memo or len(memo) > 200 or re.search(r"备注|附言", memo):
+            return Parsed()
+        clean = clean[: found.start()].rstrip(" ,;")
+        if not clean:
+            return Parsed()
+    clauses = [part.strip() for part in re.split(r"[，,；;。\n\r]", clean)]
     if not all(clauses):
         return Parsed()
     # Refuse direct risk-level assignment before bare-number shorthand can
@@ -755,7 +918,10 @@ def parse(
     ):
         return Parsed(guidance_template="risk_assessment_form")
     target_labels = _transfer_target_labels(state, customer_id)
-    commands = [_clause(clause, target_labels) for clause in clauses]
+    commands = []
+    for clause in clauses:
+        split = _split_transfers(clause, target_labels)
+        commands.extend(split if split is not None else [_clause(clause, target_labels)])
     if any(command is None for command in commands):
         if len(clauses) == 1:
             consultation = re.fullmatch(r"我?能不能(?P<body>(?:给|向).+?)[?？]?", clean)
@@ -834,7 +1000,11 @@ def parse(
         ]
     writes = [command for command in commands if command.tool not in {"read", "reserve"}]
     if not writes:
-        return Parsed(status=ParseStatus.NO_WRITE)
+        return Parsed() if memo is not None else Parsed(status=ParseStatus.NO_WRITE)
+    if memo is not None:
+        if len(writes) != 1 or writes[0].tool != "transfer":
+            return Parsed()
+        writes[0].fields["memo"] = memo
     if any(command.bare for command in writes) and not (
         len(writes) >= 2 and all(command.tool == "transfer" for command in writes)
     ):
@@ -1001,6 +1171,13 @@ def parse(
             if command.target == "idle_subscriptions":
                 ids = predicates.get("idle_subscriptions", [])
                 fields.setdefault("predicates", {})["idle_subscriptions"] = ids
+            elif command.target == "all_subscriptions":
+                owned_ids = {account.id for account in owned}
+                ids = [
+                    item.instruction_id
+                    for item in state.subscriptions
+                    if item.status == "ACTIVE" and item.account_id in owned_ids
+                ]
             else:
                 ids = [
                     item.instruction_id

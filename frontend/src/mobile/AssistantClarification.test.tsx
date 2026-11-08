@@ -160,6 +160,9 @@ it.each([
   { template: "risk_assessment_form", text: "帮我把风险测评改成R5", detail: /亲自.*六题|六题.*亲自/, link: "前往理财页", href: "#wealth" },
   { template: "register_payee_form", text: "给钱七6222020000009999转5000", detail: /手工.*收款人|收款人.*手工/, link: "前往转账页", href: "#transfer" },
   { template: "transfer_consultation", text: "我能不能给王五转100？", detail: /本次没有发起转账/, link: "查看账户余额", href: "#overview" },
+  { template: "amount_invalid", text: "给王五转-800元", detail: /金额需要大于 0/, link: "前往转账页", href: "#transfer" },
+  { template: "schedule_date_invalid", text: "每月32号给王五转800元", detail: /1 到 31 号/, link: "前往转账页", href: "#transfer" },
+  { template: "subscription_select", text: "取消订阅", detail: /没有取消任何订阅/, link: "查看我的订阅", href: "#subscriptions" },
 ])("renders server-selected $template guidance without submitting a form", async ({ template, text, detail, link, href }) => {
   current = { ...slots(), kind: "FORM_REQUIRED", required_fields: [], candidates: [], prompt_template_id: template };
   await begin(text);

@@ -51,6 +51,21 @@ const formGuidance: Record<string, typeof genericFormGuidance> = {
     body: "这是转账咨询，本次没有发起转账。您可以查看账户余额和卡限额，或重新发送明确的转账指令；是否可办理仍需安全预演。",
     links: [{ href: "#overview", label: "查看账户余额" }, { href: "#cards", label: "查看卡片限额" }],
   },
+  amount_invalid: {
+    title: "金额无法办理",
+    body: "金额需要大于 0、最多两位小数且不超过系统上限，本次没有发起转账。请重新发送正确的金额，或在转账页填写。",
+    links: [{ href: "#transfer", label: "前往转账页" }],
+  },
+  schedule_date_invalid: {
+    title: "定时日期无法识别",
+    body: "每月扣款日需在 1 到 31 号之间，每周需在周一到周日之间，本次没有创建定时转账。请重新发送正确的日期，或在转账页设置。",
+    links: [{ href: "#transfer", label: "前往转账页" }],
+  },
+  subscription_select: {
+    title: "请说明要取消哪个订阅",
+    body: "本次没有取消任何订阅。请说出订阅名称（如“取消乐听音乐订阅”）或“取消所有订阅”，也可以在订阅页逐个核对。",
+    links: [{ href: "#subscriptions", label: "查看我的订阅" }],
+  },
 };
 export function Assistant(
   p: PageProps & {
