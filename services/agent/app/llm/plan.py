@@ -600,8 +600,8 @@ def _semantic_problems(draft: PlanDraft, state: AgentState) -> list[str]:
 
 # Mirrors the gateway parser (utterance/parser.py _MEMO): a trailing 备注/附言 after
 # a clause boundary is user-authored memo text and never further commands.
-_MEMO_RE = re.compile(r"(?:^|[,，;；\s])\s*(?:备注|附言)(?:是|为|[:：])?\s*(?P<memo>.*)$")
-_MEMO_TRAILING = " \t。.!！~"
+_MEMO_RE = re.compile(r"(?:^|[,，﹐;；﹔\s])\s*(?:备注|附言)(?:是|为|[:：︰])?\s*(?P<memo>.*)$")
+_MEMO_TRAILING = " \t。.!！~～"
 
 
 def _memo_region(text: str) -> tuple[int, int] | None:

@@ -83,6 +83,8 @@ def test_memo_region_mirrors_gateway_trailing_memo():
     assert _memo_region(TEXT) == (MEMO_START, MEMO_START + len(MEMO))
     assert _memo_region("给王五转100元 附言房租") == (11, 13)
     assert _memo_region("给王五转100元，备注是房租。") == (12, 14)
+    assert _memo_region("给王五转100元﹐备注房租") == (11, 13)
+    assert _memo_region("给王五转100元，备注房租～") == (11, 13)
     assert _memo_region("给王五转100元") is None
     assert _memo_region("帮我读备注") is None
     assert _memo_region("给王五转100元，备注：") is None
